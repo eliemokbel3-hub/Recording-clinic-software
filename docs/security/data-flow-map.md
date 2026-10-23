@@ -1248,7 +1248,11 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       repository; each file is written to `<name>.tmp` and moved into place.
       A script file not named as an encounter id writes nothing and is
       reported without its name; a set folder inside either app data folder
-      is refused (round 26).
+      is refused (round 26). Since the metric amendment of 2026-10-23
+      (validation-run6 plan D11) it last writes `enrolment/slot-<n>.wav` into
+      the set folder for each clinician voice slot the built encounters use:
+      a fixed invented passage (`validation_set.ENROLMENT_PASSAGE`) spoken by
+      that voice the same way, written whole and moved into place.
       Since the clinic-smoke plan (2026-10-09, D1, D5) the set folder holds
       the synthetic set only and is deleted after the run: no recording is
       added to it by hand. (Until then mock role-play recordings, with their
@@ -1263,7 +1267,12 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       `transcript.enc`, under a fresh DPAPI-wrapped key — the
       speaker-measurement store, retention schedule) torn down key-first on
       every path; the transcript document, the composed and finalised note
-      and the metrics live in memory for that encounter only. It reads the
+      and the metrics live in memory for that encounter only. Under the
+      default `--attribution enrolment` (since 2026-10-23) it first reads
+      each needed `enrolment/slot-<n>.wav` and enrols it with the
+      speaker-embedding model into an enrolment vector held in memory for
+      the run only — never written, never a voice profile, never logged — and
+      transcribes each encounter with its clinician voice's vector. It reads the
       commit from `.git` and hashes `packaging/models-manifest.json`, and
       prints a text-free Markdown report (ids, numbers, flags, closed
       vocabularies) to standard output, which the practitioner may redirect

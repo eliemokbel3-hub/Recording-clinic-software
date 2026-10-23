@@ -75,8 +75,13 @@ set up and build it, and make releases; the installed app needs none of them.
   from the `[ml]` extra; the set folder must be outside the repository and
   holds synthetic files only since the clinic 1 smoke retired the role-plays;
   a recorded ("role-play") encounter in it — its `<id>.json`, or its WAV or
-  label track without the mark — is never overwritten); the
-  second runs every encounter through the shipped pipeline in a temporary
+  label track without the mark — is never overwritten; since the metric
+  amendment of 2026-10-23 it also writes `enrolment/slot-<n>.wav`, a fixed
+  passage spoken by each clinician voice the set uses); the
+  second (`--attribution enrolment`, the default, enrols each clinician voice
+  from those WAVs in memory with the speaker-embedding model, as the app
+  enrols the practitioner; `--attribution clustering` is runs 1–5's reading)
+  runs every encounter through the shipped pipeline in a temporary
   encrypted store torn down key-first and prints a text-free report, pass or
   fail against the rule. Developer build only, from a normal terminal; see
   `docs/testing/validation-harness.md`.

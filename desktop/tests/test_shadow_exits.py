@@ -858,6 +858,9 @@ _WRITER_REFERENCES: Counter[tuple[str, str]] = Counter(
         ("validation_set.py", "wav_bytes"): 1,
         ("validation_set.py", "write_wav"): 1,
         ("validation_set.py", "build_encounter"): 1,  # synthetic role-play PCM
+        # Validation-run6 plan Task 0.14 (D11, a deliberate pin change): the
+        # synthetic enrolment passage, ``<set>/enrolment/slot-<n>.wav``.
+        ("validation_set.py", "build_enrolments"): 1,
     }
 )
 

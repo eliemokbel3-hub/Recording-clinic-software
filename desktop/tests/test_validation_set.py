@@ -10,6 +10,7 @@ and the label track are checked by arithmetic. Scripts are invented.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import math
@@ -21,10 +22,17 @@ import pytest
 
 from conftest import use_channel
 from scribe_desktop import validation_set
+from scribe_desktop.consultation_phrases import CLOSING_PHRASES, GREETING_PHRASES
+from scribe_desktop.note import DEFAULT_SECTION_CUES, content_tokens
+from scribe_desktop.note_check import _MEDICATION_LEXICON, _STRENGTH_UNITS, HEDGE_PHRASES
+from scribe_desktop.note_config import load_note_config
 from scribe_desktop.speaker_eval import parse_audacity_labels, read_wav_pcm
-from scribe_desktop.validation import UNNAMED_ENCOUNTER, load_script
+from scribe_desktop.transcription import is_number_token
+from scribe_desktop.validation import UNNAMED_ENCOUNTER, find_encounters, load_script
 from scribe_desktop.validation_set import (
     BUILT_MARKER_SUFFIX,
+    ENROLMENT_PASSAGE,
+    ENROLMENT_RATE,
     GAP_SECONDS,
     LEAD_SECONDS,
     MIN_VOICES,
@@ -40,6 +48,7 @@ from scribe_desktop.validation_set import (
     add_noise,
     build_set,
     encounter_seed,
+    enrolment_pcm,
     label_track,
     level_turn,
     mix_turns,
@@ -118,6 +127,15 @@ def _write(folder: Path, data: dict[str, Any]) -> Path:
     path = folder / f"{data['encounter_id']}.json"
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     return path
+
+
+def _only_the_enrolment_left(out: Path) -> bool:
+    """Only the earlier build's ``enrolment/slot-0.wav`` is left in ``out``:
+    a failed rebuild removes the encounter's own files, and no encounter of
+    the set needs the enrolment now (the next build that does rewrites it)."""
+    return [path.name for path in out.iterdir()] == ["enrolment"] and [
+        path.name for path in (out / "enrolment").iterdir()
+    ] == ["slot-0.wav"]
 
 
 # ---------------------------------------------------------------------------
@@ -429,7 +447,7 @@ class TestBuildSet:
         assert len(pcm) == built[0].placement.total * 2
         track = parse_audacity_labels((out / "syn-test.txt").read_text(encoding="utf-8"))
         assert len(track.spans) == 3
-        assert lines == ["[built] syn-test (5.7 s)"]
+        assert lines == ["[built] syn-test (5.7 s)", "[built] enrolment/slot-0.wav"]
 
     def test_role_plays_are_skipped_and_bad_scripts_counted(self, tmp_path: Path) -> None:
         scripts = tmp_path / "scripts"
@@ -625,8 +643,9 @@ class TestBuildSet:
         out = tmp_path / "set"
         build_set(scripts, out, voices=_voices(2), synthesize=_FakeVoices())
         assert sorted(path.name for path in out.iterdir()) == [
-            "syn-test.built", "syn-test.json", "syn-test.txt", "syn-test.wav"
+            "enrolment", "syn-test.built", "syn-test.json", "syn-test.txt", "syn-test.wav"
         ]
+        assert [path.name for path in (out / "enrolment").iterdir()] == ["slot-0.wav"]
         assert BUILT_MARKER_SUFFIX == ".built"
 
     def test_a_recording_without_its_script_is_never_overwritten(self, tmp_path: Path) -> None:
@@ -696,7 +715,7 @@ class TestBuildSet:
             progress=lines.append,
         )
         assert lines[0].endswith("; its earlier build was removed")
-        assert list(out.iterdir()) == []
+        assert _only_the_enrolment_left(out)
 
     def test_a_failed_rebuild_removes_the_earlier_build(self, tmp_path: Path) -> None:
         """Round 11 LOW-006: a stale triple would otherwise be measured."""
@@ -713,7 +732,7 @@ class TestBuildSet:
         )
         assert (built, errors) == ([], 1)
         assert lines[0].endswith("; its earlier build was removed")
-        assert list(out.iterdir()) == []
+        assert _only_the_enrolment_left(out)
 
     def test_a_first_build_that_fails_to_write_leaves_no_mark(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -954,7 +973,7 @@ class TestBuildSet:
             "holding syn-test.wav or syn-test.txt, or delete them, then build again"
             "; its earlier build was removed"
         ]
-        assert list(out.iterdir()) == []
+        assert _only_the_enrolment_left(out)
 
     def test_voices_that_cannot_be_listed_are_refused_by_type(self, tmp_path: Path) -> None:
         def broken() -> tuple[str, ...]:
@@ -1005,6 +1024,220 @@ class TestBuildSet:
         assert lines == ["[error] syn-test.json: AssertionError"]
         assert _no_real_speech_engine == ["sapi_voices", "sapi_synthesize"]
         _no_real_speech_engine.clear()
+
+
+class TestEnrolment:
+    """Validation-run6 plan D11 (metric amendment 2026-10-23): the passage
+    every clinician voice is enrolled from, and its WAVs."""
+
+    def test_the_passage_is_task_0_2a_s(self) -> None:
+        digest = hashlib.sha256(ENROLMENT_PASSAGE.encode("utf-8")).hexdigest()
+        assert digest == "5f529ee96583ec4de5c9652d647d67591db830fc4d63bc4936b01503efa44367"
+        assert len(ENROLMENT_PASSAGE.split()) == 130
+        assert ENROLMENT_RATE == 0
+
+    @staticmethod
+    def _violations(text: str) -> list[str]:
+        """The exclusion categories ``text`` breaks (never its words)."""
+        tokens = content_tokens(text.replace("\u2019", "'"))
+
+        def holds(wanted: tuple[str, ...]) -> bool:
+            n = len(wanted)
+            return n > 0 and any(
+                tuple(tokens[i : i + n]) == wanted for i in range(len(tokens) - n + 1)
+            )
+
+        run_cues = load_note_config(REPO / "validation" / "config").normalised_cues()
+        found = []
+        if any(is_number_token(raw) for raw in text.split()):
+            found.append("number token")
+        if any(token in _STRENGTH_UNITS for token in tokens):
+            found.append("strength unit")
+        if any(token in _MEDICATION_LEXICON for token in tokens):
+            found.append("medication")
+        if any(
+            holds(tuple(phrase))
+            for cues in (DEFAULT_SECTION_CUES, run_cues)
+            for phrases in cues.values()
+            for phrase in phrases
+        ):
+            found.append("cue phrase")
+        for name, listed in (
+            ("hedge", HEDGE_PHRASES),
+            ("closing phrase", CLOSING_PHRASES),
+            ("greeting phrase", GREETING_PHRASES),
+        ):
+            if any(holds(tuple(content_tokens(phrase))) for phrase in listed):
+                found.append(name)
+        return found
+
+    def test_the_passage_breaks_no_exclusion(self) -> None:
+        """No number token, strength unit, medication, cue phrase (shipped or
+        the run's cue file), hedge, closing or greeting phrase - so the
+        enrolment speech can never be read as a fact, a cue or a boundary."""
+        assert self._violations(ENROLMENT_PASSAGE) == []
+
+    def test_each_exclusion_fires_on_its_own_category(self) -> None:
+        """The negative controls: each category's check is live."""
+        cue = " ".join(next(iter(DEFAULT_SECTION_CUES.values()))[0])
+        for extra, category in (
+            ("twelve 12", "number token"),
+            (f"{sorted(_STRENGTH_UNITS)[0]}", "strength unit"),
+            (f"{sorted(_MEDICATION_LEXICON)[0]}", "medication"),
+            (cue, "cue phrase"),
+            (HEDGE_PHRASES[0], "hedge"),
+            (CLOSING_PHRASES[0], "closing phrase"),
+            (GREETING_PHRASES[0], "greeting phrase"),
+        ):
+            assert category in self._violations(f"{ENROLMENT_PASSAGE} {extra}"), category
+
+    def test_one_wav_per_clinician_slot_the_built_scripts_use(self, tmp_path: Path) -> None:
+        scripts = tmp_path / "scripts"
+        _write(scripts, _script("syn-a"))
+        _write(
+            scripts,
+            _script("syn-b", conditions={"voice_slots": {"clinician": 2, "patient": 1}}),
+        )
+        out = tmp_path / "set"
+        synth = _FakeVoices()
+        lines: list[str] = []
+        built, errors = build_set(
+            scripts, out, voices=_voices(3), synthesize=synth, progress=lines.append
+        )
+        assert (errors, [item.clinician_slot for item in built]) == (0, [0, 2])
+        assert lines[-2:] == ["[built] enrolment/slot-0.wav", "[built] enrolment/slot-2.wav"]
+        # No WAV for the patient's slot 1.
+        assert sorted(path.name for path in (out / "enrolment").iterdir()) == [
+            "slot-0.wav", "slot-2.wav"
+        ]
+        assert (ENROLMENT_PASSAGE, 2, ENROLMENT_RATE) in synth.calls
+        written = read_wav_pcm(out / "enrolment" / "slot-2.wav")
+        assert written == enrolment_pcm(2, _FakeVoices())
+        # Peer round 18 PR-LOW-017: pinned apart from ``enrolment_pcm`` too —
+        # the passage's every sample, at a spoken turn's level (D11).
+        raw = _FakeVoices()(ENROLMENT_PASSAGE, 2, ENROLMENT_RATE)
+        assert len(written) == len(raw)
+        assert rms(pcm_samples(written)) == pytest.approx(TURN_RMS, rel=1e-3)
+        # The harness's listing never sees the folder as an encounter.
+        complete, incomplete = find_encounters(out)
+        assert [files.encounter_id for files in complete] == ["syn-a", "syn-b"]
+        assert incomplete == []
+
+    def test_only_enrols_the_named_scripts_slots(self, tmp_path: Path) -> None:
+        scripts = tmp_path / "scripts"
+        _write(scripts, _script("syn-a"))
+        _write(
+            scripts,
+            _script("syn-b", conditions={"voice_slots": {"clinician": 2, "patient": 1}}),
+        )
+        out = tmp_path / "set"
+        build_set(scripts, out, voices=_voices(3), synthesize=_FakeVoices(), only=["syn-b"])
+        assert [path.name for path in (out / "enrolment").iterdir()] == ["slot-2.wav"]
+
+    def test_no_built_encounter_makes_no_enrolment_folder(self, tmp_path: Path) -> None:
+        scripts = tmp_path / "scripts"
+        _write(scripts, _script(conditions=None))
+        out = tmp_path / "set"
+        lines: list[str] = []
+        build_set(
+            scripts, out, voices=_voices(2), synthesize=_FakeVoices(), progress=lines.append
+        )
+        assert not (out / "enrolment").exists()
+        assert not any("enrolment" in line for line in lines)
+
+    def test_a_silent_passage_is_an_error_and_removes_the_earlier_wav(
+        self, tmp_path: Path
+    ) -> None:
+        scripts = tmp_path / "scripts"
+        _write(scripts, _script())
+        out = tmp_path / "set"
+        build_set(scripts, out, voices=_voices(2), synthesize=_FakeVoices())
+        assert (out / "enrolment" / "slot-0.wav").exists()
+        fake = _FakeVoices()
+
+        def silent_passage(text: str, voice: int, rate: int) -> bytes:
+            return b"\x00\x00" * 100 if text == ENROLMENT_PASSAGE else fake(text, voice, rate)
+
+        lines: list[str] = []
+        built, errors = build_set(
+            scripts, out, voices=_voices(2), synthesize=silent_passage, progress=lines.append
+        )
+        assert ([item.encounter_id for item in built], errors) == (["syn-test"], 1)
+        assert lines[-1] == "[error] enrolment/slot-0.wav: a turn was synthesised as silence"
+        assert not (out / "enrolment" / "slot-0.wav").exists()
+
+    def test_an_unexpected_failure_is_reported_by_type_only(self, tmp_path: Path) -> None:
+        scripts = tmp_path / "scripts"
+        _write(scripts, _script())
+        fake = _FakeVoices()
+
+        def failing(text: str, voice: int, rate: int) -> bytes:
+            if text == ENROLMENT_PASSAGE:
+                raise RuntimeError("C:/Users/someone/voice said something")
+            return fake(text, voice, rate)
+
+        lines: list[str] = []
+        built, errors = build_set(
+            scripts, tmp_path / "set", voices=_voices(2), synthesize=failing,
+            progress=lines.append,
+        )
+        assert (len(built), errors) == (1, 1)
+        assert lines[-1] == "[error] enrolment/slot-0.wav: RuntimeError"
+
+    @pytest.mark.parametrize("removable", [True, False])
+    def test_a_write_that_fails_says_what_to_do(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, removable: bool
+    ) -> None:
+        scripts = tmp_path / "scripts"
+        _write(scripts, _script())
+        out = tmp_path / "set"
+        real_write = validation_set._write_replacing
+        real_unlink = Path.unlink
+
+        def locked_enrolment(path: Path, data: bytes) -> None:
+            if path.parent.name == "enrolment":
+                raise PermissionError
+            real_write(path, data)
+
+        def stuck(self: Path, missing_ok: bool = False) -> None:
+            if self.name == "slot-0.wav":
+                raise PermissionError
+            real_unlink(self, missing_ok=missing_ok)
+
+        monkeypatch.setattr(validation_set, "_write_replacing", locked_enrolment)
+        if not removable:
+            monkeypatch.setattr(Path, "unlink", stuck)
+        lines: list[str] = []
+        built, errors = build_set(
+            scripts, out, voices=_voices(2), synthesize=_FakeVoices(), progress=lines.append
+        )
+        assert (len(built), errors) == (1, 1)
+        expected = (
+            "[error] enrolment/slot-0.wav: could not be written (PermissionError) - close any "
+            "program holding it, or delete it, then build again"
+        )
+        if not removable:
+            expected += (
+                "; its earlier file could not be removed (PermissionError) - delete it by hand"
+            )
+        assert lines[-1] == expected
+
+    def test_a_folder_that_cannot_be_made_counts_every_slot(self, tmp_path: Path) -> None:
+        scripts = tmp_path / "scripts"
+        _write(scripts, _script("syn-a"))
+        _write(
+            scripts,
+            _script("syn-b", conditions={"voice_slots": {"clinician": 2, "patient": 1}}),
+        )
+        out = tmp_path / "set"
+        out.mkdir()
+        (out / "enrolment").write_bytes(b"")
+        lines: list[str] = []
+        built, errors = build_set(
+            scripts, out, voices=_voices(3), synthesize=_FakeVoices(), progress=lines.append
+        )
+        assert (len(built), errors) == (2, 2)
+        assert lines[-1] == "[error] enrolment: the folder cannot be created (FileExistsError)"
 
 
 class TestMain:

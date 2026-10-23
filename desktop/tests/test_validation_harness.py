@@ -32,6 +32,7 @@ from scribe_desktop.note import GeneratedSection, NoteRequest, whole_utterance_a
 from scribe_desktop.note_config import load_note_config
 from scribe_desktop.speaker_eval import TEMP_DIR_PREFIX, SpeakerEvalError, parse_audacity_labels
 from scribe_desktop.speech import BYTES_PER_SAMPLE, SAMPLE_RATE, TranscribedWord
+from scribe_desktop.transcription import TranscriptDocument, TranscriptSegment, TranscriptWord
 from scribe_desktop.ui import models
 from scribe_desktop.validation import (
     EncounterOutcome,
@@ -44,6 +45,7 @@ from scribe_desktop.validation import (
     run_encounters,
 )
 from scribe_desktop.validation_set import write_wav
+from speaker_fakes import FrequencyEmbedder
 
 REPO = Path(__file__).resolve().parents[2]
 windows_only = pytest.mark.skipif(sys.platform != "win32", reason="DPAPI is Windows-only")
@@ -356,6 +358,19 @@ def _two_turn_script() -> dict[str, Any]:
     }
 
 
+def _synthetic_two_turn_script() -> dict[str, Any]:
+    """The two-turn script as the builder's: the clinician on voice slot 0."""
+    return {**_two_turn_script(), "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}}
+
+
+def _enrolment(frequency: float = 220.0) -> speaker_eval.EnrolmentInputs:
+    """An in-memory enrolment of a tone (``FrequencyEmbedder``: 220 Hz is the
+    clinician's tone, 2600 Hz the patient's)."""
+    return speaker_eval.enrolment_inputs(
+        _tone(2.0, frequency), FrequencyEmbedder(), amplitude_vad
+    )
+
+
 class TestFindEncounters:
     def test_complete_and_incomplete_stems(self, tmp_path: Path) -> None:
         for name in ("a.json", "a.wav", "a.txt", "b.json", "b.wav", "c.txt", "notes.md"):
@@ -398,6 +413,16 @@ class TestFindEncounters:
             "patient",
         )
         assert speaker_eval.read_wav_pcm(files.wav) == TWO_TURNS_PCM
+
+    def test_the_enrolment_folder_is_never_an_encounter(self, tmp_path: Path) -> None:
+        """D11: the builder's ``enrolment/`` subfolder is skipped (a folder,
+        not a set file) - never an incomplete or unnamed encounter."""
+        folder = _set_folder(tmp_path / "set", script=_synthetic_two_turn_script())
+        (folder / validation.ENROLMENT_DIRNAME).mkdir()
+        _write_wav(folder / validation.ENROLMENT_DIRNAME / "slot-0.wav", _tone(2.0, 220.0))
+        complete, incomplete = find_encounters(folder)
+        assert [files.encounter_id for files in complete] == ["syn-001"]
+        assert incomplete == []
 
 
 # ---------------------------------------------------------------------------
@@ -489,6 +514,9 @@ def _inputs(tmp_path: Path, provider: Any = None, **overrides: Any) -> HarnessIn
         "frame_probability": amplitude_vad,
         "config": load_note_config(config_dir),
         "note_provider_factory": lambda config: _QuoteEverything(),
+        # The two-turn script is a recorded one (no conditions): runs 1-5's
+        # reading. ``TestEnrolledAttribution`` runs the default.
+        "attribution": "clustering",
     }
     values.update(overrides)
     return HarnessInputs(**values)
@@ -540,7 +568,7 @@ class TestRunner:
         info = validation.RunInfo("medium", False, "silero", None, "a" * 40, "b" * 64)
         report = render_report([outcome], OPTION_A, info)
         row = next(line for line in report.splitlines() if line.startswith("| syn-001 | measured"))
-        assert row.endswith("| 7 | - | PASS |")
+        assert row.endswith("| 7 | 0.0 | 0.0 | - | PASS |")
 
     def test_the_prose_stage_counts_are_reported(self, tmp_path: Path) -> None:
         pytest.importorskip("numpy")
@@ -719,7 +747,6 @@ class TestRound26Bounds:
 
 class TestClinicianSpeaker:
     def test_the_majority_clinician_cluster(self) -> None:
-        from scribe_desktop.transcription import TranscriptDocument, TranscriptSegment
 
         def segment(start: float, end: float, speaker: str) -> TranscriptSegment:
             return TranscriptSegment(
@@ -743,6 +770,225 @@ class TestClinicianSpeaker:
         assert validation.clinician_speaker(document, tied) is None
         nobody = parse_audacity_labels("0.0\t0.5\tclinician\n0.6\t9.0\tpatient\n")
         assert validation.clinician_speaker(document, nobody) is None
+
+
+def _document(
+    *segments: tuple[float, float, str], enrolled: str | None = "speaker_1"
+) -> TranscriptDocument:
+    return TranscriptDocument(
+        session_id="d" * 32,
+        created_at=validation._default_now(),
+        model_name="mock",
+        sample_rate=SAMPLE_RATE,
+        transcript_segments=tuple(
+            TranscriptSegment(
+                start_seconds=start,
+                end_seconds=end,
+                speaker=speaker,
+                transcript_words=(
+                    TranscriptWord(
+                        word_text="word",
+                        start_seconds=start,
+                        end_seconds=end,
+                        probability=0.9,
+                        uncertain=False,
+                    ),
+                ),
+            )
+            for start, end, speaker in segments
+        ),
+        enrolled_speaker=enrolled,
+        enrolment_similarity=None if enrolled is None else 0.9,
+        speaker_model_id=None if enrolled is None else "fake-speaker",
+    )
+
+
+class TestEnrolledClinician:
+    """Metric amendment 2026-10-23 (D11): the enrolled speaker confirmed by
+    the label track, on hand-built documents."""
+
+    def test_the_enrolled_speaker_confirmed_by_the_track(self) -> None:
+        document = _document((0.0, 2.0, "speaker_1"), (3.0, 5.0, "speaker_2"))
+        track = parse_audacity_labels("0.0\t2.0\tclinician\n3.0\t5.0\tpatient\n")
+        assert validation.enrolled_clinician(document, track) == "speaker_1"
+        assert validation.attribution_seconds(document, track, "speaker_1") == (0.0, 0.0)
+
+    def test_an_enrolled_speaker_whose_majority_is_not_the_clinician(self) -> None:
+        document = _document((0.0, 2.0, "speaker_1"), (3.0, 5.0, "speaker_2"))
+        track = parse_audacity_labels("0.0\t2.0\tpatient\n3.0\t5.0\tclinician\n")
+        assert validation.clinician_speaker(document, track) == "speaker_2"
+        assert validation.enrolled_clinician(document, track) is None
+
+    def test_no_enrolled_speaker_is_role_unresolved(self) -> None:
+        document = _document((0.0, 2.0, "speaker_1"), (3.0, 5.0, "speaker_2"), enrolled=None)
+        track = parse_audacity_labels("0.0\t2.0\tclinician\n3.0\t5.0\tpatient\n")
+        assert validation.clinician_speaker(document, track) == "speaker_1"
+        assert validation.enrolled_clinician(document, track) is None
+
+    def test_a_tie_is_role_unresolved(self) -> None:
+        document = _document((0.0, 2.0, "speaker_1"), (2.0, 4.0, "speaker_1"))
+        track = parse_audacity_labels("0.0\t2.0\tclinician\n2.0\t4.0\tpatient\n")
+        assert validation.enrolled_clinician(document, track) is None
+
+    def test_whole_segment_weighting_never_confirms_a_minority(self) -> None:
+        """Peer round 8 PR-MED-027: one 10 s segment at 5.1 / 4.9 seconds
+        clinician / patient and a 9 s patient segment in the enrolled
+        cluster. ``clinician_speaker`` totals whole segments under their
+        winning label (10 vs 9) and names the cluster - runs 1-5's reading,
+        unchanged - while its actual overlaps are 5.1 vs 13.9: on the
+        enrolled path, role unresolved."""
+        document = _document(
+            (0.0, 10.0, "speaker_1"), (10.0, 19.0, "speaker_1"), (20.0, 21.0, "speaker_2")
+        )
+        track = parse_audacity_labels(
+            "0.0\t5.1\tclinician\n5.1\t19.0\tpatient\n20.0\t21.0\tpatient\n"
+        )
+        assert validation.clinician_speaker(document, track) == "speaker_1"
+        assert validation.overlap_by_label(document.transcript_segments[0], track) == (
+            pytest.approx({"clinician": 5.1, "patient": 4.9})
+        )
+        assert validation.enrolled_clinician(document, track) is None
+
+    def test_both_seconds_columns_on_a_mixed_cluster(self) -> None:
+        """Peer round 7 PR-MED-025: every segment matched the enrolment, so
+        the enrolled cluster holds the patient's turn too - confirmed (a
+        clinician majority), the patient's seconds in the second column; a
+        clinician turn the enrolment missed is in the first."""
+        document = _document(
+            (0.0, 6.0, "speaker_1"), (7.0, 9.0, "speaker_1"), (10.0, 11.5, "speaker_2")
+        )
+        track = parse_audacity_labels(
+            "0.0\t6.0\tclinician\n7.0\t9.0\tpatient\n10.0\t11.5\tclinician\n"
+        )
+        assert validation.enrolled_clinician(document, track) == "speaker_1"
+        assert validation.attribution_seconds(document, track, "speaker_1") == (1.5, 2.0)
+
+
+# The body of the report (rows on) that ``c5f3179`` — the commit before
+# D11 — rendered for ``TestEnrolledAttribution``'s set under the
+# clustering path (peer round 17 PR-LOW-014; taken by loading that commit's
+# ``validation.py`` beside the current one on the same fake inputs).
+_CLUSTERING_BASELINE_C5F3179: tuple[str, ...] = (
+    "| syn-001 | measured | 2 | 12 | 0.000 | 0 | 0 | 0 | 2 | 0 | 1 | 1 | 0 | 0 | 0 | 0 | 0 "
+    "| 0 | 0 | 0 | 0 | 0 | 0 | - | PASS |",
+    "| TOTAL | 1 measured | - | 12 | 0.000 | 0 | 0 | 0 | - | - | 1 | 1 | 0 | 0 | 0 | 0 | 0 "
+    "| 0 | 0 | 0 | 0 | 0 | 0 | - | PASS |",
+    "",
+    "### Checker warnings (code = count)",
+    "",
+    "- syn-001: none",
+    "",
+    "### Facts",
+    "",
+    "| Encounter | Fact | Kind | Material | Verdict | Warned | Uncertainty surfaced "
+    "| Not transcribed | Ambiguous |",
+    "|---|---|---|---|---|---|---|---|---|",
+    "| syn-001 | 0 | laterality | yes | correct | no | - | no | no |",
+)
+
+
+@windows_only
+class TestEnrolledAttribution:
+    """D11 through the runner: the default attribution enrols the script's
+    clinician voice slot and judges the enrolled document."""
+
+    def _set(self, tmp_path: Path) -> list[Any]:
+        folder = _set_folder(tmp_path / "set", script=_synthetic_two_turn_script())
+        encounters, _ = find_encounters(folder)
+        return encounters
+
+    def test_the_enrolled_speaker_confirmed_is_measured(self, tmp_path: Path) -> None:
+        pytest.importorskip("numpy")
+        encounters = self._set(tmp_path)
+        before = _temp_stores()
+        inputs = _inputs(tmp_path, attribution="enrolment", enrolments={0: _enrolment()})
+        (outcome,) = run_encounters(encounters, inputs, progress=lambda line: None)
+        assert _temp_stores() == before
+        assert outcome.status == "measured" and outcome.segment_count == 2
+        assert outcome.metrics is not None
+        assert outcome.metrics.words.edit_distance == 0  # the replayed words
+        assert [fact.verdict for fact in outcome.metrics.facts] == ["correct"]
+        assert (outcome.clinician_as_other_seconds, outcome.other_as_clinician_seconds) == (
+            0.0,
+            0.0,
+        )
+        report = render_report(
+            [outcome], OPTION_A, validation.RunInfo("medium", False, "silero", None, None, None)
+        )
+        assert "Attribution `enrolment`, metric amendment 2026-10-23" in report
+        assert "| 0 | 0.0 | 0.0 | - | PASS |" in report
+
+    def test_clustering_ignores_the_enrolments_and_reads_as_runs_1_to_5(
+        self, tmp_path: Path
+    ) -> None:
+        """``--attribution clustering`` is today's path: the same outcome on
+        the same inputs whatever enrolment is supplied (here the patient's)."""
+        pytest.importorskip("numpy")
+        encounters = self._set(tmp_path)
+        plain = run_encounters(encounters, _inputs(tmp_path), progress=lambda line: None)
+        given = run_encounters(
+            encounters,
+            _inputs(tmp_path, enrolments={0: _enrolment(2600.0)}),
+            progress=lambda line: None,
+        )
+        assert plain == given
+        assert plain[0].status == "measured"
+        # Peer round 17 PR-LOW-014: against a FIXED baseline, not the current
+        # code — the report's rows and fact table as ``c5f3179`` (before D11)
+        # rendered these inputs, the two new seconds cells removed.
+        report = render_report(
+            plain,
+            OPTION_A,
+            validation.RunInfo("medium", False, "silero", None, None, None, "clustering"),
+        ).splitlines()
+        rows = report[6:8]
+        for index, row in enumerate(rows):
+            cells = row.split(" | ")
+            assert cells[23:25] == ["0.0", "0.0"]
+            del cells[23:25]
+            rows[index] = " | ".join(cells)
+        assert [*rows, *report[8:]] == list(_CLUSTERING_BASELINE_C5F3179)
+
+    def test_an_enrolment_that_matches_the_patient_is_role_unresolved(
+        self, tmp_path: Path
+    ) -> None:
+        pytest.importorskip("numpy")
+        encounters = self._set(tmp_path)
+        inputs = _inputs(tmp_path, attribution="enrolment", enrolments={0: _enrolment(2600.0)})
+        (outcome,) = run_encounters(encounters, inputs, progress=lambda line: None)
+        assert outcome.status == "role_unresolved"
+        assert outcome.metrics is None and outcome.words is not None
+        assert outcome.clinician_as_other_seconds is None
+        assert outcome.other_as_clinician_seconds is None
+
+    @pytest.mark.parametrize("recorded", [True, False])
+    def test_no_enrolment_for_the_script_is_an_error_before_any_store(
+        self, tmp_path: Path, recorded: bool
+    ) -> None:
+        """A recorded script (no voice slot) or a slot without an enrolment:
+        the fixed refusal, before any store exists."""
+        script = _two_turn_script() if recorded else _synthetic_two_turn_script()
+        encounters, _ = find_encounters(_set_folder(tmp_path / "set", script=script))
+        before = _temp_stores()
+        lines: list[str] = []
+        inputs = _inputs(tmp_path, attribution="enrolment", enrolments={1: _enrolment()})
+        (outcome,) = run_encounters(encounters, inputs, progress=lines.append)
+        assert _temp_stores() == before
+        assert (outcome.status, outcome.error_type) == ("error", "EnrolmentMissingError")
+        assert lines[-1] == (
+            "[error] syn-001: EnrolmentMissingError: no enrolment for this script's clinician "
+            "voice - a recorded script is measured with --attribution clustering"
+        )
+
+    def test_the_enrolments_are_never_rendered(self) -> None:
+        inputs = HarnessInputs(
+            provider=_ScriptedProvider(),
+            frame_probability=amplitude_vad,
+            config=None,  # type: ignore[arg-type]
+            enrolments={0: object()},  # type: ignore[dict-item]
+        )
+        assert "enrolments" not in repr(inputs)
+        assert inputs.attribution == "enrolment"  # the default (D11)
 
 
 # ---------------------------------------------------------------------------
@@ -955,7 +1201,7 @@ class TestRunValidationMain:
         monkeypatch.setattr(validation, "SileroVad", _Model)
         monkeypatch.setattr(validation, "WhisperSpeechProvider", _Model)
         monkeypatch.setattr(validation, "run_encounters", interrupted)
-        argv = _argv(tmp_path)
+        argv = _argv(tmp_path, "--attribution", "clustering")
         _set_folder(tmp_path / "set")
         assert validation.main(argv, repo_root=tmp_path) == 1
         out = capsys.readouterr().out
@@ -984,7 +1230,7 @@ class TestRunValidationMain:
         monkeypatch.setattr(validation, "whisper_model_available", lambda name: True)
         monkeypatch.setattr(validation, "vad_model_available", lambda: True)
         monkeypatch.setattr(validation, "SileroVad", failing)
-        argv = _argv(tmp_path)
+        argv = _argv(tmp_path, "--attribution", "clustering")
         _set_folder(tmp_path / "set")
         code = validation.main(argv, repo_root=tmp_path)
         out = capsys.readouterr().out
@@ -996,7 +1242,10 @@ class TestRunValidationMain:
             assert code == 2
             assert "[refused] the models could not be loaded (VadModelError)" in out
 
-    @pytest.mark.parametrize("site", ["rule", "config", "profile", "models", "listing", "custody"])
+    @pytest.mark.parametrize(
+        "site",
+        ["rule", "config", "profile", "models", "speaker", "listing", "slot", "enrol", "custody"],
+    )
     def test_a_refusal_that_cannot_be_written_chains_nothing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, site: str
     ) -> None:
@@ -1031,8 +1280,15 @@ class TestRunValidationMain:
         monkeypatch.setattr(validation, "SileroVad", _Model)
         monkeypatch.setattr(validation, "WhisperSpeechProvider", _Model)
         monkeypatch.setattr(validation, "run_encounters", custody_fault)
-        argv = _argv(tmp_path)
-        _set_folder(tmp_path / "set")
+        enrolled = site in ("speaker", "slot", "enrol")
+        argv = _argv(tmp_path) if enrolled else _argv(tmp_path, "--attribution", "clustering")
+        _set_folder(tmp_path / "set", script=_synthetic_two_turn_script())
+        if site != "speaker":
+            monkeypatch.setattr(validation, "speaker_model_available", lambda: True)
+        if site == "enrol":
+            (tmp_path / "set" / "enrolment").mkdir()
+            _write_wav(tmp_path / "set" / "enrolment" / "slot-0.wav", _tone(2.0, 220.0))
+            monkeypatch.setattr(validation, "build_speaker_embedder", unlistable)
         if site == "rule":
             _rule_file(tmp_path).write_text("{}", encoding="utf-8")
         elif site == "config":
@@ -1073,13 +1329,14 @@ class TestRunValidationMain:
         monkeypatch.setattr(validation, "vad_model_available", lambda: True)
         monkeypatch.setattr(validation, "SileroVad", _Vad)
         monkeypatch.setattr(validation, "WhisperSpeechProvider", _Whisper)
-        argv = _argv(tmp_path)
+        argv = _argv(tmp_path, "--attribution", "clustering")
         _set_folder(tmp_path / "set")
         assert validation.main(argv, repo_root=tmp_path) == 0
         out = capsys.readouterr().out
         assert "[run ] syn-001" in out
         assert "- PASS" in out
         assert "commit `unknown`" in out and "manifest SHA-256 `absent`" in out
+        assert "Attribution `clustering`" in out
         # A file not named as an encounter id: reported without its name, a
         # set-level error, and the run still completes (round 11 MED-006).
         (tmp_path / "set" / "Margaret Example.wav").write_bytes(b"")
@@ -1088,6 +1345,136 @@ class TestRunValidationMain:
         assert f"[error] {validation.UNNAMED_ENCOUNTER}: 1 file(s) skipped" in out
         assert "Margaret" not in out
         assert "[run ] syn-001" in out and "- FAIL" in out
+
+
+class _FakeModels:
+    """``main``'s models as fakes: the amplitude VAD and the scripted
+    provider (D11's tests)."""
+
+    class Vad:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def frame_probability(self, frame: bytes) -> float:
+            return amplitude_vad(frame)
+
+    class Whisper(_ScriptedProvider):
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+    @classmethod
+    def install(cls, monkeypatch: pytest.MonkeyPatch, *, speaker: bool = True) -> None:
+        monkeypatch.setattr(validation, "resolve_whisper_model", lambda: "medium")
+        monkeypatch.setattr(validation, "whisper_model_available", lambda name: True)
+        monkeypatch.setattr(validation, "vad_model_available", lambda: True)
+        monkeypatch.setattr(validation, "speaker_model_available", lambda: speaker)
+        monkeypatch.setattr(validation, "SileroVad", cls.Vad)
+        monkeypatch.setattr(validation, "WhisperSpeechProvider", cls.Whisper)
+        monkeypatch.setattr(validation, "build_speaker_embedder", FrequencyEmbedder)
+
+
+class TestEnrolmentMain:
+    """D11's three refusals in ``main``, each before any encounter runs, and
+    an enrolled full run with fake models."""
+
+    @pytest.fixture(autouse=True)
+    def _dev_channel(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        use_channel(monkeypatch, "dev")
+
+    def _enrolled_set(self, tmp_path: Path, enrolment_wav: bytes | None) -> Path:
+        folder = _set_folder(tmp_path / "set", script=_synthetic_two_turn_script())
+        if enrolment_wav is not None:
+            (folder / "enrolment").mkdir()
+            (folder / "enrolment" / "slot-0.wav").write_bytes(enrolment_wav)
+        return folder
+
+    def test_the_speaker_model_not_installed_is_refused_by_name(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _FakeModels.install(monkeypatch, speaker=False)
+        monkeypatch.setattr(validation, "SileroVad", _NeverBuilt)
+        argv = _argv(tmp_path)
+        self._enrolled_set(tmp_path, None)
+        assert validation.main(argv, repo_root=tmp_path) == 2
+        out = capsys.readouterr().out
+        assert "[refused] the speaker-embedding model is not installed in" in out
+        assert str(install_layout.models_root()) in out
+        assert "setup-models.py" in out
+        assert "[run ]" not in out
+        # Runs 1-5's reading needs no speaker model: it goes on to load the
+        # models (here refused by ``_NeverBuilt``).
+        assert validation.main([*argv, "--attribution", "clustering"], repo_root=tmp_path) == 2
+        out = capsys.readouterr().out
+        assert "speaker-embedding" not in out
+        assert "[refused] the models could not be loaded" in out
+
+    def test_a_missing_enrolment_wav_is_refused_by_name(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _FakeModels.install(monkeypatch)
+        monkeypatch.setattr(validation, "SileroVad", _NeverBuilt)
+        argv = _argv(tmp_path)
+        self._enrolled_set(tmp_path, None)
+        assert validation.main(argv, repo_root=tmp_path) == 2
+        out = capsys.readouterr().out
+        assert "lacks slot-0.wav, which the set's scripts need - rebuild the set" in out
+        assert "[run ]" not in out
+
+    @pytest.mark.parametrize("problem", ["not a wav", "silence", "model"])
+    def test_an_enrolment_that_cannot_be_made_is_refused_by_type(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        problem: str,
+    ) -> None:
+        pytest.importorskip("numpy")
+        _FakeModels.install(monkeypatch)
+        argv = _argv(tmp_path)
+        folder = self._enrolled_set(
+            tmp_path, b"RIFF nonsense" if problem == "not a wav" else b""
+        )
+        wav = folder / "enrolment" / "slot-0.wav"
+        if problem != "not a wav":
+            _write_wav(wav, _silence(2.0) if problem == "silence" else _tone(2.0, 220.0))
+        if problem == "model":
+            model_error = type("SpeakerModelError", (Exception,), {})
+
+            def failing() -> None:
+                raise model_error("C:/models/speaker.onnx: the library said something")
+
+            monkeypatch.setattr(validation, "build_speaker_embedder", failing)
+        assert validation.main(argv, repo_root=tmp_path) == 2
+        out = capsys.readouterr().out
+        assert "[run ]" not in out
+        assert str(folder) not in out and "library said" not in out
+        if problem == "not a wav":
+            assert (
+                "[refused] slot-0.wav could not be enrolled (WavFormatError): it must be a"
+            ) in out
+            assert "rebuild the set" in out
+        elif problem == "silence":
+            assert (
+                "[refused] slot-0.wav could not be enrolled (EnrolmentTooShortError): "
+                "no speech detected in the enrolment audio"
+            ) in out
+        else:
+            assert "[refused] the speaker model could not be loaded (SpeakerModelError)" in out
+
+    @windows_only
+    def test_a_full_enrolled_run_with_fake_models(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pytest.importorskip("numpy")
+        _FakeModels.install(monkeypatch)
+        argv = _argv(tmp_path)
+        folder = self._enrolled_set(tmp_path, b"")
+        _write_wav(folder / "enrolment" / "slot-0.wav", _tone(2.0, 220.0))
+        assert validation.main(argv, repo_root=tmp_path) == 0
+        out = capsys.readouterr().out
+        assert "[run ] syn-001" in out and "- PASS" in out
+        assert "Attribution `enrolment`, metric amendment 2026-10-23" in out
+        assert "| 0.0 | 0.0 | - | PASS |" in out
 
 
 class TestBuildInformation:
@@ -1137,9 +1524,10 @@ class TestReport:
         metric amendment of 2026-10-11 (D10) one more after ``WER``; since the
         invented-text guard (D8) one more, ``Suspect segments``, before the
         prose cell; since the metric amendment of 2026-10-13 (validation-pass
-        plan D7) two more after ``Uncertainty missed`` — so the header, the
-        separator, a measured row, an unmeasured row and the totals all carry
-        25 cells."""
+        plan D7) two more after ``Uncertainty missed``; since the metric
+        amendment of 2026-10-23 (validation-run6 plan D11) the two attribution
+        seconds after ``Suspect segments`` — so the header, the separator, a
+        measured row, an unmeasured row and the totals all carry 27 cells."""
         fact = validation.FactOutcome(
             fact_index=0,
             kind="present",
@@ -1174,6 +1562,8 @@ class TestReport:
                 words=metrics.words,
                 metrics=metrics,
                 suspect_segments=2,
+                clinician_as_other_seconds=1.5,
+                other_as_clinician_seconds=2.0,
             ),
             EncounterOutcome("syn-002", "error", "OSError"),
         ]
@@ -1190,20 +1580,58 @@ class TestReport:
         # cell; metric amendment 2026-10-13 (D7): the acoustic-only surfacing
         # and the unhedged-mark count after "Uncertainty missed" — 25 cells in
         # every row, and the header line names the amendment.
-        assert "| Checker failures | Suspect segments | Prose p/f/e | Rule |" in header
+        assert (
+            "| Checker failures | Suspect segments | Clinician speech labelled other (s) "
+            "| Other speech labelled clinician (s) | Prose p/f/e | Rule |"
+        ) in header
+        # Metric amendment 2026-10-23 (D11): the header line names the
+        # attribution policy (``RunInfo``'s default) and the amendment.
+        assert (
+            "Attribution `enrolment`, metric amendment 2026-10-23: the clinician is the "
+            "enrolled speaker"
+        ) in report
         assert (
             "| Uncertainty missed | Surfaced (acoustic only) "
             "| Hedge marks on unhedged segments | Ambiguous facts |"
         ) in header
         assert "metric amendment 2026-10-13" in report
-        assert separator == "|" + "---|" * 25
+        assert separator == "|" + "---|" * 27
         for row in (header, separator, measured, unmeasured, total):
-            assert len(row.strip().strip("|").split("|")) == 25
-        # Missed, acoustic, unhedged, ambiguous, checker, suspect, prose, rule.
-        assert measured.endswith("| 0 | 0 | 3 | 0 | 0 | 2 | - | PASS |")
-        assert unmeasured.endswith("| - | - | - | - | - | - | - | FAIL: harness_error |")
+            assert len(row.strip().strip("|").split("|")) == 27
+        # Missed, acoustic, unhedged, ambiguous, checker, suspect, the two
+        # attribution seconds, prose, rule.
+        assert measured.endswith("| 0 | 0 | 3 | 0 | 0 | 2 | 1.5 | 2.0 | - | PASS |")
+        assert unmeasured.endswith(
+            "| - | - | - | - | - | - | - | - | - | FAIL: harness_error |"
+        )
         # The run fails on syn-002's error.
-        assert total.endswith("| 0 | 0 | 3 | 0 | 0 | 2 | - | FAIL |")
+        assert total.endswith("| 0 | 0 | 3 | 0 | 0 | 2 | 1.5 | 2.0 | - | FAIL |")
+        clustering = render_report(
+            outcomes,
+            OPTION_A,
+            validation.RunInfo("medium", False, "silero", None, None, None, "clustering"),
+        )
+        assert "Attribution `clustering`, metric amendment 2026-10-23" in clustering
+        # Peer round 17 PR-LOW-013: a seconds TOTAL with no measured row is
+        # "-", and a measured zero stays 0.0.
+        unresolved = render_report([EncounterOutcome("syn-001", "role_unresolved")], OPTION_A, info)
+        (unresolved_total,) = [
+            line for line in unresolved.splitlines() if line.startswith("| TOTAL")
+        ]
+        assert unresolved_total.endswith("| - | - | - | FAIL |")
+        zero = EncounterOutcome(
+            "syn-001",
+            "measured",
+            segment_count=1,
+            words=metrics.words,
+            metrics=metrics,
+            suspect_segments=0,
+            clinician_as_other_seconds=0.0,
+            other_as_clinician_seconds=0.0,
+        )
+        zero_report = render_report([zero], OPTION_A, info)
+        (zero_total,) = [line for line in zero_report.splitlines() if line.startswith("| TOTAL")]
+        assert zero_total.endswith("| 0.0 | 0.0 | - | PASS |")
         # Omitted, silent, silent (run-1), warned — in that order.
         assert "| 1 | 0 | 1 | 1 |" in measured
         assert "| 1 | 0 | 1 | 1 |" in total
@@ -1229,3 +1657,15 @@ class TestReport:
             EncounterOutcome("syn-001", "measured", suspect_segments=value)
         assert EncounterOutcome("syn-001", "measured", suspect_segments=0).suspect_segments == 0
         assert EncounterOutcome("syn-001", "error", "OSError").suspect_segments is None
+
+    @pytest.mark.parametrize("value", [-0.5, math.inf, math.nan, 2, True, "1.0"])
+    @pytest.mark.parametrize("name", ["clinician_as_other_seconds", "other_as_clinician_seconds"])
+    def test_the_attribution_seconds_are_non_negative_seconds(
+        self, name: str, value: Any
+    ) -> None:
+        """D11: each attribution number is a finite, non-negative float, or
+        None (no clinician confirmed)."""
+        with pytest.raises(ValueError, match=f"{name} must be a non-negative number of seconds"):
+            EncounterOutcome("syn-001", "measured", **{name: value})
+        assert getattr(EncounterOutcome("syn-001", "measured", **{name: 0.0}), name) == 0.0
+        assert getattr(EncounterOutcome("syn-001", "error", "OSError"), name) is None

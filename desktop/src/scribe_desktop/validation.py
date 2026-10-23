@@ -29,8 +29,12 @@ synthetic ``conditions`` (the clinic 1 smoke retired the role-play set,
 - **The runner** (Task 2.4, ``evaluate_encounter`` / ``main``): per
   encounter, transcription in a temporary encrypted store torn down key-first
   (``speaker_eval.transcribe_in_temporary_store``, reused IN PLACE), the
-  clinician cluster chosen from the timed label track
-  (``speaker_eval.align_segments``), ``compose_draft`` with the extractive
+  clinician attributed as the app does — with an enrolment of the script's
+  clinician voice (the builder's passage, ``<set>/enrolment/``; metric
+  amendment 2026-10-23, validation-run6 plan D11) — and CONFIRMED by the
+  timed label track (``speaker_eval.align_segments``), or, with
+  ``--attribution clustering``, chosen from the label track alone (runs
+  1-5's reading), ``compose_draft`` with the extractive
   provider built from the explicit config folder, every proposal confirmed
   (``ui.note_review.build_resolutions``), ``finalise_note``, optionally the
   narrative prose stage, then the metrics and the pass rule (data).
@@ -46,7 +50,9 @@ What this module enforces, and what it does not:
   synthetic or mock content by the plan's Constraint 8.
 - **Custody.** The only store is the temporary one ``speaker_eval`` builds
   and destroys key-first with its fail-closed probe; a store that cannot be
-  shown gone stops the run with the path named. No audit row and no
+  shown gone stops the run with the path named. The enrolment profiles live
+  in this process only (``speaker_eval.EnrolmentInputs``; never a profile
+  store, never printed). No audit row and no
   Past-sessions entry is written: nothing here calls a store, audit or
   Past-sessions function (``ui.models``, imported for the provider factory
   and the prose stage, imports those modules; nothing here uses them).
@@ -76,7 +82,7 @@ import tempfile
 from array import array
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final, Literal, NamedTuple, Protocol, get_args
@@ -85,6 +91,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from scribe_desktop import install_layout
 from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
+from scribe_desktop.enrolment import EnrolmentError
 from scribe_desktop.note import (
     NOTE_WARNING_SEVERITY,
     GeneratedNote,
@@ -134,15 +141,20 @@ from scribe_desktop.note_config import (
     load_note_config,
 )
 from scribe_desktop.note_fill import detect_prefill_candidates
+from scribe_desktop.speaker_embedding import build_speaker_embedder, speaker_model_available
 from scribe_desktop.speaker_eval import (
     CLINICIAN_LABEL,
     TEMP_DIR_PREFIX,
+    WAV_FORMAT_HELP,
+    EnrolmentInputs,
     LabelTrack,
     LabelTrackError,
     RecordingRefusedError,
     SpeakerEvalError,
+    WavFormatError,
     align_segments,
     configure_output,
+    enrolment_inputs,
     parse_audacity_labels,
     read_wav_pcm,
     transcribe_in_temporary_store,
@@ -1724,6 +1736,27 @@ _STATUSES: Final[tuple[str, ...]] = get_args(EncounterStatus)
 # Two clusters holding the clinician's seconds within this are a tie: no
 # cluster is chosen by its name (the speaker_eval float-noise tolerance).
 ROLE_TIE_SECONDS: Final = 1e-9
+# Metric amendment 2026-10-23 (validation-run6 plan D11): how the clinician
+# is attributed. ``enrolment`` (the default) is the app's live condition —
+# the enrolled pass's ``enrolled_speaker``, confirmed by the label track;
+# ``clustering`` is runs 1-5's reading — the label track names the cluster.
+Attribution = Literal["enrolment", "clustering"]
+ATTRIBUTIONS: Final[tuple[str, ...]] = get_args(Attribution)
+# The set folder's enrolment WAVs, one per clinician voice slot, written by
+# the builder (``validation_set``) and read by ``main``.
+ENROLMENT_DIRNAME: Final = "enrolment"
+
+
+def enrolment_wav_name(slot: int) -> str:
+    """The set's enrolment WAV for clinician voice ``slot``
+    (``<set>/enrolment/slot-<n>.wav``)."""
+    return f"slot-{slot}.wav"
+
+
+class EnrolmentMissingError(RecordingRefusedError):
+    """Under ``enrolment`` attribution the script names no enrolled clinician
+    voice: a recorded script (no synthetic conditions) is measured with
+    ``--attribution clustering``. Fixed text only."""
 
 
 @dataclass(frozen=True)
@@ -1763,6 +1796,12 @@ class EncounterOutcome:
     # word (``suspect_segment_count``); None when no transcript was made. A
     # count only — no rule reads it.
     suspect_segments: int | None = None
+    # Metric amendment 2026-10-23 (D11): the label track's clinician seconds
+    # on segments not labelled as the confirmed clinician, and its other
+    # speakers' seconds on segments labelled as it (``attribution_seconds``);
+    # None when no clinician was confirmed. Recorded; no rule reads them.
+    clinician_as_other_seconds: float | None = None
+    other_as_clinician_seconds: float | None = None
 
     def __post_init__(self) -> None:
         if not _ENCOUNTER_ID_RE.fullmatch(self.encounter_id):
@@ -1773,6 +1812,12 @@ class EncounterOutcome:
         _require_count(self.segment_count, "segment_count")
         if self.suspect_segments is not None:
             _require_count(self.suspect_segments, "suspect_segments")
+        for name in ("clinician_as_other_seconds", "other_as_clinician_seconds"):
+            seconds = getattr(self, name)
+            if seconds is not None and (
+                not isinstance(seconds, float) or not math.isfinite(seconds) or seconds < 0
+            ):
+                raise ValueError(f"{name} must be a non-negative number of seconds")
         # Round 12 LOW-002 (Constraint 7 at run time, as round 11 LOW-012
         # did for ``EncounterMetrics``): what the rule and the report read
         # is the validated type, never a string.
@@ -1854,6 +1899,66 @@ def clinician_speaker(document: TranscriptDocument, track: LabelTrack) -> str | 
     return clinician_clusters[0][1]
 
 
+def overlap_by_label(segment: TranscriptSegment, track: LabelTrack) -> dict[str, float]:
+    """``segment``'s ACTUAL overlap seconds with each label of ``track`` —
+    every span's overlap summed per label, never the segment's whole
+    duration under one winning label (D11)."""
+    parts: dict[str, list[float]] = {}
+    for span in track.spans:
+        seconds = min(segment.end_seconds, span.end_seconds) - max(
+            segment.start_seconds, span.start_seconds
+        )
+        if seconds > 0:
+            parts.setdefault(span.label, []).append(seconds)
+    return {label: math.fsum(values) for label, values in parts.items()}
+
+
+def enrolled_clinician(document: TranscriptDocument, track: LabelTrack) -> str | None:
+    """Metric amendment 2026-10-23 (D11): the enrolled pass's
+    ``enrolled_speaker``, CONFIRMED by the label track — ``clinician_speaker``
+    must name the same cluster, AND that cluster's actual overlap seconds
+    (``overlap_by_label``) must give the clinician more than all other
+    labels together, by more than ``ROLE_TIE_SECONDS`` (peer round 8
+    PR-MED-027: ``clinician_speaker`` totals whole segments under their
+    winning label, so a cluster of one 10 s segment at 5.1 / 4.9 seconds and
+    a 9 s patient segment would confirm as 10 vs 9). Anything else — no
+    ``enrolled_speaker``, a different cluster, a tie, an overlap majority
+    that is not the clinician — is None, "role unresolved": never a
+    guess."""
+    enrolled = document.enrolled_speaker
+    if enrolled is None or clinician_speaker(document, track) != enrolled:
+        return None
+    clinician: list[float] = []
+    others: list[float] = []
+    for segment in document.transcript_segments:
+        if segment.speaker != enrolled:
+            continue
+        for label, seconds in overlap_by_label(segment, track).items():
+            (clinician if label == CLINICIAN_LABEL else others).append(seconds)
+    if math.fsum(clinician) - math.fsum(others) <= ROLE_TIE_SECONDS:
+        return None
+    return enrolled
+
+
+def attribution_seconds(
+    document: TranscriptDocument, track: LabelTrack, clinician: str
+) -> tuple[float, float]:
+    """D11's two recorded numbers for the confirmed ``clinician`` label:
+    ``(clinician seconds on segments not labelled clinician, other
+    speakers' seconds on segments labelled clinician)``, from the actual
+    overlaps (``overlap_by_label``). Speech no segment covers counts in
+    neither."""
+    as_other: list[float] = []
+    as_clinician: list[float] = []
+    for segment in document.transcript_segments:
+        overlaps = overlap_by_label(segment, track)
+        if segment.speaker == clinician:
+            as_clinician.extend(s for label, s in overlaps.items() if label != CLINICIAN_LABEL)
+        else:
+            as_other.append(overlaps.get(CLINICIAN_LABEL, 0.0))
+    return math.fsum(as_other), math.fsum(as_clinician)
+
+
 def confirm_all(draft: NoteDraft, now: datetime) -> list[ProposalResolution]:
     """D9's declared proposal policy, through the review surface's own
     ``build_resolutions``: every proposal with a row is CONFIRMED with the
@@ -1896,7 +2001,10 @@ class HarnessInputs:
     speech provider and VAD frame probability, the config loaded from the
     explicit folder, the template profile (None = the config's only one),
     the note-provider factory (default: the extractive provider built from
-    the config's own cues) and the optional prose stage."""
+    the config's own cues), the optional prose stage and, since the metric
+    amendment of 2026-10-23 (D11), the attribution policy with its enrolments
+    — clinician voice slot -> the in-memory profile, never a store, never
+    rendered (``repr=False``)."""
 
     provider: SpeechProvider
     frame_probability: FrameProbabilityFn
@@ -1907,6 +2015,8 @@ class HarnessInputs:
     )
     prose_stage: ProseStage | None = None
     now: Callable[[], datetime] = _default_now
+    attribution: Attribution = "enrolment"
+    enrolments: Mapping[int, EnrolmentInputs] = field(default_factory=dict, repr=False)
 
 
 def read_label_track(labels: Path) -> LabelTrack:
@@ -1938,16 +2048,44 @@ def evaluate_encounter(
     """One encounter through the shipped pipeline (Task 2.4). Raises
     ``SpeakerEvalError`` when the temporary store cannot be shown gone
     (custody: the caller stops the run) and any input or pipeline error as
-    itself; the label track and WAV are validated BEFORE any store exists."""
+    itself; the label track, the script's enrolment and the WAV are
+    validated BEFORE any store exists.
+
+    Attribution (metric amendment 2026-10-23, D11): under ``enrolment`` the
+    script's clinician voice slot picks its profile from
+    ``inputs.enrolments`` (none: ``EnrolmentMissingError``), the store is
+    transcribed twice — the enrolled pass replays the plain pass's words, so
+    every word-level number is the same — and the ENROLLED document is
+    judged, its clinician confirmed by ``enrolled_clinician``; under
+    ``clustering`` it is runs 1-5's path exactly (``clinician_speaker`` on
+    the plain document)."""
     track = read_label_track(labels)
+    enrolment: EnrolmentInputs | None = None
+    if inputs.attribution == "enrolment":
+        conditions = script.conditions
+        slot = None if conditions is None else conditions.voice_slots[CLINICIAN_LABEL]
+        enrolment = None if slot is None else inputs.enrolments.get(slot)
+        if enrolment is None:
+            raise EnrolmentMissingError(
+                "no enrolment for this script's clinician voice - a recorded script "
+                "is measured with --attribution clustering"
+            )
     pcm = read_wav_pcm(wav)
-    document, _enrolled = transcribe_in_temporary_store(
-        pcm, inputs.provider, inputs.frame_probability
+    plain, enrolled = transcribe_in_temporary_store(
+        pcm, inputs.provider, inputs.frame_probability, enrolment=enrolment
     )
     del pcm
+    if enrolment is None:
+        document = plain
+        clinician = clinician_speaker(document, track)
+    else:
+        # ``enrolled`` is set whenever an enrolment is given; a missing one
+        # judges the plain document, whose absent ``enrolled_speaker`` is
+        # "role unresolved".
+        document = plain if enrolled is None else enrolled
+        clinician = enrolled_clinician(document, track)
     segment_count = len(document.transcript_segments)
     suspect_segments = suspect_segment_count(document)
-    clinician = clinician_speaker(document, track)
     if clinician is None:
         return EncounterOutcome(
             encounter_id,
@@ -1956,6 +2094,7 @@ def evaluate_encounter(
             words=word_errors(document, script),
             suspect_segments=suspect_segments,
         )
+    as_other, as_clinician = attribution_seconds(document, track, clinician)
     config = inputs.config
     now = inputs.now()
     draft = compose_draft(
@@ -1988,6 +2127,8 @@ def evaluate_encounter(
         metrics=metrics,
         prose=prose,
         suspect_segments=suspect_segments,
+        clinician_as_other_seconds=as_other,
+        other_as_clinician_seconds=as_clinician,
     )
 
 
@@ -2070,6 +2211,7 @@ class RunInfo:
     prose: str | None
     commit: str | None
     models_manifest_sha256: str | None
+    attribution: Attribution = "enrolment"
 
 
 def run_passed(rule: PassRule, outcomes: Sequence[EncounterOutcome], *, errors: int = 0) -> bool:
@@ -2084,6 +2226,30 @@ def _rate(value: float) -> str:
 
 def _flag(value: bool | None) -> str:
     return "-" if value is None else ("yes" if value else "no")
+
+
+def _seconds(value: float | None) -> str:
+    return "-" if value is None else f"{value:.1f}"
+
+
+def _seconds_total(values: Sequence[float]) -> str:
+    """A seconds column's TOTAL: ``-`` when no row has a value (peer round
+    17 PR-LOW-013: an unmeasured column is never shown as zero)."""
+    return _seconds(math.fsum(values) if values else None)
+
+
+# The header's attribution sentence, per policy (metric amendment
+# 2026-10-23, D11).
+_ATTRIBUTION_TEXT: Final[dict[str, str]] = {
+    "enrolment": (
+        "the clinician is the enrolled speaker (an enrolment of each script's clinician "
+        "voice), confirmed by the label track"
+    ),
+    "clustering": (
+        "the clinician is the cluster the label track names, without an enrolment "
+        "(--attribution clustering: runs 1-5's reading)"
+    ),
+}
 
 
 def render_report(
@@ -2105,7 +2271,10 @@ def render_report(
         "amendment 2026-10-11: Ref words, WER and every fact verdict are over canonical "
         "tokens (read beside runs 1-2, not compared with them). Uncertainty is also "
         "surfaced by a hedge mark on a correct, hedged line, metric amendment 2026-10-13 "
-        "(the recogniser's alone: Surfaced (acoustic only)).",
+        "(the recogniser's alone: Surfaced (acoustic only)). Attribution "
+        f"`{info.attribution}`, metric amendment 2026-10-23: "
+        f"{_ATTRIBUTION_TEXT[info.attribution]}; the two seconds columns show the "
+        "attribution residue both ways (recorded, never failing).",
         "",
         "| Encounter | Status | Segments | Ref words | WER | Spelling-normalised words "
         "| Unsupported clinical lines "
@@ -2113,10 +2282,13 @@ def render_report(
         "| Wrong (material) | Omitted | Silent omissions | Silent (run-1 predicate) "
         "| Warned omissions | Uncertainty missed | Surfaced (acoustic only) "
         "| Hedge marks on unhedged segments | Ambiguous facts | Checker failures "
-        "| Suspect segments | Prose p/f/e | Rule |",
-        "|" + "---|" * 25,
+        "| Suspect segments | Clinician speech labelled other (s) "
+        "| Other speech labelled clinician (s) | Prose p/f/e | Rule |",
+        "|" + "---|" * 27,
     ]
     totals = Counter[str]()
+    as_other_total: list[float] = []
+    as_clinician_total: list[float] = []
     for outcome in outcomes:
         failures = rule_failures(rule, outcome)
         words = outcome.words
@@ -2181,6 +2353,15 @@ def render_report(
         if suspect is not None:
             totals["suspect"] += suspect
         cells.insert(17, "-" if suspect is None else str(suspect))
+        # Metric amendment 2026-10-23 (D11): after the suspect count, before
+        # the prose cell; "-" where no clinician was confirmed.
+        as_other = outcome.clinician_as_other_seconds
+        as_clinician = outcome.other_as_clinician_seconds
+        if as_other is not None:
+            as_other_total.append(as_other)
+        if as_clinician is not None:
+            as_clinician_total.append(as_clinician)
+        cells[18:18] = [_seconds(as_other), _seconds(as_clinician)]
         status = outcome.status + (f" ({outcome.error_type})" if outcome.error_type else "")
         lines.append(
             f"| {outcome.encounter_id} | {status} | {outcome.segment_count} | {ref} | {wer} | "
@@ -2195,7 +2376,9 @@ def render_report(
         f"| {totals['facts']} | {totals['correct']} | {totals['wrong']} | {totals['omitted']} "
         f"| {totals['silent']} | {totals['silent_v1']} | {totals['warned']} | {totals['missed']} "
         f"| {totals['acoustic']} | {totals['unhedged']} "
-        f"| {totals['ambiguous']} | {totals['checker']} | {totals['suspect']} | - | {verdict} |"
+        f"| {totals['ambiguous']} | {totals['checker']} | {totals['suspect']} "
+        f"| {_seconds_total(as_other_total)} | {_seconds_total(as_clinician_total)} "
+        f"| - | {verdict} |"
     )
 
     lines += ["", "### Checker warnings (code = count)", ""]
@@ -2343,7 +2526,32 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="also run the narrative prose stage and report its section counts",
     )
+    parser.add_argument(
+        "--attribution",
+        choices=ATTRIBUTIONS,
+        default="enrolment",
+        help=(
+            "how the clinician is attributed: `enrolment` (default; the app's live condition, "
+            "with the set's enrolment WAVs, confirmed by the label track) or `clustering` "
+            "(runs 1-5's reading: the label track names the cluster)"
+        ),
+    )
     return parser
+
+
+def needed_enrolment_slots(encounters: Sequence[EncounterFiles]) -> list[int]:
+    """Every clinician voice slot the set's synthetic scripts use, read with
+    ``load_script``; a script that does not load, or a recorded one, adds
+    nothing (each is reported when its encounter runs)."""
+    slots: set[int] = set()
+    for files in encounters:
+        try:
+            script = load_script(files.script)
+        except ScriptError:
+            continue
+        if script.conditions is not None:
+            slots.add(script.conditions.voice_slots[CLINICIAN_LABEL])
+    return sorted(slots)
 
 
 def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
@@ -2353,8 +2561,11 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
     missing set or config folder, the app's own config folder, an unusable
     rule or config, a config carrying the app's learned content, a template
     profile that cannot be bound, then the models (by name, before any is
-    constructed), an unreadable set folder, and models that cannot be
-    loaded (by exception type — round 26)."""
+    constructed; under ``enrolment`` attribution the speaker model too), an
+    unreadable set folder, an enrolment WAV the set's scripts need missing
+    from ``<set>/enrolment/`` (D11), models that cannot be loaded (by
+    exception type — round 26), and an enrolment WAV that cannot be enrolled
+    (by type, naming the slot's file)."""
     configure_output()
     args = _parser().parse_args(argv)
     if install_layout.channel() != "dev":
@@ -2461,6 +2672,14 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
             f"{install_layout.model_remedy('language-model')}"
         )
         return 2
+    attribution: Attribution = args.attribution
+    if attribution == "enrolment" and not speaker_model_available():
+        print(
+            f"[refused] the speaker-embedding model is not installed in {models} (the "
+            "harness attributes the clinician with an enrolment): "
+            f"{install_layout.model_remedy('speaker-embedding')}"
+        )
+        return 2
 
     listing_failure: str | None = None
     try:
@@ -2477,6 +2696,16 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
     if not encounters:
         print(f"[error] no complete encounters in {set_dir}")
         return 1
+    slots = needed_enrolment_slots(encounters) if attribution == "enrolment" else []
+    enrolment_dir = set_dir / ENROLMENT_DIRNAME
+    missing = [slot for slot in slots if not (enrolment_dir / enrolment_wav_name(slot)).is_file()]
+    if missing:
+        names = ", ".join(enrolment_wav_name(slot) for slot in missing)
+        print(
+            f"[refused] {enrolment_dir} lacks {names}, which the set's scripts need - "
+            "rebuild the set (scripts/build-validation-set.py)"
+        )
+        return 2
 
     load_failure: str | None = None
     load_interrupted = False
@@ -2496,12 +2725,51 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
     if load_failure is not None:
         print(f"[refused] the models could not be loaded ({load_failure})")
         return 2
+    # D11: one profile per needed slot, in memory only, under ONE embedder.
+    enrolments: dict[int, EnrolmentInputs] = {}
+    enrol_slot: int | None = None
+    enrol_failure: str | None = None
+    enrol_detail: str | None = None
+    try:
+        if slots:
+            embedder = build_speaker_embedder()
+            for enrol_slot in slots:
+                enrolments[enrol_slot] = enrolment_inputs(
+                    read_wav_pcm(enrolment_dir / enrolment_wav_name(enrol_slot)),
+                    embedder,
+                    vad.frame_probability,
+                )
+    except KeyboardInterrupt:
+        load_interrupted = True
+    except WavFormatError as exc:
+        # ``read_wav_pcm``'s text names the path: the fixed help instead.
+        enrol_failure = _error_type(exc)
+        enrol_detail = f"it must be a {WAV_FORMAT_HELP} - rebuild the set"
+    except EnrolmentError as exc:
+        enrol_failure = _error_type(exc)
+        enrol_detail = str(exc)  # enrolment's own fixed, numbers-only text
+    except Exception as exc:  # noqa: BLE001 - reported by TYPE (round 26)
+        enrol_failure = _error_type(exc)
+    if load_interrupted:
+        print("[stopped] the run was interrupted while the models loaded; nothing was run")
+        return 1
+    if enrol_failure is not None:
+        line = (
+            f"[refused] the speaker model could not be loaded ({enrol_failure})"
+            if enrol_slot is None
+            else f"[refused] {enrolment_wav_name(enrol_slot)} could not be enrolled "
+            f"({enrol_failure})"
+        )
+        print(line if enrol_detail is None else f"{line}: {enrol_detail}")
+        return 2
     inputs = HarnessInputs(
         provider=provider,
         frame_probability=vad.frame_probability,
         config=config,
         template_profile_id=args.template_profile,
         prose_stage=prose_stage,
+        attribution=attribution,
+        enrolments=enrolments,
     )
     custody: str | None = None
     interrupted = False
@@ -2531,6 +2799,7 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
         prose="narrative" if args.prose else None,
         commit=read_commit(repo_root),
         models_manifest_sha256=models_manifest_sha256(repo_root),
+        attribution=attribution,
     )
     print()
     print(render_report(outcomes, rule, info, errors=errors))
@@ -2539,8 +2808,10 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
 
 __all__ = [
     "AXES",
+    "ATTRIBUTIONS",
     "CONTRADICTION_CODES",
     "ENCOUNTER_ID_PATTERN",
+    "ENROLMENT_DIRNAME",
     "FACT_KINDS",
     "FACT_VERDICTS",
     "REFERENCE_GREETING_LINES",
@@ -2551,11 +2822,13 @@ __all__ = [
     "ROLE_TIE_SECONDS",
     "SCRIPT_SCHEMA_VERSION",
     "UNNAMED_ENCOUNTER",
+    "Attribution",
     "CanonicalTokens",
     "EncounterFiles",
     "EncounterMetrics",
     "EncounterOutcome",
     "EncounterScript",
+    "EnrolmentMissingError",
     "ExpectedFact",
     "FactOutcome",
     "HarnessInputs",
@@ -2571,10 +2844,13 @@ __all__ = [
     "ValidationHarnessError",
     "WordErrors",
     "align_transcripts",
+    "attribution_seconds",
     "canonical_tokens",
     "clinician_speaker",
     "confirm_all",
     "document_from_turns",
+    "enrolled_clinician",
+    "enrolment_wav_name",
     "encounter_metrics",
     "evaluate_encounter",
     "find_encounters",
@@ -2585,6 +2861,8 @@ __all__ = [
     "load_script_with_bytes",
     "main",
     "models_manifest_sha256",
+    "needed_enrolment_slots",
+    "overlap_by_label",
     "read_commit",
     "read_label_track",
     "reference_document",

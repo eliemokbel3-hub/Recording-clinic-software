@@ -297,6 +297,8 @@ See the Planning Extraction Summary (the canonical list).
 - ~~Next: the agent writes Task 0.2a's scratch (`--enrol`), the practitioner runs it; then 0.13; then Task 0.9.~~ Done 2026-10-23.
 - `[2026-10-23]` Task 0.2a measured (record on the task); decision 0.13 GATE MET under the practitioner's outcome reading (D1 stands; D11 built in Task 0.14). Next: Task 0.9 (the dated lexicon commit), then 0.14, 0.11, 0.10, 0.12.
 - `[2026-10-23]` Task 0.9 built (record on the task): `HEDGE_PHRASES` 33, `REFERENCE_HEDGES` 52, the builder moved, the R3 tables, `hld-19` reconciled; uncommitted. Reviewed; codex peer pass rounds 11–15 CONVERGED (6 LOW fixed); /simplify round 16 (1 LOW applied). The practitioner kept all three risky phrases and gave the word to commit (2026-10-23); committed. Next: 0.14.
+- `[2026-10-23]` Task 0.14 built (record on the task): the harness enrols each synthetic clinician voice from `<set>/enrolment/slot-<n>.wav` and confirms it by the label track; `--attribution clustering` keeps runs 1–5's reading; uncommitted. Codex peer pass rounds 17–21 CONVERGED; /simplify round 22 clean. **Two practitioner words owed:** commit Task 0.14; and PR-LOW-016's deferral to Phase 3 (pre-existing report cells). Next after the commit: 0.11.
+- `[2026-10-23]` The practitioner gave both words: Task 0.14 committed and pushed; PR-LOW-016 deferred to the report work (Task 4.3 in this plan's numbering). Next: 0.11.
 
 ## Review History
 - 2026-10-22 `/review-plan` (Opus 5.5): Plan-subagent design critique + Explore subagent + coverage, practicality, risk and simplicity lenses, every finding checked against `0be35d7` / `4ff5f26`. Plan-scoped; no code reviewed. Step 3.5 gate: missed-speech warning Include in plan; chooser mark Include in plan; ui-refresh at its merge; larger model Excluded.
@@ -306,6 +308,8 @@ See the Planning Extraction Summary (the canonical list).
 - 2026-10-23 scoped `/review-plan` of D1 (Fable 5.1), after Task 0.2: coverage (the harness's attribution read against the app's), practicality (the enrolment audio's source; the order — the harness path before 0.12 so the diagnosis runs on the shipped path), simplicity (no companion column; the flag), risk (the threshold residue; masking stated and answered). Two practitioner answers. Decision 0.4 (2)'s sibling sweep in the same pass. Plan-scoped; no code reviewed; nothing built.
 - 2026-10-23 `/peer-loop` code pass over Task 0.9's diff (codex `gpt-6-astra` high, read-only, cap 5; composer Opus 5.5): Round 11 1 LOW; Round 12 2 LOW; Round 13 1 LOW; Round 14 2 LOW; Round 15 0 — converged. Every finding verified (probes for the hedge-line set and both-way mutations) and fixed; full suite 7987 passed, 9 skipped.
 - 2026-10-23 `/simplify` (Claude Code, Opus 5.5) over Task 0.9's diff before its commit: Round 16, 1 LOW (SIMP-001, test-only) Fix-now.
+- 2026-10-23 `/peer-loop` code pass over Task 0.14's diff (codex `gpt-6-astra` high, read-only, cap 5; composer Opus 5.5): Round 17 3 LOW (verified, fixed); Round 18 2 LOW (PR-LOW-017 fixed; PR-LOW-016 pre-existing, deferred to Task 4.3 — practitioner-confirmed 2026-10-23); Round 19 1 LOW (fixed, docs); Round 20 2 LOW (fixed, docs); Round 21 0 — converged.
+- 2026-10-23 `/simplify` (Claude Code, Opus 5.5) over Task 0.14's production diff before its commit: Round 22, no findings.
 
 ## Review Findings Log
 ### Round 1 — 2026-10-22
@@ -729,6 +733,158 @@ Source: Claude Code simplify
 
 **Summary:** 1 LOW, Fix-now → `/fix`. No other simplification worth a maintainer's attention.
 
+### Round 17 — 2026-10-23
+Source: Codex peer-review (gpt-6-astra high; code review of Task 0.14's uncommitted diff)
+
+**PR-LOW-013 — `desktop/src/scribe_desktop/validation.py:2374` — Missing attribution measurements become zero totals**
+
+- Triage: Fix-now
+- Fix route: fix-on-fast
+- Why it matters: An unavailable measurement is presented as zero attribution error.
+- Current behaviour: Both totals unconditionally pass their lists through `math.fsum`. When no encounter has a confirmed clinician, every encounter displays `-`, but TOTAL displays `0.0` in both attribution columns. This conflicts with `docs/testing/validation-harness.md:65`, which specifies `-` when no clinician was confirmed.
+- Desired behaviour: Display `-` for an attribution total with no measured values; preserve `0.0` when measurements exist and sum to zero.
+- Verification: A read-only pure-function probe of `render_report` with one `role_unresolved` outcome produced `-` in both encounter cells and `0.0` in both TOTAL cells. Add pins distinguishing absent measurements from measured zero.
+- Regression risk: Limited to the two new total cells; no verdict or measurement changes.
+- /fix decision: Applied
+- /fix notes: 2026-10-23 — verified (a `role_unresolved` outcome printed `0.0` in both TOTAL cells); `_seconds_total` prints `-` when no row has a value; `TestReport` pins both ways (unresolved → `| - | - | - | FAIL |`, a measured zero → `| 0.0 | 0.0 | - | PASS |`); `validation-harness.md` names the TOTAL case.
+
+**PR-LOW-014 — `desktop/tests/test_validation_harness.py:905` — Clustering compatibility test has no previous-behaviour baseline**
+
+- Triage: Fix-now
+- Fix route: fix-on-fast
+- Why it matters: D11 and Task 0.14 require a pin that clustering preserves the previous outcome. The documentation claims this equality is tested.
+- Current behaviour: `plain` and `given` both call the modified `run_encounters` with `attribution="clustering"`. Their equality proves that supplied enrolments are ignored, but any shared change to clustering metrics or verdicts still passes, provided the outcome remains `measured`.
+- Desired behaviour: Retain the enrolment-independence assertion and add an independently fixed expected outcome derived from HEAD for the same fake inputs, excluding the two newly added seconds fields.
+- Verification: Static tracing of `_inputs` and lines 905–912 confirms both sides execute the same current implementation; neither supplies a HEAD-derived expected result. A shared change to an existing metric leaves this comparison equal.
+- Regression risk: Tests only; no production behaviour change.
+- /fix decision: Applied
+- /fix notes: 2026-10-23 — verified (both sides ran the current code); `_CLUSTERING_BASELINE_C5F3179` holds the rows, checker warnings and facts that `c5f3179`'s `validation.py` rendered for the same fake inputs (taken by loading HEAD's module beside the current one in a deleted probe; only the header and the two new cells differed); the test strips the two new `0.0` cells and compares.
+
+**PR-LOW-015 — `docs/security/threat-model.md:3968` — Enrolment refresh guarantee exceeds the builder’s scope**
+
+- Triage: Fix-now
+- Fix route: fix-on-fast
+- Why it matters: The documented protection against stale or replaced enrolment WAVs is stronger than the implemented protection.
+- Current behaviour: The threat model says the builder rewrites or removes enrolment WAVs “on every build”. However, `validation_set.py:720` selects only slots belonging to successfully built encounters. Unselected slots remain untouched. The related statement in `docs/testing/validation-harness.md:33` that no encounter needs a retained WAV after a failed rebuild is also false.
+- Desired behaviour: Explain that the builder refreshes slots used by successfully built encounters; other existing enrolments can remain and still serve existing encounters. Keep the empty-folder requirement for runs of record.
+- Verification: Build encounters A and B sharing slot 0, then fail a rebuild using `--only A`. A is removed at `validation_set.py:711`; `built` is empty, so `build_enrolments` returns at line 520 without touching slot 0. B remains and still needs that WAV. This is a static counterexample; no build was run.
+- Regression risk: Documentation only. The current builder behaviour matches D11’s scope.
+- /fix decision: Applied
+- /fix notes: 2026-10-23 — verified (the `--only` counterexample holds statically); the threat model's residue (7) and `validation-harness.md` step 1 now say a build refreshes only the slots its built encounters use, other slots keep their earlier WAV, and the run of record is built whole into an empty folder.
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 3 LOW
+
+Round 17 disposition (composer, 2026-10-23): all three verified against the code and fixed (`/fix` Fix-now, batched as independent mechanical LOWs); ruff and mypy clean; `test_validation_harness`, `test_validation_set`, `test_pilot_docs` 221 passed. Classes for round 18: an absent value rendered as a value; a compatibility pin that compares the code with itself; a document's guarantee wider than the code.
+
+### Round 18 — 2026-10-23
+Source: Codex peer-review (gpt-6-astra high; code review of Task 0.14's uncommitted diff)
+
+**PR-LOW-016 — `desktop/src/scribe_desktop/validation.py:2374` — Unmeasured report fields still become zero**
+
+- Triage: Fix-now
+- Fix route: fix-on-fast
+- Why it matters: Round 17 fixes the two seconds totals, but other cells still present missing measurements as measured zero.
+- Current behaviour: An error outcome with no transcript or metrics displays `0` segments. Its TOTAL displays zero reference words, spelling changes, unsupported content, facts, omission counts, uncertainty counts, checker failures and suspect segments. An entirely role-unresolved run likewise displays zero note-derived totals despite never measuring those metrics.
+- Desired behaviour: Show `-` where no contributing measurement exists, including an unavailable segment count. Preserve measured zero and totals over available measurements.
+- Pattern siblings: `segment_count` defaults at `validation.py:1791` and renders at `:2367`; unconditional counter totals at `:2374–2379`. Word-level, note-level and suspect totals need separate availability checks because role-unresolved encounters still supply transcription measurements.
+- Verification: A read-only `render_report` probe with one error outcome reproduced the zero segment count and zero legacy totals alongside absent encounter cells. Static tracing confirms `run_encounters` constructs this outcome at `:2195`. `_seconds_total` correctly handles absent, measured-zero and mixed cases; the remaining fields bypass that distinction.
+- Regression risk: Report presentation only; retain current verdicts and numeric totals whenever contributing measurements exist.
+- /fix decision: Deferred
+- /fix notes: 2026-10-23 — verified, and PRE-EXISTING: `c5f3179` renders the same `0` segment count for an error outcome (`segment_count: int = 0`) and the same integer TOTAL counters; Task 0.14's diff adds neither. Not fixed here: D11 says `--attribution clustering` reproduces runs 1–5, pinned by `_CLUSTERING_BASELINE_C5F3179`, and changing these cells would change runs 1–5's report shape. Recommended disposition: Defer to Phase 3 (the harness's report columns for rule v2), where the report changes anyway — awaiting the practitioner (Deferral Confirmation Gate). Confirmed 2026-10-23 (the practitioner: "defer PR-LOW-016 to Phase 3"); the composer's recommendation had named the report work by the draft's numbering — in this plan it is Task 4.3 (Phase 4, the harness's report), where the deferred item is recorded.
+
+**PR-LOW-017 — `desktop/tests/test_validation_set.py:1114` — Enrolment PCM expectation uses the implementation being checked**
+
+- Triage: Fix-now
+- Fix route: fix-on-fast
+- Why it matters: D11 requires enrolment audio to use the same level as a spoken turn, but the new PCM assertion cannot detect enrolment-specific gain drift.
+- Current behaviour: `build_enrolments` writes the result of `enrolment_pcm`, and the test compares the decoded WAV with another call to `enrolment_pcm`. Both sides inherit any regression in that new helper.
+- Desired behaviour: Keep the write/read assertion and independently pin the enrolment PCM’s level and sample count against the known fake input and the spoken-turn contract.
+- Pattern siblings: No other circular PCM expectation found in `TestEnrolment`. The passage hash and word count are literals; the fixed clustering baseline also matches HEAD’s report rendering.
+- Verification: Static counterexample: changing only `enrolment_pcm` to pass `target_rms=TURN_RMS / 2` to `level_turn` changes the required output level while preserving this equality, synthesis-call assertions, file counts and silence refusal. Existing `level_turn` tests exercise that helper directly and would not detect its incorrect use here. No tests or builds were run.
+- Regression risk: Tests only; use deterministic synthetic samples and allow PCM rounding tolerance.
+- /fix decision: Applied
+- /fix notes: 2026-10-23 — verified (the test compared `enrolment_pcm` with itself); `test_one_wav_per_clinician_slot_the_built_scripts_use` now also pins the WAV's length to the fake synthesiser's raw passage and its RMS to `TURN_RMS` (rel 1e-3), independent of `enrolment_pcm`; the `target_rms=TURN_RMS / 2` counterexample would halve the RMS and fail it; ruff clean.
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 2 LOW
+
+Round 18 disposition (composer, 2026-10-23): PR-LOW-017 verified and fixed; PR-LOW-016 verified as pre-existing (not in Task 0.14's diff) and held for the practitioner's word on its deferral. Classes for round 19: tests whose expectation comes from the code under test; a guarantee wider than the code; an absent value shown as a value — within the diff's own new code.
+
+### Round 19 — 2026-10-23
+Source: Codex peer-review (gpt-6-astra high; code review of Task 0.14's uncommitted diff)
+
+**PR-LOW-018 — `docs/testing/validation-harness.md:46` — Missing enrolment is incorrectly included under “role unresolved”**
+
+- Triage: Fix-now
+- Fix route: fix-on-fast
+- Why it matters: The declared policy conflates a refusal before transcription with an attribution failure after transcription. These produce different report statuses and available measurements.
+- Current behaviour: The new paragraph includes “no enrolment for the script’s clinician voice” among outcomes described as “role unresolved”. The code instead raises `EnrolmentMissingError` before reading the encounter WAV or creating a store; `run_encounters` reports an `error` outcome. The parenthetical “an error, below” and amendment paragraph at line 76 contradict the encompassing sentence.
+- Desired behaviour: Remove missing enrolment from the role-unresolved list and describe it separately as a pre-transcription harness error. Preserve the implemented behaviour.
+- Pattern siblings: The amendment paragraph at `docs/testing/validation-harness.md:76` and `evaluate_encounter`’s docstring correctly distinguish missing enrolment. No additional incorrect classification found in the scoped diff.
+- Verification: Traced the raise at `desktop/src/scribe_desktop/validation.py:2069` through the refusal handler at `:2176` and error-outcome construction at `:2195`. The new test at `desktop/tests/test_validation_harness.py:977` explicitly expects `("error", "EnrolmentMissingError")`. No tests, builds or harness runs performed.
+- Regression risk: Documentation only; no runtime or report change required.
+- /fix decision: Applied
+- /fix notes: 2026-10-23 — verified (`EnrolmentMissingError` is raised before the WAV is read and reported as an `error` outcome, which the test expects); the Clinician speaker policy no longer lists it among the role-unresolved cases and says instead that the encounter is refused before transcription and reported as an error; the doc-reading tests pass.
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 1 LOW
+
+Round 19 disposition (composer, 2026-10-23): PR-LOW-018 verified and fixed (documentation only). Round 20 re-attacks the documents-against-code class.
+
+### Round 20 — 2026-10-23
+Source: Codex peer-review (gpt-6-astra high; code review of Task 0.14's uncommitted diff)
+
+**PR-LOW-019 — `docs/testing/validation-harness.md:46` — Missing WAV still classified as an encounter error**
+
+- Triage: Fix-now
+- Fix route: fix-on-fast
+- Why it matters: The Round 19 replacement conflates a run-level refusal with an encounter-level error, which produce different exit statuses and report availability.
+- Current behaviour: The sentence says “No enrolment WAV” produces an encounter error, `EnrolmentMissingError`. For a synthetic script needing a missing WAV, `main` instead prints `[refused] … lacks slot-<n>.wav … rebuild the set` and returns 2 before running encounters or producing a report (`desktop/src/scribe_desktop/validation.py:2699`). `EnrolmentMissingError` occurs when `evaluate_encounter` has no in-memory enrolment for the script, including a recorded script without a voice slot (`:2064`).
+- Desired behaviour: Distinguish a missing required WAV (whole-run refusal, exit 2) from a missing in-memory enrolment or recorded script without a slot (encounter error).
+- Pattern to follow: The refusal list at `docs/testing/validation-harness.md:40` correctly describes the missing-file case.
+- Pattern siblings: The amendment paragraph at `docs/testing/validation-harness.md:76` correctly assigns `EnrolmentMissingError` to recorded scripts. No additional incorrect missing-file classification found in the scoped diff.
+- Verification: Traced the missing-file return at `validation.py:2708` and the encounter exception through `run_encounters` at `:2176` and `:2195`. The separate tests at `desktop/tests/test_validation_harness.py:1411` and `:965` explicitly expect these distinct outcomes. No tests or harness runs performed.
+- Regression risk: Documentation only; preserve both runtime paths.
+- /fix decision: Applied
+- /fix notes: 2026-10-23 — verified (`main` refuses the whole run, exit 2, when a needed `slot-<n>.wav` is missing; `EnrolmentMissingError` is the recorded-script case); the policy sentence now names both: a synthetic script's missing WAV refuses the run (the refusal list), a recorded script is reported as an error.
+
+**PR-LOW-020 — `desktop/src/scribe_desktop/validation_set.py:517` — Stale-enrolment removal described as guaranteed**
+
+- Triage: Fix-now
+- Fix route: fix-on-fast
+- Why it matters: The new docstring overstates the protection against measuring an earlier enrolment after a failed rebuild.
+- Current behaviour: It states that the earlier WAV is removed and “the harness never enrols from a stale file.” However, `build_enrolments` catches a failed deletion, prints a manual-deletion instruction and returns its error count (`:553–559`). An earlier readable WAV can remain; the harness checks its presence and enrols it without knowing that the preceding build failed (`desktop/src/scribe_desktop/validation.py:2701`, `:2737`).
+- Desired behaviour: Describe removal as attempted, and state that failed removal requires manual cleanup before running the harness. Preserve the existing operational contract.
+- Pattern to follow: `docs/testing/validation-harness.md:33` already names the manual-deletion exception.
+- Pattern siblings: `docs/security/threat-model.md:3968` also says a failed build removes the used slot’s WAV without mentioning failed removal. Searches for stale-file, removal and earlier-file wording across the scoped changes found these two unqualified descriptions.
+- Verification: Re-read the deletion failure branch and the harness’s file-loading path. `desktop/tests/test_validation_set.py:1187` explicitly covers the failed-deletion diagnostic. No files were written and no tests were run.
+- Regression risk: Documentation only; no change to builder cleanup, harness acceptance or measurement rules.
+- /fix decision: Applied
+- /fix notes: 2026-10-23 — verified (a failed removal is caught and reported with a delete-by-hand instruction); `build_enrolments`'s docstring and the threat model's residue (7) now say a removal that itself fails is reported for deletion by hand before the harness runs; ruff clean.
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 2 LOW
+
+Round 20 disposition (composer, 2026-10-23): both verified and fixed (documentation and a docstring). Correction to round 19's note: no test reads `docs/testing/validation-harness.md`, so "the doc-reading tests pass" checked nothing; the wording was verified against the code by reading. Round 21 is the pass's fifth and last round under the cap.
+
+### Round 21 — 2026-10-23
+
+Source: Codex peer-review (gpt-6-astra high; code review of Task 0.14's uncommitted diff)
+
+No findings
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 0 LOW
+
+Round 21 disposition (composer, 2026-10-23): no findings — the code pass over Task 0.14's diff converged (rounds 17–21, 8 LOW: 7 fixed, PR-LOW-016 pre-existing and held for the practitioner's word on its deferral).
+
+### Round 22 — 2026-10-23
+Source: Claude Code simplify
+
+**Scope:** Task 0.14's production diff after the peer pass converged, read in full: `validation.py` (the enrolment path, `overlap_by_label`, `enrolled_clinician`, `attribution_seconds`, `needed_enrolment_slots`, the two seconds columns, `main`'s attribution block) and `validation_set.py` (`ENROLMENT_PASSAGE`, `enrolment_pcm`, `build_enrolments`, `build_set`'s call).
+
+No findings.
+
+**Consciously left alone:** `evaluate_encounter`'s fallback to the plain document when `enrolled` is None (unreachable while `transcribe_in_temporary_store` returns an enrolled document for every enrolment, but it fails closed to "role unresolved" and says so); `build_enrolments` computing `enrolment_wav_name(slot)` twice (one is the printed name, one the path); the per-label lists summed with `math.fsum` (the harness's float convention, not a shape to collapse); `main`'s set-after-`except` failure variables (the peer round 27 PR-HIGH-066 rule: nothing printed inside an `except`).
+
+**Summary:** no simplifications worth a maintainer's attention.
+
 ## Tasks
 
 ### Phase 0 — Budget, measurement, decisions, freeze, predictions
@@ -796,12 +952,13 @@ Source: Claude Code simplify
     - **Risks for the practitioner, not acted on** (review): "i don't know" is often a patient's filler ("I don't know, it just aches") and will add `[check: unsure]` marks, each acknowledged separately; "seem" marks reports such as "it doesn't seem to help" (consistent with "seems" / "seemed" already listed); "i believe" can report someone else's words. Removing any is a new dated decision before Task 0.10. **Decided 2026-10-23 (the practitioner): keep all three.**
     - **The move.** `validation.document_from_turns` / `reference_document` / `SpokenTurn` / `REFERENCE_MODEL_NAME`; the fixture's `build_document` is a thin call (a delegation test proves it calls the harness's builder — peer round 14); every scripted and explicit-turns held-out document is pinned by one SHA-256 taken before the move (`test_validation_scripts.py` `_HELD_OUT_DOCUMENTS_SHA256`), unchanged after it. `REFERENCE_GREETING_LINES` / `REFERENCE_TAIL_STARTS` for every `end_and_new_patient` script (6 of the 50, 14 held-out), the tail starts pinned equal to `HeldOutCase.boundary`, the six run-of-record pairs pinned exactly (peer round 13), the axis coverage pinned both ways. The acknowledgement set is not written (0.3 is (b) without (c): Task 0.2a's counts are within the budget).
     - Task 0.2a's enrolment passage still holds no listed hedge and no `REFERENCE_HEDGES` entry (hash unchanged).
-- [ ] 🟥 **0.14 The harness's enrolment path (D11) — its own dated commit, after 0.13 and before 0.11**
+- [x] 🟩 **0.14 The harness's enrolment path (D11) — its own dated commit, after 0.13 and before 0.11**
   - `validation_set.py`: `ENROLMENT_PASSAGE` (Task 0.2a's text, hash-equal); `build_set` writes `enrolment/slot-<n>.wav` for every clinician slot the built scripts use (the folder made once; whole-then-move; a write failure refused by name like a triple's); `scripts/README.md` and the builder's docstring.
   - `validation.py`: `HarnessInputs.enrolments` / `.attribution`; `evaluate_encounter`'s enrolled judgement and the track confirmation (`clinician_speaker` on the enrolled document must equal `enrolled_speaker`); `main`'s `--attribution` flag, the three refusals in the model block, the needed slots read from the set's scripts (the same `load_script`); `EncounterOutcome` carries the clinician seconds labelled other and the other seconds labelled clinician; the report header line and the two seconds columns (separator and cell counts re-pinned in Task 4.3's inventory).
   - Tests (fakes only, no model): a frequency-stub embedder as `test_speaker_eval.py`'s `_FrequencyEmbedder`; both ways — the enrolled speaker confirmed by the track → `measured`; an enrolled speaker whose majority truth is not the clinician → `role_unresolved`; the PR-MED-027 counterexample (a 10 s segment at 5.1 / 4.9 clinician / patient plus a 9 s patient segment in the enrolled cluster) → `role_unresolved` on the enrolled path, while `clustering` reads it as today; no `enrolled_speaker` → `role_unresolved`; `--attribution clustering` equals today's outcome on the same fake inputs; each refusal by name before any encounter; the builder writes one WAV per slot used and none for an unused slot, and refuses a passage write failure by name; `ENROLMENT_PASSAGE`'s exclusions (no number token, unit, medication, shipped cue phrase, hedge, closing or greeting phrase; the word count ≥ 0.2a's); `find_encounters` ignores the subfolder; both seconds columns on a fake track, including a mixed cluster (every segment matched: clinician-majority confirmed, the patient's seconds in the second column — PR-MED-025).
   - Docs: `docs/testing/validation-harness.md` — step 1 (the builder's `enrolment/` output), the declared policy "Clinician speaker" rewritten, a "Metric amendment 2026-10-23" paragraph in the amendments' form (what changed, what it overrides, why it is not masking, the pins), the refusal list and the new column under "What each number means"; flow 26 of `docs/security/data-flow-map.md` (the enrolment vector in memory only) and the threat model's harness residues.
   - Done when: suite green; a one-encounter fake set exercised both ways in the tests; committed with the date before 0.11.
+  - **Record (2026-10-23).** Built, uncommitted (10 files: `validation.py`, `validation_set.py`, `test_validation_harness.py`, `test_validation_set.py`, `test_shadow_exits.py` — the one `_WRITER_REFERENCES` pin for `build_enrolments`, a deliberate pin change — `docs/testing/validation-harness.md`, `scripts/README.md`, flow 26 of `docs/security/data-flow-map.md`, the threat model's "The pilot" residue (7), and this plan). The report has 27 columns; the clustering path is pinned against the report `c5f3179` rendered for the same fake inputs (`_CLUSTERING_BASELINE_C5F3179`). Codex peer pass rounds 17–21 CONVERGED (8 LOW: 7 fixed; PR-LOW-016 — unmeasured legacy report cells shown as zero — is PRE-EXISTING at `c5f3179`, not in this diff, and its deferral was confirmed by the practitioner 2026-10-23, recorded on Task 4.3); /simplify round 22 no findings. Suite: 8032 passed, 9 skipped, run twice — the second after round 18's test edit and round 19's wording (only round 20's docstring and documentation wording came after); ruff and mypy clean on the final tree. Committed 2026-10-23 on the practitioner's word ("commit and push").
 - [ ] 🟥 **0.11 Fixtures and lints over a set table (before the set exists)**
   - `fixtures/heldout_transcripts.py`: `HELDOUT_DIR` :62 and `SCRIPT_CASE_PREFIX` :63 → a per-set table `(folder, prefix, cases)`; `HELD_OUT_CASES` concatenates the sets; a set whose folder is absent contributes nothing (so the suite is green before 0.10).
   - `test_validation_scripts.py`: `HELDOUT` :62 and :464, the prefix asserts :354 / :386 / :388, `TestHeldOutScripts` and `TestHeldOutTranscripts` parameterised over the table; the lints :329-348 run per set.
@@ -846,6 +1003,7 @@ Nothing to build. Tasks 2.1 and 2.2 are removed (their text survives in D2 and t
 - [ ] 🟥 **4.1 The residue classifiers (D8)** — R1 through `_fact_end_states` (no `all_matched` state) plus the `reference_document` run plus the review-mark term over the walk's `marked` flag on every wrong end state of every occurrence (its numeric near-emptiness documented); R2 only on an unsurfaced fact, through `script_line_hedged` over `REFERENCE_HEDGES`; R3 (axis, the fact at or after `REFERENCE_TAIL_STARTS`, no boundary on the measured document, no listed greeting on the `REFERENCE_GREETING_LINES` line). Each class a field on `FactOutcome` that clears ONLY its own failure predicates, through residue-adjusted counts (D8). Pins both ways for each condition, plus: an already-surfaced fact is not R2 and uses no ceiling; an R2 fact that is also `omitted` still fails `silent_omissions` unless R1; an R1 fact with an unsurfaced uncertainty still fails `uncertainty_missed` unless R2; a fact reported `wrong` with a silently omitted alternative cleared from BOTH counts by one R1 and counted once against R1; a nonmaterial `wrong` or `wrongly_present` fact consuming no allowance; a split-segment fact and a repeated-token fact where only ONE wrong alternative is marked NOT R1, and both marked R1; an unrelated `absent` fact before the tail start not R3; a boundary that fired after the fact not R3; a shared closing-and-greeting line read as the greeting line; a script with the axis and no entry in either table a harness error; the raw counts unchanged, the same outcomes giving v1 FAIL and v2 PASS. `align_transcripts` not used.
 - [ ] 🟥 **4.2 The warned amendments (D7)** — `warned` reads `clinician_line_omitted` on the fact's segment (the deletion-edge term, its `_FactState` flags and their pins were DROPPED 2026-10-23 with the missed-speech warning — not built); today's `warned` carried as the walk flag `warned_v033`, with `silently_omitted_v033` across every alternative, printed as "Silent (0.3.3 predicate)" (D7); `warned_v1` unchanged and still labelled as run 1's; `_FactState`'s new fields; the report header cites the amendments (`test_validation_harness.py:1198`); D7's retained pins (an omitted fact on a segment carrying `clinician_line_omitted` credited, and the same fact with the code on another segment not; a patient-side omission warned by 0.3.3 and not by run 1; a reported-`wrong` fact with a 0.3.3-silent alternative; the repeated-token state-count bound within 2^10). The deletion-edge pins (partial deletion vs substitution, edges, cross-segment, suspect-filtered, a line beside a pause) went with their term and are not built (peer round 7 PR-MED-026).
 - [ ] 🟥 **4.3 Rule v2, the set layer and the report** — `PassRule` `Literal[1, 2]` with per-set literal ceilings keyed by set name; `validation/rules/rule-v2.json`; each class clearing only its own failure predicates through the residue-adjusted counts, the raw counts and the v1 verdict untouched (D8); `run_passed`'s set-level check and a set-level failure line; `main` takes the set name (from the folder or a flag) to pick the ceilings; report: per-set class counts, a class column in the Facts table, the v1 verdict line beside the v2 verdict, the one-verdict heading replaced; every positional pin re-pinned (`"---|" * 25`, `cells = ["-"] * 18`, `cells.insert(17, …)`, the TOTAL row, `test_validation_harness.py:1184-1209`); ceilings pinned at n and n + 1; a schema-1 file with ceiling fields refused; a schema-2 file refused by a `Literal[1]` reader (documented, not tested here).
+  - Deferred here 2026-10-23 (PR-LOW-016, practitioner-confirmed): an unmeasured cell shows `-`, never `0` — an error outcome's segment count, and each legacy TOTAL counter (reference words, spelling changes, unsupported content, facts, omissions, uncertainty, checker failures, suspect segments) when no outcome contributes to it; a measured zero stays `0`. Word-level, note-level and suspect totals take separate availability checks (a role-unresolved encounter still supplies transcription measurements). Under rule v2's report only; `--attribution clustering` under rule v1 keeps `_CLUSTERING_BASELINE_C5F3179`'s shape unless this task re-pins it deliberately.
 - [ ] 🟥 **4.4 The harness document** — `docs/testing/validation-harness.md`: the amendments (dated), the rule v2 section with its override text (verbatim from Task 0.7) and the set layer, `heldout-2`, the three-set gate, the fitted-ceiling statement; Task 0.14's attribution amendment paragraph cross-checked against the policy as built.
 
 ### Phase 5 — Documents and version

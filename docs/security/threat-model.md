@@ -3898,7 +3898,12 @@ a DPAPI blob (`measure-speakers.py`, `run-validation.py`); with
 `replay-kept-recordings.py`) no key file is ever written — the key lives only
 in the process's memory, so a hard kill or power loss mid-run leaves
 ciphertext with no key anywhere (round 5 PR-HIGH-051). The harness reads no voice profile, writes no audit row and no
-Past-sessions entry and reads none, and opens no connection: nothing it runs
+Past-sessions entry and reads none (since the metric amendment of 2026-10-23,
+validation-run6 plan D11, it enrols each synthetic clinician voice from the
+set folder's own `enrolment/slot-<n>.wav` into a vector held in memory for the
+run only — never the practitioner's profile, never written or printed; a WAV
+that cannot be enrolled is refused by error type, with the WAV format's fixed
+help or the enrolment's own fixed text and never its path), and opens no connection: nothing it runs
 calls the Cliniko client or any network interface, and the offline
 environment is applied and asserted before any model loads (network-capable
 modules are still imported indirectly, as in the app). Its report holds ids,
@@ -3958,7 +3963,13 @@ folder without its sidecar passes the copy check. Writing the cue file fresh,
 never copying it (rule v1, call 1, `docs/testing/validation-harness.md`), is
 the practitioner's operating rule, not an enforced control — and the file is
 committed to the public repository, so a copied one would publish the
-practitioner's learned phrases.
+practitioner's learned phrases; (7) THE ENROLMENT WAVS ARE TRUSTED AS
+BUILT: the harness enrols whatever `enrolment/slot-<n>.wav` it finds, so a
+file replaced by hand would be measured as that voice — a build rewrites (or,
+on a failure, removes) only the slots its built encounters use, so another
+slot's earlier file stays, and a removal that itself fails is reported for
+deletion by hand before the harness runs; the run of record is built whole into an empty
+folder (`docs/testing/validation-harness.md`, Runs of record).
 
 ## Kept recordings (development-recordings plan; 0.3.0; BUILT 2026-10-07 → 2026-10-08, live smokes PASS on the developer build)
 

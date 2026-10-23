@@ -29,6 +29,12 @@ The steps, each a pure function tested on generated tones:
    the same samples — and added across the whole recording.
 6. **Peak.** The mix is scaled down only if it would clip, which keeps the
    ratio.
+7. **Enrolment** (validation-run6 plan D11, metric amendment 2026-10-23).
+   For every clinician voice slot the built scripts use, the fixed
+   non-clinical ``ENROLMENT_PASSAGE`` is spoken by that voice at
+   ``ENROLMENT_RATE`` with a turn's synthesis and level, and written as
+   ``<set>/enrolment/slot-<n>.wav``; the harness enrols each clinician voice
+   from it, as the app enrols the practitioner.
 
 No real voice runs in the test suite: the voice list and the synthesizer
 are injected (``build_set``), tested with zero, one and two voices. The
@@ -55,15 +61,17 @@ from pathlib import Path
 from typing import Final
 
 from scribe_desktop import install_layout
-from scribe_desktop.speaker_eval import configure_output
+from scribe_desktop.speaker_eval import CLINICIAN_LABEL, configure_output
 from scribe_desktop.speech import BYTES_PER_SAMPLE, SAMPLE_RATE
 from scribe_desktop.speech import write_wav as speech_write_wav
 from scribe_desktop.validation import (
     ENCOUNTER_ID_PATTERN,
+    ENROLMENT_DIRNAME,
     REPO_ROOT,
     UNNAMED_ENCOUNTER,
     EncounterScript,
     ScriptError,
+    enrolment_wav_name,
     load_script,
     load_script_with_bytes,
 )
@@ -78,6 +86,24 @@ TAIL_SECONDS: Final = 0.5
 PEAK_LIMIT: Final = 0.95 * 32767
 MIN_VOICES: Final = 2
 _ENCOUNTER_ID_RE: Final = re.compile(ENCOUNTER_ID_PATTERN)
+# D11 (metric amendment 2026-10-23): the passage each clinician voice is
+# enrolled from - everyday, non-clinical sentences, about 40 s spoken; no
+# number token, strength unit, medication, shipped cue phrase, hedge,
+# closing or greeting phrase (pinned in the tests, with its SHA-256: Task
+# 0.2a's text, hash-equal). A change is a new dated amendment.
+ENROLMENT_PASSAGE: Final = (
+    "The garden behind the library is quiet early in the year. Tall trees line the "
+    "path, and the grass stays green after the rain. On calm days people bring a "
+    "book and sit on the wooden bench near the pond. Ducks drift across the water "
+    "while children watch from the little bridge. The café across the road sells "
+    "fresh bread, soft cheese and strong tea. Some mornings a light mist hangs over "
+    "the water, and the birds sing loudly from the hedges. A gardener trims the "
+    "roses and sweeps the leaves into neat piles beside the gate. In the evening "
+    "the sky turns orange, then deep blue, and the lamps along the street come on. "
+    "Walking home, you can hear the wind in the leaves and smell the wet earth."
+)
+# The builder's standard rate (``SyntheticConditions.rate``'s default).
+ENROLMENT_RATE: Final = 0
 # SAPI's ``SVSFIsNotXML``: a line is spoken as text, never parsed as markup.
 SAPI_IS_NOT_XML: Final = 16
 # ``SAFT16kHz16BitMono`` — requested, not honoured by the OneCore voices
@@ -327,12 +353,13 @@ def write_wav(path: Path, pcm: bytes) -> None:
 
 @dataclass(frozen=True)
 class BuiltEncounter:
-    """What was written for one encounter: its id, its length in seconds and
-    its turn placement (numbers only)."""
+    """What was written for one encounter: its id, its length in seconds,
+    its turn placement and its clinician's voice slot (numbers only)."""
 
     encounter_id: str
     seconds: float
     placement: Placement
+    clinician_slot: int
 
 
 def render_encounter(
@@ -463,7 +490,76 @@ def build_encounter(
             f"{stem}: could not be written ({type(exc).__name__}) - close any program "
             f"holding {stem}.wav or {stem}.txt, or delete them, then build again"
         ) from None
-    return BuiltEncounter(stem, placement.total / TARGET_SAMPLE_RATE, placement)
+    assert script.conditions is not None  # render_encounter refused a role-play
+    return BuiltEncounter(
+        stem,
+        placement.total / TARGET_SAMPLE_RATE,
+        placement,
+        script.conditions.voice_slots[CLINICIAN_LABEL],
+    )
+
+
+def enrolment_pcm(slot: int, synthesize: Synthesizer) -> bytes:
+    """``ENROLMENT_PASSAGE`` spoken by voice ``slot`` at ``ENROLMENT_RATE``,
+    with a spoken turn's synthesis and level (D11)."""
+    return to_pcm16(level_turn(pcm_samples(synthesize(ENROLMENT_PASSAGE, slot, ENROLMENT_RATE))))
+
+
+def build_enrolments(
+    out_dir: Path,
+    slots: Sequence[int],
+    synthesize: Synthesizer,
+    progress: Callable[[str], None] = print,
+) -> int:
+    """``<out_dir>/enrolment/slot-<n>.wav`` for each of ``slots`` (D11), the
+    folder made once, each file written whole and moved into place. A slot
+    that cannot be spoken or written is reported by name (its refusal text,
+    or an exception TYPE) and counted, and its earlier WAV is removed so
+    the harness does not enrol from a stale file; when that removal fails
+    too, the error says to delete the file by hand, which must be done
+    before the harness runs. Returns the error count."""
+    if not slots:
+        return 0
+    folder = out_dir / ENROLMENT_DIRNAME
+    folder_failure: str | None = None
+    try:
+        folder.mkdir(exist_ok=True)
+    except OSError as exc:
+        folder_failure = type(exc).__name__
+    if folder_failure is not None:
+        progress(f"[error] {ENROLMENT_DIRNAME}: the folder cannot be created ({folder_failure})")
+        return len(slots)
+    errors = 0
+    for slot in slots:
+        name = f"{ENROLMENT_DIRNAME}/{enrolment_wav_name(slot)}"
+        path = folder / enrolment_wav_name(slot)
+        # Each line is printed AFTER its ``except`` block ends (peer round
+        # 27, PR-HIGH-066).
+        failed: str | None = None
+        try:
+            _write_replacing(path, wav_bytes(enrolment_pcm(slot, synthesize)))
+        except BuildError as exc:
+            failed = f"{name}: {exc}"
+        except OSError as exc:
+            failed = (
+                f"{name}: could not be written ({type(exc).__name__}) - close any program "
+                "holding it, or delete it, then build again"
+            )
+        except Exception as exc:  # noqa: BLE001 - our refusal text, else the TYPE only
+            failed = f"{name}: {type(exc).__name__}"
+        if failed is None:
+            progress(f"[built] {name}")
+            continue
+        errors += 1
+        removal: str | None = None
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            removal = type(exc).__name__
+        if removal is not None:
+            failed += f"; its earlier file could not be removed ({removal}) - delete it by hand"
+        progress(f"[error] {failed}")
+    return errors
 
 
 def _remove_earlier_build(out_dir: Path, stem: str) -> str:
@@ -553,7 +649,9 @@ def build_set(
     synthetic build in ``out_dir`` is removed — except a script file not
     named as an encounter id, which is counted and reported without its name
     (``UNNAMED_ENCOUNTER``) and touches nothing. A name in ``only`` that
-    matches no script exactly is an error."""
+    matches no script exactly is an error. Last, the enrolment WAV of every
+    clinician voice slot the built encounters use (``build_enrolments``,
+    D11), each failure counted as an error."""
     if out_dir.resolve() == scripts_dir.resolve():
         raise BuildError("the output folder must not be the scripts folder")
     if repo_root is not None and _inside(out_dir, repo_root):
@@ -621,6 +719,8 @@ def build_set(
         errors += 1
         shown = name if _ENCOUNTER_ID_RE.fullmatch(name) else UNNAMED_ENCOUNTER
         progress(f"[error] {shown}: no script has this exact name")
+    slots = sorted({encounter.clinician_slot for encounter in built})
+    errors += build_enrolments(out_dir, slots, speak, progress)
     return built, errors
 
 
@@ -646,7 +746,9 @@ def main(
         description=(
             "Build the synthetic validation set (pilot plan Task 2.5): each synthetic script "
             "becomes <id>.wav (16 kHz mono), <id>.txt (its label track) and a copy of "
-            "<id>.json, spoken by the installed Windows voices. Developer build only."
+            "<id>.json, spoken by the installed Windows voices; enrolment/slot-<n>.wav holds "
+            "a fixed passage spoken by each clinician voice the set uses. Developer build "
+            "only."
         )
     )
     parser.add_argument("scripts_dir", type=Path, help="folder of <id>.json scripts")
@@ -687,6 +789,8 @@ def main(
 
 __all__ = [
     "BUILT_MARKER_SUFFIX",
+    "ENROLMENT_PASSAGE",
+    "ENROLMENT_RATE",
     "GAP_SECONDS",
     "LEAD_SECONDS",
     "MIN_VOICES",
@@ -705,8 +809,10 @@ __all__ = [
     "active_samples",
     "add_noise",
     "build_encounter",
+    "build_enrolments",
     "build_set",
     "encounter_seed",
+    "enrolment_pcm",
     "label_track",
     "level_turn",
     "main",
