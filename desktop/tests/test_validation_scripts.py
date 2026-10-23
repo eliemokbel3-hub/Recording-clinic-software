@@ -17,6 +17,11 @@ the held-out scripts also get the fact-edge, routed-clause and trigger
 checks, and each correction and hedge expectation its routing preconditions.
 The axis, kind and voice-baseline lints above stay on ``validation/scripts``
 only.
+
+Validation-run6 plan Task 0.11: the held-out lints run per set over the
+fixture's table (``HELD_OUT_SETS``: ``validation/heldout`` and
+``validation/heldout-2``); a set with no scripts yet passes them vacuously,
+and a set whose cases are not yet written gets the script lints only.
 """
 
 from __future__ import annotations
@@ -33,8 +38,12 @@ from fixtures import heldout_transcripts
 from fixtures.heldout_transcripts import (
     EDGE_CASE_PREFIX,
     HELD_OUT_CASES,
-    SCRIPT_CASE_PREFIX,
+    HELD_OUT_SETS,
+    SCRIPT_CASE_PREFIXES,
     HeldOutCase,
+    HeldOutSet,
+    held_out_set,
+    script_path,
 )
 from scribe_desktop.note import (
     CANONICAL_SECTION_KEYS,
@@ -66,7 +75,6 @@ from scribe_desktop.validation_set import render_encounter, to_pcm16
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPTS = REPO / "validation" / "scripts"
-HELDOUT = REPO / "validation" / "heldout"
 CONFIG = REPO / "validation" / "config"
 MIN_HELDOUT = 16
 MIN_PER_AXIS = 3
@@ -311,11 +319,16 @@ class TestRenderable:
 
 
 def _heldout_paths() -> list[Path]:
-    return sorted(HELDOUT.glob("*.json"))
+    """Every held-out set's scripts (Task 0.11)."""
+    return [path for held_out in HELD_OUT_SETS for path in held_out.script_paths()]
 
 
-def _heldout_scripts() -> list[EncounterScript]:
-    return [load_script(path) for path in _heldout_paths()]
+def _heldout_scripts(held_out: HeldOutSet) -> list[EncounterScript]:
+    return [load_script(path) for path in held_out.script_paths()]
+
+
+def _set_name(held_out: HeldOutSet) -> str:
+    return held_out.name
 
 
 # Review round 8 LOW-005 (routed to the held-out author, not edited here —
@@ -331,16 +344,36 @@ class TestHeldOutScripts:
     """Validation-pass plan Task 0.9: the held-out set is never tuned to, so
     its lint checks only that it is usable — not its axis or kind counts,
     and the same alignment, routing and trigger checks as the run-of-record
-    set (review round 8 LOW-004)."""
+    set (review round 8 LOW-004). Since validation-run6 Task 0.11 each lint
+    runs per held-out set."""
 
-    def test_no_held_out_fact_borders_a_repeat_of_its_own_edge_word(self) -> None:
-        assert _facts_bordering_their_edge_word(_heldout_scripts()) == []
+    def test_the_sets_have_distinct_folders_and_prefixes(self) -> None:
+        names = [held_out.name for held_out in HELD_OUT_SETS]
+        assert names == ["heldout", "heldout-2"]
+        assert len(set(SCRIPT_CASE_PREFIXES)) == len(SCRIPT_CASE_PREFIXES)
+        for prefix in (*SCRIPT_CASE_PREFIXES, EDGE_CASE_PREFIX):
+            others = [p for p in (*SCRIPT_CASE_PREFIXES, EDGE_CASE_PREFIX) if p != prefix]
+            assert not any(other.startswith(prefix) for other in others), prefix
 
-    def test_every_held_out_uncertain_fact_sits_in_a_routed_clause(self) -> None:
-        unrouted = _uncertain_facts_in_unrouted_clauses(_heldout_scripts())
-        assert unrouted == _HELD_OUT_UNROUTED_PENDING
+    @pytest.mark.parametrize("held_out", HELD_OUT_SETS, ids=_set_name)
+    def test_no_held_out_fact_borders_a_repeat_of_its_own_edge_word(
+        self, held_out: HeldOutSet
+    ) -> None:
+        assert _facts_bordering_their_edge_word(_heldout_scripts(held_out)) == []
 
-    def test_no_held_out_script_speaks_an_autofill_trigger(self) -> None:
+    @pytest.mark.parametrize("held_out", HELD_OUT_SETS, ids=_set_name)
+    def test_every_held_out_uncertain_fact_sits_in_a_routed_clause(
+        self, held_out: HeldOutSet
+    ) -> None:
+        unrouted = _uncertain_facts_in_unrouted_clauses(_heldout_scripts(held_out))
+        pending = [
+            item for item in _HELD_OUT_UNROUTED_PENDING
+            if item[0].startswith(held_out.prefix)
+        ]
+        assert unrouted == pending
+
+    @pytest.mark.parametrize("held_out", HELD_OUT_SETS, ids=_set_name)
+    def test_no_held_out_script_speaks_an_autofill_trigger(self, held_out: HeldOutSet) -> None:
         # No held-out scenario is about autofill, so a trigger would only
         # add a warning its script does not list.
         triggers = [
@@ -348,21 +381,35 @@ class TestHeldOutScripts:
         ]
         spoken = [
             (script.encounter_id, index)
-            for script in _heldout_scripts()
+            for script in _heldout_scripts(held_out)
             for index, line in enumerate(script.lines)
             if any(_contains(content_tokens(line.text), trigger) for trigger in triggers)
         ]
         assert spoken == []
 
-    def test_every_held_out_script_loads_with_a_held_out_id(self) -> None:
-        ids = [load_script(path).encounter_id for path in _heldout_paths()]
-        assert len(ids) >= MIN_HELDOUT
+    @pytest.mark.parametrize("held_out", HELD_OUT_SETS, ids=_set_name)
+    def test_every_held_out_script_loads_with_a_held_out_id(self, held_out: HeldOutSet) -> None:
+        paths = held_out.script_paths()
+        ids = [load_script(path).encounter_id for path in paths]
+        # A set whose cases are not yet written may have no scripts yet
+        # (Task 0.10 authors ``heldout-2``); once it has any, the minimum holds.
+        if held_out.cases_written or ids:
+            assert len(ids) >= MIN_HELDOUT
         assert len(set(ids)) == len(ids)
-        assert [i for i in ids if not i.startswith(SCRIPT_CASE_PREFIX)] == []
+        assert ids == [path.stem for path in paths]
+        assert [i for i in ids if not i.startswith(held_out.prefix)] == []
         assert not set(ids) & {path.stem for path in SCRIPTS.glob("*.json")}
 
-    def test_every_held_out_script_is_synthetic_with_material_facts(self) -> None:
-        for path in _heldout_paths():
+    def test_the_first_held_out_set_is_present(self) -> None:
+        """A missing ``validation/heldout`` folder would pass the per-set
+        lints vacuously; its cases are written, so its scripts must exist."""
+        assert len(held_out_set("heldout").script_paths()) == 22
+
+    @pytest.mark.parametrize("held_out", HELD_OUT_SETS, ids=_set_name)
+    def test_every_held_out_script_is_synthetic_with_material_facts(
+        self, held_out: HeldOutSet
+    ) -> None:
+        for path in held_out.script_paths():
             script = load_script(path)
             assert script.conditions is not None, script.encounter_id
             slots = script.conditions.voice_slots.values()
@@ -387,15 +434,39 @@ class TestHeldOutTranscripts:
     turns are the script's lines) plus ``edge-`` cases, and every expected
     index well-formed."""
 
-    def test_one_case_per_held_out_script_and_the_rest_are_edge_cases(self) -> None:
+    def test_the_cases_are_unique_and_every_one_is_scripted_or_an_edge_case(self) -> None:
         ids = [case.case_id for case in HELD_OUT_CASES]
         assert len(set(ids)) == len(ids)
-        scripted = {i for i in ids if i.startswith(SCRIPT_CASE_PREFIX)}
-        assert scripted == {path.stem for path in _heldout_paths()}
-        assert [i for i in ids if not i.startswith((SCRIPT_CASE_PREFIX, EDGE_CASE_PREFIX))] == []
+        assert [i for i in ids if not i.startswith((*SCRIPT_CASE_PREFIXES, EDGE_CASE_PREFIX))] == []
         for case in HELD_OUT_CASES:
             # A scripted case reads its script's lines; an edge case has its own.
             assert bool(case.explicit_turns) == case.case_id.startswith(EDGE_CASE_PREFIX)
+
+    @pytest.mark.parametrize("held_out", HELD_OUT_SETS, ids=_set_name)
+    def test_one_case_per_held_out_script_of_each_set(self, held_out: HeldOutSet) -> None:
+        """Task 0.11: a set's scripted cases are exactly its scripts, under its
+        own prefix; a set whose cases are not yet written holds no case."""
+        if not held_out.cases_written:
+            assert held_out.all_cases() == ()
+            return
+        scripted = [case.case_id for case in held_out.cases]
+        assert set(scripted) == {path.stem for path in held_out.script_paths()}
+        assert all(case_id.startswith(held_out.prefix) for case_id in scripted)
+        for case in held_out.edge_cases:
+            assert case.case_id.startswith(EDGE_CASE_PREFIX), case.case_id
+
+    def test_a_misfiled_divergence_table_is_named(self) -> None:
+        """Task 0.11: the per-set divergence tables' check, both ways — a
+        well-formed table passes; a missing set, an extra set and a case
+        filed under the wrong set are each named."""
+        first = HELD_OUT_CASES[0].case_id
+        good = {"heldout": {first: None}, "heldout-2": {}}
+        assert heldout_transcripts.misfiled(good) == []
+        assert heldout_transcripts.misfiled({"heldout": {}}) == ["set heldout-2"]
+        extra = {**good, "heldout-9": {}}
+        assert heldout_transcripts.misfiled(extra) == ["set heldout-9"]
+        wrong = {"heldout": {}, "heldout-2": {first: None}}
+        assert heldout_transcripts.misfiled(wrong) == [first]
 
     @pytest.mark.parametrize("case", HELD_OUT_CASES, ids=_case_id)
     def test_the_case_builds_its_transcript(self, case: HeldOutCase) -> None:
@@ -466,9 +537,9 @@ class TestHeldOutTranscripts:
 
     def test_the_next_patients_lines_are_never_facts_of_the_first(self) -> None:
         for case in HELD_OUT_CASES:
-            if case.boundary is None or not case.case_id.startswith(SCRIPT_CASE_PREFIX):
+            if case.boundary is None or case.explicit_turns:
                 continue
-            script = load_script(HELDOUT / f"{case.case_id}.json")
+            script = load_script(script_path(case.case_id))
             withheld = [fact.kind for fact in script.facts if fact.line >= case.boundary]
             assert set(withheld) <= {"absent"}, case.case_id
 
@@ -502,9 +573,22 @@ def _held_out_documents_sha256() -> str:
     return digest.hexdigest()
 
 
+def _written_heldout_scripts() -> list[EncounterScript]:
+    """The scripts of the held-out sets whose cases are written: a set's R3
+    table entries are written with its cases (Task 0.12 for ``heldout-2``)."""
+    return [
+        script
+        for held_out in HELD_OUT_SETS
+        if held_out.cases_written
+        for script in _heldout_scripts(held_out)
+    ]
+
+
 def _axis_scripts() -> list[EncounterScript]:
     return [
-        script for script in [*_scripts(), *_heldout_scripts()] if _NEXT_PATIENT_AXIS in script.axes
+        script
+        for script in [*_scripts(), *_written_heldout_scripts()]
+        if _NEXT_PATIENT_AXIS in script.axes
     ]
 
 
@@ -570,7 +654,7 @@ class TestNextPatientReferenceTables:
     def test_the_tail_starts_equal_the_held_out_boundaries(self) -> None:
         boundaries = {case.case_id: case.boundary for case in HELD_OUT_CASES}
         for encounter_id, tail in REFERENCE_TAIL_STARTS.items():
-            if encounter_id.startswith(SCRIPT_CASE_PREFIX):
+            if encounter_id.startswith(SCRIPT_CASE_PREFIXES):
                 assert tail == boundaries[encounter_id], encounter_id
 
     def test_the_greeting_line_is_the_tail_start_or_shares_the_closing_line(self) -> None:
@@ -618,7 +702,7 @@ class TestNextPatientReferenceTables:
         run_of_record = {
             encounter_id: (REFERENCE_GREETING_LINES[encounter_id], tail)
             for encounter_id, tail in REFERENCE_TAIL_STARTS.items()
-            if not encounter_id.startswith(SCRIPT_CASE_PREFIX)
+            if not encounter_id.startswith(SCRIPT_CASE_PREFIXES)
         }
         assert run_of_record == {
             "syn-06": (4, 4),

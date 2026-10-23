@@ -18,7 +18,13 @@ from pathlib import Path
 
 import pytest
 
-from fixtures.heldout_transcripts import HELD_OUT_CASES, HeldOutCase
+from fixtures.heldout_transcripts import (
+    HELD_OUT_CASES,
+    HeldOutCase,
+    by_case,
+    held_out_set,
+    misfiled,
+)
 from scribe_desktop import note_check as note_check_module
 from scribe_desktop.note import (
     CANONICAL_SECTION_KEYS,
@@ -2262,9 +2268,12 @@ class TestCheck1HedgeMark:
         else:
             assert got == case.unsure, case.case_id
 
-    def test_every_predicted_unsure_divergence_is_a_held_out_case(self) -> None:
-        assert set(_PREDICTED_UNSURE_DIVERGENCES) <= {c.case_id for c in HELD_OUT_CASES}
-        assert set(_UNSURE_PREDICTIONS_BEFORE_RUN6_0_9) <= {c.case_id for c in HELD_OUT_CASES}
+    def test_every_predicted_unsure_divergence_is_a_case_of_its_set(self) -> None:
+        assert misfiled(_PREDICTED_UNSURE_DIVERGENCES_BY_SET) == []
+        counts = {name: len(cases) for name, cases in _PREDICTED_UNSURE_DIVERGENCES_BY_SET.items()}
+        assert counts == {"heldout": 3, "heldout-2": 0}
+        heldout = {c.case_id for c in held_out_set("heldout").all_cases()}
+        assert set(_UNSURE_PREDICTIONS_BEFORE_RUN6_0_9) <= heldout
 
     def test_the_widened_hedges_changed_these_predictions_and_no_expectation(
         self, monkeypatch: pytest.MonkeyPatch
@@ -2276,7 +2285,8 @@ class TestCheck1HedgeMark:
         and today's result is the expectation (resolved) or today's recorded
         divergence."""
         assert _UNSURE_PREDICTIONS_BEFORE_RUN6_0_9
-        cases = {c.case_id: c for c in HELD_OUT_CASES}
+        # The dated record was made over the first held-out set (Task 0.11).
+        cases = {c.case_id: c for c in held_out_set("heldout").all_cases()}
         today = {case_id: _held_out_unsure(case) for case_id, case in cases.items()}
         monkeypatch.setattr(note_check_module, "HEDGE_PHRASES", _HEDGE_PHRASES_0_3_3)
         before = {case_id: _held_out_unsure(case) for case_id, case in cases.items()}
@@ -2299,14 +2309,22 @@ class TestCheck1HedgeMark:
 _VALIDATION_CONFIG_DIR = Path(__file__).resolve().parents[2] / "validation" / "config"
 
 # Task 0.10's predicted unsure divergences under the frozen hedges (C3):
-# case id -> (the case's expected unsure lines, the frozen-hedge result).
-# Since validation-run6 Task 0.9 (2026-10-23) the result is under the
-# widened list; an entry it changed keeps its 0.3.3 value below.
-_PREDICTED_UNSURE_DIVERGENCES: dict[str, tuple[tuple[int, ...], tuple[int, ...]]] = {
-    "hld-19": ((3, 5), (3,)),  # line 5's hedge is still outside the list
-    "hld-20": ((3, 5), (5,)),  # line 3's hedge is not a contiguous frozen phrase
-    "hld-21": ((3, 5), ()),  # both hedges are outside the frozen list
+# held-out set -> case id -> (the case's expected unsure lines, the
+# frozen-hedge result). Since validation-run6 Task 0.9 (2026-10-23) the
+# result is under the widened list; an entry it changed keeps its 0.3.3
+# value below. Keyed per set since Task 0.11; ``heldout-2``'s entries are
+# written by its Task 0.12.
+_PREDICTED_UNSURE_DIVERGENCES_BY_SET: dict[
+    str, dict[str, tuple[tuple[int, ...], tuple[int, ...]]]
+] = {
+    "heldout": {
+        "hld-19": ((3, 5), (3,)),  # line 5's hedge is still outside the list
+        "hld-20": ((3, 5), (5,)),  # line 3's hedge is not a contiguous frozen phrase
+        "hld-21": ((3, 5), ()),  # both hedges are outside the frozen list
+    },
+    "heldout-2": {},
 }
+_PREDICTED_UNSURE_DIVERGENCES = by_case(_PREDICTED_UNSURE_DIVERGENCES_BY_SET)
 
 
 # Validation-run6 plan Task 0.9 (2026-10-23), the dated record: case id ->

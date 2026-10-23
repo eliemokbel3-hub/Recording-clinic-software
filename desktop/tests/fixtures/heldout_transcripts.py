@@ -45,10 +45,20 @@ script model's own place for content that must not reach the note).
 
 Data and small builders only: nothing here imports a module that does not
 exist yet. The text is invented.
+
+Validation-run6 plan Task 0.11: the held-out SETS are one table,
+``HELD_OUT_SETS`` — per set its folder name under ``validation/``, its case
+id prefix and its cases (``validation/heldout`` with ``hld-`` and the
+``edge-`` cases; ``validation/heldout-2`` with ``h2-``, authored blind in
+Task 0.10). A set's ``cases_written`` is False until its cases exist (Task
+0.12 writes ``heldout-2``'s and flips it): such a set holds no case, its
+scripts — none while its folder is absent or empty — get the script lints
+only, and ``HELD_OUT_CASES`` gains nothing from it.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -58,8 +68,7 @@ from scribe_desktop.transcription import TranscriptDocument
 from scribe_desktop.validation import document_from_turns, load_script
 
 REPO: Final = Path(__file__).resolve().parents[3]
-HELDOUT_DIR: Final = REPO / "validation" / "heldout"
-SCRIPT_CASE_PREFIX: Final = "hld-"
+VALIDATION_DIR: Final = REPO / "validation"
 EDGE_CASE_PREFIX: Final = "edge-"
 
 NO_CORRECTION: Final = "no routed non-clinician line is followed by that speaker's self-correction"
@@ -82,9 +91,18 @@ def build_document(turns: tuple[Turn, ...]) -> TranscriptDocument:
     return document_from_turns(turns)
 
 
+def script_path(encounter_id: str) -> Path:
+    """The held-out script a scripted case reads: the set whose prefix the
+    id carries (Task 0.11)."""
+    for held_out in HELD_OUT_SETS:
+        if encounter_id.startswith(held_out.prefix):
+            return held_out.folder / f"{encounter_id}.json"
+    raise ValueError("no held-out set has this case id's prefix")
+
+
 def script_turns(encounter_id: str) -> tuple[Turn, ...]:
     """The held-out script's lines as turns (role as the speaker label)."""
-    script = load_script(HELDOUT_DIR / f"{encounter_id}.json")
+    script = load_script(script_path(encounter_id))
     return tuple(Turn(line.role, line.text) for line in script.lines)
 
 
@@ -392,4 +410,65 @@ EDGE_CASES: Final[tuple[HeldOutCase, ...]] = (
     ),
 )
 
-HELD_OUT_CASES: Final[tuple[HeldOutCase, ...]] = SCRIPT_CASES + EDGE_CASES
+
+@dataclass(frozen=True)
+class HeldOutSet:
+    """One held-out set (Task 0.11): ``name`` is its folder under
+    ``validation/`` (and the harness's set name), ``prefix`` its scripts'
+    and scripted cases' id prefix, ``cases`` one per script, ``edge_cases``
+    the explicit-turn cases authored with it. ``cases_written`` False: no
+    case yet (the set's scripts get the script lints only)."""
+
+    name: str
+    prefix: str
+    cases: tuple[HeldOutCase, ...]
+    edge_cases: tuple[HeldOutCase, ...] = ()
+    cases_written: bool = True
+
+    @property
+    def folder(self) -> Path:
+        return VALIDATION_DIR / self.name
+
+    def script_paths(self) -> list[Path]:
+        """The set's scripts; none while its folder is absent."""
+        return sorted(self.folder.glob("*.json"))
+
+    def all_cases(self) -> tuple[HeldOutCase, ...]:
+        return self.cases + self.edge_cases
+
+
+HELD_OUT_SETS: Final[tuple[HeldOutSet, ...]] = (
+    HeldOutSet("heldout", "hld-", SCRIPT_CASES, EDGE_CASES),
+    # Authored blind in Task 0.10; its ``h2-NN`` cases are Task 0.12's.
+    HeldOutSet("heldout-2", "h2-", (), cases_written=False),
+)
+SCRIPT_CASE_PREFIXES: Final[tuple[str, ...]] = tuple(s.prefix for s in HELD_OUT_SETS)
+
+HELD_OUT_CASES: Final[tuple[HeldOutCase, ...]] = tuple(
+    case for held_out in HELD_OUT_SETS for case in held_out.all_cases()
+)
+
+
+def held_out_set(name: str) -> HeldOutSet:
+    """The set of that name in the table."""
+    (held_out,) = (s for s in HELD_OUT_SETS if s.name == name)
+    return held_out
+
+
+def by_case[V](per_set: Mapping[str, Mapping[str, V]]) -> dict[str, V]:
+    """A per-set table (set name -> case id -> entry; the tests' predicted
+    divergences, Task 0.11) flattened to case id -> entry."""
+    return {case_id: entry for entries in per_set.values() for case_id, entry in entries.items()}
+
+
+def misfiled(per_set: Mapping[str, Mapping[str, object]]) -> list[str]:
+    """What is wrong with a per-set table's keys: a set name it lacks or
+    adds, and each case id filed under a set that does not hold that case.
+    Empty when well formed."""
+    names = [held_out.name for held_out in HELD_OUT_SETS]
+    problems = [f"set {name}" for name in names if name not in per_set]
+    problems += [f"set {name}" for name in per_set if name not in names]
+    for held_out in HELD_OUT_SETS:
+        own = {case.case_id for case in held_out.all_cases()}
+        problems += [case_id for case_id in per_set.get(held_out.name, {}) if case_id not in own]
+    return problems

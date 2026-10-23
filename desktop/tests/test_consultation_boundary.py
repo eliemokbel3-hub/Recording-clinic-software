@@ -37,7 +37,14 @@ from typing import Any, Final
 
 import pytest
 
-from fixtures.heldout_transcripts import HELD_OUT_CASES, HeldOutCase, Turn, build_document
+from fixtures.heldout_transcripts import (
+    HELD_OUT_CASES,
+    HeldOutCase,
+    Turn,
+    build_document,
+    by_case,
+    misfiled,
+)
 from scribe_desktop import note_fill
 from scribe_desktop.consultation_phrases import (
     BOUNDARY_SEGMENTS,
@@ -98,17 +105,25 @@ _GREETING: Final = Turn(_C, "Hello, come in.")
 _TAIL: Final = Turn(_N, "My hip is sore again.")
 
 # Task 0.10's predicted boundary divergences under the frozen lists (C3):
-# case id -> (the case's expected boundary, the frozen-list result). Each is
-# asserted BOTH ways below, so a later vocabulary decision shows here.
-_PREDICTED_BOUNDARY_DIVERGENCES: Final[dict[str, tuple[int | None, int | None]]] = {
-    "hld-09": (5, None),  # its greeting is not in the frozen greeting list
-    "hld-10": (4, 5),  # the next patient's greeting is unlisted; a listed one follows
-    "hld-11": (4, None),  # a bare time-of-day greeting (excluded by D2's vocabulary rule)
-    "hld-12": (5, None),  # a bare time-of-day greeting
-    "hld-14": (5, None),  # a greeting phrase D2's vocabulary rule excludes
-    "edge-greeting-third-segment": (5, None),  # its closing is not a frozen closing
-    "edge-second-sentence-greeting": (3, None),  # its closing is not a frozen closing
+# held-out set -> case id -> (the case's expected boundary, the frozen-list
+# result). Each is asserted BOTH ways below, so a later vocabulary decision
+# shows here. Keyed per set since validation-run6 Task 0.11; ``heldout-2``'s
+# entries are written by its Task 0.12.
+_PREDICTED_BOUNDARY_DIVERGENCES_BY_SET: Final[
+    dict[str, dict[str, tuple[int | None, int | None]]]
+] = {
+    "heldout": {
+        "hld-09": (5, None),  # its greeting is not in the frozen greeting list
+        "hld-10": (4, 5),  # the next patient's greeting is unlisted; a listed one follows
+        "hld-11": (4, None),  # a bare time-of-day greeting (excluded by D2's vocabulary rule)
+        "hld-12": (5, None),  # a bare time-of-day greeting
+        "hld-14": (5, None),  # a greeting phrase D2's vocabulary rule excludes
+        "edge-greeting-third-segment": (5, None),  # its closing is not a frozen closing
+        "edge-second-sentence-greeting": (3, None),  # its closing is not a frozen closing
+    },
+    "heldout-2": {},
 }
+_PREDICTED_BOUNDARY_DIVERGENCES: Final = by_case(_PREDICTED_BOUNDARY_DIVERGENCES_BY_SET)
 
 
 @pytest.fixture(scope="module")
@@ -349,9 +364,11 @@ class TestHeldOutBoundaries:
             assert got == case.boundary
 
     def test_the_divergences_are_exactly_task_0_10s_seven(self) -> None:
-        ids = {case.case_id for case in HELD_OUT_CASES}
-        assert set(_PREDICTED_BOUNDARY_DIVERGENCES) <= ids
-        assert len(_PREDICTED_BOUNDARY_DIVERGENCES) == 7
+        assert misfiled(_PREDICTED_BOUNDARY_DIVERGENCES_BY_SET) == []
+        counts = {
+            name: len(cases) for name, cases in _PREDICTED_BOUNDARY_DIVERGENCES_BY_SET.items()
+        }
+        assert counts == {"heldout": 7, "heldout-2": 0}
 
     @pytest.mark.parametrize("case", HELD_OUT_CASES, ids=_case_id)
     def test_a_boundary_is_always_a_spoken_segment(

@@ -23,7 +23,7 @@ from typing import get_args
 import pytest
 from pydantic import ValidationError
 
-from fixtures.heldout_transcripts import HELD_OUT_CASES, HeldOutCase
+from fixtures.heldout_transcripts import HELD_OUT_CASES, HeldOutCase, by_case, misfiled
 from scribe_desktop import note as note_module
 from scribe_desktop.logging_setup import PayloadTripwireFilter, dropped_record_count
 from scribe_desktop.note import (
@@ -2936,18 +2936,30 @@ class TestBoundedCarry:
         else:
             assert got == case.corrections, case.case_id
 
-    def test_every_predicted_correction_divergence_is_a_held_out_case(self) -> None:
-        assert set(_PREDICTED_CORRECTION_DIVERGENCES) <= {c.case_id for c in HELD_OUT_CASES}
+    def test_every_predicted_correction_divergence_is_a_case_of_its_set(self) -> None:
+        assert misfiled(_PREDICTED_CORRECTION_DIVERGENCES_BY_SET) == []
+        counts = {
+            name: len(cases) for name, cases in _PREDICTED_CORRECTION_DIVERGENCES_BY_SET.items()
+        }
+        assert counts == {"heldout": 2, "heldout-2": 0}
 
 
 _VALIDATION_CONFIG_DIR = Path(__file__).resolve().parents[2] / "validation" / "config"
 
 # Task 0.10's predicted correction divergences under the frozen markers (C3):
-# case id -> (the case's expected corrections, the frozen-marker result).
-_PREDICTED_CORRECTION_DIVERGENCES: dict[str, tuple[tuple[int, ...], tuple[int, ...]]] = {
-    "hld-16": ((2,), ()),  # its opener is not a frozen marker
-    "hld-18": ((2,), ()),  # its opener is not a frozen marker
+# held-out set -> case id -> (the case's expected corrections, the
+# frozen-marker result). Keyed per set since validation-run6 Task 0.11;
+# ``heldout-2``'s entries are written by its Task 0.12.
+_PREDICTED_CORRECTION_DIVERGENCES_BY_SET: dict[
+    str, dict[str, tuple[tuple[int, ...], tuple[int, ...]]]
+] = {
+    "heldout": {
+        "hld-16": ((2,), ()),  # its opener is not a frozen marker
+        "hld-18": ((2,), ()),  # its opener is not a frozen marker
+    },
+    "heldout-2": {},
 }
+_PREDICTED_CORRECTION_DIVERGENCES = by_case(_PREDICTED_CORRECTION_DIVERGENCES_BY_SET)
 
 
 def _held_out_corrections(case: HeldOutCase) -> tuple[int, ...]:

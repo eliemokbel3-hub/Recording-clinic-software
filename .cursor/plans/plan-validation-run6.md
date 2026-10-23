@@ -299,6 +299,8 @@ See the Planning Extraction Summary (the canonical list).
 - `[2026-10-23]` Task 0.9 built (record on the task): `HEDGE_PHRASES` 33, `REFERENCE_HEDGES` 52, the builder moved, the R3 tables, `hld-19` reconciled; uncommitted. Reviewed; codex peer pass rounds 11–15 CONVERGED (6 LOW fixed); /simplify round 16 (1 LOW applied). The practitioner kept all three risky phrases and gave the word to commit (2026-10-23); committed. Next: 0.14.
 - `[2026-10-23]` Task 0.14 built (record on the task): the harness enrols each synthetic clinician voice from `<set>/enrolment/slot-<n>.wav` and confirms it by the label track; `--attribution clustering` keeps runs 1–5's reading; uncommitted. Codex peer pass rounds 17–21 CONVERGED; /simplify round 22 clean. **Two practitioner words owed:** commit Task 0.14; and PR-LOW-016's deferral to Phase 3 (pre-existing report cells). Next after the commit: 0.11.
 - `[2026-10-23]` The practitioner gave both words: Task 0.14 committed and pushed; PR-LOW-016 deferred to the report work (Task 4.3 in this plan's numbering). Next: 0.11.
+- `[2026-10-23]` Task 0.11 built (record on the task): the held-out fixtures and lints run over a set table, `heldout-2` (`h2-`) unwritten until Task 0.12 (`cases_written=False`: lints only); uncommitted. Codex peer pass round 23 converged with no findings. **Practitioner word owed:** commit Task 0.11. Next after the commit: 0.10 (`heldout-2` by an independent author).
+- `[2026-10-23]` The practitioner gave the word: Task 0.11 committed and pushed. Next: 0.10.
 
 ## Review History
 - 2026-10-22 `/review-plan` (Opus 5.5): Plan-subagent design critique + Explore subagent + coverage, practicality, risk and simplicity lenses, every finding checked against `0be35d7` / `4ff5f26`. Plan-scoped; no code reviewed. Step 3.5 gate: missed-speech warning Include in plan; chooser mark Include in plan; ui-refresh at its merge; larger model Excluded.
@@ -310,6 +312,7 @@ See the Planning Extraction Summary (the canonical list).
 - 2026-10-23 `/simplify` (Claude Code, Opus 5.5) over Task 0.9's diff before its commit: Round 16, 1 LOW (SIMP-001, test-only) Fix-now.
 - 2026-10-23 `/peer-loop` code pass over Task 0.14's diff (codex `gpt-6-astra` high, read-only, cap 5; composer Opus 5.5): Round 17 3 LOW (verified, fixed); Round 18 2 LOW (PR-LOW-017 fixed; PR-LOW-016 pre-existing, deferred to Task 4.3 — practitioner-confirmed 2026-10-23); Round 19 1 LOW (fixed, docs); Round 20 2 LOW (fixed, docs); Round 21 0 — converged.
 - 2026-10-23 `/simplify` (Claude Code, Opus 5.5) over Task 0.14's production diff before its commit: Round 22, no findings.
+- 2026-10-23 `/peer-loop` code pass over Task 0.11's test-only diff (codex `gpt-6-astra` high, read-only, cap 5; composer Opus 5.5): Round 23 0 — converged.
 
 ## Review Findings Log
 ### Round 1 — 2026-10-22
@@ -885,6 +888,16 @@ No findings.
 
 **Summary:** no simplifications worth a maintainer's attention.
 
+### Round 23 — 2026-10-23
+
+Source: Codex peer-review (gpt-6-astra high; code review of Task 0.11's uncommitted diff)
+
+No findings
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 0 LOW
+
+Round 23 disposition (composer, 2026-10-23): no findings — the code pass over Task 0.11's test-only diff converged in its first round. The peer's read-only probes (ids and counts only): the 32 existing cases keep their order; the set table reads `heldout` written with 32 cases and `heldout-2` unwritten with none; `misfiled` names a case filed under both sets, an id that is no case, and an edge case filed under `heldout-2`; `script_path` resolves each set's folder. No `/simplify` round: the diff is tests only.
+
 ## Tasks
 
 ### Phase 0 — Budget, measurement, decisions, freeze, predictions
@@ -959,11 +972,12 @@ No findings.
   - Docs: `docs/testing/validation-harness.md` — step 1 (the builder's `enrolment/` output), the declared policy "Clinician speaker" rewritten, a "Metric amendment 2026-10-23" paragraph in the amendments' form (what changed, what it overrides, why it is not masking, the pins), the refusal list and the new column under "What each number means"; flow 26 of `docs/security/data-flow-map.md` (the enrolment vector in memory only) and the threat model's harness residues.
   - Done when: suite green; a one-encounter fake set exercised both ways in the tests; committed with the date before 0.11.
   - **Record (2026-10-23).** Built, uncommitted (10 files: `validation.py`, `validation_set.py`, `test_validation_harness.py`, `test_validation_set.py`, `test_shadow_exits.py` — the one `_WRITER_REFERENCES` pin for `build_enrolments`, a deliberate pin change — `docs/testing/validation-harness.md`, `scripts/README.md`, flow 26 of `docs/security/data-flow-map.md`, the threat model's "The pilot" residue (7), and this plan). The report has 27 columns; the clustering path is pinned against the report `c5f3179` rendered for the same fake inputs (`_CLUSTERING_BASELINE_C5F3179`). Codex peer pass rounds 17–21 CONVERGED (8 LOW: 7 fixed; PR-LOW-016 — unmeasured legacy report cells shown as zero — is PRE-EXISTING at `c5f3179`, not in this diff, and its deferral was confirmed by the practitioner 2026-10-23, recorded on Task 4.3); /simplify round 22 no findings. Suite: 8032 passed, 9 skipped, run twice — the second after round 18's test edit and round 19's wording (only round 20's docstring and documentation wording came after); ruff and mypy clean on the final tree. Committed 2026-10-23 on the practitioner's word ("commit and push").
-- [ ] 🟥 **0.11 Fixtures and lints over a set table (before the set exists)**
+- [x] 🟩 **0.11 Fixtures and lints over a set table (before the set exists)**
   - `fixtures/heldout_transcripts.py`: `HELDOUT_DIR` :62 and `SCRIPT_CASE_PREFIX` :63 → a per-set table `(folder, prefix, cases)`; `HELD_OUT_CASES` concatenates the sets; a set whose folder is absent contributes nothing (so the suite is green before 0.10).
   - `test_validation_scripts.py`: `HELDOUT` :62 and :464, the prefix asserts :354 / :386 / :388, `TestHeldOutScripts` and `TestHeldOutTranscripts` parameterised over the table; the lints :329-348 run per set.
   - The divergence dicts keyed per set with their count pins (`test_consultation_boundary.py:103` / :354, `test_note.py:~2947`, `test_note_check.py:~2242`); `heldout-2`'s entries are EMPTY here and written in 0.12.
   - Done when: the suite is green with the second folder absent, and green with an empty `validation/heldout-2/` folder present.
+  - **Record (2026-10-23).** Built, uncommitted (5 test files: `fixtures/heldout_transcripts.py`, `test_validation_scripts.py`, `test_consultation_boundary.py`, `test_note.py`, `test_note_check.py`). As built: `HELDOUT_DIR` / `SCRIPT_CASE_PREFIX` became `HELD_OUT_SETS` (a `HeldOutSet` per folder: name, prefix, cases, edge cases, `cases_written`) and `SCRIPT_CASE_PREFIXES`; `script_path` finds a case's script by its prefix; the divergence dicts are `_PREDICTED_*_DIVERGENCES_BY_SET`, flattened by `by_case`, each count test asserting `misfiled(...) == []` (a missing or extra set, a case filed under a set that does not hold it — pinned both ways) and per-set counts (`heldout-2` 0). `HELD_OUT_CASES` keeps its order, so the documents' pins are unchanged. Interpretation, recorded here: `heldout-2` carries `cases_written=False` until Task 0.12 — while it is False the set holds no case, its scripts get the script lints only (Task 0.10's lint step), and they are left out of the R3 tables' axis scripts (C12: nothing but the lints reads them before 0.12); Task 0.12 flips it with the `h2-NN` cases, and from then the one-case-per-script test requires a case for every script. Checked: the five files with `heldout-2` absent, 1106 passed; with an empty `validation/heldout-2/` present, 1106 passed; a rehearsal with `heldout`'s 22 scripts copied in under `h2-` ids and no cases, green (44 more lint items); a rehearsal with one misnamed `hld-` script in `heldout-2`, the id test failed as intended (each rehearsal folder removed after). Full suite: 8041 passed, 9 skipped (run before the `misfiled` both-ways test was added; that test passes on its own); ruff and mypy clean. Codex peer pass round 23: no findings, converged. Committed 2026-10-23 on the practitioner's word ("commit and push").
 - [ ] 🟥 **0.10 `validation/heldout-2/` by an independent author (C12)**
   - A fresh author session in an EMPTY folder outside the repository, given ONLY a behaviour spec (written by the composer, committed with the set) and one format example: uncued clinician lines (advice, plans, safety-netting) and uncued patient lines; varied greetings and closings with negatives ("morning stiffness"); hedges and non-hedges, clinician hedges included; self-corrections; a dose read aloud; a quiet trailing clause; the lint rules in plain words (every uncertain clause routed; no line that is an autofill trigger; synthetic conditions). Same script format as `validation/heldout`; ids `h2-NN`; 20–25 scripts.
   - `[2026-10-23]` The format example puts the clinician on voice slot 0 and the spec says so (D11: the builder enrols each clinician slot the set uses; slot 0 keeps `heldout-2` on the baseline's first voice).
