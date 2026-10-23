@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h2-15",
+  "appointment_type": "chronic",
+  "axes": ["laterality", "numbers", "uncertain", "contradictory", "rate"],
+  "lines": [
+    {"role": "clinician", "text": "How have things been since last time?"},
+    {"role": "patient", "text": "Since last time the pain's spread into my left buttock, if I'm remembering right."},
+    {"role": "patient", "text": "Actually, I also wanted to ask about my sleep, I'm only getting about four hours a night."},
+    {"role": "clinician", "text": "Any tingling down that leg?"},
+    {"role": "patient", "text": "No doubt about it, there's tingling in my big toe most days."},
+    {"role": "clinician", "text": "Let me have a look. Lifting your left leg straight brings on the buttock pain at about 50 degrees."},
+    {"role": "clinician", "text": "The muscles on the left side of your back are pretty tight."},
+    {"role": "clinician", "text": "It might be a nerve being irritated at the bottom of the spine, though I'm fairly confident it's nothing serious."},
+    {"role": "clinician", "text": "Lie on your back, bring both knees to your chest and rock gently side to side for a minute, morning and night."},
+    {"role": "clinician", "text": "If you lose feeling between your legs or can't pass water, go straight to A and E."},
+    {"role": "patient", "text": "I'm sure that won't happen, but I'll keep an eye on it."},
+    {"role": "clinician", "text": "Good. Let's see you next week."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["spread", "into", "my", "left", "buttock"], "line": 1, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["only", "getting", "about", "four", "hours", "a", "night"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["tingling", "in", "my", "big", "toe", "most", "days"], "line": 4, "material": true},
+    {"kind": "laterality", "tokens": ["lifting", "your", "left", "leg", "straight"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["at", "about", "50", "degrees"], "line": 5, "material": true},
+    {"kind": "laterality", "tokens": ["left", "side", "of", "your", "back"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["nerve", "being", "irritated", "at", "the", "bottom", "of", "the", "spine"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["bring", "both", "knees", "to", "your", "chest"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["can't", "pass", "water"], "line": 9, "material": true},
+    {"kind": "present", "tokens": ["go", "straight", "to", "a", "and", "e"], "line": 9, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}, "rate": 3}
+}

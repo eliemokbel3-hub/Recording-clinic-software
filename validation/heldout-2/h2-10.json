@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h2-10",
+  "appointment_type": "chronic",
+  "axes": ["laterality", "numbers", "uncertain", "noise", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Hello again, how's the hip?"},
+    {"role": "patient", "text": "Since last time the ache in my right groin wakes me twice a night, though I lose count."},
+    {"role": "receptionist", "text": "Sorry to barge in, your three o'clock has phoned to say she's stuck in traffic."},
+    {"role": "clinician", "text": "Thanks, Jo, tell her there's no rush."},
+    {"role": "clinician", "text": "Where were we. Let me have a look at you lying down. Turning the hip inwards is limited and brings on the groin pain."},
+    {"role": "patient", "text": "I definitely don't get any numbness down the leg, I'm positive about that."},
+    {"role": "clinician", "text": "It's likely early arthritis in the hip, I'd say, though an X-ray would tell us for sure."},
+    {"role": "clinician", "text": "I'd like you to see a GP about an X-ray and some stronger pain relief."},
+    {"role": "clinician", "text": "Cycling on the exercise bike is good for it, fifteen minutes a day on low resistance."},
+    {"role": "patient", "text": "Okay. I can do that."},
+    {"role": "clinician", "text": "Great, see you next week."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["my", "right", "groin"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["wakes", "me", "twice", "a", "night"], "line": 1, "material": true, "expect_uncertain": true},
+    {"kind": "absent", "tokens": ["stuck", "in", "traffic"], "line": 2, "material": false},
+    {"kind": "present", "tokens": ["turning", "the", "hip", "inwards", "is", "limited"], "line": 4, "material": true},
+    {"kind": "negation", "tokens": ["don't", "get", "any", "numbness", "down", "the", "leg"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["early", "arthritis", "in", "the", "hip"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["see", "a", "gp"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["some", "stronger", "pain", "relief"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["fifteen", "minutes", "a", "day", "on", "low", "resistance"], "line": 8, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "receptionist": 1}, "snr_db": 15}
+}

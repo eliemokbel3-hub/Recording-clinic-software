@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h2-11",
+  "appointment_type": "initial",
+  "axes": ["laterality", "numbers", "contradictory", "small_talk", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "So what are you coming in with?"},
+    {"role": "patient", "text": "My left wrist, I fell off my bike two weeks ago."},
+    {"role": "patient", "text": "Sorry, three weeks ago, it was the bank holiday."},
+    {"role": "clinician", "text": "Did you have it X-rayed?"},
+    {"role": "patient", "text": "Yeah, at the hospital, nothing broken."},
+    {"role": "clinician", "text": "Let me have a look. It's swollen over the back of the wrist and bending it back is reduced range compared with the right."},
+    {"role": "clinician", "text": "I think you have a sprain of the wrist ligaments, it should settle in six to eight weeks."},
+    {"role": "clinician", "text": "For pain, paracetamol 500 milligrams, two tablets four times a day, is fine."},
+    {"role": "clinician", "text": "Make a fist and spread your fingers wide, ten times, every hour or so."},
+    {"role": "clinician", "text": "No lifting anything heavy with that hand for now."},
+    {"role": "clinician", "text": "Right, see you next week. Mind how you go."},
+    {"role": "patient", "text": "Thanks, bye."},
+    {"role": "clinician", "text": "Daniel? Hello, come on in. Did you find a parking space alright?"},
+    {"role": "next_patient", "text": "Eventually, round the back. Anyway, my neck's been stiff since I started working from home."},
+    {"role": "clinician", "text": "Okay, let's start from the beginning then."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["my", "left", "wrist"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["fell", "off", "my", "bike"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["two", "weeks", "ago"], "line": 1, "material": false},
+    {"kind": "present", "tokens": ["three", "weeks", "ago"], "line": 2, "material": true},
+    {"kind": "negation", "tokens": ["nothing", "broken"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["swollen", "over", "the", "back", "of", "the", "wrist"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["sprain", "of", "the", "wrist", "ligaments"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["six", "to", "eight", "weeks"], "line": 6, "material": false},
+    {"kind": "dose", "tokens": ["paracetamol", "500", "milligrams", "two", "tablets", "four", "times", "a", "day"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["make", "a", "fist", "and", "spread", "your", "fingers", "wide"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["no", "lifting", "anything", "heavy"], "line": 9, "material": true},
+    {"kind": "absent", "tokens": ["round", "the", "back"], "line": 13, "material": false},
+    {"kind": "absent", "tokens": ["my", "neck's", "been", "stiff"], "line": 13, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

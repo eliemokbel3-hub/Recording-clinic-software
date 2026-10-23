@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h2-19",
+  "appointment_type": "post_operative",
+  "axes": ["laterality", "numbers", "contradictory"],
+  "lines": [
+    {"role": "clinician", "text": "Eight weeks since they plated the ankle, how's the walking?"},
+    {"role": "patient", "text": "Better, I'm off the crutches indoors, but outside I still use one."},
+    {"role": "clinician", "text": "Let me have a look. Your left ankle bends up to about 10 degrees."},
+    {"role": "clinician", "text": "Um, sorry, I mean your right ankle, I've been staring at the wrong notes."},
+    {"role": "clinician", "text": "Stand facing the wall and lunge your knee towards it, keeping the heel down, ten times, a few sessions a day."},
+    {"role": "clinician", "text": "If the scar gets hot or starts weeping, ring the fracture clinic that same day."},
+    {"role": "clinician", "text": "See you next week."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["off", "the", "crutches", "indoors"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["outside", "i", "still", "use", "one"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["bends", "up", "to", "about", "10", "degrees"], "line": 2, "material": true},
+    {"kind": "laterality", "tokens": ["your", "right", "ankle"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["lunge", "your", "knee", "towards", "it"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["keeping", "the", "heel", "down"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["scar", "gets", "hot"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["ring", "the", "fracture", "clinic"], "line": 5, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h2-21",
+  "appointment_type": "chronic",
+  "axes": ["laterality", "numbers", "uncertain", "small_talk", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Good afternoon, how are the knees treating you?"},
+    {"role": "patient", "text": "It's the right knee that's bad, the left only grumbles in the cold."},
+    {"role": "patient", "text": "Every evening it throbs, after I've walked the dog."},
+    {"role": "clinician", "text": "And first thing?"},
+    {"role": "patient", "text": "Since last time the morning stiffness lasts about twenty minutes, hard to say exactly."},
+    {"role": "clinician", "text": "Let me have a look. There's some creaking under the kneecap and a little fluid, but it's stable."},
+    {"role": "clinician", "text": "I think you have wear and tear in the knee, arthritis, and the best medicine for it is strengthening."},
+    {"role": "clinician", "text": "You can use ibuprofen gel 5 percent, rubbed in three times a day, it's gentler on the stomach than tablets."},
+    {"role": "clinician", "text": "Sit on a chair, straighten the knee and hold it for five seconds, ten times on each leg, twice a day."},
+    {"role": "patient", "text": "And the hydrotherapy, will I get that?"},
+    {"role": "clinician", "text": "Possibly, I'd have to check the waiting list, it's long at the moment."},
+    {"role": "patient", "text": "Oh, and good morning from my husband, he says hello, he's waiting in the car."},
+    {"role": "clinician", "text": "Ha, tell him hello back. See you in four weeks."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["the", "right", "knee", "that's", "bad"], "line": 1, "material": true},
+    {"kind": "laterality", "tokens": ["the", "left", "only", "grumbles"], "line": 1, "material": false},
+    {"kind": "present", "tokens": ["every", "evening", "it", "throbs"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["after", "i've", "walked", "the", "dog"], "line": 2, "material": false},
+    {"kind": "present", "tokens": ["lasts", "about", "twenty", "minutes"], "line": 4, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["creaking", "under", "the", "kneecap"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["a", "little", "fluid"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["wear", "and", "tear", "in", "the", "knee"], "line": 6, "material": true},
+    {"kind": "dose", "tokens": ["ibuprofen", "gel", "5", "percent", "rubbed", "in", "three", "times", "a", "day"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["straighten", "the", "knee", "and", "hold", "it", "for", "five", "seconds"], "line": 8, "material": true},
+    {"kind": "absent", "tokens": ["he's", "waiting", "in", "the", "car"], "line": 11, "material": false},
+    {"kind": "present", "tokens": ["see", "you", "in", "four", "weeks"], "line": 12, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

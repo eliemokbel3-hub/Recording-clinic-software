@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h2-08",
+  "appointment_type": "follow_up",
+  "axes": ["laterality", "numbers", "contradictory", "uncertain"],
+  "lines": [
+    {"role": "clinician", "text": "How's the elbow been from last time, any better?"},
+    {"role": "patient", "text": "From last time I'd say it's about a four out of ten now."},
+    {"role": "patient", "text": "Er, no, more like a six, it was a four on the good days."},
+    {"role": "clinician", "text": "Okay, and is it still worse lifting the kettle?"},
+    {"role": "patient", "text": "The kettle's fine now, it's gripping the steering wheel that sets it off, on the right."},
+    {"role": "clinician", "text": "Let me have a look. Pushing your wrist back against me still brings the pain on, at the outer elbow."},
+    {"role": "clinician", "text": "I'd like to do some acupuncture with fine needles today, if you're happy with that."},
+    {"role": "patient", "text": "Yeah, go for it. It was 2019 when I had needles for my back, don't quote me on that."},
+    {"role": "clinician", "text": "Squeeze a soft ball for a slow count of five, twenty times, morning and evening."},
+    {"role": "clinician", "text": "See you next week."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["about", "a", "four", "out", "of", "ten"], "line": 1, "material": false},
+    {"kind": "present", "tokens": ["more", "like", "a", "six"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["gripping", "the", "steering", "wheel"], "line": 4, "material": true},
+    {"kind": "laterality", "tokens": ["on", "the", "right"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["still", "brings", "the", "pain", "on"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["at", "the", "outer", "elbow"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["acupuncture", "with", "fine", "needles"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["2019", "when", "i", "had", "needles", "for", "my", "back"], "line": 7, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["slow", "count", "of", "five"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["twenty", "times"], "line": 8, "material": false},
+    {"kind": "present", "tokens": ["morning", "and", "evening"], "line": 8, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

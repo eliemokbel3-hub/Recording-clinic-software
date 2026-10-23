@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h2-09",
+  "appointment_type": "acute",
+  "axes": ["numbers", "negation", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Hi, what's been going on?"},
+    {"role": "patient", "text": "I'm coming in with my back, it went yesterday when I was hoovering the stairs."},
+    {"role": "clinician", "text": "Any tingling or pins and needles down your legs?"},
+    {"role": "patient", "text": "None at all, it's just across the middle."},
+    {"role": "patient", "text": "Sitting is the worst, I can't sit through a whole episode of anything."},
+    {"role": "clinician", "text": "Let me have a look. Bending back is fine but bending forward brings your pain on."},
+    {"role": "clinician", "text": "Your GP gave you naproxen, so keep taking naproxen 500 milligrams twice a day with food, as they prescribed."},
+    {"role": "clinician", "text": "Change position every half an hour, even just standing up for a minute."},
+    {"role": "clinician", "text": "Lovely. See you Thursday."},
+    {"role": "clinician", "text": "Next one? Come on in."},
+    {"role": "next_patient", "text": "Hi. My knee's been swelling up after football."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["went", "yesterday"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["when", "i", "was", "hoovering", "the", "stairs"], "line": 1, "material": false},
+    {"kind": "negation", "tokens": ["none", "at", "all"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["just", "across", "the", "middle"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["sitting", "is", "the", "worst"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["bending", "forward", "brings", "your", "pain", "on"], "line": 5, "material": true},
+    {"kind": "dose", "tokens": ["naproxen", "500", "milligrams", "twice", "a", "day", "with", "food"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["change", "position", "every", "half", "an", "hour"], "line": 7, "material": true},
+    {"kind": "absent", "tokens": ["my", "knee's", "been", "swelling", "up"], "line": 10, "material": true},
+    {"kind": "absent", "tokens": ["after", "football"], "line": 10, "material": false}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

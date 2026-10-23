@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h2-14",
+  "appointment_type": "acute",
+  "axes": ["laterality", "numbers", "small_talk", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "So, you've pulled something in your leg?"},
+    {"role": "patient", "text": "Back of my right thigh, sprinting for a bus on Friday."},
+    {"role": "patient", "text": "I felt a pop, and it bruised the next day, all the way down to the knee."},
+    {"role": "clinician", "text": "Let me have a look. Straight leg raise is about half the other side, and it's sore when you push your heel back into my hand."},
+    {"role": "clinician", "text": "I think you have a moderate hamstring strain, so no running for at least three weeks."},
+    {"role": "clinician", "text": "Lie on your back with your heel on a chair and lift your bottom off the floor, ten slow lifts, twice a day."},
+    {"role": "patient", "text": "Is that all? I thought you'd give me something harder."},
+    {"role": "clinician", "text": "That's plenty for now, honestly. Right, cheerio, see you in a fortnight, mind the stairs on the way out."},
+    {"role": "clinician", "text": "Mrs Kowalski, hello there, lovely weather, isn't it?"},
+    {"role": "next_patient", "text": "Hello! Gorgeous, isn't it. I hope you can help, my wrist has been clicking and aching since I took up knitting."},
+    {"role": "clinician", "text": "Ah, a knitter! Let's hear all about it."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["back", "of", "my", "right", "thigh"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["sprinting", "for", "a", "bus"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["felt", "a", "pop"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["all", "the", "way", "down", "to", "the", "knee"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["straight", "leg", "raise", "is", "about", "half", "the", "other", "side"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["moderate", "hamstring", "strain"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["no", "running", "for", "at", "least", "three", "weeks"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["lift", "your", "bottom", "off", "the", "floor"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["see", "you", "in", "a", "fortnight"], "line": 7, "material": false},
+    {"kind": "absent", "tokens": ["lovely", "weather"], "line": 8, "material": false},
+    {"kind": "absent", "tokens": ["my", "wrist", "has", "been", "clicking", "and", "aching"], "line": 9, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}
