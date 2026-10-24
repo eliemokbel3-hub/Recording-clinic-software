@@ -309,8 +309,11 @@ NOTE_WARNING_SEVERITY: Final[Mapping[str, NoteWarningSeverity]] = {
     "suspect_source": "review",
     # Validation-pass plan D7 (decision 0.1 (a)): ONE per quoted line spoken by
     # someone other than the confirmed clinician that holds a spoken hedge
-    # (``note_check.HEDGE_PHRASES``), from the same ``line_marks`` rule. It
-    # marks its line as the two above do, but "Acknowledge all" clears it.
+    # (``note_check.HEDGE_PHRASES``), from the same ``line_marks`` rule —
+    # since validation-run6 plan D5 within the hedge scope
+    # (``quoted_line_marks``: or a same-speaker neighbour joined
+    # mid-sentence). It marks its line as the two above do, but "Acknowledge
+    # all" clears it.
     "hedged_source": "review",
     # Check 2 — structured contradictions (Task 5.2). Three codes because
     # severity is a property of the code: a contradiction resting on
@@ -399,20 +402,24 @@ def check_mark(kind: str) -> str:
     return f"check: {kind}"
 
 
-def text_holds_hedge(text: str) -> bool:
+def text_holds_hedge(text: str, *, phrases: Sequence[str] | None = None) -> bool:
     """True when ``text``'s content tokens — typographic apostrophes folded
     first — hold a spoken hedge (``note_check.HEDGE_PHRASES``, frozen by the
     validation-pass plan's Task 0.8, widened by the validation-run6 plan's
     Task 0.9) as whole tokens in a row. THE one hedge
     test: the line mark reads it through ``words_hold_hedge`` and the
-    validation harness reads it over a script line (D7). Returns a bool; no
-    text leaves it."""
-    # Read here, not imported at the top: ``note_check`` imports this module
-    # (as ``finalise_note`` reads ``check_note``).
-    from scribe_desktop.note_check import HEDGE_PHRASES
+    validation harness reads it over a script line (D7). ``phrases`` replaces
+    the product's list for the harness's reference lexicon only
+    (``validation.REFERENCE_HEDGES``, validation-run6 plan D8's R2); the app
+    never passes it. Returns a bool; no text leaves it."""
+    if phrases is None:
+        # Read here, not imported at the top: ``note_check`` imports this
+        # module (as ``finalise_note`` reads ``check_note``).
+        from scribe_desktop.note_check import HEDGE_PHRASES
 
+        phrases = HEDGE_PHRASES
     tokens = content_tokens(text.replace(_TYPOGRAPHIC_APOSTROPHE, "'"))
-    for phrase in HEDGE_PHRASES:
+    for phrase in phrases:
         wanted = tuple(phrase.split())
         if any(
             tokens[start : start + len(wanted)] == wanted
@@ -422,11 +429,54 @@ def text_holds_hedge(text: str) -> bool:
     return False
 
 
-def words_hold_hedge(words: Sequence[TranscriptWord]) -> bool:
+def words_hold_hedge(
+    words: Sequence[TranscriptWord], *, phrases: Sequence[str] | None = None
+) -> bool:
     """``text_holds_hedge`` over the words the transcription guard did NOT
     mark ``suspect`` (invented-text guard D6: a suspect word supplies no
     phrase; it is skipped, as in ``opens_with_correction``)."""
-    return text_holds_hedge(" ".join(word.word_text for word in words if not word.suspect))
+    return text_holds_hedge(
+        " ".join(word.word_text for word in words if not word.suspect), phrases=phrases
+    )
+
+
+def segment_hedged(
+    document: TranscriptDocument, segment_index: int, *, phrases: Sequence[str] | None = None
+) -> bool:
+    """THE hedge scope (validation-run6 plan D5, decision 0.6 (ii)): True
+    when segment ``segment_index``'s own words hold a spoken hedge
+    (``words_hold_hedge``), or when the segment right before or right after
+    it has the SAME speaker label, holds one, and the EARLIER of the two ends
+    mid-sentence (``ends_mid_sentence``: a trailing comma, semicolon, colon
+    or dash — the recogniser cut one sentence there). "It was about 40 mg,"
+    then "I think." is one hedged sentence, so both segments are hedged.
+
+    Not joined, the named residues: a bare cut (no trailing mark), a full
+    stop, a different speaker label, and any segment in between — a textless
+    one included (the neighbour is the adjacent index, never the nearest
+    segment with words). A hedge split inside itself ("not, I think, sure")
+    stays unlisted. The clinician is NOT excluded here: the line mark's
+    caller does that (``quoted_line_marks``). The validation harness applies
+    the same function to a script's lines (``validation.script_line_hedged``,
+    over ``validation.reference_document``) — one rule, two inputs (C5).
+    ``phrases`` as in ``text_holds_hedge``. Returns a bool; no text leaves
+    it."""
+    segments = document.transcript_segments
+    own = segments[segment_index]
+    if words_hold_hedge(own.transcript_words, phrases=phrases):
+        return True
+    for other in (segment_index - 1, segment_index + 1):
+        if not 0 <= other < len(segments):
+            continue
+        neighbour = segments[other]
+        if neighbour.speaker != own.speaker:
+            continue
+        earlier = segments[min(segment_index, other)]
+        if ends_mid_sentence(earlier.transcript_words) and words_hold_hedge(
+            neighbour.transcript_words, phrases=phrases
+        ):
+            return True
+    return False
 
 
 def line_marks(words: Sequence[TranscriptWord], *, clinician: bool) -> tuple[str, ...]:
@@ -438,9 +488,10 @@ def line_marks(words: Sequence[TranscriptWord], *, clinician: bool) -> tuple[str
     confirmed clinician's (``clinician`` — the caller's
     ``spoken_by_confirmed_clinician`` for the line's segment) and its words
     hold a spoken hedge (``words_hold_hedge``). So a transcript whose only
-    speaker is the confirmed clinician is never marked unsure. THE one rule:
-    Check 1 emits its codes from it and the line editor marks its rows from
-    it (the editor cannot read the warnings). Pure; reads no config."""
+    speaker is the confirmed clinician is never marked unsure. The per-span
+    part of THE one rule: Check 1 and the line editor (which cannot read the
+    warnings) both read it through ``quoted_line_marks``, which adds the
+    hedge scope (validation-run6 plan D5). Pure; reads no config."""
     kinds: list[str] = []
     if any(is_number_token(word.word_text) for word in words):
         kinds.append(NUMBER_LINE_MARK)
@@ -449,6 +500,28 @@ def line_marks(words: Sequence[TranscriptWord], *, clinician: bool) -> tuple[str
     if not clinician and words_hold_hedge(words):
         kinds.append(UNSURE_LINE_MARK)
     return tuple(kinds)
+
+
+def quoted_line_marks(
+    document: TranscriptDocument,
+    segment_index: int,
+    words: Sequence[TranscriptWord],
+    *,
+    clinician: bool,
+) -> tuple[str, ...]:
+    """The line-mark kinds a quoted line earns in its transcript: the
+    per-span ``line_marks`` of ``words`` (the line's words in segment
+    ``segment_index``), with ``UNSURE_LINE_MARK`` also earned through the
+    hedge scope (validation-run6 plan D5): when the line is not the
+    confirmed clinician's and its segment is hedged (``segment_hedged`` —
+    its own words, or a same-speaker neighbour joined mid-sentence). THE one
+    rule for a quoted line: Check 1 emits its codes from it and the line
+    editor marks its rows from it, so the two always agree. Unsure stays
+    last, in ``LINE_MARK_CODES`` order. Pure; reads no config."""
+    kinds = line_marks(words, clinician=clinician)
+    if not clinician and UNSURE_LINE_MARK not in kinds and segment_hedged(document, segment_index):
+        kinds = (*kinds, UNSURE_LINE_MARK)
+    return kinds
 
 
 class SourceCoords(NamedTuple):
@@ -3090,11 +3163,13 @@ __all__ = [
     "opens_with_correction",
     "provenance_label",
     "provider_assertion_id",
+    "quoted_line_marks",
     "reconstruct_span_text",
     "render_note",
     "section_admits_utterance",
     "section_input_digest",
     "section_marks_line",
+    "segment_hedged",
     "speaker_role",
     "spoken_by_confirmed_clinician",
     "strip_token_punctuation",

@@ -74,8 +74,10 @@ from scribe_desktop.note import (
     normalise_token,
     opens_with_correction,
     provider_assertion_id,
+    quoted_line_marks,
     reconstruct_span_text,
     section_admits_utterance,
+    segment_hedged,
     speaker_role,
     spoken_by_confirmed_clinician,
     text_digest,
@@ -2640,6 +2642,155 @@ class TestEndsMidSentence:
         assert ends_mid_sentence((*_words("sore,"), blank))
         assert not ends_mid_sentence((blank,))
         assert not ends_mid_sentence(())
+
+
+def _hedged_segments(*texts: tuple[str, str]) -> list[int]:
+    """The indices ``segment_hedged`` holds for, over one document."""
+    document = _document(texts=texts)
+    return [
+        index
+        for index in range(len(document.transcript_segments))
+        if segment_hedged(document, index)
+    ]
+
+
+class TestSegmentHedged:
+    """Validation-run6 plan D5 (decision 0.6 (ii)): a segment is hedged by its
+    own words, or by a same-speaker neighbour when the EARLIER of the two ends
+    mid-sentence (``ends_mid_sentence``). Every case is three segments, so a
+    neighbour on each side is tried."""
+
+    @pytest.mark.parametrize("mark", [",", ";", ":", " –", " —"])
+    def test_a_hedge_in_the_next_segment_joined_mid_sentence(self, mark: str) -> None:
+        assert _hedged_segments(
+            (f"It was about forty{mark}", SPEAKER_1),
+            ("I think.", SPEAKER_1),
+            ("Okay.", SPEAKER_2),
+        ) == [0, 1]
+
+    def test_a_hedge_in_the_previous_segment_joined_mid_sentence(self) -> None:
+        assert _hedged_segments(
+            ("Okay.", SPEAKER_2),
+            ("I think,", SPEAKER_1),
+            ("it was the left one.", SPEAKER_1),
+        ) == [1, 2]
+
+    @pytest.mark.parametrize("cut", [".", "", "?", "!", " -"])
+    def test_a_full_stop_a_bare_cut_or_a_hyphen_does_not_join(self, cut: str) -> None:
+        assert _hedged_segments(
+            (f"It was about forty{cut}", SPEAKER_1),
+            ("I think.", SPEAKER_1),
+            ("It eased by Friday.", SPEAKER_1),
+        ) == [1]
+
+    def test_only_the_earlier_segments_mark_joins(self) -> None:
+        """The later segment's own trailing comma joins it to what FOLLOWS,
+        never back to what came before."""
+        assert _hedged_segments(
+            ("I think.", SPEAKER_1),
+            ("It was about forty,", SPEAKER_1),
+            ("Okay.", SPEAKER_2),
+        ) == [0]
+
+    def test_another_speaker_never_joins(self) -> None:
+        assert _hedged_segments(
+            ("It was about forty,", SPEAKER_1),
+            ("I think.", SPEAKER_2),
+            ("Okay.", SPEAKER_1),
+        ) == [1]
+
+    def test_a_segment_in_between_breaks_the_join(self) -> None:
+        """The neighbour is the adjacent segment only: a hedge two segments
+        away is not joined, a textless segment between included (the named
+        residue)."""
+        assert _hedged_segments(
+            ("It was about forty,", SPEAKER_1),
+            ("and it hurt,", SPEAKER_1),
+            ("I think.", SPEAKER_1),
+        ) == [1, 2]
+        assert _hedged_segments(
+            ("It was about forty,", SPEAKER_1),
+            ("", SPEAKER_1),
+            ("I think.", SPEAKER_1),
+        ) == [2]
+
+    def test_a_hedge_spoken_in_the_segment_itself_needs_no_neighbour(self) -> None:
+        assert _hedged_segments(
+            ("Okay.", SPEAKER_2),
+            ("Maybe it was Monday.", SPEAKER_1),
+            ("Okay.", SPEAKER_2),
+        ) == [1]
+
+    def test_a_suspect_hedge_supplies_nothing(self) -> None:
+        document = _document(
+            texts=(("It was about forty,", SPEAKER_1), ("I think.", SPEAKER_1))
+        )
+        hedge = document.transcript_segments[1]
+        guarded = document.model_copy(
+            update={
+                "transcript_segments": (
+                    document.transcript_segments[0],
+                    hedge.model_copy(
+                        update={
+                            "transcript_words": tuple(
+                                word.model_copy(update={"suspect": True})
+                                for word in hedge.transcript_words
+                            )
+                        }
+                    ),
+                )
+            }
+        )
+        assert segment_hedged(document, 0)
+        assert not segment_hedged(guarded, 0)
+        assert not segment_hedged(guarded, 1)
+
+    def test_phrases_replace_the_products_list(self) -> None:
+        """The harness's reference lexicon (D8's R2) goes through the same
+        scope: a phrase outside the product's list hedges only when passed."""
+        document = _document(
+            texts=(("It was about forty,", SPEAKER_1), ("it might be.", SPEAKER_1))
+        )
+        assert not segment_hedged(document, 0)
+        assert segment_hedged(document, 0, phrases=("might",))
+        assert segment_hedged(document, 1, phrases=("might",))
+        assert not segment_hedged(document, 0, phrases=("probably",))
+
+
+class TestQuotedLineMarks:
+    """Validation-run6 plan D5: a quoted line's marks are ``line_marks`` of
+    its words plus ``unsure`` through the hedge scope — never for the
+    confirmed clinician's line, always last, never twice."""
+
+    def test_the_scope_adds_unsure_to_a_joined_line(self) -> None:
+        document = _document(
+            texts=(("It was 40 mg,", SPEAKER_1), ("I think.", SPEAKER_1))
+        )
+        first = document.transcript_segments[0].transcript_words
+        assert quoted_line_marks(document, 0, first, clinician=False) == ("number", "unsure")
+        assert quoted_line_marks(document, 0, first, clinician=True) == ("number",)
+
+    def test_a_line_hedged_in_its_own_words_is_marked_once(self) -> None:
+        document = _document(
+            texts=(("I think it is maybe sore,", SPEAKER_1), ("probably.", SPEAKER_1))
+        )
+        words = document.transcript_segments[0].transcript_words
+        assert quoted_line_marks(document, 0, words, clinician=False) == ("unsure",)
+
+    def test_an_unjoined_line_keeps_line_marks(self) -> None:
+        document = _document(
+            texts=(("It was 40 mg.", SPEAKER_1), ("I think.", SPEAKER_1))
+        )
+        first = document.transcript_segments[0].transcript_words
+        assert quoted_line_marks(document, 0, first, clinician=False) == ("number",)
+
+    def test_a_partly_quoted_line_is_judged_by_its_segment(self) -> None:
+        """The scope is a SEGMENT's: a span that leaves the hedge words out
+        of its own segment is still marked (the one rule the harness credits
+        by)."""
+        document = _document(texts=(("I think the knee is sore.", SPEAKER_1),))
+        words = document.transcript_segments[0].transcript_words
+        assert quoted_line_marks(document, 0, words[2:], clinician=False) == ("unsure",)
 
 
 class TestAnyCueMatches:

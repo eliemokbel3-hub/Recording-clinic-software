@@ -28,6 +28,7 @@ from typing import Any
 
 import pytest
 
+from fixtures.heldout_transcripts import held_out_set
 from scribe_desktop import validation
 from scribe_desktop.note import (
     ConfirmationDecision,
@@ -44,7 +45,9 @@ from scribe_desktop.note import (
     finalise_note,
     normalise_token,
     reconstruct_span_text,
+    segment_hedged,
     text_digest,
+    text_holds_hedge,
 )
 from scribe_desktop.note_check import (
     _LATERALITY_TOKENS,
@@ -1155,6 +1158,26 @@ def _hedge_mark(document: TranscriptDocument, segment: int, aid: str) -> NoteWar
     )
 
 
+def _text_holds(text: str, phrases: Sequence[str] | None) -> bool:
+    return text_holds_hedge(text, phrases=phrases)
+
+
+# The pin's own reading of "ends mid-sentence" over a script line's TEXT
+# (closing quotes and brackets peeled, then a comma, semicolon, colon or an
+# en or em dash) — re-spelled here, so the pin does not read the scope
+# through the function it checks.
+_JOINING_MARKS = ",;:–—"
+_CLOSING = "\"')]}”’»"
+
+
+def _ends_with_a_join(text: str) -> bool:
+    stripped = text.rstrip()
+    if not stripped:
+        return False
+    last_word = stripped.split()[-1].rstrip(_CLOSING)
+    return bool(last_word) and last_word[-1] in _JOINING_MARKS
+
+
 # A script needs a clinician line: a patient-only test ends with this one,
 # spoken in the transcript as its last SPEAKER_1 segment — no hedge, no
 # structured word, no fact and unquoted, so it adds no mark, no warning, no
@@ -1286,6 +1309,173 @@ class TestHedgeCreditAmendment:
         assert [f.uncertainty_surfaced for f in metrics.facts] == [True, False, False]
         assert metrics.hedge_marks_unhedged == 2
         assert metrics.uncertainty_missed == 2
+
+    def test_a_scope_ii_mark_is_credited(self) -> None:
+        """Validation-run6 plan D5: the fact's line ends in a comma and the
+        same speaker's next line holds the hedge — in the script and in the
+        transcript. Check 1 marks the fact's line through the scope, the mark
+        is re-derived through the same scope, and the script term
+        (``script_line_hedged``) holds, so the fact is surfaced."""
+        script = _script(
+            ("patient", "it started in my left knee,"),
+            ("patient", "i think"),
+            ("clinician", _CLINICIAN_CLOSE),
+            facts=[_fact("laterality", "left knee", 0, uncertain=True)],
+        )
+        document = _doc(
+            (SPEAKER_2, "it started in my left knee,"),
+            (SPEAKER_2, "i think"),
+            (SPEAKER_1, _CLINICIAN_CLOSE),
+        )
+        assert validation.script_line_hedged(script, 0)
+        note = _checked(document, 0, 1)
+        assert [(w.note_warning_code, w.source_coords) for w in note.note_warnings] == [
+            ("hedged_source", SourceCoords(0, 0, 5)),
+            ("hedged_source", SourceCoords(1, 0, 1)),
+        ]
+        metrics = encounter_metrics(document, note, script)
+        fact = _only_fact(metrics)
+        assert (fact.verdict, fact.uncertainty_surfaced, fact.uncertainty_surfaced_acoustic) == (
+            "correct",
+            True,
+            False,
+        )
+        assert (metrics.uncertainty_missed, metrics.hedge_marks_unhedged) == (0, 0)
+        assert rule_failures(OPTION_A, _measured(metrics)) == ()
+
+    def test_a_scope_iii_mark_is_not_credited(self) -> None:
+        """Scope (iii) (any adjacent same-speaker line, rejected): the fact's
+        line ENDS a sentence before the hedge. Check 1 marks only the hedge's
+        own line; a stub mark on the fact's line, as a scope-(iii) checker
+        would put, is re-derived as unhedged and counted; the script term
+        does not hold. Not surfaced either way."""
+        script = _script(
+            ("patient", "it started in my left knee."),
+            ("patient", "i think"),
+            ("clinician", _CLINICIAN_CLOSE),
+            facts=[_fact("laterality", "left knee", 0, uncertain=True)],
+        )
+        document = _doc(
+            (SPEAKER_2, "it started in my left knee."),
+            (SPEAKER_2, "i think"),
+            (SPEAKER_1, _CLINICIAN_CLOSE),
+        )
+        assert not validation.script_line_hedged(script, 0)
+        checked = _checked(document, 0, 1)
+        assert [(w.note_warning_code, w.source_coords) for w in checked.note_warnings] == [
+            ("hedged_source", SourceCoords(1, 0, 1))
+        ]
+        stub = _note(document, 0, 1, warnings=[_hedge_mark(document, 0, "a0")])
+        for note, unhedged in ((checked, 0), (stub, 1)):
+            metrics = encounter_metrics(document, note, script)
+            fact = _only_fact(metrics)
+            assert (fact.verdict, fact.uncertainty_surfaced) == ("correct", False)
+            assert (metrics.uncertainty_missed, metrics.hedge_marks_unhedged) == (1, unhedged)
+
+    def test_a_hedge_the_recogniser_split_off_is_not_credited(self) -> None:
+        """The script joins the hedge by a comma; the recogniser ended the
+        fact's segment with a full stop (D12's named residue, kept a fail by
+        D17): the script term holds, but the product puts no mark on the
+        fact's line, so nothing is credited."""
+        script = _script(
+            ("patient", "it started in my left knee,"),
+            ("patient", "i think"),
+            ("clinician", _CLINICIAN_CLOSE),
+            facts=[_fact("laterality", "left knee", 0, uncertain=True)],
+        )
+        document = _doc(
+            (SPEAKER_2, "it started in my left knee."),
+            (SPEAKER_2, "i think"),
+            (SPEAKER_1, _CLINICIAN_CLOSE),
+        )
+        assert validation.script_line_hedged(script, 0)
+        metrics = encounter_metrics(document, _checked(document, 0, 1), script)
+        assert (_only_fact(metrics).uncertainty_surfaced, metrics.uncertainty_missed) == (False, 1)
+
+    @pytest.mark.parametrize(
+        "path",
+        # Named sets only (the blind ``heldout-3`` is never read, C12).
+        [
+            path
+            for name in ("heldout", "heldout-2")
+            for path in held_out_set(name).script_paths()
+        ],
+        ids=lambda path: path.stem,
+    )
+    def test_script_line_hedged_is_segment_hedged_on_the_reference_document(
+        self, path: Path
+    ) -> None:
+        """Validation-run6 plan D5's pin: on every seen held-out script, the
+        script term equals ``note.segment_hedged`` on
+        ``reference_document(script)`` line for line, and both equal the
+        scope re-read from the script's TEXT (a line's role, its trailing
+        mark, a neighbour's hedge), under both lexicons. No seen held-out
+        line ends in a joining mark (checked 2026-10-24, the 50 too), so here
+        the pin reads the line's own hedge; the join through a script's
+        punctuation and roles is pinned by the synthetic scripts above
+        (``test_a_scope_ii_mark_is_credited`` and its two negatives) and below
+        (``test_the_reference_document_carries_the_join``)."""
+        script = validation.load_script(path)
+        reference = validation.reference_document(script)
+        lines = script.lines
+        for phrases in (None, validation.REFERENCE_HEDGES):
+            for index in range(len(lines)):
+                by_text = _text_holds(lines[index].text, phrases) or any(
+                    0 <= other < len(lines)
+                    and lines[other].role == lines[index].role
+                    and _text_holds(lines[other].text, phrases)
+                    and _ends_with_a_join(lines[min(index, other)].text)
+                    for other in (index - 1, index + 1)
+                )
+                hedged = validation.script_line_hedged(script, index, phrases=phrases)
+                assert hedged == segment_hedged(reference, index, phrases=phrases), index
+                assert hedged == by_text, index
+
+    def test_the_reference_document_carries_the_join(self) -> None:
+        """The pin's text oracle over a script that DOES join: commas, a
+        dash, a closing quote, a role change and a full stop — line for line,
+        under both lexicons."""
+        script = _script(
+            ("patient", "it started in my left knee,"),  # 0: joined to 1
+            ("patient", "i think"),  # 1: own hedge
+            ("patient", 'then the "right one,"'),  # 2: joined to 3 through the quote
+            ("patient", "it might be —"),  # 3: reference-only hedge; joined to 4
+            ("patient", "worse at night."),  # 4
+            ("clinician", "okay maybe,"),  # 5: own hedge
+            ("patient", "and the hip."),  # 6: another role before it
+            facts=[_fact("laterality", "left knee", 0)],
+        )
+        reference = validation.reference_document(script)
+        expected = {
+            None: [True, True, False, False, False, True, False],
+            validation.REFERENCE_HEDGES: [True, True, True, True, True, True, False],
+        }
+        for phrases, wanted in expected.items():
+            got = [
+                validation.script_line_hedged(script, index, phrases=phrases)
+                for index in range(len(script.lines))
+            ]
+            assert got == wanted, phrases is None
+            assert got == [
+                segment_hedged(reference, index, phrases=phrases)
+                for index in range(len(script.lines))
+            ]
+            assert got == [
+                _text_holds(line.text, phrases)
+                or any(
+                    0 <= other < len(script.lines)
+                    and script.lines[other].role == line.role
+                    and _text_holds(script.lines[other].text, phrases)
+                    and _ends_with_a_join(script.lines[min(index, other)].text)
+                    for other in (index - 1, index + 1)
+                )
+                for index, line in enumerate(script.lines)
+            ]
+
+    def test_the_held_out_sets_read_by_the_pin_are_present(self) -> None:
+        """The pin above is not vacuous: both named sets hold scripts."""
+        assert len(held_out_set("heldout").script_paths()) == 22
+        assert held_out_set("heldout-2").script_paths()
 
     def test_low_confidence_alone_still_surfaces_and_is_the_acoustic_reading(self) -> None:
         script = _script(

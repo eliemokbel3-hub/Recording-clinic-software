@@ -7,7 +7,7 @@
 - a written decision, BEFORE run 6, on the recogniser-level and tone-level residues (rule v1 kept, or a ratified rule v2);
 - a fresh held-out set by an independent author, written predictions before the build, and run 6 as the run of record.
 
-**Overall Progress:** `47%` (14 of 30 buildable tasks; `[2026-10-24, stage-1]` Tasks 1.1–1.4 built and verified (suite 8425 passed, review round 38, codex peer round 39 converged); `[2026-10-24, peer round 25]` the convention, stated: the 8 `[decision]` tasks — all taken — are outside the count; 38 checkboxes in all, 22 ticked)
+**Overall Progress:** `50%` (15 of 30 buildable tasks; `[2026-10-24, stage-2]` Task 3.1 built and verified (suite 8504 passed, review round 41, codex peer round 42 converged); `[2026-10-24, stage-1]` Tasks 1.1–1.4 built and verified (suite 8425 passed, review round 38, codex peer round 39 converged); `[2026-10-24, peer round 25]` the convention, stated: the 8 `[decision]` tasks — all taken — are outside the count; 38 checkboxes in all, 22 ticked)
 
 ## Lifecycle State
 - Active
@@ -341,7 +341,7 @@ See the Planning Extraction Summary (the canonical list).
 
 ## Current State / Handoff Note
 - Loop config: executor=claude-p model="claude-opus-5-5" effort=high profile=default; peer=codex model="gpt-6-astra" effort=medium; architect=off; cadence=every-phase; caps=review:3,peer:5; gates=executor; cap-raise=executor; high-auto=on; peer-max=12; notify=action-only; scope=all; autocommit=on; isolation=none; merge=off; perms=scoped; liveness=10; monitor-delivery=auto; verify=composer.
-- COMPOSER RUN-STATE: iso=validation-run6-20261024-125936-4d21; runkeys stage-1=Phase 1, stage-2=Phase 3, stage-3=Phase 4, stage-4=Phase 5, stage-5=H1-H4; started 2026-10-24 by the practitioner's /execute-loop (wizard confirmed); current: stage-1 closed (Phase 1 committed locally); next stage-2 (Phase 3).
+- COMPOSER RUN-STATE: iso=validation-run6-20261024-125936-4d21; runkeys stage-1=Phase 1, stage-2=Phase 3, stage-3=Phase 4, stage-4=Phase 5, stage-5=H1-H4; started 2026-10-24 by the practitioner's /execute-loop (wizard confirmed); current: stage-2 closed (Phases 1 and 3 committed locally); next stage-3 (Phase 4).
 - **Order:** 0.2 (measure) → 0.2a (the same audio counts under an enrolment, D11) → 0.13 (the D1 decision) → 0.9 (dated commit) → 0.14 (the harness enrols; its own dated commit) → 0.11 (fixtures over a set table, before the set) → 0.10 (`heldout-2`, independent author, empty folder) → 0.12 (diagnosis, the `h2-NN` cases and divergence entries, predictions; frozen) → Phases 1–5 → H1–H4 → P.1 → H5 → P.2 → P.3.
 - Line references were taken at `0be35d7`; `desktop/src` is unchanged at `4ff5f26`. A build leg re-locates symbols before editing.
 - `[2026-10-22]` Decisions taken ("take all the recommendations"): 0.1 median ≤ 2, maximum ≤ 5; 0.3 (b), (c) only if over budget; 0.4's rule (values owed after Task 0.2); 0.5 (a); 0.6 lexicon (b), scope (ii); 0.7 (b) with the written override; 0.8 all three sets. Recorded on each task. Later the same day: "joined" = `note.ends_mid_sentence` (D5).
@@ -426,6 +426,50 @@ See the Planning Extraction Summary (the canonical list).
   - Live-user smoke: the practitioner carried it to P.2's mock smoke (in chat, 2026-10-24; recorded on P.2).
   - Committed locally with the rx2 commit message above; not pushed.
   - Next: stage-2, Phase 3 (hedge scope, Task 3.1).
+- `[2026-10-24T15:00+11:00]` **stage-2 rx1 (executor) — Phase 3 (Task 3.1) BUILT, suite owed to the composer.** Task 3.1 is marked 🟨 with its record on the task. ruff and mypy are clean (66 source files). pytest was NOT run: the suite belongs to the composer, through the blind runner `scripts/lint-held-out-set.py validation/heldout-3`. No MUST-PAUSE: nothing at HEAD changed WHAT is built.
+  - **What was built:** one hedge scope, `note.segment_hedged` (own words, or the adjacent same-speaker segment joined mid-sentence by `ends_mid_sentence` on the earlier one), and `note.quoted_line_marks` (`line_marks` plus the scoped `unsure`), now called by Check 1 and the line editor alike; `validation.script_line_hedged` is `segment_hedged` over `reference_document(script)`; the harness's mark re-derivation and script term both read the scope. `line_marks` is unchanged. A keyword `phrases` on the hedge test, for Task 4.1's R2 over `REFERENCE_HEDGES`.
+  - **Three interpretations, recorded on the task (none a pause):** the neighbour is the adjacent index (a textless segment between breaks the join — what Task 0.12's scratch computed the predictions with); the earlier segment's raw trailing mark is read; a partly quoted span is judged by its segment.
+  - **Read-only check:** no line of the 50, `heldout` or `heldout-2` (nor the edge cases' turns) ends in a joining mark, so no held-out unsure result or divergence entry can change; scope (ii) acts at audio level, where the recogniser splits a line.
+  - **Watch in the suite run:** any exact-code-list test over a fixture whose same-speaker, non-clinician line ends in `,` `;` `:` or a dash before a hedged line (none found by search in the note-level fixtures); the four new test groups (`test_note.py`, `test_note_check.py`, `test_ui_models.py`, `test_validation_metrics.py`).
+  - **Blind rule:** no file under `validation/heldout-3/` was opened, read, listed or returned by a search. Searches named `validation/scripts`, `validation/heldout` and `validation/heldout-2` (seen) explicitly, and `desktop/`; the new pin reads `held_out_set("heldout")` and `held_out_set("heldout-2")` by name only. No lint log was opened; pytest was not run.
+  - **Next round number:** 41 (loop-history-check OK: 9 round entries, 40 headings).
+  - **Next:** the composer runs the full desktop suite through the blind runner, then resumes this executor to fix any failures and run `/review-loop` (round 41 onward).
+- `[2026-10-24T15:15+11:00]` **stage-2 rx2 (executor) — `/review-loop` CONVERGED in round 41; a suite re-run is owed to the composer.** ruff and mypy are clean (66 source files). No MUST-PAUSE.
+  - **The composer's rx1 run:** 8513 collected, 8504 passed, 0 failed, 9 skipped. There was nothing to fix.
+  - **Round 41** (record in the Findings Log): 0 CRIT / 0 HIGH / 0 MED / 2 LOW, both applied. Both were comments and docstrings only.
+    - LOW-001: `line_marks`'s docstring no longer claims Check 1 and the editor call it directly. They read it through `quoted_line_marks`.
+    - LOW-002: the unsure mark's description now names the hedge scope in its three places: the `HEDGE_PHRASES` comment, the `ui/note.py` module docstring and the `hedged_source` copy comment.
+    - The round converged in round 1 of the cap of 3. Review History integrity: OK. The history check is OK: 10 round entries and 41 headings, so the next round is 42.
+  - **Owed:** the composer's re-run of the full desktop suite through the blind runner. Comments changed in `note.py`, `note_check.py`, `ui/models.py` and `ui/note.py`; no test changed in rx2. Per the loop config (cadence every-phase), the codex peer pass over Phase 3 is the composer's to schedule.
+  - **Proposed commit message for Phase 3** (the composer's to commit, after a green suite):
+    ```
+    Mark a line unsure when its hedge was cut into the next segment (0.3.4 Phase 3, Task 3.1)
+
+    - note: segment_hedged, the hedge scope (D5, decision 0.6 (ii)) - a
+      segment's own words hold a hedge, or the adjacent same-speaker
+      segment holds one and the earlier of the two ends mid-sentence
+      (ends_mid_sentence); quoted_line_marks, line_marks plus the scoped
+      unsure mark, never for the confirmed clinician; the hedge test takes
+      an optional phrases list (the harness's reference lexicon only)
+    - note_check / ui/models: Check 1 and the line editor both mark
+      through quoted_line_marks, so they always agree
+    - validation: script_line_hedged is segment_hedged over
+      reference_document(script) (one rule, C5); the hedge credit's
+      re-derivation and script term both read the scope
+    - tests: the scope both ways, Check 1 and the editor rows agreeing,
+      a scope-(ii) mark credited and a scope-(iii) one not, the held-out
+      pin over heldout and heldout-2; review-loop round 41 (2 LOW,
+      applied)
+
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+    ```
+  - **Blind rule:** no file under `validation/heldout-3/` was opened, read, listed or returned by a search in rx2. No lint log was opened and pytest was not run. No subagent was spawned.
+- `[2026-10-24T15:46+11:00]` **Composer — Phase 3 CLOSED (stage-2).**
+  - The full suite through the blind runner, run over rx1: collected 8513, passed 8504, failed 0, skipped 9. Re-run over rx2's round-41 fixes: the same numbers. ruff and mypy are clean (66 source files).
+  - Review rounds: review-loop round 41 (2 LOW, applied); codex peer round 42 (`gpt-6-astra` medium, read-only, pass stage-2.p1) found 0 findings, converged at peer round 1 of cap 5. The composer recorded the round, and the census assertion passed (42 > 41). /simplify: round 43.
+  - Live-user smoke: the practitioner carried it to P.2's mock smoke (in chat, 2026-10-24; recorded on P.2).
+  - Committed locally with the rx2 commit message above; not pushed.
+  - Next: stage-3, Phase 4 (the harness, Tasks 4.1–4.4, as amended by D13–D17).
 
 ## Review History
 - 2026-10-22 `/review-plan` (Opus 5.5): Plan-subagent design critique + Explore subagent + coverage, practicality, risk and simplicity lenses, every finding checked against `0be35d7` / `4ff5f26`. Plan-scoped; no code reviewed. Step 3.5 gate: missed-speech warning Include in plan; chooser mark Include in plan; ui-refresh at its merge; larger model Excluded.
@@ -450,6 +494,9 @@ See the Planning Extraction Summary (the canonical list).
 - 2026-10-24 round 38: 0 CRIT / 0 HIGH / 0 MED / 3 LOW; skew=none; action=none
 - 2026-10-24 round 39: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
 - 2026-10-24 round 40: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
+- 2026-10-24 round 41: 0 CRIT / 0 HIGH / 0 MED / 2 LOW; skew=none; action=none
+- 2026-10-24 round 42: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
+- 2026-10-24 round 43: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
 
 ## Review Findings Log
 ### Round 1 — 2026-10-22
@@ -1531,6 +1578,56 @@ Round status: Closed (0 pending)
 - Consciously left alone: `check_note` computes `omission_warnings` twice (once directly, once inside `clinician_line_omissions` for its exclusion) and `_covered_words` three times; folding them needs a signature change to a public, separately callable function (C5) for a cost bounded by one transcript — marginal. `validation.py`'s single-code `high_risk_omission` read is Phase 4's (D13), not this phase's.
 - Last reviewed: 2026-10-24
 
+### Round 41 — 2026-10-24
+Source: Claude Code review-loop (Opus 5.5, executor stage-2 rx2; sequential passes — correctness and security, executor judgment, structural quality, post-fix regression, missed-issue, plan deviation against D5, D8's R2 reach, C4–C6, C11 and Task 3.1)
+Round status: Closed (0 pending)
+
+**Scope:** Phase 3's 9 uncommitted files against HEAD `766c16e` (the working tree): `note.py`, `note_check.py`, `ui/models.py`, `validation.py`, the plan, and the tests `test_note.py`, `test_note_check.py`, `test_ui_models.py`, `test_validation_metrics.py`. The source diff and the touched functions (`text_holds_hedge`, `words_hold_hedge`, `segment_hedged`, `line_marks`, `quoted_line_marks`, `ends_mid_sentence`, `reconstruction_warnings`, `_row_marks`, `script_line_hedged`, `encounter_metrics`' hedge re-derivation and script term) were read in full, and the tests through their diffs. Before the round, the composer's suite over rx1 was green (8513 collected, 8504 passed, 0 failed, 9 skipped). The blind rule held: searches named `desktop/src` and `desktop/tests`; no `h3-` file was read or returned.
+
+- **LOW-001** — `desktop/src/scribe_desktop/note.py` `line_marks` docstring: "THE one rule: Check 1 emits its codes from it and the line editor marks its rows from it" was stale, since both now call `quoted_line_marks`. Triage: Fix-now; Decision: Applied. It now calls itself the per-span part of the one rule, read by both through `quoted_line_marks`, which adds the hedge scope.
+- **LOW-002** — the unsure mark described without the scope, a pattern family (searched: `spoken hedge`, `THE one rule`, `hedged_source` over `desktop/src`): `note_check.py`'s `HEDGE_PHRASES` comment ("a quoted line … that holds one of these phrases … is the unsure mark's evidence"), `ui/note.py`'s module docstring (the `[check: unsure]` paragraph) and `ui/models.py`'s `WARNING_COPY["hedged_source"]` comment. Triage: Fix-now; Decision: Applied. Each now names the scope: a same-speaker line joined mid-sentence to a hedged one is marked too. Siblings already right: `note.py`'s `NOTE_WARNING_SEVERITY` comment (rx1) and `validation.py`'s four docstrings (rx1). Comments only; no string a test pins was touched.
+
+**Looked at and left alone:**
+- `WARNING_COPY["hedged_source"]`'s on-screen title "A quoted line says the speaker was unsure": still true of the joined sentence; on-screen copy and its documents are Task 5.1's, and the P.2 smoke reads it.
+- `validation.render_report`'s header cites the 2026-10-13 hedge credit and not D5's scope: the header's amendment citations are Task 4.2/4.3's (re-pinned there with the rest of the header).
+- `script_line_hedged` rebuilds `reference_document(script)` once per fact: one document per fact of a few dozen lines, against keeping the harness's call the single named function C5 pins.
+- Index bounds: every caller reaches `segment_hedged` with a valid index (Check 1 after `_words_for_coords` succeeds, `_row_marks` after its bounds check, the harness after `marked` resolves, `fact.line` validated by the loader).
+- The clinician exclusion stays in `quoted_line_marks` alone; the harness's re-derivation does not re-check the speaker, as before D5 (the shipped checker never marks the clinician).
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 2 LOW
+Round Classification: 🆕 2 (the first code round over Phase 3); skew=none
+Finding verification: 7 candidates; 5 dropped (the four left alone above, by design or another task's; the index bounds, already guarded); 0 downgraded
+Missed-issue pass: re-read `note.py` (`text_holds_hedge` to `quoted_line_marks`, `ends_mid_sentence`), `note_check.py` (`HEDGE_PHRASES` comment, `reconstruction_warnings`), `ui/models.py` (`_row_marks`, `EditableLine`, the `hedged_source` copy), `ui/note.py` (module docstring), `validation.py` (`script_line_hedged`, the re-derivation, the script term, `_judge`), the four new test groups; result: LOW-002
+Convergence: no CRIT, HIGH or MED; the two LOWs applied (comments and docstrings only; ruff and mypy clean). Converged in one round (cap 3).
+
+### Round 42 — 2026-10-24
+Source: independent cross-family codex peer review (composer-recorded from the read-only peer's output, `.cursor/loops/stage-2-peer-r42.log`; pass stage-2.p1, peer_round 1 of cap 5)
+Reviewer: codex gpt-6-astra (medium)
+Round status: Closed (0 pending)
+
+**Scope:** Phase 3's working-tree diff against `766c16e` (`note.py`, `note_check.py`, `ui/models.py`, `ui/note.py`, `validation.py`, four test files, the plan's Task 3.1 record and Round 41), plus the named supporting functions (`ends_mid_sentence`, the hedge tests, `line_marks`, `reconstruction_warnings`, `_row_marks`, `reference_document`, `_judge`, `script_hedged`) and `test_shadow_exits.py`. Read-only; no suite, no network. The blind rule held: no `validation/heldout-3/` file was opened or listed.
+
+#### Findings
+
+(none)
+
+- Verification counts: 5 claims checked (the five review jobs), 0 defects confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-10-24
+- Convergence: 0 findings in the pass's first round. Converged (cap 5).
+
+### Round 43 — 2026-10-24
+Source: Claude Code simplify (composer-run, propose-only; stage-2 of run validation-run6-20261024-125936-4d21)
+Round status: Closed (0 pending)
+
+**Scope:** Phase 3's source diff against `766c16e`, read in full: `note.py` (`text_holds_hedge` / `words_hold_hedge` `phrases=`, `segment_hedged`, `quoted_line_marks`), `note_check.py` (`reconstruction_warnings`), `ui/models.py` (`_row_marks`), `ui/note.py` (docstring), `validation.py` (`script_line_hedged`, the hedge credit's re-derivation and script term). Tests and the plan are out of scope (the skill's rule). The blind rule held: no `validation/heldout-3/` file was read.
+
+#### Findings
+
+(none)
+
+- Consciously left alone: `quoted_line_marks`'s `UNSURE_LINE_MARK not in kinds` guard (it keeps the order and the one-per-line rule explicit and costs one tuple scan); `encounter_metrics`' `marked` now read only for emptiness (unchanged from HEAD's shape, a coordinate-validity guard).
+- Last reviewed: 2026-10-24
+
 ## Tasks
 
 ### Phase 0 — Budget, measurement, decisions, freeze, predictions
@@ -1732,10 +1829,17 @@ Round status: Closed (0 pending)
 Nothing to build. Tasks 2.1 and 2.2 are removed (their text survives in D2 and the Review Findings Log); 2.3 moved to Phase 1 as 1.4.
 
 ### Phase 3 — Hedge scope (`note.py`, `note_check.py`, `ui/models.py`, `validation.py`)
-- [ ] 🟥 **3.1 One scope rule, two inputs (D5)**
+- [x] 🟩 **3.1 One scope rule, two inputs (D5)**
   - `note.segment_hedged(document, segment_index)` using `words_hold_hedge` and `ends_mid_sentence`; `validation.script_line_hedged(script, line_index)` with the same rule over script lines, pinned equal to `segment_hedged` on `reference_document(script)` for every `heldout` script.
   - Callers: Check 1's `reconstruction_warnings` (`note_check.py:603`), `_row_marks` (`ui/models.py:3071`; no signature change), the harness's `:1360` re-derivation and `:1425` `script_hedged`. `line_marks` unchanged.
   - Tests: `test_note`, `test_note_check` (joined by a comma yes; after a full stop no; a bare cut no; other speaker no; the clinician excluded as today), `test_ui_models` (the editor row's mark agrees with Check 1), the per-set unsure divergence entries, a harness test that a scope-(ii) mark is credited and a scope-(iii) one is not.
+  - **`[2026-10-24]` Built (stage-2 rx1; ruff and mypy clean, 66 source files; the suite is the composer's, through the blind runner).**
+    - **`note.py`:** `segment_hedged(document, segment_index, *, phrases=None)` — the segment's own words hold a hedge (`words_hold_hedge`), or the ADJACENT segment (index ± 1) has the same speaker label, holds one, and the earlier of the two `ends_mid_sentence`. `quoted_line_marks(document, segment_index, words, *, clinician)` — `line_marks(words, clinician=)` unchanged, plus `unsure` (last, never twice) when the line is not the confirmed clinician's and `segment_hedged` holds: THE one rule Check 1 and the line editor both call. `text_holds_hedge` / `words_hold_hedge` gain a keyword `phrases` (None = `note_check.HEDGE_PHRASES`, still read lazily, so the 0.9 monkeypatch test keeps working) for D8's R2 over `REFERENCE_HEDGES` (Task 4.1); the app never passes it. `__all__`; the `hedged_source` severity comment.
+    - **Callers:** `note_check.reconstruction_warnings` and `ui/models._row_marks` call `quoted_line_marks` (no signature change; `line_marks` is no longer imported by either). `validation.script_line_hedged(script, line_index, *, phrases=None)` IS `segment_hedged(reference_document(script), line_index)` — equal by construction (C5); the harness's mark re-derivation reads `segment_hedged(document, coords.segment_index)` (was `words_hold_hedge` over the marked words) and its script term `script_line_hedged(script, fact.line)` (was `text_holds_hedge` over the line). `hedge_marks_unhedged` now counts a mark whose segment is not hedged within the scope. Docstrings updated (`_WordInfo.hedged`, `_judge`, `encounter_metrics`, `EncounterMetrics`).
+    - **Interpretations, recorded (none changes WHAT is built):** (1) "neighbour" is the adjacent index, exactly as Task 0.12's scratch reference (`.cursor/loops/run6-015-analyse.py` `segment_hedged`) computed predictions v1/v2 — so a textless VAD segment between the two halves breaks the join, a named residue beside D5's "a segment in between"; (2) the join reads the earlier segment's raw trailing mark (`ends_mid_sentence` over all its words), as the scratch and the bounded carry do; a suspect hedge supplies nothing (`words_hold_hedge`); (3) the scope is a SEGMENT's: a partly quoted span whose segment hedges outside the span is marked (the scratch marked only when the span itself or a joined neighbour held one; the extractive provider quotes whole segments, so the predictions are unaffected) — this keeps Check 1 and the harness re-derivation one rule, so `hedge_marks_unhedged` stays 0 from the shipped checker by construction.
+    - **Checked, read-only (blind rule kept):** no line of `validation/scripts`, `validation/heldout` or `validation/heldout-2` ends in a joining mark, and neither do the held-out edge cases' turns — so scope (ii) changes no held-out case's unsure lines and no divergence entry (`_PREDICTED_UNSURE_DIVERGENCES_BY_SET` unchanged: `heldout` 3, `heldout-2` 10, `heldout-3` 0), consistent with Task 0.12 ("scope (ii) joins none" on the case documents; its 3 / 0 / 2 extra marks were on the AUDIO documents, where the recogniser splits a line at a comma). The script side of the 50 is therefore scope (i) too; `syn-30` fact 0's credit comes from its own line's hedge plus the product's joined mark.
+    - **Tests:** `test_note.py` `TestSegmentHedged` (9 tests: the next / previous neighbour joined by `,` `;` `:` and both dashes; `.` `?` `!`, a bare cut and a hyphen not; only the earlier segment's mark joins; another speaker never; a segment in between, a textless one included; own hedge; a suspect hedge supplies nothing; `phrases`) and `TestQuotedLineMarks` (4: unsure added after number and never for the clinician; marked once; an unjoined line keeps `line_marks`; a partly quoted line judged by its segment). `test_note_check.py` `TestCheck1HedgeMark` (+4: the scope over five cuts — `,` `;` and a spaced dash mark both lines, `.` and a bare cut only the hedge's; never across speakers; the clinician's joined lines excluded and both marked with no confirmed clinician; a fact line joined to an UNQUOTED hedge marked through `check_note`). `test_ui_models.py` `test_the_hedge_scope_marks_the_same_rows_as_check_1` (every line in the note, routed or added; unsure rows {0, 1} and, with no confirmed clinician, {0, 1, 3, 4}; equal to Check 1's `hedged_source` set both times). `test_validation_metrics.py` `TestHedgeCreditAmendment` (+6: a scope-(ii) mark credited; a scope-(iii) one — Check 1's and a stub's — not, the stub counted unhedged; a hedge the recogniser split off by a full stop not credited (D12's named residue); the `heldout` / `heldout-2` pin, parametrised by script stem over the two NAMED folders only, `script_line_hedged` equal to `segment_hedged` on `reference_document` AND to a text-level re-reading, under both lexicons; the same three-way equality over a synthetic script that does join (commas, a dash, a closing quote, a role change, a reference-only hedge); the two named sets present, `heldout` 22). The per-set unsure divergence test is unchanged (above).
+    - **Not here:** the report header's citation of the scope as a metric amendment (Task 4.2/4.3's header work); the documents (Task 5.1).
 
 ### Phase 4 — The harness (`validation.py`, `validation/rules/`, `docs/testing/validation-harness.md`), its own dated commit before run 6
 - [ ] 🟥 **4.1 The residue classifiers (D8)** — R1 through `_fact_end_states` (no `all_matched` state) plus the `reference_document` run plus the review-mark term over the walk's `marked` flag on every wrong end state of every occurrence (its numeric near-emptiness documented); R2 only on an unsurfaced fact, through `script_line_hedged` over `REFERENCE_HEDGES`; R3 (axis, the fact at or after `REFERENCE_TAIL_STARTS`, no boundary on the measured document, no listed greeting on the `REFERENCE_GREETING_LINES` line). Each class a field on `FactOutcome` that clears ONLY its own failure predicates, through residue-adjusted counts (D8). Pins both ways for each condition, plus: an already-surfaced fact is not R2 and uses no ceiling; an R2 fact that is also `omitted` still fails `silent_omissions` unless R1; an R1 fact with an unsurfaced uncertainty still fails `uncertainty_missed` unless R2; a fact reported `wrong` with a silently omitted alternative cleared from BOTH counts by one R1 and counted once against R1; a nonmaterial `wrong` or `wrongly_present` fact consuming no allowance; a split-segment fact and a repeated-token fact where only ONE wrong alternative is marked NOT R1, and both marked R1; an unrelated `absent` fact before the tail start not R3; a boundary that fired after the fact not R3; a shared closing-and-greeting line read as the greeting line; a script with the axis and no entry in either table a harness error; the raw counts unchanged, the same outcomes giving v1 FAIL and v2 PASS. `align_transcripts` not used.
@@ -1771,6 +1875,7 @@ Nothing to build. Tasks 2.1 and 2.2 are removed (their text survives in D2 and t
   - Verify (`gh attestation verify`, hashes) and install at a pilot-allowed point; reload the extension; restart Chrome.
   - Mock smoke (desktop-started, no patient, shadow on, no development tick, Discarded): an uncued clinician advice line shows "A line you said is not in the note", Acknowledge all leaves it, the per-code click clears it; a hedge after a comma-cut line shows `[check: unsure]`; the chooser's `[flagged]` / `[next patient?]` marks are readable; the count line reads correctly; the Status tab shows 0.3.4.
   - `[2026-10-24]` This mock smoke is also Phase 1's live-user smoke: the practitioner carried it here in chat during stage-1 of run `validation-run6-20261024-125936-4d21`, rather than smoking Phase 1 on the developer build. Phase 1 was committed without a live smoke of its own.
+  - `[2026-10-24]` It is also Phase 3's live-user smoke (its `[check: unsure]` line above): the practitioner carried it here in chat during stage-2 of the same run. Phase 3 was committed without a live smoke of its own.
   - Done when: the result is on this task and AGENTS.md says 0.3.4 is installed.
 - [ ] 🟥 **P.3 The register and the P.5 question**
   - `[2026-10-24]` **Amended:** rows for `heldout` and `heldout-2` from run 6 by class — an unrouted patient statement silently absent (control: the chooser lists every unrouted line; the clinician's review), hedge idioms outside every list, the confident recogniser errors, the closing gap — and `heldout-3`'s after P.4; the Encounter cell pattern gains `h2-` and `h3-` with both-ways cases.

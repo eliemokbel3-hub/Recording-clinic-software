@@ -2457,6 +2457,85 @@ class TestCheck1HedgeMark:
             assert render_note(reloaded, style) == render_note(note, style), style
             assert "[check:" not in render_note(reloaded, style, check_marks=False), style
 
+    @pytest.mark.parametrize(
+        ("cut", "marked"),
+        [
+            (",", [0, 1]),  # joined by a comma: the fact's line is marked too
+            (";", [0, 1]),
+            (" —", [0, 1]),
+            (".", [1]),  # after a full stop: only the hedge's own line
+            ("", [1]),  # a bare cut is not joined (the named residue)
+        ],
+    )
+    def test_the_hedge_scope_marks_a_line_joined_to_a_hedge(
+        self, cut: str, marked: list[int]
+    ) -> None:
+        """Validation-run6 plan D5 (scope (ii)): the patient's "It was about
+        40 mg," then "I think." is one hedged sentence, so both quoted lines
+        draw ONE ``hedged_source`` each, on their own spans."""
+        document = _document(
+            (f"It was about 40 mg{cut}", SPEAKER_1),
+            ("I think.", SPEAKER_1),
+            ("Okay, the knee is stable.", SPEAKER_2),
+        )
+        note = _note(
+            document,
+            (
+                _quoted(document, 0, "presenting_complaint", aid="t0"),
+                _quoted(document, 1, "presenting_complaint", aid="t1"),
+            ),
+        )
+        hedged = _hedged_codes(reconstruction_warnings(note, document))
+        # "It was about 40 mg" is five words; a spaced dash is a sixth.
+        spans = {0: SourceCoords(0, 0, 5 if cut.startswith(" ") else 4), 1: SourceCoords(1, 0, 1)}
+        assert hedged == [(f"t{index}", spans[index]) for index in marked]
+
+    def test_the_hedge_scope_never_crosses_speakers(self) -> None:
+        """The patient's comma-cut line followed by the CLINICIAN's hedge: not
+        joined (another speaker), and the clinician's own line is never
+        marked."""
+        document = _document(
+            ("It was about 40 mg,", SPEAKER_1),
+            ("I think.", SPEAKER_2),
+        )
+        note = _note(
+            document,
+            (
+                _quoted(document, 0, "presenting_complaint", aid="t0"),
+                _quoted(document, 1, "assessment", aid="t1"),
+            ),
+        )
+        assert _hedged_codes(reconstruction_warnings(note, document)) == []
+
+    def test_the_clinicians_joined_line_is_still_excluded(self) -> None:
+        """The scope widens WHICH words hedge a segment, never WHO is marked:
+        the confirmed clinician's own joined lines draw none, and with no
+        confirmed clinician both do."""
+        document = _document(
+            ("The knee is stable,", SPEAKER_2),
+            ("I think.", SPEAKER_2),
+        )
+        quoted = (
+            _quoted(document, 0, "objective_examination", aid="t0"),
+            _quoted(document, 1, "objective_examination", aid="t1"),
+        )
+        assert _hedged_codes(reconstruction_warnings(_note(document, quoted), document)) == []
+        unconfirmed = _note(document, quoted, clinician_speaker=None)
+        hedged = _hedged_codes(reconstruction_warnings(unconfirmed, document))
+        assert [aid for aid, _coords in hedged] == ["t0", "t1"]
+
+    def test_a_line_joined_to_an_unquoted_hedge_is_marked_through_check_note(self) -> None:
+        """Only the fact's line is in the note; its hedge was cut into the next
+        segment, which is left out. ``check_note`` still marks the fact's
+        line (D5's purpose: the doubt reaches the line the note carries)."""
+        document = _document(
+            ("It was about 40 mg,", SPEAKER_1),
+            ("I think.", SPEAKER_1),
+        )
+        bare = _note(document, (_quoted(document, 0, "presenting_complaint", aid="t0"),))
+        warnings = check_note(bare, document, _CHECK_CONFIG)
+        assert _hedged_codes(warnings) == [("t0", SourceCoords(0, 0, 4))]
+
     @pytest.mark.parametrize("case", HELD_OUT_CASES, ids=lambda case: case.case_id)
     def test_the_held_out_unsure_lines(self, case: HeldOutCase) -> None:
         """Validation-pass Task 0.9's reading rule: every case's unsure lines

@@ -101,9 +101,8 @@ from scribe_desktop.note import (
     compose_draft,
     content_tokens,
     finalise_note,
+    segment_hedged,
     strip_token_punctuation,
-    text_holds_hedge,
-    words_hold_hedge,
 )
 
 # Package-private by name, shared deliberately (the note.py convention):
@@ -525,6 +524,18 @@ def reference_document(script: EncounterScript) -> TranscriptDocument:
     return document_from_turns(_LineTurn(line.role, line.text) for line in script.lines)
 
 
+def script_line_hedged(
+    script: EncounterScript, line_index: int, *, phrases: Sequence[str] | None = None
+) -> bool:
+    """The hedge scope (validation-run6 plan D5) over a SCRIPT's lines:
+    ``note.segment_hedged`` itself, applied to ``reference_document(script)``
+    — the line's role is the speaker, its own trailing punctuation the
+    mid-sentence join — so the harness's script term and the product's mark
+    are one rule (C5). ``phrases`` as in ``note.text_holds_hedge``; the
+    product's list when None."""
+    return segment_hedged(reference_document(script), line_index, phrases=phrases)
+
+
 # D8's R2 reference lexicon, frozen in Task 0.9 (2026-10-23) by the same
 # BLIND session as the widened ``HEDGE_PHRASES``, harness-only: a script
 # line holding one of these (whole tokens in a row, as
@@ -838,9 +849,10 @@ class EncounterMetrics:
     amendment 2026-10-11 — "500mg" counts 1, "five hundred" 2, "500" 0;
     the script's rewrites are not counted), reported, never failing.
     ``hedge_marks_unhedged`` (metric amendment 2026-10-13, validation-pass
-    plan D7): the note's ``hedged_source`` warnings whose marked words hold
-    no spoken hedge (``note.words_hold_hedge``, re-derived) — expected 0 from
-    the shipped checker; reported, never failing, and never credited."""
+    plan D7): the note's ``hedged_source`` warnings whose segment holds no
+    spoken hedge within the hedge scope (``note.segment_hedged``,
+    re-derived; validation-run6 plan D5) — expected 0 from the shipped
+    checker; reported, never failing, and never credited."""
 
     words: WordErrors
     spelling_normalised_words: int
@@ -925,7 +937,9 @@ class _WordInfo(NamedTuple):
     words. ``warned_v1`` is ``warned`` under run 1's predicate and
     clinician-only scope (the report's comparison column, metric amendment
     2026-10-09). ``hedged`` (metric amendment 2026-10-13): the word sits
-    under a ``hedged_source`` mark whose marked words hold a spoken hedge."""
+    under a ``hedged_source`` mark whose segment holds a spoken hedge
+    (``note.segment_hedged``, the hedge scope since validation-run6 plan
+    D5)."""
 
     covered_any: bool
     covered_all: bool
@@ -1169,7 +1183,8 @@ def _judge(
     of 2026-10-13 (validation-pass plan D7), by the hedge credit: the
     verdict is ``correct``, the fact's SCRIPT line holds a spoken hedge
     (``script_hedged``) AND an aligned word sits under a ``hedged_source``
-    mark whose own words hold one (``_WordInfo.hedged``)."""
+    mark whose segment holds one (``_WordInfo.hedged``) — each within the
+    hedge scope since validation-run6 plan D5."""
     all_matched, all_deleted, in_any, in_all, warned, surfaced, warned_v1, hedged = state
     verdict: FactVerdict
     if kind == "absent":
@@ -1505,14 +1520,16 @@ def encounter_metrics(
       ``uncertainty_surfaced`` (for ``expect_uncertain`` facts): a
       ``low_confidence_source`` warning sits on one of the fact's aligned
       words, or (the metric amendment of 2026-10-13, validation-pass plan
-      D7) the fact is ``correct``, its script line holds a spoken hedge
-      (``note.text_holds_hedge``) and one of its aligned words sits under a
-      ``hedged_source`` warning whose marked words hold one too
-      (``note.words_hold_hedge``, re-derived as ``warned`` re-derives its
-      predicate). The first reading alone is kept as
+      D7) the fact is ``correct``, its script line holds a spoken hedge and
+      one of its aligned words sits under a ``hedged_source`` warning whose
+      segment holds one too (re-derived as ``warned`` re-derives its
+      predicate) — both within the hedge scope since validation-run6 plan D5
+      (``script_line_hedged`` and ``note.segment_hedged``, one rule: the
+      line's own words, or a same-speaker neighbour joined mid-sentence).
+      The first reading alone is kept as
       ``uncertainty_surfaced_acoustic`` for the report's "Surfaced (acoustic
       only)" column, which no rule reads; a ``hedged_source`` warning whose
-      words hold no hedge credits nothing and is counted
+      segment is not hedged credits nothing and is counted
       (``hedge_marks_unhedged``).
     - Ambiguity is conservative: across equal-cost alignments, and across
       repeated occurrences of the tokens inside the fact's line, the fact
@@ -1545,8 +1562,11 @@ def encounter_metrics(
                 for index in range(coords.first_word_index, coords.last_word_index + 1)
             )
     # Metric amendment 2026-10-13 (D7): a hedge mark credits only the words
-    # under it, and only when those words hold a hedge (re-derived, never
-    # trusted from the warning); any other mark is counted, never credited.
+    # under it, and only when their segment is hedged (re-derived, never
+    # trusted from the warning) — since validation-run6 plan D5 within the
+    # hedge scope (``note.segment_hedged``: its own words, or a same-speaker
+    # neighbour joined mid-sentence), the rule Check 1 marks by; any other
+    # mark is counted, never credited.
     hedged: set[tuple[int, int]] = set()
     hedge_marks_unhedged = 0
     for warning in note.note_warnings:
@@ -1554,7 +1574,7 @@ def encounter_metrics(
         if warning.note_warning_code != "hedged_source" or coords is None:
             continue
         marked = _words_for_coords(document, coords)
-        if marked and words_hold_hedge(marked):
+        if marked and segment_hedged(document, coords.segment_index):
             hedged.update(
                 (coords.segment_index, index)
                 for index in range(coords.first_word_index, coords.last_word_index + 1)
@@ -1618,8 +1638,10 @@ def encounter_metrics(
         # then carried to canonical rows (PR-MED-023) — a span that cuts a
         # join takes the whole joined token.
         line_tokens = content_tokens(script.lines[fact.line].text)
-        # D7: the SCRIPT line's own hedge, one of the credit's three terms.
-        script_hedged = text_holds_hedge(script.lines[fact.line].text)
+        # D7: the SCRIPT line's hedge, one of the credit's three terms —
+        # within the hedge scope since validation-run6 plan D5 (without it a
+        # scope-(ii) mark could never be credited).
+        script_hedged = script_line_hedged(script, fact.line)
         judged: set[_Judged] = set()
         for start in _occurrences(line_tokens, fact.tokens):
             first_content = reference.line_offsets[fact.line] + start
@@ -2880,6 +2902,7 @@ __all__ = [
     "rule_failures",
     "run_encounters",
     "run_passed",
+    "script_line_hedged",
     "suspect_segment_count",
     "transcript_wer",
     "word_errors",

@@ -92,10 +92,10 @@ from scribe_desktop.note import (
     check_mark,
     compose_draft,
     is_prefilled,
-    line_marks,
     line_marks_by_assertion,
     note_input_digest,
     provenance_label,
+    quoted_line_marks,
     reconstruct_span_text,
     render_note,
     spoken_by_confirmed_clinician,
@@ -2221,7 +2221,8 @@ WARNING_COPY: Final[Mapping[str, WarningCopy]] = {
         "the note, remove or keep it, then acknowledge.",
     ),
     # Validation-pass plan D7: one per quoted line someone other than the
-    # clinician said with a spoken hedge, marking it "[check: unsure]". Unlike
+    # clinician said with a spoken hedge (within the hedge scope since the
+    # validation-run6 plan's D5), marking it "[check: unsure]". Unlike
     # the two above, "Acknowledge all" clears it (not in
     # ``SEPARATELY_ACKNOWLEDGED_CODES``).
     "hedged_source": WarningCopy(
@@ -2918,7 +2919,7 @@ class EditableLine:
     the row's transcript line carries a Check 4 omission although the
     chooser does not offer it (replaced, or only partly in the note), and
     its label starts with ``FLAGGED_LINE_MARK``. ``marks`` (invented-text
-    guard D5): the line-mark kinds (``note.line_marks``) of a row whose line
+    guard D5): the line-mark kinds (``note.quoted_line_marks``) of a row whose line
     IS in the note (routed, moved or added), shown at the front of its label
     after any ``FLAGGED_LINE_MARK`` as ``[check: <kind>] ``."""
 
@@ -3070,9 +3071,11 @@ def _row_marks(
     *,
     clinician_speaker: str | None,
 ) -> tuple[str, ...]:
-    """The mark kinds of a row whose line is in the note — ``line_marks``
-    over the words under ``assertion``'s coordinates (the editor reads the
-    document, never the warnings, which it cannot see), its ``clinician``
+    """The mark kinds of a row whose line is in the note —
+    ``quoted_line_marks`` over the words under ``assertion``'s coordinates
+    and their segment's hedge scope (validation-run6 plan D5; the editor
+    reads the document, never the warnings, which it cannot see), its
+    ``clinician``
     the same test Check 1 makes against the draft's confirmed clinician
     (validation-pass plan D7: ``spoken_by_confirmed_clinician`` for the
     line's segment); none for a removed
@@ -3092,7 +3095,7 @@ def _row_marks(
     if reconstruct_span_text(span) != assertion.text:
         return ()
     clinician = spoken_by_confirmed_clinician(segment.speaker, clinician_speaker)
-    return line_marks(span, clinician=clinician)
+    return quoted_line_marks(document, coords.segment_index, span, clinician=clinician)
 
 
 @dataclass(frozen=True)

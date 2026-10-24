@@ -1807,6 +1807,107 @@ class TestReviewEditModels:
             for row in models.editable_lines(unconfirmed, document, removed=set(), additions={})
         } == {0: ("unsure",), 1: ("unsure",)}
 
+    def test_the_hedge_scope_marks_the_same_rows_as_check_1(self, tmp_path: Path) -> None:
+        """Validation-run6 plan D5: a row whose segment is joined mid-sentence
+        to a same-speaker hedge carries ``[check: unsure]`` exactly where
+        Check 1 emits ``hedged_source`` — one rule (``note.quoted_line_marks``)
+        for both. Every line is in the note (routed, or added by hand)."""
+        from scribe_desktop.note import (
+            SECTION_INDEX,
+            GeneratedNote,
+            GeneratedSection,
+            transcript_digest,
+        )
+        from scribe_desktop.note_check import reconstruction_warnings
+
+        turns = (
+            ("It started on the Monday,", SPEAKER_1),  # joined to the next line's hedge
+            ("I think.", SPEAKER_1),  # its own hedge
+            ("It eased by the Friday.", SPEAKER_1),  # after a full stop: not joined
+            ("The knee is stable,", SPEAKER_2),  # the clinician's: never marked
+            ("probably.", SPEAKER_2),
+        )
+        document = _document(
+            tuple(
+                TranscriptSegment(
+                    start_seconds=float(index * 10),
+                    end_seconds=float(index * 10 + 5),
+                    speaker=speaker,
+                    transcript_words=_review_words(text),
+                )
+                for index, (text, speaker) in enumerate(turns)
+            )
+        )
+        config = load_note_config(tmp_path / "config")
+        draft = compose_draft(
+            document,
+            config,
+            ExtractiveNoteProvider(cues=config.normalised_cues()),
+            "template-a",
+            clinician_speaker=SPEAKER_2,
+        )
+        routed = [
+            assertion for section in draft.note_sections for assertion in section.note_assertions
+        ]
+        in_note = {
+            assertion.note_span.source_coords.segment_index
+            for assertion in routed
+            if assertion.note_span.source_coords is not None
+        }
+        additions = {
+            line.assertion_id: line
+            for line in (
+                _manual_line(document, index, "presenting_complaint")
+                for index in range(len(turns))
+                if index not in in_note
+            )
+        }
+        grouped: dict[Any, list[Any]] = {}
+        for assertion in (*routed, *additions.values()):
+            grouped.setdefault(assertion.section_key, []).append(assertion)
+        digest = transcript_digest(document)
+
+        def marked(clinician: str | None) -> tuple[set[int], set[str], set[str]]:
+            rows = models.editable_lines(
+                draft.model_copy(update={"clinician_speaker": clinician}),
+                document,
+                removed=set(),
+                additions=additions,
+            )
+            assert {row.segment_index for row in rows} == set(range(len(turns)))
+            note = GeneratedNote(
+                session_id=draft.session_id,
+                created_at=datetime(2026, 10, 24, tzinfo=UTC),
+                template_profile_id=draft.template_profile_id,
+                provider_name="extractive-v1",
+                clinician_speaker=clinician,
+                transcript_digest=digest,
+                config_digest=digest,
+                note_sections=tuple(
+                    GeneratedSection(section_key=key, note_assertions=tuple(grouped[key]))
+                    for key in sorted(grouped, key=lambda key: SECTION_INDEX[key])
+                ),
+            )
+            checked = {
+                warning.assertion_id
+                for warning in reconstruction_warnings(note, document)
+                if warning.note_warning_code == "hedged_source"
+            }
+            unsure = [row for row in rows if "unsure" in row.marks]
+            return (
+                {row.segment_index for row in unsure},
+                {row.assertion_id for row in unsure},
+                checked,
+            )
+
+        segments, rows_marked, checked = marked(SPEAKER_2)
+        assert segments == {0, 1}
+        assert rows_marked == checked
+        # With no confirmed clinician the clinician's joined pair is marked too.
+        segments, rows_marked, checked = marked(None)
+        assert segments == {0, 1, 3, 4}
+        assert rows_marked == checked
+
     def test_flagged_segments_reads_only_the_omission_warnings(self) -> None:
         from scribe_desktop.note import NoteWarning, SourceCoords
 

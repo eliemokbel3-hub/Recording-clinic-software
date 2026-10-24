@@ -251,8 +251,8 @@ from scribe_desktop.note import (
     SourceCoords,
     content_tokens,
     is_interrogative,
-    line_marks,
     normalise_token,
+    quoted_line_marks,
     reconstruct_span_text,
     spoken_by_confirmed_clinician,
     transcript_digest,
@@ -509,7 +509,10 @@ def _resolved_coords(assertion: NoteAssertion) -> SourceCoords:
 # read by ``note.text_holds_hedge`` since the hedge mark's Task 3.1): a quoted
 # line from a speaker who is not the clinician that holds one of these phrases
 # (whole tokens, in a row, typographic apostrophes folded first) is the
-# "unsure" line mark's evidence (Check 1's ``hedged_source``). A CLOSED tuple
+# "unsure" line mark's evidence (Check 1's ``hedged_source``) — for that line
+# and, through the hedge scope (validation-run6 plan D5,
+# ``note.segment_hedged``), for a same-speaker line joined to it mid-sentence.
+# A CLOSED tuple
 # taken from published hedging sources, never from the validation scripts,
 # keeping only what a speaker says about their OWN certainty: no entry that
 # IS a modal verb ("may" is also a month; a fixed phrase holding one, "as far
@@ -589,11 +592,13 @@ def reconstruction_warnings(
     """Errors for every ``transcript`` assertion that is not exactly what its
     coordinates say; review warnings for included low-confidence words; and
     (invented-text guard D5) ONE ``number_source`` / ``suspect_source`` per
-    line whose words earn that mark (``note.line_marks``), on the line's
-    span — and (validation-pass plan D7) ONE ``hedged_source`` the same way,
-    for a line its segment's speaker said who is not the note's confirmed
-    clinician (``note.spoken_by_confirmed_clinician``; with no confirmed
-    clinician, nobody is).
+    line whose words earn that mark (``note.quoted_line_marks``), on the
+    line's span — and (validation-pass plan D7) ONE ``hedged_source`` the
+    same way, for a line its segment's speaker said who is not the note's
+    confirmed clinician (``note.spoken_by_confirmed_clinician``; with no
+    confirmed clinician, nobody is), when the line's segment is hedged
+    within the hedge scope (validation-run6 plan D5, ``note.segment_hedged``:
+    its own words, or a same-speaker neighbour joined mid-sentence).
 
     Uncertainty warnings and line marks are emitted only for assertions that
     reconstruct exactly: when reconstruction fails, the cited words are NOT
@@ -646,7 +651,9 @@ def reconstruction_warnings(
                     )
             speaker = document.transcript_segments[coords.segment_index].speaker
             clinician = spoken_by_confirmed_clinician(speaker, note.clinician_speaker)
-            for kind in line_marks(words, clinician=clinician):
+            for kind in quoted_line_marks(
+                document, coords.segment_index, words, clinician=clinician
+            ):
                 warnings.append(
                     NoteWarning(
                         note_warning_code=mark_codes[kind],
