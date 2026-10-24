@@ -407,8 +407,11 @@ def text_holds_hedge(text: str, *, phrases: Sequence[str] | None = None) -> bool
     first — hold a spoken hedge (``note_check.HEDGE_PHRASES``, frozen by the
     validation-pass plan's Task 0.8, widened by the validation-run6 plan's
     Task 0.9) as whole tokens in a row. THE one hedge
-    test: the line mark reads it through ``words_hold_hedge`` and the
-    validation harness reads it over a script line (D7). ``phrases`` replaces
+    test, read through ``words_hold_hedge`` and the hedge scope
+    ``segment_hedged`` — by the line mark (``quoted_line_marks``) and, since
+    validation-run6 plan D5, by the validation harness over a script's lines
+    (``validation.script_line_hedged`` over ``reference_document``) and over
+    the measured transcript. ``phrases`` replaces
     the product's list for the harness's reference lexicon only
     (``validation.REFERENCE_HEDGES``, validation-run6 plan D8's R2); the app
     never passes it. Returns a bool; no text leaves it."""
@@ -448,14 +451,15 @@ def segment_hedged(
     (``words_hold_hedge``), or when the segment right before or right after
     it has the SAME speaker label, holds one, and the EARLIER of the two ends
     mid-sentence (``ends_mid_sentence``: a trailing comma, semicolon, colon
-    or dash — the recogniser cut one sentence there). "It was about 40 mg,"
+    or en or em dash, never a hyphen — the recogniser cut one sentence
+    there). "It was about 40 mg,"
     then "I think." is one hedged sentence, so both segments are hedged.
 
     Not joined, the named residues: a bare cut (no trailing mark), a full
     stop, a different speaker label, and any segment in between — a textless
     one included (the neighbour is the adjacent index, never the nearest
-    segment with words). A hedge split inside itself ("not, I think, sure")
-    stays unlisted. The clinician is NOT excluded here: the line mark's
+    segment with words). A listed hedge with other words inside it ("I
+    don't really know") is not found. The clinician is NOT excluded here: the line mark's
     caller does that (``quoted_line_marks``). The validation harness applies
     the same function to a script's lines (``validation.script_line_hedged``,
     over ``validation.reference_document``) — one rule, two inputs (C5).

@@ -946,13 +946,7 @@ class EncounterMetrics:
     plan D7): the note's ``hedged_source`` warnings whose segment holds no
     spoken hedge within the hedge scope (``note.segment_hedged``,
     re-derived; validation-run6 plan D5) — expected 0 from the shipped
-    checker; reported, never failing, and never credited.
-    ``next_patient_axis``, ``reference_tail_start`` and
-    ``reference_boundary`` (validation-run6 plan D14's recorded check, set
-    only when the reference reading was taken): whether the script carries
-    the next-patient axis, its ``REFERENCE_TAIL_STARTS`` row and the
-    product's boundary on the script's own words — integers, reported,
-    never failing."""
+    checker; reported, never failing, and never credited."""
 
     words: WordErrors
     spelling_normalised_words: int
@@ -966,9 +960,6 @@ class EncounterMetrics:
     expected_warnings_absent: tuple[str, ...]
     facts: tuple[FactOutcome, ...]
     hedge_marks_unhedged: int = 0
-    next_patient_axis: bool = False
-    reference_tail_start: int | None = None
-    reference_boundary: int | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -981,11 +972,6 @@ class EncounterMetrics:
             "hedge_marks_unhedged",
         ):
             _require_count(getattr(self, name), name)
-        if not isinstance(self.next_patient_axis, bool):
-            raise ValueError("next_patient_axis must be a flag")
-        for name in ("reference_tail_start", "reference_boundary"):
-            if getattr(self, name) is not None:
-                _require_count(getattr(self, name), name)
         for code, count in self.checker_tally:
             _require_member(code, NOTE_WARNING_SEVERITY, "checker_tally code")
             _require_count(count, "checker_tally count")
@@ -2038,9 +2024,6 @@ def encounter_metrics(
         expected_warnings_absent=tuple(sorted(expected - set(tally))),
         facts=tuple(facts),
         hedge_marks_unhedged=hedge_marks_unhedged,
-        next_patient_axis=next_patient_axis,
-        reference_tail_start=None if reference is None else reference.tail_start,
-        reference_boundary=None if reference is None else reference.boundary,
     )
 
 

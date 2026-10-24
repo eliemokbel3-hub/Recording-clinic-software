@@ -2721,6 +2721,22 @@ class TestSegmentHedged:
             ("Okay.", SPEAKER_2),
         ) == [1]
 
+    def test_a_listed_hedge_with_other_words_inside_it_is_not_found(self) -> None:
+        """The named residue the threat model and the harness document state:
+        the phrase's words must stand in a row ("I don't really know" holds
+        no listed hedge). Punctuation is not a word, so a hedge broken only by
+        commas ("Not, I think, sure") still holds "i think"."""
+        assert _hedged_segments(
+            ("Okay.", SPEAKER_1),
+            ("I don't really know.", SPEAKER_2),
+            ("Okay.", SPEAKER_1),
+        ) == []
+        assert _hedged_segments(
+            ("Okay.", SPEAKER_1),
+            ("Not, I think, sure.", SPEAKER_2),
+            ("Okay.", SPEAKER_1),
+        ) == [1]
+
     def test_a_suspect_hedge_supplies_nothing(self) -> None:
         document = _document(
             texts=(("It was about forty,", SPEAKER_1), ("I think.", SPEAKER_1))

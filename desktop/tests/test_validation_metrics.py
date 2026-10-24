@@ -2391,15 +2391,6 @@ class TestResidueR3:
         assert not metrics.r3_event
         assert (metrics.material_wrong, metrics.material_wrong_v2) == (0, 0)
 
-    def test_the_metrics_record_the_reference_reading(self) -> None:
-        reference = ReferenceReading(frozenset(), boundary=None, tail_start=2)
-        metrics = self._metrics(reference=reference)
-        assert (
-            metrics.next_patient_axis,
-            metrics.reference_tail_start,
-            metrics.reference_boundary,
-        ) == (True, 2, None)
-
 
 # The reference reading's scripts (D8, D14): ``next_patient_boundary`` on the
 # script's own words. "On examination" is a shipped cue (the head-case

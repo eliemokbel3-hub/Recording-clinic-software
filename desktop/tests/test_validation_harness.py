@@ -1715,8 +1715,6 @@ def _residue_outcomes() -> list[EncounterOutcome]:
             _fact_outcome(),
             _fact_outcome(1, kind="absent", verdict="wrongly_present", residue_r3=True),
             checker_tally=(("clinician_line_omitted", 2),),
-            next_patient_axis=True,
-            reference_tail_start=4,
             reference=_axis_reading(None, 4),
         ),
     ]

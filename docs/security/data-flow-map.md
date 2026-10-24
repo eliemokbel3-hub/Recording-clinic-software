@@ -1272,7 +1272,9 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       own scripts and label tracks, were to be added to it under decision
       3.6 — retired before any was recorded.)
     - RUN. `scripts/run-validation.py <set-folder> --config <folder> --rule
-      <file>` applies and asserts the offline environment, reads the rule
+      <file>` (and, with a schema-2 rule since validation-run6 plan D17,
+      `--set <name>`, a name the rule holds) applies and asserts the offline
+      environment, reads the rule
       file, the explicit config folder (never the app's own) and the models,
       and for each encounter reads its WAV, label track and script, then
       transcribes it in a temporary encrypted session store
@@ -1280,7 +1282,13 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       `transcript.enc`, under a fresh DPAPI-wrapped key — the
       speaker-measurement store, retention schedule) torn down key-first on
       every path; the transcript document, the composed and finalised note
-      and the metrics live in memory for that encounter only. Under the
+      and the metrics live in memory for that encounter only. Since
+      validation-run6 plan D8 and D14 it also composes, checks and judges a
+      second note, in memory and before the label track is read, over the
+      script's own invented words (`validation.reference_reading` over
+      `reference_document`: no audio, no store, nothing written), for the
+      residue classes; only fact indices, a boundary, a tail start and one
+      flag are kept from it. Under the
       default `--attribution enrolment` (since 2026-10-23) it first reads
       each needed `enrolment/slot-<n>.wav` and enrols it with the
       speaker-embedding model into an enrolment vector held in memory for

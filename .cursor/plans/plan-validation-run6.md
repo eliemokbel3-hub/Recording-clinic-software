@@ -7,7 +7,7 @@
 - a written decision, BEFORE run 6, on the recogniser-level and tone-level residues (rule v1 kept, or a ratified rule v2);
 - a fresh held-out set by an independent author, written predictions before the build, and run 6 as the run of record.
 
-**Overall Progress:** `70%` (21 of 30 buildable tasks; `[2026-10-24, stage-4]` Tasks 5.1 and 5.2 built and verified (suite 8614 collected, 8605 passed, 0 failed, 9 skipped, `npm run qa` 313 / 313, review round 48, codex peer round 49 applied); `[2026-10-24, stage-3]` Tasks 4.1–4.4 built and verified (suite 8605 passed, review rounds 44–45, codex peer round 46 applied, simplify round 47 clean); `[2026-10-24, stage-2]` Task 3.1 built and verified (suite 8504 passed, review round 41, codex peer round 42 converged); `[2026-10-24, stage-1]` Tasks 1.1–1.4 built and verified (suite 8425 passed, review round 38, codex peer round 39 converged); `[2026-10-24, peer round 25]` the convention, stated: the 8 `[decision]` tasks — all taken — are outside the count; 38 checkboxes in all, 22 ticked)
+**Overall Progress:** `83%` (25 of 30 buildable tasks; `[2026-10-24, stage-5]` H1–H4 done — H1 round 50 (suite 8615 collected, 8606 passed, 0 failed, 9 skipped), H2 round 51 (suite 8614 collected, 8605 passed, 0 failed, 9 skipped), H3 round 52 clean, H4 codex rounds 53 (code, 0) and 54 (docs, 1 LOW, fixed); 26 of 38 checkboxes ticked; `[2026-10-24, stage-4]` Tasks 5.1 and 5.2 built and verified (suite 8614 collected, 8605 passed, 0 failed, 9 skipped, `npm run qa` 313 / 313, review round 48, codex peer round 49 applied); `[2026-10-24, stage-3]` Tasks 4.1–4.4 built and verified (suite 8605 passed, review rounds 44–45, codex peer round 46 applied, simplify round 47 clean); `[2026-10-24, stage-2]` Task 3.1 built and verified (suite 8504 passed, review round 41, codex peer round 42 converged); `[2026-10-24, stage-1]` Tasks 1.1–1.4 built and verified (suite 8425 passed, review round 38, codex peer round 39 converged); `[2026-10-24, peer round 25]` the convention, stated: the 8 `[decision]` tasks — all taken — are outside the count; 38 checkboxes in all, 22 ticked)
 
 ## Lifecycle State
 - Active
@@ -770,6 +770,153 @@ See the Planning Extraction Summary (the canonical list).
   - Committed locally with the rx3 commit message above; not pushed.
   - Next: stage-5, the hardening stage H1–H4 over the whole run.
 
+- `[2026-10-24T19:08+11:00]` **Executor — Task H1 built (stage-5 rx1; `/review-loop` over the whole run `8996a75..HEAD` plus the working tree, `validation/heldout-3/` excluded). Converged in ONE round (round 50, cap 3).**
+  - **Round 50 (0 CRIT / 0 HIGH / 0 MED / 13 LOW, all applied).**
+    - LOW-001: `note.segment_hedged`'s docstring gave "not, I think, sure" as unlisted. It holds the listed "i think", so it is hedged; round 48 LOW-002 had left this docstring by phase scope.
+    - LOW-002: a new pin, `TestSegmentHedged.test_a_listed_hedge_with_other_words_inside_it_is_not_found`, for that named residue.
+    - LOW-003: the harness document's D5 amendment (:85) and the same docstring said "dash" where only an en or em dash joins.
+    - LOW-004 to LOW-013: documents that lagged the Phase 4 harness code.
+      - In `validation-harness.md`: R2's failure on `heldout-3` (reported, D17); R1's mark "in every end state judged `wrong`"; `hedged_source`'s 0.3.4 scope; three suspect-skipping predicates, not two; 0.3.3's reading among the non-ambiguous comparisons; the exit status and the Rule column read rule v2 under schema 2; `none` in the reference-boundary record.
+      - CHANGELOG: R3's measured-boundary condition; the D13 credit's boundary and suspect-word conditions.
+      - Data-flow flow 26: `--set`, and the in-memory reference compose.
+  - **Lenses:**
+    - the executor's whole-run passes (cross-phase interactions, C4–C6, C11, C2/C3);
+    - one read-only Explore subagent for the documents against the harness code. Its first two candidates were dropped on reading the document; its full report's ten were confirmed and applied.
+  - **Nothing here changes WHAT is built:** no rule, ceiling, vocabulary or decided behaviour. So there is no MUST-PAUSE.
+  - **Blind rule:** held (round 50's scope line). No pytest was run by the executor or the subagent.
+  - **Changed:**
+    - `desktop/src/scribe_desktop/note.py` (a docstring);
+    - `desktop/tests/test_note.py` (one test);
+    - `docs/testing/validation-harness.md` (eight clauses), `CHANGELOG.md` (two clauses), `docs/security/data-flow-map.md` (flow 26's RUN) — no test reads any of the three;
+    - this plan (round 50, its History line, H1, this note).
+  - **Gates:** ruff clean; mypy clean (66 source files).
+  - **Owed to the composer:** the full desktop suite through the blind runner. The extension is unchanged.
+  - **Proposed commit message:**
+
+    ```
+    Whole-run review of 0.3.4: the hedge-scope docstring and one pin (Task H1)
+
+    Review-loop round 50 over 8996a75..HEAD (validation/heldout-3 excluded),
+    converged in one round, 13 LOW applied:
+    - note.segment_hedged's docstring named "not, I think, sure" as an
+      unlisted split hedge; it holds the listed "i think". It now names a
+      listed hedge with other words inside it ("I don't really know"),
+      as the threat model and the harness document do, and the join's
+      dash is an en or em dash, never a hyphen
+    - a pin for that named residue (TestSegmentHedged)
+    - validation-harness.md: the D5 amendment's dash; R2 reported, not
+      failed, on heldout-3; R1's mark on the end states judged wrong;
+      hedged_source's 0.3.4 scope; every predicate skips suspect words;
+      0.3.3's reading is not ambiguity; the exit status and Rule column
+      are rule v2's under schema 2; "none" in the reference record
+    - CHANGELOG 0.3.4: R3's two boundary conditions; the flagged-line
+      credit's boundary and suspect-word conditions
+    - data-flow flow 26: --set, and the in-memory reference compose
+
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+    ```
+  - **Next:** the composer runs the suite and commits. Then H2 `/simplify`, H3 `/security-review` and H4, the codex peer pass, documents included.
+  - _Superseded by the rx2 bullet below: its commit message covers rounds 50–52._
+
+- `[2026-10-24T19:25+11:00]` **Executor — stage-5 rx2: H2's fix applied; H1 and H3 closed.**
+  - **H1 🟩:** the composer's suite over round 50 gave 8615 collected, 8606 passed, 0 failed, 0 errored, 9 skipped.
+  - **H2 🟨 (round 51):**
+    - SIMP-001 was verified (no reader of the three `EncounterMetrics` reference fields anywhere in `desktop/src`, `desktop/tests` or `scripts/`) and applied. The fields, their checks, their docstring paragraph and their constructor arguments are removed, along with the two test sites. R3's local axis guard and `EncounterOutcome.reference` are kept.
+    - The routed `note.text_holds_hedge` docstring was corrected.
+    - Round 51 is Closed; the fix-delta self-check passed.
+  - **H3 🟩:** round 52, 0 findings.
+  - **H4 🟥:** the composer's codex peer pass is next.
+  - **Gates:** ruff and mypy are clean (66 source files).
+  - **Owed:** the full desktop suite through the blind runner. Expect one fewer collected than 8615, because the metrics test was removed.
+  - **Blind rule:** held. Searches named `desktop/` and `scripts/` only, and no pytest was run.
+  - **Changed this leg:** `validation.py`, `note.py` (a docstring), `test_validation_metrics.py`, `test_validation_harness.py`, and this plan. They are uncommitted, alongside rx1's.
+  - **Proposed hardening commit message (rounds 50–52):**
+
+    ```
+    Hardening of 0.3.4: whole-run review, simplify, security review (H1-H3)
+
+    Review-loop round 50 (H1) over 8996a75..HEAD (validation/heldout-3
+    excluded), converged in one round, 13 LOW applied:
+    - note.segment_hedged's docstring named "not, I think, sure" as an
+      unlisted split hedge; it holds the listed "i think". It now names a
+      listed hedge with other words inside it ("I don't really know"),
+      and the join's dash is an en or em dash, never a hyphen
+    - a pin for that named residue (TestSegmentHedged)
+    - validation-harness.md: the D5 amendment's dash; R2 reported, not
+      failed, on heldout-3; R1's mark on the end states judged wrong;
+      hedged_source's 0.3.4 scope; every predicate skips suspect words;
+      0.3.3's reading is not ambiguity; the exit status and Rule column
+      are rule v2's under schema 2; "none" in the reference record
+    - CHANGELOG 0.3.4: R3's two boundary conditions; the flagged-line
+      credit's boundary and suspect-word conditions
+    - data-flow flow 26: --set, and the in-memory reference compose
+
+    Simplify round 51 (H2), 1 LOW applied:
+    - SIMP-001: EncounterMetrics' next_patient_axis, reference_tail_start
+      and reference_boundary had no reader (D14's record lives on
+      EncounterOutcome.reference); removed with their two test sites
+    - note.text_holds_hedge's docstring: the harness reaches it through
+      segment_hedged / script_line_hedged since D5
+
+    Security review round 52 (H3): no findings.
+
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+    ```
+  - _Superseded by the rx3 bullet below: its commit message adds rounds 53–54._
+
+- `[2026-10-24T19:43+11:00]` **Executor — stage-5 rx3: H4's finding fixed; H1–H4 done.**
+  - **H2 🟩:** the composer's suite over round 51 gave 8614 collected, 8605 passed, 0 failed, 0 errored, 9 skipped.
+  - **H4 🟩:** codex rounds 53 (code, 0) and 54 (documents, 1 LOW).
+  - **PR-LOW-001:** verified (`surface=docs`, `rec=Fix-now — confirmed`) and applied in `docs/testing/validation-harness.md:180`. It now says one non-suspect content word is enough for the LINE to draw `clinician_line_omitted`, while a FACT on it is credited only through its own non-suspect words. The sweep of `docs/` and `CHANGELOG.md` found no sibling. Round 54 is Closed; cap verdict converge.
+  - **Gates:** docs only; no suite owed. `docs/pilot/` and `docs/practice/` are untouched.
+  - **Blind rule:** held. Searches named `docs/`, `CHANGELOG.md` and `desktop/src`; no pytest was run.
+  - **Uncommitted:** every stage-5 change (rx1–rx3).
+  - **Next:** the composer commits the hardening stage; then Phase P (P.1, run 6, from the H4 commit).
+  - **Proposed hardening commit message (rounds 50–54):**
+
+    ```
+    Hardening of 0.3.4: whole-run review, simplify, security and peer review (H1-H4)
+
+    Review-loop round 50 (H1) over 8996a75..HEAD (validation/heldout-3
+    excluded), converged in one round, 13 LOW applied:
+    - note.segment_hedged's docstring named "not, I think, sure" as an
+      unlisted split hedge; it holds the listed "i think". It now names a
+      listed hedge with other words inside it ("I don't really know"),
+      and the join's dash is an en or em dash, never a hyphen
+    - a pin for that named residue (TestSegmentHedged)
+    - validation-harness.md: the D5 amendment's dash; R2 reported, not
+      failed, on heldout-3; R1's mark on the end states judged wrong;
+      hedged_source's 0.3.4 scope; every predicate skips suspect words;
+      0.3.3's reading is not ambiguity; the exit status and Rule column
+      are rule v2's under schema 2; "none" in the reference record
+    - CHANGELOG 0.3.4: R3's two boundary conditions; the flagged-line
+      credit's boundary and suspect-word conditions
+    - data-flow flow 26: --set, and the in-memory reference compose
+
+    Simplify round 51 (H2), 1 LOW applied:
+    - SIMP-001: EncounterMetrics' next_patient_axis, reference_tail_start
+      and reference_boundary had no reader (D14's record lives on
+      EncounterOutcome.reference); removed with their two test sites
+    - note.text_holds_hedge's docstring: the harness reaches it through
+      segment_hedged / script_line_hedged since D5
+
+    Security review round 52 (H3): no findings.
+
+    Codex peer pass (H4, gpt-6-astra medium): round 53, the code, no
+    findings; round 54, the documents, 1 LOW applied:
+    - PR-LOW-001: validation-harness.md's "what stays silent" sentence
+      now separates the line's warning (one content word not marked
+      suspect) from a fact's credit (its own words not suspect)
+
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+    ```
+
+- `[2026-10-24T19:50+11:00]` **Composer — stage-5 closed (hardening H1–H4).**
+  - Composer checks: suite 2 through the blind runner over rounds 50–51 gave 8614 collected, 8605 passed, 0 failed, 9 skipped. Round 54 was recorded and the census asserted (`NEW-ROUND OK`, findings_max 54). The rx3 diff (one sentence, `docs/testing/validation-harness.md:125` of the diff) was read and matches PR-LOW-001's fix. `--phase-close` OK. The executor's cap verdict "converge" was accepted under `cap-raise=executor` (a docs-only LOW, fixed, with no sibling).
+  - Blind rule: held in every stage-5 leg. In the peer logs (r53, r54), `heldout-3` appears only inside plan or document text.
+  - Committed locally with the rx3 message above; not pushed.
+  - **Run state:** Phases 1, 3, 4 and 5 and H1–H4 are done. **Next (practitioner):** H5 (0.3.4 built of record after P.1) and P.1–P.4. P.1 is run 6 from the H4 commit, on four sets; the gate is read on the 50 and `heldout-3`.
+
 ## Review History
 - 2026-10-22 `/review-plan` (Opus 5.5): Plan-subagent design critique + Explore subagent + coverage, practicality, risk and simplicity lenses, every finding checked against `0be35d7` / `4ff5f26`. Plan-scoped; no code reviewed. Step 3.5 gate: missed-speech warning Include in plan; chooser mark Include in plan; ui-refresh at its merge; larger model Excluded.
 - 2026-10-22 `/review-plan` (Fable 5.1): three read-only subagent lenses (coverage 12 findings, practicality 12, simplicity/risk 12) over the plan and the code at `4ff5f26`; 5 HIGH (0.11 vs C12; the script-side hedge term twice; the missed-speech credit; the copy's line number), the rest MED/LOW; all applied. One practitioner answer: "joined" reuses `note.ends_mid_sentence`. Plan-scoped; no code reviewed.
@@ -802,6 +949,11 @@ See the Planning Extraction Summary (the canonical list).
 - 2026-10-24 round 47: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
 - 2026-10-24 round 48: 0 CRIT / 0 HIGH / 0 MED / 10 LOW; skew=none; action=none
 - 2026-10-24 round 49: 0 CRIT / 0 HIGH / 0 MED / 2 LOW; skew=same-family; action=none
+- 2026-10-24 round 50: 0 CRIT / 0 HIGH / 0 MED / 13 LOW; skew=none; action=none
+- 2026-10-24 round 51: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=pre-existing; action=none
+- 2026-10-24 round 52: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
+- 2026-10-24 round 53: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
+- 2026-10-24 round 54: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=pre-existing; action=triage-and-ship
 
 ## Review Findings Log
 ### Round 1 — 2026-10-22
@@ -2133,6 +2285,210 @@ Round status: Closed (0 pending)
 - Verification counts: 2 defect claims checked, 2 confirmed, 0 dropped as unverifiable
 - Last reviewed: 2026-10-24
 
+### Round 50 — 2026-10-24
+Source: Claude Code review-loop (Opus 5.5, executor stage-5 rx1, Task H1; the WHOLE-RUN lens). Passes:
+- correctness and security, cross-phase interaction, plan deviation (D1, D3, D5, D7, D8, D13–D17, C4–C6, C11), structural, post-fix regression and missed-issue — the executor;
+- document accuracy against the HARNESS code — one read-only Explore subagent, given the blind rule verbatim. It checked every harness and rule v2 claim in `docs/testing/validation-harness.md`, the 0.3.4 entry of `CHANGELOG.md`, `validation/README.md`, and the harness passages of the threat model and data-flow map against `validation.py` and `rule-v2.json`.
+
+Round status: Closed (0 pending)
+
+**Scope:** the run's diff `8996a75..HEAD` (`97a5f37`) plus the working tree, with `validation/heldout-3/` excluded (its diff is empty).
+- **Source read in full:** `note.py`, `note_check.py`, `replay_kept.py`, `ui/models.py`, `ui/note.py` and the `validation.py` diff.
+- **Tests read:** the re-pins in `test_ui_screens.py`, `test_save_as_ratification.py`, `test_note_pipeline.py`, `test_ui_note_editor.py`, `test_ui_prose_stage.py` and `test_replay_kept.py`, plus `TestFlaggedLineCredit`, `TestSegmentHedged` and the clustering baseline pin.
+- **Blind rule:** held. Searches named `desktop/`, `docs/`, `scripts/`, `CHANGELOG.md`, the rule file and the plan; no `h3-` file was read or returned; no lint log was opened; no pytest was run. The subagent reported the same.
+
+**Cross-phase interactions checked (no finding):**
+- **Phase 1's code, read by Phase 4's harness:**
+  - D13's `credited_segments` reads both `OMISSION_CODES` and the shared `spoken_by_confirmed_clinician`.
+  - Its coverage, `_note_lines` over `note_span.source_coords`, is the same set as Check 4's `_covered_words` (`_resolved_coords` is that field).
+  - Its boundary, `next_patient_segment` over Check 6's warning, is the segment `next_patient_boundary` gives the second code.
+  - So every `clinician_line_omitted` segment is credited. That is pinned through the real checker (`test_the_real_check_4_code_on_an_uncovered_clinician_line_credits_it`).
+  - `warned_v033` is exactly 0.3.3's predicate, so the 0.3.3 column cannot read the new code.
+- **Phase 1's code, read by `replay_kept`:** it is counted by code name inside `reviews`, with `clinician_speaker` taken from the enrolment only, so there is no count without one.
+- **Phase 3's hedge scope:**
+  - Check 1 and `_row_marks` both go through `quoted_line_marks`.
+  - The harness's mark re-derivation goes through `segment_hedged` on the mark's segment.
+  - The script term and R2 go through `script_line_hedged`, which IS `segment_hedged` over `reference_document`.
+  - `REVIEW_MARK_CODES` takes in a scope-(ii) `hedged_source` as D8 lists it.
+  - No caller of the old per-span `line_marks` or `words_hold_hedge` remains outside `note.py`.
+- **R3:** it reads the measured boundary from Check 6 and the reference boundary from `next_patient_boundary`, as D14 has it. `reference_reading`'s `ResidueTableError` becomes an error outcome by type in `run_encounters`.
+- **C4 holds:** the new code is review severity, never routes or deletes, and is in `SEPARATELY_ACKNOWLEDGED_CODES`.
+- **C6 holds:** no `voice_commands` import in `note*.py`.
+- **C11 holds:** `test_shadow_exits.py` is unchanged.
+- **C2 and C3 hold:**
+  - `consultation_phrases.py`, `note_config.py`, `option-a-proposed.json`, `validation/config/` and `test_vocabulary.py` are unchanged.
+  - `HEDGE_PHRASES`'s diff is comments only.
+  - `rule-v2.json` matches D8, D15 and D17.
+- **Other readers:** `RULE_SCHEMA_VERSION` 2 has no other reader, and `guard_eval` imports nothing the run changed.
+
+- **LOW-001** — `desktop/src/scribe_desktop/note.py` `segment_hedged` docstring: the example of an unlisted split hedge, "not, I think, sure", is false. Its content tokens hold the listed "i think" in a row, so it IS hedged.
+  - Round 48 LOW-002 fixed the same example in the threat model but left this docstring as code outside Phase 5. It is in scope for the whole run.
+  - Triage: Fix-now. Decision: Applied. The docstring now uses the threat model's and the harness document's example, a listed hedge with other words inside it ("I don't really know"), which is not found.
+- **LOW-002** — the named residue that LOW-001 restates had no pin. The threat model (:668), the harness document and the docstring each state it.
+  - Triage: Fix-now. Decision: Applied. `test_note.py` `TestSegmentHedged.test_a_listed_hedge_with_other_words_inside_it_is_not_found` checks two lines:
+    - "I don't really know." is hedged nowhere;
+    - "Not, I think, sure." IS hedged, because punctuation is not a word.
+- **LOW-003** — `docs/testing/validation-harness.md:85` (D5's metric amendment, a 0.3.4 passage): the join was given as "a comma, semicolon, colon or dash". `note._CONTINUATION_MARKS` joins only an en or em dash, never a hyphen. This is a pattern sibling that round 48 LOW-003 missed.
+  - Triage: Fix-now. Decision: Applied ("or en or em dash, never a hyphen"). The same wording in `segment_hedged`'s docstring got the same fix.
+  - The sweep of `docs/`, `desktop/src` and `CHANGELOG.md` for "colon or dash" found only passages about the bounded carry from 0.3.1 and earlier: the harness document :180 and :187, threat-model :334, kept-recordings :44, phase-history :75 and CHANGELOG :11. Round 48 left these as older wording, and they are left again.
+
+The subagent's full report came after its first, partial one. It held ten more LOW candidates, each checked against the code named and confirmed. All were applied in the same round; all are documents, and no test reads any of them (searched `desktop/tests` for `validation-harness.md`, `CHANGELOG` and `data-flow-map`).
+- **LOW-004** — `validation-harness.md:125` (R2): "a reference hedge the product misses … fails" is true only where the set requires uncertainty surfaced. On `heldout-3` (`rule-v2.json`: `require_uncertainty_surfaced` false; `_encounter_failures` fails it only `if require_uncertainty and missed`) it is reported. Applied: now qualified, citing D17.
+- **LOW-005** — `validation-harness.md:184` (R1's mark term): "in every end state". The code (`all(state.marked for state, j in walked if j.verdict == "wrong")`) requires it of the end states judged `wrong` only; :124 already said so. Applied ("in every end state judged `wrong`").
+- **LOW-006** — `validation-harness.md:184`: `hedged_source` was described without the 0.3.4 hedge scope (`quoted_line_marks`). Applied (", or, since 0.3.4, joined mid-sentence to a same-speaker line holding one").
+- **LOW-007** — `validation-harness.md:73`: "both harness predicates follow — the current one and run 1's". There are now three, and the D13 credit skips suspect words too (`and not word.suspect`). Applied.
+- **LOW-008** — `validation-harness.md:71` (Ambiguous): the comparison readings listed left out 0.3.3's, which `encounter_metrics` also strips (`warned_v033=False`). Applied.
+- **LOW-009** — `validation-harness.md:43` (exit status): under a schema-2 rule the exit status, the Rule column and the TOTAL verdict are rule v2's for the named set (`main` returns `run_passed(..., set_name=)`), and this was unstated. Applied.
+- **LOW-010** — `validation-harness.md:155`: "as integers". The record prints `none` for a None value (`syn-38: none, 4`). Applied ("`none` where there is none").
+- **LOW-011** — `CHANGELOG.md` 0.3.4 entry: R3 "by the reference boundary" named one of its two boundary conditions. It requires no Check 6 boundary on the measured transcript too (`boundary is None and reference.boundary is None`). Applied.
+- **LOW-012** — `CHANGELOG.md`: the D13 credit's summary left out "before any next-patient boundary" and "never a suspect word". The harness document :87 is complete. Applied.
+- **LOW-013** — `docs/security/data-flow-map.md` flow 26 RUN: the command line omitted `--set`, which a schema-2 rule requires (`main` refuses without it). The flow also did not name the second in-memory compose over the script's own words (`reference_reading`, before the label track; no audio, no store). Applied: both added, and what is kept from it is named (fact indices, a boundary, a tail start, one flag; `ReferenceReading`). It has no custody effect.
+
+**Candidates dropped (the subagent's):**
+- "the D13 credit names `clinician_line_omitted` only" at :85: that paragraph is the dated D7 amendment, and :87 (D13) right after it says "EITHER code" and "subsumes D7's term". This is history, not a finding.
+- "the report prints per-set v1 and v2 verdict lines": that wording is not in the document. :155 says the two lines are for "the set" of the run, which is true of `_verdict_lines`.
+
+**Looked at and left alone:**
+- `replay_kept.note_drift` restates `evaluate_encounter`'s compose steps rather than calling the new `_compose_note`. This duplication predates the run, and `_compose_note` takes `HarnessInputs`, which the replay does not hold.
+- `WARNING_COPY["clinician_line_omitted"]`'s hint does not say a removed line can raise it, as the first code's does. Its "if it belongs" covers a deliberate removal, and the P.2 smoke reads the copy on screen.
+- At a patient / next-patient seam, `script_line_hedged` separates the roles `patient` and `next_patient`, while the measured transcript gives both the other voice's label. This needs a joining mark exactly at the seam. It is unmeasurable without reading `heldout-3`, so it is noted only.
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 13 LOW
+Round Classification: 🆕 12 (LOW-002 to LOW-013) and ♻️ 1 (LOW-001, round 48 LOW-002's sibling, left there by phase scope); skew=none. Every finding is a document or a docstring lagging code that is unchanged since its phase, plus one pin; no fix-induced defect.
+Finding verification: 15 candidates; 2 dropped (the subagent's first two, read against the document); 0 downgraded. LOW-001 was confirmed by hand through `content_tokens` and `HEDGE_PHRASES`, LOW-003 against `note._CONTINUATION_MARKS` and `TestSegmentHedged`'s hyphen case, and LOW-004 to LOW-013 against the code lines named on each.
+Missed-issue pass: re-read `clinician_line_omissions`, `_covered_words`, `encounter_metrics`' D13 block and fact loop, `reference_reading`, `_residue_section` and the `--set` refusals. Result: none beyond the findings above.
+Convergence: no CRIT, HIGH or MED. Converged at round 1 of the cap of 3, with all thirteen LOWs applied. ruff and mypy are clean (66 source files). A test changed, so the suite is owed to the composer through the blind runner. No test reads the three documents changed (searched `desktop/tests`).
+- Last reviewed: 2026-10-24
+
+### Round 51 — 2026-10-24
+Source: Claude Code simplify (composer-run subagent, stage-5 H2; composer-recorded from its returned block)
+Round status: Closed (0 pending)
+
+**Scope:** The whole run's source diff `8996a75..HEAD` (`97a5f37`) plus the working-tree change to `note.py`'s `segment_hedged` docstring, read in full: `note.py`, `note_check.py`, `replay_kept.py`, `ui/models.py`, `ui/note.py` and `validation.py` (the diff, plus `_note_lines`, `encounter_metrics`' coverage and credit block, and `EncounterMetrics`). For context, the plan's Goal, D1–D18, C1–C14, the Phase 1/3/4 task records and rounds 38–50. The test files were read only where a candidate touches them (`test_validation_metrics.py:2394-2401`, `test_validation_harness.py:1661-1722`). Blind rule held: searches named only `desktop/src`, `desktop/tests` and `docs/`; no `h3-` file was opened, listed or returned; no lint log was opened; no pytest was run; no file was written.
+
+#### Findings
+
+- **SIMP-001** — LOW — `EncounterMetrics.next_patient_axis`, `reference_tail_start` and `reference_boundary` are written and never read: they duplicate `EncounterOutcome.reference`.
+  - Triage: Fix-now
+  - Fix route: `/fix` (localized: one module plus two test sites)
+  - File: `desktop/src/scribe_desktop/validation.py:950-955` (docstring), `:969-971` (fields), `:984-988` (validation in `__post_init__`), `:2041-2043` (set in `encounter_metrics`)
+  - Why it matters: Phase 4 added these three fields so the metrics could record D14's reference-boundary check. Round 44 LOW-005 then moved that record onto `EncounterOutcome.reference`, a `ReferenceReading` that also carries `next_patient_axis`, and `_residue_section` (`:3225`) now reads only that. A search of `desktop/src` finds no reader of the three metrics fields. They are only built in `encounter_metrics` and type-checked in `__post_init__`. No document names them (`docs/` searched). So the same reading lives in two places and can drift. Round 44 said "folding them away is a later simplification", and round 47 left it as already known. This whole-run pass is the point where that deferral comes due.
+  - Current behaviour: `encounter_metrics(..., reference=)` copies `reference.tail_start` and `reference.boundary` into the metrics. It also recomputes `NEXT_PATIENT_AXIS in script.axes` into `next_patient_axis`. That is the third spelling of the axis test, beside `reference_tail_start()` and `reference_reading`. Nothing reads these copies.
+  - Desired behaviour: remove the three fields, their docstring paragraph, their `__post_init__` checks and the three constructor arguments. Keep the local `next_patient_axis` in `encounter_metrics`, because R3 reads it. Do not switch R3 to `reference.next_patient_axis`: hand-built readings in `TestResidueR3` leave that flag at its default of False. D14's record stays on `EncounterOutcome.reference`, which is unchanged. No report cell, verdict, class count or rule input changes.
+  - Pattern to follow: `EncounterOutcome.reference` and `ReferenceReading`, already the single record that `_residue_section` reads.
+  - Pattern siblings: searched `desktop/src` for `reference_tail_start|reference_boundary|next_patient_axis` and `desktop/tests` for `.reference_tail_start`, `.reference_boundary`, `metrics.next_patient_axis` and the `=` keyword spellings. Two test sites follow the fields:
+    - `test_validation_metrics.py:2394-2401` `test_the_metrics_record_the_reference_reading`: remove it. The record is pinned through the outcome by `test_validation_harness.py:2013` `test_the_reference_boundary_record_covers_every_script_the_run_read`.
+    - `test_validation_harness.py:1718-1719`: the `next_patient_axis=True, reference_tail_start=4` overrides in `_residue_outcomes`' `syn-002`. Remove them; `reference=_axis_reading(None, 4)` stays.
+    - No other site was found. `reference_tail_start` the FUNCTION (`:664`, tests `:2536`, `:2567`) is a different symbol and stays.
+  - Verification: ruff and mypy (no remaining reference to the fields), then the composer's suite through the blind runner. `TestReport`'s residue tests and the D14 record test must pass unchanged, and `TestResidueR3` must pass with the one test removed.
+  - Regression risk: low. The fields have no reader, so the change cannot alter output. The one risk is a missed test override, which mypy will not catch because `_metrics_of` passes `**overrides: Any`. It would fail loudly at construction as an unexpected keyword.
+  - /fix decision: Applied
+  - /fix notes:
+    - **Verified first** (stage-5 rx2, executor):
+      - `desktop/src`, `desktop/tests` and `scripts/` were searched for `reference_tail_start|reference_boundary|next_patient_axis` and every keyword spelling.
+      - The three `EncounterMetrics` fields had no reader. The only metrics hits were the declaration, the docstring, `__post_init__` and the `encounter_metrics` constructor arguments.
+      - In the tests, the only hits were the two sites the finding named: `test_validation_metrics.py`'s `test_the_metrics_record_the_reference_reading`, and `test_validation_harness.py`'s `syn-002` overrides through `_metrics_of`'s `**overrides: Any`. Nothing else passes either keyword, so mypy's blind spot hides no third site.
+      - Every other hit is a different symbol: `ReferenceReading.next_patient_axis`, the function `reference_tail_start` and the local `next_patient_axis` that R3 reads.
+    - **Fix** (`validation.py`): removed the three fields, their docstring paragraph, their two `__post_init__` checks and the three constructor arguments.
+    - **Kept:**
+      - the local `next_patient_axis = NEXT_PATIENT_AXIS in script.axes` (R3's guard; not switched to `reference.next_patient_axis`, per the finding);
+      - `EncounterOutcome.reference` / `ReferenceReading`, unchanged;
+      - R1 and R3 still read `reference`.
+    - **Tests:** the metrics test is removed, because D14's record stays pinned through the outcome by `test_the_reference_boundary_record_covers_every_script_the_run_read`. The two `syn-002` overrides are removed and `reference=_axis_reading(None, 4)` stays. `ReferenceReading` is still imported and used in `test_validation_metrics.py`.
+    - **Re-read after the fix:** a search returns no remaining reference to the fields. ruff is clean; mypy is clean (66 source files).
+    - **Sibling sites:** none beyond the two named. No document names the fields (`docs/` searched in round 51).
+    - **Suite:** owed to the composer through the blind runner. Collected should be one fewer than 8615.
+  - /fix date: 2026-10-24
+  - /fix applied by: Claude Code
+
+- Consciously left alone: the D13 credit's `credited_segments` comprehension (`validation.py:1837`) re-spells `ui.models.flagged_segments`' anchor test. Task 4.2's amendment chose "read from the note's warnings, not from `ui.models.flagged_segments`". That reason (no dependency on Task 1.2) has now lapsed, but it is still the plan's chosen shape.
+- Consciously left alone: the harness's coverage, `_note_lines` → `covered` → `covered_segments`, beside Check 4's `_covered_words`. Round 50 found the two give the same set. The harness's `covered` also feeds `covered_any` / `covered_all`, so importing `_covered_words` for the credit alone would put two coverage sets in one function, which is worse than now.
+- Consciously left alone: `reconstruction_warnings` and `_row_marks` each compute `spoken_by_confirmed_clinician(...)` before calling `quoted_line_marks`. Folding the speaker test into `quoted_line_marks` would change its signature for a two-line saving.
+- Consciously left alone: the code name `"clinician_line_omitted"` as a string literal in `replay_kept.note_drift` and `validation._residue_section`. Every warning code in this codebase is a literal, so this follows the convention.
+- Consciously left alone: `replay_kept.note_drift` restating `_compose_note`. Already left in round 50: it predates the run, and `_compose_note` takes `HarnessInputs`.
+- Consciously left alone: `_fact_classes`' zip and `class_counts`' per-class `if` both map a class to its fact flag. Two sites of three lines each; taste.
+- Consciously left alone (rounds 40, 43, 47; not re-raised): `check_note`'s double `omission_warnings` / `_covered_words`, `quoted_line_marks`' membership guard, `render_report` / `_verdict_lines` recomputing the verdict, `main`'s `--set` refusals beside `set_row`, `r3`'s defensive `tail_start is not None`, and `FactOutcome` built then `replace`d.
+- Noted, not a simplification (routed by the composer to the executor's fix leg as a docstring item): `note.text_holds_hedge`'s docstring still says "the validation harness reads it over a script line (D7)". Since Phase 3 the harness reaches it only through `segment_hedged` / `script_line_hedged` over `reference_document`.
+  - **Docstring correction, applied (stage-5 rx2, the composer's routing; 2026-10-24).**
+    - **Verified:** no caller of `text_holds_hedge(` exists outside `note.py`, whose `words_hold_hedge` calls it, and `segment_hedged` calls that.
+    - **Fix:** the docstring now says it is read through `words_hold_hedge` and the hedge scope `segment_hedged`, by the line mark (`quoted_line_marks`) and, since D5, by the harness over a script's lines (`validation.script_line_hedged` over `reference_document`) and over the measured transcript. A docstring only; ruff is clean.
+- Verification counts: 9 candidates; 1 kept (SIMP-001, confirmed by a `desktop/src` search showing no reader and a `docs/` search showing no mention); 8 left alone (6 by the conservatism guard or a plan-chosen shape, 2 already ruled on in earlier rounds); 0 downgraded.
+- Fix-delta self-check: PASS — re-read the 4 applied hunks across 3 files (`validation.py`'s docstring, fields, checks and constructor; the two test sites). R1 and R3 still read `reference`; no drive-by edit was found. Separately, the `note.py` docstring hunk was re-read.
+- Last reviewed: 2026-10-24
+
+### Round 52 — 2026-10-24
+Source: Claude Code security-review (composer-run subagent, portable checklist, stage-5 H3; composer-recorded from its returned block)
+Round status: Closed (0 pending)
+
+**Scope:** `git diff 8996a75 HEAD -- desktop/src scripts validation/README.md validation/rules` (`__init__.py`, `note.py`, `note_check.py`, `replay_kept.py`, `ui/models.py`, `ui/note.py`, `validation.py`, `validation/README.md`, `validation/rules/rule-v2.json`; no change under `scripts/` in the range) plus the working tree (`note.py`, docstring only), every hunk read in full with the unchanged code it depends on: `NoteWarning` / `_check_code` (`note.py:762-819`), the audit row's fields and patterns (`audit.py:133-146`, `:248-349`), `_validation_error_text` / `load_script_with_bytes` / `load_pass_rule`, `_error_type` / `run_encounters`, the D11 enrolment block of `main`, `validation_set.ENROLMENT_PASSAGE`. Context: plan Goal, D1–D18, C1–C14, the H3 line; threat-model Phase 3A surface 2 and data-flow flow 26. Trust boundaries: a warning's code and coordinates into `generated.enc` / `note.enc` and the audit row; the harness's console report, refusals and error lines; the replay's report on real kept recordings; the rule-file loader. Blind rule held: nothing under `validation/heldout-3/` and no lint or author log opened; every search confined to `desktop/` and `docs/`; nothing written; no pytest, app or script run.
+
+#### Findings
+
+None — no candidate survived verification.
+
+- Challenged and dropped (4):
+  - `main`'s `--set` refusal prints the rule's set names (`validation.py:3460-3463`): each name must match `RULE_NAME_PATTERN` before the rule loads (`PassRule._check_sets`); the typed name is never echoed; the report heading names a set only once `set_name in rule.sets`.
+  - A bad nested value under `sets.<key>` could echo the key through pydantic's error location: `SetCeilings` is in `_schema_field_names`, so a non-schema key prints as `<key>`; `_RULE_CONFIG` keeps `hide_input_in_errors=True`.
+  - `reference_reading` runs the full pipeline over script text before the label track is read: in memory only, no store or write (flow 26); any exception, `ResidueTableError` included, reported by type name only through `_error_type` in `run_encounters`, after the `except` block; only fact indices, a boundary, a tail start and one flag kept (`ReferenceReading.__post_init__` checks each).
+  - `segment_hedged` indexes `segments[segment_index]` without a bound check: not exploitable — Check 1 calls it only for coordinates that already reconstruct; `_row_marks` has already indexed the segment; the harness guards with `marked and …` after `_words_for_coords` returns None; `script_line_hedged` receives the loader-checked `fact.line`.
+- The H3 surfaces:
+  1. The `clinician_line_omitted` anchor is clean: the fixed code, `severity="review"` and `SourceCoords(seg, 0, len(words) - 1)` (three integers), a zero-word segment skipped first; `_check_code` refuses an unregistered code and the new code is a literal in `NOTE_WARNING_SEVERITY`; `WARNING_COPY` and `SEPARATELY_ACKNOWLEDGED_NAMES` are fixed text, `flagged_segments` / `OMISSION_CODES` indices only; the audit row holds no warning field and every string in it is pattern-constrained; no `log_event(` call logs a warning code; a 0.3.3 build's "Acknowledge all" clearing the new code on rollback is the named residue (`threat-model.md:903-907`).
+  2. The builder's passage and the in-memory enrolment (unchanged in this range, built in `f07dd41`): `ENROLMENT_PASSAGE` is everyday prose with no number, medication, hedge, closing or greeting; the vectors stay in the run's `enrolments` dict, never written; WAV and enrolment failures print a fixed help line or `EnrolmentError`'s numbers-only text, outside the handler, never the path; the builder's `enrolment/slot-<n>.wav` is synthetic audio by design (D11).
+  3. `replay_kept.py` keeps its refusals: only `NoteDrift` (a new `clinician_lines_omitted: int`, counted by code name) and `render_report` (one integer column, a fixed-label total) changed; the refusal order (`channel`, `check_tool_wer`, the lock) is untouched and `scripts/replay-kept-recordings.py` did not change; output stays session ids, integers and model names.
+  4. The harness's reference-transcript handling: `reference_document`, `script_line_hedged` and the R1/R2/R3 terms return booleans and indices; the new report pieces print only ids, closed vocabularies and integers ("Silent (0.3.3 predicate)", the Facts table's "Residue class", `_residue_section`, `_verdict_lines`); every new refusal and error is fixed text, none printed inside an `except` block.
+- Checked and clean: AuthN/AuthZ (no new entry point; channel guards unchanged); injection and taint (no text reaches a new sink or format string); secrets and sensitive data (no content in any code, log line, audit field, exception message or report column; the new warning persists only inside the already-encrypted note files); SSRF / outbound (no network code touched); crypto and sessions (no change); resource and availability (the fact walk bounded at 2^10 merged states per cell; the second pipeline pass bounded by `MAX_SCRIPT_BYTES`); dependencies and config (standard-library `statistics` and `dataclasses.replace` only; `rule-v2.json` literal integers and booleans).
+- Verification counts: 9 changed files read in full as diffs plus the working tree; 8 unchanged supporting regions; 5 searches confined to `desktop/` and `docs/`; 4 candidates challenged and dropped; 0 logged. The QA suite runs through `scripts/lint-held-out-set.py` (C12) — the composer's.
+- Last reviewed: 2026-10-24
+
+### Round 53 — 2026-10-24
+Source: independent cross-family codex peer review (composer-recorded from the read-only peer's output, `.cursor/loops/stage-5-peer-r53.log`; pass stage-5.p1, peer_round 1 of cap 5)
+Reviewer: codex gpt-6-astra (medium)
+Round status: Closed (0 pending)
+
+**Scope:** Hardening H4 over the whole run, `8996a75` to the working tree (H1–H3's fixes included): the source diff (`note.py`, `note_check.py`, `replay_kept.py`, `ui/models.py`, `ui/note.py`, `validation.py`, `rule-v2.json`, `validation/README.md`), the plan's Goal, D1–D18, C1–C14 and the phase and hardening records, and targeted test reads (`test_note.py`, `test_note_check.py`). It covered the cross-phase interactions (job 1), the constraints, with no diff in `consultation_phrases.py`, `note_config.py`, `note_fill.py` or rule v1, and no `voice_commands` import (job 2), and the edges and rollback (job 3). Read-only; no suite, no network; the blind rule held (no read under `validation/heldout-3/`; its ids appear only inside `validation.py`'s integer table and the plan's text).
+
+#### Findings
+
+None — the peer's block: "24 claims checked, 24 confirmed, 0 dropped as unverifiable".
+
+- Composer coverage note: the peer's command log shows no read of the documents diff (`docs/`, `CHANGELOG.md`), so job 4 (documents against the code after H1's fixes) was not covered by this round. A documents-only slice of the same pass follows as round 54. This round's zero is a code-lens result only.
+- Verification counts: 24 claims checked, 24 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-10-24
+
+### Round 54 — 2026-10-24
+Source: independent cross-family codex peer review (composer-recorded from the read-only peer's output, `.cursor/loops/stage-5-peer-r54.log`; pass stage-5.p1, peer_round 2 of cap 5; the documents slice of H4, after round 53's code lens left the documents unread)
+Reviewer: codex gpt-6-astra (medium)
+Round status: Closed (0 pending)
+
+**Scope:** the documents diff `8996a75` to the working tree (`CHANGELOG.md` and twelve files under `docs/`), with targeted reads of the code and plan each document quotes or describes. Per-document evidence, from the peer: `CHANGELOG.md` — feature summaries, quoted strings and rollback, consistent; `docs/architecture/phase-history.md` — the historical mark annotations, consistent; `docs/design-system.md` — warning copy, tooltip, marks and acknowledgement rules, match the code; `docs/pilot/README.md` — conditional admission of the new synthetic ids, accurate; `docs/pilot/findings-register.md` — prose against the Encounter pin and the unchanged table, consistent; `docs/practice/README.md` — review banner and update scope, retained; `docs/practice/clinician-review-guide.md` — quoted controls, warning conditions, hedge explanations and approval banner, consistent; `docs/release/pilot-builds.md` — the generic warning reader, grouping and acknowledgement on rollback, consistent; `docs/security/data-flow-map.md` — warning storage and the reference-reading flow, consistent; `docs/security/threat-model.md` — omission predicate, hedge scope, residues and rollback, consistent; `docs/testing/kept-recordings.md` — replay counts, fourteen columns and totals text, match the code; `docs/testing/shipping-gate.md` — separate acknowledgements and the unsure-mark treatment, consistent; `docs/testing/validation-harness.md` — D13 credit, residue classes, ceilings, gate, uncertainty override and report, one overstatement (below). No document unchecked. Read-only; no suite, no network; the blind rule held (every `heldout-3/` mention in the log is document or plan text).
+
+#### Findings
+
+- **PR-LOW-001** (LOW, docs-only, `docs/testing/validation-harness.md:180`): the remaining-silent-omission description requires every content word of the clinician's LINE to be suspect, but a fact whose own aligned words are all suspect stays silent even when another, non-suspect content word earns that wholly uncovered line `clinician_line_omitted`. — Evidence (peer): the document limits remaining silence to, among other cases, "one whose every content word the guard marked suspect", then calls other qualifying lines "warned"; `note_check.py:1730` needs only one non-suspect content token to raise the line warning, while `validation.py:1881` credits a fact only with `segment_index in credited_segments and not word.suspect`; the document's own line 73 states the fact-level exception correctly. Recommendation: Fix-now — separate the line's warning eligibility from the fact's credit and describe suspect words at the fact level. /fix decision: Applied
+  - Verified tuple (stage-5 rx3, executor): `surface=docs`, `rec=Fix-now — confirmed`. Evidence:
+    - `note_check.clinician_line_omissions` (`note_check.py:1730`) skips a line only when `not any(content_tokens(word.word_text) for word in words if not word.suspect)`. So ONE non-suspect content word is enough for the line to draw the warning.
+    - The harness's credit is per word: `warned=warned_v033 or (segment_index in credited_segments and not word.suspect)` (`validation.py:1881`). The fact's `warned` is the walk's `state.warned or info.warned` over its OWN aligned words (`_after_word`).
+    - So a fact whose own words are all suspect stays a silent omission on a line that IS warned. `:180` said every other wholly unquoted clinician line "is warned", which overstated the credit. `:73` already said it right ("a material fact whose words are all suspect is a silent omission").
+  - /fix notes:
+    - **Fix** (`docs/testing/validation-harness.md:180`): the line case is kept ("on one whose every content word the guard marked suspect (that line draws no warning)"). The next clause now separates the two:
+      - one content word not marked suspect is enough for the LINE to draw `clinician_line_omitted`;
+      - a fact on that line is warned unless every one of the fact's OWN words was marked suspect, since the harness never credits a suspect word (pointing to Suspect segments, :73).
+    - Re-read in place.
+    - **Sibling sweep:** `docs/` and `CHANGELOG.md` were searched for "every content word", "content word not marked suspect", "content word that is not suspect", "not marked possibly not speech", "marked as possibly not speech" and "suspect" across `docs/security/`. Every other hit states the LINE's warning condition, which is correct as written, or a different reader of the guard. None ties a FACT's warned or silent state to the line's words:
+      - `validation-harness.md:85` is D7's dated amendment; its "D7's term was widened on 2026-10-24 (next)" leads to :87, which states "a suspect word is never credited";
+      - `validation-harness.md:184` is the warning's description;
+      - `kept-recordings.md:57`, `design-system.md:156`, `clinician-review-guide.md:130` and `:137-138`, and `threat-model.md:506` are the warning's own conditions;
+      - `threat-model.md:545`, `:576` and `:688`, `data-flow-map.md:618` and `shipping-gate.md:102` are other guard readers;
+      - `CHANGELOG.md:8` is the warning's condition.
+      No sibling needed a change. `docs/pilot/` and `docs/practice/` are untouched, so `test_pilot_docs.py` is unaffected.
+    - **Gates:** docs only; no suite owed.
+  - /fix date: 2026-10-24
+  - /fix applied by: Claude Code
+- Verification counts: 48 claims checked, 47 confirmed, 0 dropped as unverifiable
+- Cap verdict: converge. The pass's code lens (round 53) found 0 in 24 claims. Its documents slice (this round) found one LOW overstatement, verified and fixed with no sibling. Neither found a regression from rounds 50–52. Peer round 2 of cap 5; no further peer round needed.
+- Fix-delta self-check: PASS — re-read the one applied hunk (`validation-harness.md:180`) in context. The line clause and the fact clause read separately, and nothing else in the sentence changed.
+- Last reviewed: 2026-10-24
+
 ## Tasks
 
 ### Phase 0 — Budget, measurement, decisions, freeze, predictions
@@ -2382,10 +2738,16 @@ Nothing to build. Tasks 2.1 and 2.2 are removed (their text survives in D2 and t
   - **`[2026-10-24]` Built (stage-4 rx1; by hand — no npm in the leg; `test_install_layout.py` and `npm run qa` owed to the composer).** 0.3.3 → 0.3.4 in the six fields the version test reads: `desktop/pyproject.toml` `[project] version`, `desktop/src/scribe_desktop/__init__.py` `__version__`, `extension/package.json` `version`, `extension/package-lock.json` top-level `version` and `packages[""].version`, `extension/src/manifest.ts` `version:` — nothing else in those files touched. No other `"0.3.3"` literal under `desktop/` or `extension/` (node_modules excluded). "Rolling back below 0.3.4" sits above "Rolling back below 0.3.3": one new stored thing (the review warning), read on 0.3.3 / 0.3.2 as "A review warning from a newer version of the app", one row with its count, coordinates kept, cleared by that build's "Acknowledge all" — the separate click lost, no warning dropped (Task 1.3's pin named); a note the older build generates is checked by its own rules; the `[next patient?]` mark is on screen only; no recording needs finishing for 0.3.4's sake; below 0.3.3 the older rules apply. ruff and mypy clean (66 source files).
 
 ### Hardening stage
-- [ ] 🟥 **H1** `/review-loop` to convergence over the whole run.
-- [ ] 🟥 **H2** `/simplify`: trivial → `/fix`, substantial → scoped `/review-plan`.
-- [ ] 🟥 **H3** `/security-review`: the new warning's anchor (no content in a code), the builder's passage and the harness's in-memory enrolment (D11), the kept-recording measurement script's refusals and integer-only output, the harness's handling of the reference transcript.
-- [ ] 🟥 **H4** Final cross-family `/peer-review` (codex `gpt-6-astra` medium), documents included (`docs/lessons.md`: a docs-only phase still draws peer findings).
+- [x] 🟩 **H1** `/review-loop` to convergence over the whole run.
+  - **`[2026-10-24]` Built (stage-5 rx1; suite owed to the composer through the blind runner).** Round 50 converged in one round: 13 LOW applied (a docstring, a pin, and documents lagging the harness code — `validation-harness.md`, CHANGELOG's 0.3.4 entry, data-flow flow 26). Cross-phase checks are recorded on round 50.
+  - **`[2026-10-24]` Verified (stage-5 rx2):** the composer's full suite over round 50's changes, through the blind runner: 8615 collected, 8606 passed, 0 failed, 0 errored, 9 skipped (the nine link tests).
+- [x] 🟩 **H2** `/simplify`: trivial → `/fix`, substantial → scoped `/review-plan`.
+  - **`[2026-10-24]` Round 51 (composer-run subagent): 1 LOW, SIMP-001, trivial → `/fix`, applied in stage-5 rx2.** The three unread `EncounterMetrics` reference fields were removed with their two test sites. Also corrected: `note.text_holds_hedge`'s docstring, a routed note. ruff and mypy are clean.
+  - **`[2026-10-24]` Verified (stage-5 rx3):** the composer's full suite over round 51's changes, through the blind runner: 8614 collected (one fewer, the removed metrics test), 8605 passed, 0 failed, 0 errored, 9 skipped (the nine link tests).
+- [x] 🟩 **H3** `/security-review`: the new warning's anchor (no content in a code), the builder's passage and the harness's in-memory enrolment (D11), the kept-recording measurement script's refusals and integer-only output, the harness's handling of the reference transcript.
+  - **`[2026-10-24]` Round 52 (composer-run subagent, portable checklist): 0 findings, Closed.** Four candidates were challenged and dropped there.
+- [x] 🟩 **H4** Final cross-family `/peer-review` (codex `gpt-6-astra` medium), documents included (`docs/lessons.md`: a docs-only phase still draws peer findings).
+  - **`[2026-10-24]` Pass stage-5.p1:** round 53, the code lens, 0 findings over 24 claims; round 54, the documents slice (all thirteen documents), 1 LOW, PR-LOW-001 (`validation-harness.md:180`, line eligibility vs a fact's suspect-word credit). It was verified and fixed in stage-5 rx3 with no sibling. Cap verdict: converge. Docs only, so no suite is owed.
 - [ ] 🟥 **H5** 0.3.4 built of record after P.1 on the H4 commit: the `Release` workflow, `gh attestation verify`, the `docs/release/pilot-builds.md` row, CI green. If P.1 forces a code change, H1–H4 and P.1 run again before H5.
 
 ### Phase P — Practitioner (normal terminal, developer build, installed app closed; C1, C8, C10)
