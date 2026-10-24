@@ -7,7 +7,7 @@
 - a written decision, BEFORE run 6, on the recogniser-level and tone-level residues (rule v1 kept, or a ratified rule v2);
 - a fresh held-out set by an independent author, written predictions before the build, and run 6 as the run of record.
 
-**Overall Progress:** `33%` (10 of 30 buildable tasks; `[2026-10-24, peer round 25]` the convention, stated: the 8 `[decision]` tasks — all taken — are outside the count; 38 checkboxes in all, 18 ticked)
+**Overall Progress:** `47%` (14 of 30 buildable tasks; `[2026-10-24, stage-1]` Tasks 1.1–1.4 built and verified (suite 8425 passed, review round 38, codex peer round 39 converged); `[2026-10-24, peer round 25]` the convention, stated: the 8 `[decision]` tasks — all taken — are outside the count; 38 checkboxes in all, 22 ticked)
 
 ## Lifecycle State
 - Active
@@ -340,7 +340,8 @@ See the Planning Extraction Summary (the canonical list).
 - **Excluded:** a larger model; edits to rule v1, the cue file or the seen scripts' facts; widening from seen failures; the guard's constants; routing changes; a sub-reason field; a per-warning line number in review copy. `[2026-10-24]` deleting D1's exclusion of already-flagged lines (D13); a product-lexicon definition of "tone only" and a split-hedge residue class (D17); re-setting the seen sets' ceilings to the predictions (D15).
 
 ## Current State / Handoff Note
-- Loop config (proposed, as the last three runs): executor=claude-p model="claude-opus-5-5" effort=high profile=default; peer=codex model="gpt-6-astra" effort=medium; architect=off; cadence=every-phase; caps=review:3,peer:5; gates=executor; cap-raise=executor; high-auto=on; peer-max=12; notify=action-only; scope=all; autocommit=on; isolation=none; merge=off; perms=scoped; liveness=10; monitor-delivery=auto; verify=composer.
+- Loop config: executor=claude-p model="claude-opus-5-5" effort=high profile=default; peer=codex model="gpt-6-astra" effort=medium; architect=off; cadence=every-phase; caps=review:3,peer:5; gates=executor; cap-raise=executor; high-auto=on; peer-max=12; notify=action-only; scope=all; autocommit=on; isolation=none; merge=off; perms=scoped; liveness=10; monitor-delivery=auto; verify=composer.
+- COMPOSER RUN-STATE: iso=validation-run6-20261024-125936-4d21; runkeys stage-1=Phase 1, stage-2=Phase 3, stage-3=Phase 4, stage-4=Phase 5, stage-5=H1-H4; started 2026-10-24 by the practitioner's /execute-loop (wizard confirmed); current: stage-1 closed (Phase 1 committed locally); next stage-2 (Phase 3).
 - **Order:** 0.2 (measure) → 0.2a (the same audio counts under an enrolment, D11) → 0.13 (the D1 decision) → 0.9 (dated commit) → 0.14 (the harness enrols; its own dated commit) → 0.11 (fixtures over a set table, before the set) → 0.10 (`heldout-2`, independent author, empty folder) → 0.12 (diagnosis, the `h2-NN` cases and divergence entries, predictions; frozen) → Phases 1–5 → H1–H4 → P.1 → H5 → P.2 → P.3.
 - Line references were taken at `0be35d7`; `desktop/src` is unchanged at `4ff5f26`. A build leg re-locates symbols before editing.
 - `[2026-10-22]` Decisions taken ("take all the recommendations"): 0.1 median ≤ 2, maximum ≤ 5; 0.3 (b), (c) only if over budget; 0.4's rule (values owed after Task 0.2); 0.5 (a); 0.6 lexicon (b), scope (ii); 0.7 (b) with the written override; 0.8 all three sets. Recorded on each task. Later the same day: "joined" = `note.ends_mid_sentence` (D5).
@@ -364,6 +365,67 @@ See the Planning Extraction Summary (the canonical list).
 - `[2026-10-24]` Task 0.15 recorded and committed on the practitioner's word ("do task 0.15, task 0.16 then task 0.17"). Predictions v2 equal the expected numbers on all three sets: the 50 PASS; `heldout` FAIL on 2 unmarked wrong facts plus R2 4; `heldout-2` FAIL with 25 silent facts on patient lines plus R2 9. The only D14 mismatch is `hld-10`. `C:\run6-sets-012\` may be deleted. Next: 0.16 (the pre-registration commit), then 0.17.
 - `[2026-10-24]` Task 0.16: D18's bands are written on the task and committed. That commit is the pre-registration, and its hash goes on Task 0.17 before the author runs. Next: 0.17.
 - `[2026-10-24]` Task 0.17 built and committed on the practitioner's word (record on the task): the test side and the blind runner; review rounds 32–36 over the runner (the codex pass converged at round 36) and `/simplify` round 37 (1 LOW applied); `validation/heldout-3/` with 23 scripts from a blind restricted author session; the lints green through the runner on the first run (8394 passed). From now on, while an `h3-` script is in the tree, pytest runs only through `scripts/lint-held-out-set.py validation/heldout-3`; every build leg's QA step must use it (C12). Phase 0 is complete. Next: `/execute-loop` for Phases 1, 3, 4, 5 and H (the loop config above), on the practitioner's word.
+- `[2026-10-24T13:28+11:00]` **stage-1 rx1 (executor) — Phase 1 BUILT, suite owed to the composer.** Tasks 1.1–1.4 are built and marked 🟨, with a record on each task. ruff and mypy are clean (66 source files). pytest was NOT run: the suite belongs to the composer, through the blind runner `scripts/lint-held-out-set.py validation/heldout-3`. No MUST-PAUSE: nothing changed WHAT is built.
+  - **What was built:**
+    - Check 4's second code `clinician_line_omitted` (review severity, separately acknowledged), from one function `note_check.clinician_line_omissions` over the shared coverage rule `_covered_words`. The harness reaches it through `check_note`; it runs after the first code and before Check 6, and stops at the boundary.
+    - The copy, the acknowledgement name, `OMISSION_CODES`, the count line and the `[next patient?]` mark.
+    - The 0.3.3 forward-tolerance pin.
+    - `replay_kept`'s per-code count and column.
+    - (c) is not built, per decision 0.13 GATE MET.
+    - C6 and C11 hold: no `voice_commands` import, and no new placement, clipboard, list, combo or text widget.
+  - **Tests re-pinned deliberately (the composer's first suite run will show if any were missed):**
+    - `test_note_matrix.py`: the exact code lists of ex-small-talk, ex-next-patient-greeting, ex-head-of-recording-greeting, ex-close-and-greet-one-segment and ab2-over-omission; Axis C's present-trigger reviews; prefill-partial; declined.
+    - `test_save_as_ratification.py` and `test_note_pipeline.py`.
+    - `test_note.py`: the registry, 20 codes.
+    - `test_ui_models.py`.
+    - `test_ui_screens.py`: the base fixtures' unquoted clinician lines now draw the new code. `_acknowledge_everything` and the Save flows acknowledge it, and the Acknowledge-all tests now assert it stays open.
+    - `test_ui_prose_stage.py`, `test_ui_note_editor.py` and `test_replay_kept.py`.
+  - **Not re-pinned, worth watching in the suite run:** `test_note_check.py::TestCheckNote` and any other exact-code list over a fixture with an uncovered, content-bearing clinician line.
+  - **Observations (not pauses):**
+    - Coverage is coordinate carriage (D1). So a clinician line that triggers an autofill line draws the new code even when that autofill line is confirmed: the config line covers nothing.
+    - The registry holds 19 codes at HEAD (the unknown-version code included) and 20 now. The Validation table's "18" is the count without the unknown-version code.
+    - The documents that quote the old mark or the count line (`docs/design-system.md`, the review guide, `docs/testing/kept-recordings.md`) are Task 5.1's.
+  - **Blind rule:** no file under `validation/heldout-3/` was opened, read, listed or returned by a search. Searches stayed in `desktop/` and named files, and the only held-out script read was the seen `validation/heldout/hld-19.json`.
+  - **Next round number:** 38 (loop-history-check OK, 37 headings).
+  - **Next:** the composer runs the desktop suite through the blind runner, then resumes this executor with the results to fix any failures and run `/review-loop` (round 38 onward).
+- `[2026-10-24T13:44+11:00]` **stage-1 rx2 (executor) — the suite's 3 failures fixed; `/review-loop` CONVERGED in round 38.** The suite still needs a re-run by the composer. ruff and mypy are clean (66 source files). No MUST-PAUSE.
+  - **The composer's rx1 run:** 8434 collected, 8422 passed, 3 failed, 9 skipped. All three failures were in `test_replay_kept.py::TestMain`: `test_with_enrolment_the_clinician_is_the_attributed_label`, `test_an_entry_with_no_saved_note_is_replayed_with_a_dash` and `test_the_suspect_count_is_the_new_transcripts_own`. Each pinned the row's END at the suspect cell, while Task 1.4 appended "Clinician lines omitted" as the new last column. The TESTS were wrong; Task 1.4's line leaves the column's place open, and the rx1 report pins put it last. Their endings now carry the new cell, which is 0 in each: either no clinician is set (the dash test and the suspect test), or there are no reviews at all (the enrolment test).
+  - **Round 38** (record in the Findings Log): 0 CRIT / 0 HIGH / 0 MED / 3 LOW, all applied.
+    - LOW-001: the `eligible_utterances` docstring and a test comment said "every mark before the speaker"; now "both front marks", since the suspect prefix stays after the speaker.
+    - LOW-002: the held-out test's function-local imports, hoisted into the module's import block.
+    - LOW-003: the typed-over test regains its check of the empty filter beside a replaced line, by adding lines 3 and 5 back first.
+    - The round converged in round 1 of the cap of 3. The history check is OK: 7 round entries and 38 headings, so the next round is 39.
+  - **Owed:** the composer's re-run of the full desktop suite through the blind runner. These tests changed in rx2: `test_replay_kept.py` (3), `test_note_check.py` (imports only), `test_ui_screens.py` (the typed-over test) and `test_ui_models.py` (a comment). Per the loop config, the codex peer pass over Phase 1 (cadence every-phase) is the composer's to schedule.
+  - **Proposed commit message for Phase 1** (the composer's to commit, after a green suite):
+    ```
+    Widen Check 4 to any uncovered clinician line and shorten the chooser marks (0.3.4 Phase 1, Tasks 1.1-1.4)
+
+    - note_check: clinician_line_omissions, Check 4's second code
+      clinician_line_omitted (review, separately acknowledged), one per
+      wholly uncovered line the confirmed clinician said that holds a
+      content word and draws no high_risk_omission, before the
+      next-patient boundary; one coverage rule (_covered_words) shared
+      by both codes; run in check_note after the first code, before
+      Check 6 (D1, decision 0.3 (b); (c) not built, decision 0.13)
+    - ui/models: its copy and acknowledgement name, OMISSION_CODES for
+      flagged_segments, the count line covering both codes, the
+      next-patient mark shortened to "[next patient?]" (D3)
+    - note: the code registered (20 codes); a 0.3.3 reader reads it as
+      unknown_review_warning, pinned (Task 1.3)
+    - replay_kept: the clinician_line_omitted count, its column and
+      total (Task 1.4)
+    - tests re-pinned where the new code fires; review-loop round 38
+      (3 LOW, applied)
+
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+    ```
+  - **Blind rule:** no file under `validation/heldout-3/` was opened, read, listed or returned by a search in rx2; no lint log was opened; pytest was not run.
+- `[2026-10-24T14:45+11:00]` **Composer — Phase 1 CLOSED (stage-1).**
+  - The full suite through the blind runner, re-run over rx2: collected 8434, passed 8425, failed 0, skipped 9. ruff and mypy are clean.
+  - Review rounds: review-loop round 38 (3 LOW, applied); codex peer round 39 (`gpt-6-astra` medium, read-only, pass stage-1.p1) found 0 findings, converged at peer round 1 of cap 5. The composer recorded the round, and the census assertion passed (39 > 38).
+  - Live-user smoke: the practitioner carried it to P.2's mock smoke (in chat, 2026-10-24; recorded on P.2).
+  - Committed locally with the rx2 commit message above; not pushed.
+  - Next: stage-2, Phase 3 (hedge scope, Task 3.1).
 
 ## Review History
 - 2026-10-22 `/review-plan` (Opus 5.5): Plan-subagent design critique + Explore subagent + coverage, practicality, risk and simplicity lenses, every finding checked against `0be35d7` / `4ff5f26`. Plan-scoped; no code reviewed. Step 3.5 gate: missed-speech warning Include in plan; chooser mark Include in plan; ui-refresh at its merge; larger model Excluded.
@@ -385,6 +447,9 @@ See the Planning Extraction Summary (the canonical list).
 - 2026-10-24 round 35: 0 CRIT / 0 HIGH / 3 MED / 0 LOW; skew=same-family; action=strengthen-siblings
 - 2026-10-24 round 36: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
 - 2026-10-24 round 37: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=none; action=none
+- 2026-10-24 round 38: 0 CRIT / 0 HIGH / 0 MED / 3 LOW; skew=none; action=none
+- 2026-10-24 round 39: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
+- 2026-10-24 round 40: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
 
 ## Review Findings Log
 ### Round 1 — 2026-10-22
@@ -1416,6 +1481,56 @@ Round status: Closed (0 pending)
 
 **Summary:** 1 LOW, Fix-now → `/fix` (applied). Nothing else worth a maintainer's attention.
 
+### Round 38 — 2026-10-24
+Source: Claude Code review-loop (Opus 5.5, executor stage-1 rx2; sequential passes — correctness and security, executor judgment, structural quality, post-fix regression, missed-issue, plan deviation against D1, D3, C4–C6, C11 and Tasks 1.1–1.4)
+Round status: Closed (0 pending)
+
+**Scope:** Phase 1's 16 uncommitted files against HEAD `8996a75` (the working tree): `note.py`, `note_check.py`, `replay_kept.py`, `ui/models.py`, `ui/note.py`, the plan, and the tests `test_note.py`, `test_note_check.py`, `test_note_matrix.py`, `test_note_pipeline.py`, `test_replay_kept.py`, `test_save_as_ratification.py`, `test_ui_models.py`, `test_ui_note_editor.py`, `test_ui_prose_stage.py`, `test_ui_screens.py`. The source diff was read in full, and the tests through their diffs and the new class. Before the round, the composer's suite run over rx1 had 3 failures, all in `test_replay_kept.py::TestMain`. They pinned the row's END at the suspect cell, while Task 1.4 deliberately appended the new last column. Fixed before the round: the three endings now carry the new cell (`| 1.000 | 0 | 0 | 0 | 0 | 0 |`, `| - | 0 | 0 | 0 | 0 |`, `| 7 | 0 |`), and their comments name both last cells. No `h3-` file was read or returned by a search.
+
+- **LOW-001** — `desktop/src/scribe_desktop/ui/models.py` `eligible_utterances` docstring (and `test_ui_models.py`'s D3 comment): "every mark before the speaker" is false. The guard's `[possibly not speech]` prefix sits after the speaker, by the practitioner's 2026-10-13 front-mark decision, which the exact label pins keep. Triage: Fix-now; Decision: Applied. Both now say both FRONT marks come before the speaker and the suspect prefix after it, with the cut applied to the words only. D3's "all marks" is read as the front marks; record-only.
+- **LOW-002** — `desktop/tests/test_note_check.py` `test_the_five_held_out_silent_facts_are_carried_or_flagged`: four function-local imports, the only ones in the file. Triage: Fix-now; Decision: Applied. They are hoisted into the module's import block (`script_path`, `compose_draft`, `finalise_note`, `extractive_provider_from_config`, `flagged_segments`, `confirm_all`, `first_detected_prefill`, `load_script`).
+- **LOW-003** — `desktop/tests/test_ui_screens.py` `test_a_typed_over_flagged_line_is_named_by_number_never_offered_twice`: the rx1 re-pin dropped the test's only check of the empty filter beside a replaced line. That check covered `FLAGGED_FILTER_EMPTY_LINE` appended after "see its row below.", with Add disabled. The new code's lines 3 and 5 now fill the filter, so the path was no longer reached. Triage: Fix-now; Decision: Applied. Lines 3 and 5 are added back, then the empty chooser, the disabled Add and the appended line are asserted as before.
+
+**Looked at and left alone:**
+- `check_note` computes `omission_warnings` and `_covered_words` twice over (once for each Check 4 code). This is linear in the transcript and keeps `clinician_line_omissions` callable on its own, as the harness and the tests use it.
+- `validation.py:1537`'s `warned` still reads `high_risk_omission` only. That is the harness credit, D7/D13, owned by Tasks 4.x.
+- The documents that quote the old mark and the count line are Task 5.1's.
+- An autofill-trigger clinician line draws the new code even when its config line is confirmed. Coverage is coordinate carriage (D1, as decided).
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 3 LOW
+Round Classification: 🆕 3 (the first code round over Phase 1); skew=none
+Finding verification: 5 candidates; 2 dropped (the duplicate computation, by design; the harness reader, Phase 4's); 0 downgraded
+Missed-issue pass: re-read `note_check.py` (`_covered_words`, `clinician_line_omissions`, `check_note`), `ui/models.py` (`flagged_segments`, `flagged_count_line`, `eligible_utterances`, the copy and the names), `replay_kept.py` (`note_drift`, `render_report`), the new test class and the `test_ui_screens.py` re-pins; result: LOW-003
+Convergence: no CRIT, HIGH or MED; the three LOWs applied. Converged in one round (cap 3).
+
+### Round 39 — 2026-10-24
+Source: independent cross-family codex peer review (composer-recorded from the read-only peer's output, `.cursor/loops/stage-1-peer-r39.log`; pass stage-1.p1, peer_round 1 of cap 5)
+Reviewer: codex gpt-6-astra (medium)
+Round status: Closed (0 pending)
+
+**Scope:** Phase 1's working-tree diff against `8996a75` (`note.py`, `note_check.py`, `replay_kept.py`, `ui/models.py`, `ui/note.py`, ten test files, the plan's Phase 1 records and Round 38), plus the named supporting functions (`line_marks`, `admissible_sections`, `next_patient_boundary`, `check_note`, `SEPARATELY_ACKNOWLEDGED_CODES`, `eligible_utterances`, `flagged_segments`, the Note tab's acknowledgement and filter paths, the forward-tolerant reader, `replay_kept`'s count and output). Read-only; no suite, no network. The blind rule held: every search was scoped to `desktop/` files.
+
+#### Findings
+
+(none)
+
+- Verification counts: 6 claims checked, 6 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-10-24
+- Convergence: 0 findings in the pass's first round. Converged (cap 5).
+
+### Round 40 — 2026-10-24
+Source: Claude Code simplify (composer-run, before Phase 1's local commit)
+Round status: Closed (0 pending)
+
+**Scope:** Phase 1's source diff against `8996a75` (`note.py`, `note_check.py`, `replay_kept.py`, `ui/models.py`, `ui/note.py`), the touched functions read in full. The blind rule held: every search was scoped to `desktop/src`.
+
+#### Findings
+
+(none) — no simplifications worth a maintainer's attention.
+
+- Consciously left alone: `check_note` computes `omission_warnings` twice (once directly, once inside `clinician_line_omissions` for its exclusion) and `_covered_words` three times; folding them needs a signature change to a public, separately callable function (C5) for a cost bounded by one transcript — marginal. `validation.py`'s single-code `high_risk_omission` read is Phase 4's (D13), not this phase's.
+- Last reviewed: 2026-10-24
+
 ## Tasks
 
 ### Phase 0 — Budget, measurement, decisions, freeze, predictions
@@ -1600,14 +1715,18 @@ Round status: Closed (0 pending)
     - `validation/README.md` names the set; `scripts/README.md` names the runner. The practitioner may delete `C:\heldout3-author` (the scripts are in the repository).
 
 ### Phase 1 — Check 4 widened and the chooser marks (`note_check.py`, `note.py`, `ui/models.py`)
-- [ ] 🟥 **1.1 The checker (D1)**
+- [x] 🟩 **1.1 The checker (D1)**
   - `note_check.clinician_line_omissions(note, document, config)` inside `check_note` after `omission_warnings`; `note.NOTE_WARNING_SEVERITY["clinician_line_omitted"] = "review"`; `__all__`; the code-list docstrings (`note_check.py:136`, `:192`).
   - Tests (`test_note_check.py`, a sibling of `TestCheck4Omission`): fires on a wholly uncovered clinician line; not on a partly quoted one, a filler-only line, a patient line, a line that already draws `high_risk_omission`, a line past the boundary, or with no confirmed clinician; a one-word acknowledgement fires under (b) and not under (c); the tail pin `test_consultation_boundary.py:656` unchanged; `test_note_matrix`; the five held-out silent cases asserted per 0.12's predictions; every note-level exact-code-list test in Key Findings re-checked and re-pinned deliberately where the new code fires (`test_save_as_ratification.py:342`, `test_ui_screens.py:5693-5749`); the direct `omission_warnings` pins (`test_note_check.py:1791/:1828/:1882/:2291`, `test_note_schema_v2.py:893`) and `test_transcript_trim.py:459-483` stay unchanged as regression pins (peer round 2 PR-LOW-001).
-- [ ] 🟥 **1.2 The copy, acknowledgement, count line and chooser marks (D1, D3)**
+  - **`[2026-10-24]` Built (stage-1 rx1; ruff and mypy clean; the suite is the composer's, through the blind runner).** `note_check.clinician_line_omissions(note, document, config)` exactly D1's seven conditions, coverage through a new private `_covered_words` that `omission_warnings` now also reads (Check 4's ONE coverage rule, behaviour-preserving), the "already draws `high_risk_omission`" condition read from `omission_warnings` itself (so the two codes can never double-warn a line), the boundary from `next_patient_boundary`; `check_note` runs it right after `omission_warnings` and before Check 6; `__all__`; the module docstring's Check 4 paragraph and Check 6's docstring; `NOTE_WARNING_SEVERITY["clinician_line_omitted"] = "review"`. (c) is not built (decision 0.13: GATE MET). Tests: `TestCheck4ClinicianLineOmission` (15 tests, 26 items: fires once over the whole line, one per line in order, partly quoted / whole quoted / config line, disfluencies and punctuation, patient line, a `high_risk_omission` line, no clinician, suspect line, past the boundary with the first code still flagging the tail, five one-word acknowledgements and a question firing under (b) with no `ACKNOWLEDGEMENT_TOKENS`, a one-word "right" / "no" drawing the FIRST code only, `check_note`'s order, the five held-out cases); `test_registered_severities` pins the count at 20. Re-pinned where the new code fires: `test_note_matrix` (cells `ex-small-talk`, `ex-next-patient-greeting`, `ex-head-of-recording-greeting`, `ex-close-and-greet-one-segment`, `ab2-over-omission`; Axis C's present-trigger, prefill-partial and declined cases), `test_save_as_ratification.py` (4 codes, segments `[0, 3, 1, 2]`), `test_note_pipeline.py` (the fixture's "Please use an ice pack tonight"). **Count, recorded:** `NOTE_WARNING_SEVERITY` held 19 codes at HEAD (the Validation table's baseline of 18 left out `unknown_review_warning` or another code), so it is 20 now — a count, not a design change.
+- [x] 🟩 **1.2 The copy, acknowledgement, count line and chooser marks (D1, D3)**
   - `ui/models.py`: `WARNING_COPY["clinician_line_omitted"]` ("A line you said is not in the note"); `SEPARATELY_ACKNOWLEDGED_CODES` / `_NAMES` and `ACKNOWLEDGE_ALL_TOOLTIP` (the rename ripple); `flagged_segments` reads both omission codes; `flagged_count_line`'s wording rewritten to cover both ("a line you said, or a side, negation, number, dose, name or medication someone said"); `eligible_utterances` front marks short (D3: `[next patient?]`), marks before the speaker, the 60-character cut on the words only; `ui/note.py`'s docstring :44-77.
   - Tests: `test_ui_models` (the separately-acknowledged set, the tooltip :1979-1985, the count line, the exact labels :2025-2055), `test_ui_screens` `WARNING_COPY` parity; `test_shadow_exits.py` unchanged.
-- [ ] 🟥 **1.3 Forward tolerance** — a pin that a note holding `clinician_line_omitted` reads on the stored-note path and that the 0.3.3 reader's behaviour (each new-code warning read as an `unknown_review_warning`, fields kept, grouped as one code) is what the rollback line describes.
-- [ ] 🟥 **1.4 `replay_kept` per-code count** (moved from 2.3, 2026-10-23) — `note_drift` gains the per-code review count for `clinician_line_omitted` (an integer, the code name only), so the practitioner's replay and `docs/testing/kept-recordings.md` can follow it; the numbers-only output pin extended; `test_shadow_exits.py` unchanged.
+  - **`[2026-10-24]` Built (stage-1 rx1; ruff and mypy clean; suite owed to the composer).** `ui/models.py`: `WARNING_COPY["clinician_line_omitted"]` ("A line you said is not in the note"; hint: the transcript, the "Show flagged lines only" filter, Add line to section, then acknowledge); the code in `SEPARATELY_ACKNOWLEDGED_NAMES` (so in `_CODES` and the tooltip; 5 codes); `NEXT_PATIENT_LINE_MARK` = `"[next patient?] "` and the `possible_next_patient` name quotes it; a new `OMISSION_CODES` (both codes), which `flagged_segments` reads; `flagged_count_line` → "N flagged line(s) is/are not in the note (a line you said, or a side, negation, number, dose, name or medication someone said)." with the "Line N is replaced…" tail unchanged; `eligible_utterances` already put every mark before the speaker and cut the words only — its docstring now says so (D3); `ui/note.py`'s module docstring (Flagged lines, the next-patient mark). No widget, list, combo, clipboard or placement change (C11). Tests: `test_ui_models` (the set of 5, the tooltip word for word plus a pin that the name quotes the mark, the new copy, `flagged_segments` over both codes and not Check 6, the count line's four cases, the exact labels with `[next patient?]`, and a 159-character line whose label keeps `[flagged] [next patient?]` whole while its words are cut at 60). **Ripple, re-pinned deliberately:** the screens' base fixtures (`_NOTE_TURNS`' "Please use an ice pack tonight"; `_EDIT_TURNS`' segments 3 and 5) carry clinician lines the note leaves out, so the new code is open on every base review — `test_ui_screens.py`'s `_acknowledge_everything` acknowledges it by its own row (like the line-mark codes), the write-tests' `_save`, the window flows and the Note-tab Save flows use that helper, and the tests that assert "Acknowledge all" semantics now assert the new code stays open (`test_confirming_all_then_acknowledge_enables_save`, `test_acknowledge_all_clears_unacknowledged`, `test_removing_a_line…`, `test_acknowledge_all_clears_the_others_and_leaves_the_omission_open` → 2 open, then 1, then 0), and the flagged-lines group starts with lines 3 and 5 flagged (the chooser, the count line, the filter's four entries, the typed-over line's count); `test_ui_prose_stage.py`'s `_ratify` and `test_ui_note_editor.py`'s Save test the same.
+- [x] 🟩 **1.3 Forward tolerance** — a pin that a note holding `clinician_line_omitted` reads on the stored-note path and that the 0.3.3 reader's behaviour (each new-code warning read as an `unknown_review_warning`, fields kept, grouped as one code) is what the rollback line describes.
+  - **`[2026-10-24]` Built (suite owed).** `test_note.py::TestForwardTolerantWarningReader::test_the_new_omission_code_reads_back_and_a_0_3_3_reader_groups_it`: 0.3.4 reads two stored `clinician_line_omitted` back unchanged (and round-trips); with the registry patched to 0.3.3's (the code removed), the same bytes read as two `unknown_review_warning` with their coordinates, no block, ONE review group of count 2 that `acknowledge_all_codes` clears — the rollback line's wording (Task 5.2).
+- [x] 🟩 **1.4 `replay_kept` per-code count** (moved from 2.3, 2026-10-23) — `note_drift` gains the per-code review count for `clinician_line_omitted` (an integer, the code name only), so the practitioner's replay and `docs/testing/kept-recordings.md` can follow it; the numbers-only output pin extended; `test_shadow_exits.py` unchanged.
+  - **`[2026-10-24]` Built (suite owed).** `NoteDrift.clinician_lines_omitted: int = 0` (already inside `reviews`); `note_drift` counts it by code name; the report gains a last column "Clinician lines omitted" (14 columns) and a totals clause "Clinician lines omitted (clinician_line_omitted, among the reviews): N." Tests: the column and its total, the count kept apart and among the reviews (a stubbed checker), an end-to-end uncued clinician line counted once, the error/review test now carries codes, and the report pins at 14 columns. `docs/testing/kept-recordings.md` is Task 5.1's.
 
 ### Phase 2 — The missed-speech warning — DROPPED 2026-10-23 (decision 0.4 (2))
 Nothing to build. Tasks 2.1 and 2.2 are removed (their text survives in D2 and the Review Findings Log); 2.3 moved to Phase 1 as 1.4.
@@ -1651,6 +1770,7 @@ Nothing to build. Tasks 2.1 and 2.2 are removed (their text survives in D2 and t
 - [ ] 🟥 **P.2 Install 0.3.4 and smoke it**
   - Verify (`gh attestation verify`, hashes) and install at a pilot-allowed point; reload the extension; restart Chrome.
   - Mock smoke (desktop-started, no patient, shadow on, no development tick, Discarded): an uncued clinician advice line shows "A line you said is not in the note", Acknowledge all leaves it, the per-code click clears it; a hedge after a comma-cut line shows `[check: unsure]`; the chooser's `[flagged]` / `[next patient?]` marks are readable; the count line reads correctly; the Status tab shows 0.3.4.
+  - `[2026-10-24]` This mock smoke is also Phase 1's live-user smoke: the practitioner carried it here in chat during stage-1 of run `validation-run6-20261024-125936-4d21`, rather than smoking Phase 1 on the developer build. Phase 1 was committed without a live smoke of its own.
   - Done when: the result is on this task and AGENTS.md says 0.3.4 is installed.
 - [ ] 🟥 **P.3 The register and the P.5 question**
   - `[2026-10-24]` **Amended:** rows for `heldout` and `heldout-2` from run 6 by class — an unrouted patient statement silently absent (control: the chooser lists every unrouted line; the clinician's review), hedge idioms outside every list, the confident recogniser errors, the closing gap — and `heldout-3`'s after P.4; the Encounter cell pattern gains `h2-` and `h3-` with both-ways cases.

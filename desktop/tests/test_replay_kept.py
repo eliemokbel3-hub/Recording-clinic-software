@@ -480,12 +480,42 @@ class TestNoteDrift:
     ) -> None:
         """Round 29 LOW-014: a non-zero error count reaches the row (the
         synthetic content draws no error-severity warning of its own)."""
-        warnings = [SimpleNamespace(severity=s) for s in ("error", "review", "error")]
+        warnings = [
+            SimpleNamespace(severity=s, note_warning_code=c)
+            for s, c in (("error", "contradiction"), ("review", "mapping_drop"), ("error", "x"))
+        ]
         monkeypatch.setattr(replay_kept, "check_note", lambda note, document, config: warnings)
         drift = replay_kept.note_drift(
             _document("a" * 32), self._config(tmp_path), None, clinician_speaker=None, now=NOW
         )
-        assert (drift.errors, drift.reviews) == (2, 1)
+        assert (drift.errors, drift.reviews, drift.clinician_lines_omitted) == (2, 1, 0)
+
+    def test_the_clinician_line_omitted_count_is_kept_apart_and_among_the_reviews(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Validation-run6 plan Task 1.4: the new code's warnings are counted
+        by code name, and each is still one of the reviews."""
+        codes = ("clinician_line_omitted", "high_risk_omission", "clinician_line_omitted")
+        warnings = [SimpleNamespace(severity="review", note_warning_code=c) for c in codes]
+        monkeypatch.setattr(replay_kept, "check_note", lambda note, document, config: warnings)
+        drift = replay_kept.note_drift(
+            _document("a" * 32), self._config(tmp_path), None, clinician_speaker=None, now=NOW
+        )
+        assert drift == replay_kept.NoteDrift(
+            errors=0, reviews=3, sections_missing=None, clinician_lines_omitted=2
+        )
+
+    def test_a_real_uncued_clinician_line_is_counted(self, tmp_path: Path) -> None:
+        """End to end through the shipped checker: the clinician's line no
+        shipped cue routes, left out of the note, counts once."""
+        # "Please" opens it: a capitalised non-starter would be name-like and
+        # draw `high_risk_omission` instead.
+        document = _document("a" * 32, clinician="Please keep walking every morning.")
+        drift = replay_kept.note_drift(
+            document, self._config(tmp_path), None, clinician_speaker="speaker_1", now=NOW
+        )
+        assert drift.clinician_lines_omitted == 1
+        assert drift.reviews >= 1
 
     def test_the_detected_prefill_is_passed_to_the_draft(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -656,7 +686,10 @@ class TestReport:
         assert "DRIFT, not accuracy" in report
         assert "shipped defaults - drift includes your learned cues" in report
         assert "unresolved (no --enrolment" in report
-        row = f"| {'a' * 32} | 6.0 | small | medium | 10 | 9 | 1 | 0.100 | 1.000 | - | 0 | 2 | 0 |"
+        row = (
+            f"| {'a' * 32} | 6.0 | small | medium | 10 | 9 | 1 | 0.100 | 1.000 | - | 0 | 2 | 0 "
+            "| 0 |"
+        )
         assert row in report
         assert "pooled drift WER 0.100 (1 edits over 10 kept words)" in report
 
@@ -668,12 +701,27 @@ class TestReport:
             folder=Path("X:/f"), model_name="medium", enrolled=False, errors=0, skipped=0,
         )
         table = [line for line in report.splitlines() if line.startswith("|")]
-        assert table[0].endswith("| Check reviews | Suspect segments |")
+        assert table[0].endswith("| Check reviews | Suspect segments | Clinician lines omitted |")
         for line in table:
-            assert len(line.strip().strip("|").split("|")) == 13
-        assert table[2].endswith("| 0 | 2 | 3 |")
-        assert table[3].endswith("| 0 | 2 | 0 |")
+            assert len(line.strip().strip("|").split("|")) == 14
+        assert table[2].endswith("| 0 | 2 | 3 | 0 |")
+        assert table[3].endswith("| 0 | 2 | 0 | 0 |")
         assert "Suspect segments in the new transcripts: 3." in report
+
+    def test_the_clinician_lines_omitted_column_and_its_total(self) -> None:
+        """Validation-run6 plan Task 1.4: one more column, last, an integer
+        under the code's own name, and its total on the totals line."""
+        note = replay_kept.NoteDrift(0, 4, None, clinician_lines_omitted=2)
+        report = replay_kept.render_report(
+            [self._row(note=note), self._row(session_id="b" * 32)],
+            folder=Path("X:/f"), model_name="medium", enrolled=False, errors=0, skipped=0,
+        )
+        table = [line for line in report.splitlines() if line.startswith("|")]
+        assert table[2].endswith("| 0 | 4 | 0 | 2 |")
+        assert table[3].endswith("| 0 | 2 | 0 | 0 |")
+        assert (
+            "Clinician lines omitted (clinician_line_omitted, among the reviews): 2." in report
+        )
 
     def test_the_count_reads_the_new_transcripts_suspect_segments(self) -> None:
         def word(text: str, *, suspect: bool = False) -> TranscriptWord:
@@ -876,9 +924,10 @@ class TestMain:
         out = _output(capsys)
         assert "the practitioner-attributed label (--enrolment)" in out
         line = next(line for line in out.splitlines() if line.startswith(f"| {sid} |"))
-        # Nothing missing from the saved note; the last cell is the suspect
-        # count (invented-text guard D8).
-        assert line.endswith("| 1.000 | 0 | 0 | 0 | 0 |")
+        # Nothing missing from the saved note; the last two cells are the
+        # suspect count (invented-text guard D8) and the clinician lines
+        # omitted (validation-run6 Task 1.4).
+        assert line.endswith("| 1.000 | 0 | 0 | 0 | 0 | 0 |")
         _no_content(out)
         # Round 31 MED-003: the note is made from the ENROLLED document (the
         # plain one names no enrolled speaker), its clinician that speaker.
@@ -927,7 +976,8 @@ class TestMain:
         line = next(
             line for line in _output(capsys).splitlines() if line.startswith(f"| {sid} |")
         )
-        assert line.endswith("| - | 0 | 0 | 0 |")  # the last cell: suspect segments (D8)
+        # The last two cells: suspect segments (D8), clinician lines omitted (Task 1.4).
+        assert line.endswith("| - | 0 | 0 | 0 | 0 |")
 
     def test_the_suspect_count_is_the_new_transcripts_own(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -950,7 +1000,7 @@ class TestMain:
         assert replay_kept.main([str(folder)]) == 0
         out = _output(capsys)
         line = next(line for line in out.splitlines() if line.startswith(f"| {sid} |"))
-        assert line.endswith("| 7 |")
+        assert line.endswith("| 7 | 0 |")  # then the clinician lines omitted (Task 1.4)
         assert "Suspect segments in the new transcripts: 7." in out
         assert len(counted) == 1
 

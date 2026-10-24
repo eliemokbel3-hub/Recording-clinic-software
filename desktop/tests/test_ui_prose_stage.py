@@ -117,10 +117,19 @@ def _screen(
     return screen, record
 
 
+def _acknowledge(screen: Any) -> None:
+    """The "Acknowledge all" click, then Check 4's second code by its own row
+    (validation-run6 plan D1): the fixture's "Please use an ice pack tonight"
+    is a clinician line the note leaves out."""
+    screen._acknowledge_all()
+    if any(w.note_warning_code == "clinician_line_omitted" for w in screen._note.note_warnings):
+        screen._acknowledge("clinician_line_omitted")
+
+
 def _ratify(screen: Any) -> None:
     for proposal in screen._draft.note_proposals:
         screen.confirm_proposal(proposal.proposal_id)
-    screen._acknowledge_all()
+    _acknowledge(screen)
 
 
 def _settled(qapp: Any, screen: Any) -> None:
@@ -274,7 +283,7 @@ class TestStaleRenderings:
         # rendering: nothing is in flight and every section shows its prose.
         assert not screen.rendering_in_flight
         assert not screen.save_button.isEnabled()
-        screen._acknowledge_all()
+        _acknowledge(screen)
         assert screen.save_button.isEnabled()
         screen.deleteLater()
 
@@ -390,6 +399,7 @@ class TestStaleRenderings:
         # here so the late refusal below is the ONE thing that closes Save.
         assert any(w.note_warning_code == "high_risk_omission" for w in screen._note.note_warnings)
         screen._acknowledge("high_risk_omission")
+        screen._acknowledge("clinician_line_omitted")  # validation-run6 D1: its own row too
         stage.release.set()
         _settled(qapp, screen)
         refused_now = {

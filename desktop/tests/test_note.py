@@ -674,6 +674,10 @@ class TestWarningTaxonomy:
         assert note_module.UNKNOWN_REVIEW_WARNING == "unknown_review_warning"
         # Validation-pass plan D7: the hedge mark's code.
         assert NOTE_WARNING_SEVERITY["hedged_source"] == "review"
+        # Validation-run6 plan D1: Check 4's second code; 20 codes in all (19
+        # before it, the unknown-version code included).
+        assert NOTE_WARNING_SEVERITY["clinician_line_omitted"] == "review"
+        assert len(NOTE_WARNING_SEVERITY) == 20
 
 
 def _stored_with_warning(warning: dict[str, object]) -> bytes:
@@ -728,6 +732,65 @@ class TestForwardTolerantWarningReader:
         assert read.note_warning_code == "unknown_review_warning"
         assert read.assertion_id == aid
         assert read.source_coords == SourceCoords(0, 0, 1)
+
+    def test_the_new_omission_code_reads_back_and_a_0_3_3_reader_groups_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Validation-run6 plan Task 1.3 (the rollback line of its Task 5.2):
+        0.3.4 reads its own ``clinician_line_omitted`` back unchanged; a 0.3.3
+        reader — this registry without the code — reads each one as
+        ``unknown_review_warning`` with its coordinates kept, grouped as ONE
+        review code that its "Acknowledge all" clears (the separately
+        acknowledged control is lost; no warning is dropped)."""
+        from scribe_desktop.ui import models
+
+        payload = json.loads(_note().to_bytes())
+        payload["note_warnings"] = [
+            {"note_warning_code": "mapping_drop", "severity": "review"},
+            {
+                "note_warning_code": "clinician_line_omitted",
+                "severity": "review",
+                "source_coords": [0, 0, 1],
+            },
+            {
+                "note_warning_code": "clinician_line_omitted",
+                "severity": "review",
+                "source_coords": [2, 0, 4],
+            },
+        ]
+        blob = json.dumps(payload).encode("utf-8")
+        current = GeneratedNote.from_bytes(blob)
+        assert [w.note_warning_code for w in current.note_warnings] == [
+            "mapping_drop",
+            "clinician_line_omitted",
+            "clinician_line_omitted",
+        ]
+        assert GeneratedNote.from_bytes(current.to_bytes()) == current
+
+        registry_0_3_3 = {
+            code: severity
+            for code, severity in NOTE_WARNING_SEVERITY.items()
+            if code != "clinician_line_omitted"
+        }
+        monkeypatch.setattr(note_module, "NOTE_WARNING_SEVERITY", registry_0_3_3)
+        rolled_back = GeneratedNote.from_bytes(blob)
+        assert [
+            (w.note_warning_code, w.severity, w.source_coords) for w in rolled_back.note_warnings
+        ] == [
+            ("mapping_drop", "review", None),
+            ("unknown_review_warning", "review", SourceCoords(0, 0, 1)),
+            ("unknown_review_warning", "review", SourceCoords(2, 0, 4)),
+        ]
+        assert rolled_back.blocking_warnings() == ()
+        summary = models.summarise_warnings(rolled_back.note_warnings)
+        assert [(group.code, group.count) for group in summary.review] == [
+            ("mapping_drop", 1),
+            ("unknown_review_warning", 2),
+        ]
+        assert models.acknowledge_all_codes(summary, ()) == (
+            "mapping_drop",
+            "unknown_review_warning",
+        )
 
     def test_an_unknown_error_code_is_still_refused(self) -> None:
         blob = _stored_with_warning({"note_warning_code": "a_code_from_0_4_0", "severity": "error"})

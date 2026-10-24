@@ -2286,6 +2286,17 @@ WARNING_COPY: Final[Mapping[str, WarningCopy]] = {
         "Check the transcript beside the note (a line you removed can raise this too), "
         "tick 'Show flagged lines only' to find them, then acknowledge.",
     ),
+    # Validation-run6 plan D1 (Check 4's second code): a whole line the
+    # confirmed clinician said is in no section — no cue routed it and it holds
+    # no word ``high_risk_omission`` flags (advice, a plan, safety-netting).
+    # Its line is marked ``[flagged]`` in the chooser like the first code's, and
+    # only this row's own Acknowledge clears it.
+    "clinician_line_omitted": WarningCopy(
+        "A line you said is not in the note",
+        None,
+        "Check the transcript beside the note, tick 'Show flagged lines only' to find it, "
+        "add it with Add line to section if it belongs, then acknowledge.",
+    ),
     # Note-learning plan Task 4.2 (D6, C8): the prose the language model
     # wrote for a section did not pass the fidelity check, so that section is
     # shown as Clean clinical — its confirmed lines, unchanged. The copy names
@@ -2397,12 +2408,14 @@ def summarise_warnings(warnings: Sequence[NoteWarning]) -> WarningSummary:
 # the note that must be looked at, which one click must not wave through. The
 # validation-pass plan (D5) adds Check 6: rare, and it withholds content. Its
 # hedge mark (D7, ``hedged_source``) is deliberately NOT here: "Acknowledge
-# all" clears it.
+# all" clears it. The validation-run6 plan (D1, C4) adds Check 4's second
+# code: a whole line of the clinician's left out is an omission like the first.
 # ONE source (peer round 14 PR-LOW-001): each code with the plain words the
 # button's tooltip names it by, so the set the button skips and the list its
 # tooltip gives cannot drift apart.
 SEPARATELY_ACKNOWLEDGED_NAMES: Final[Mapping[str, str]] = {
     "high_risk_omission": "something said that is not in the note (check its flagged lines)",
+    "clinician_line_omitted": "a line you said that is not in the note (check its flagged lines)",
     "number_source": "a quoted line with a number (check each line marked [check: number])",
     "suspect_source": (
         "a quoted line that may not be speech "
@@ -2410,7 +2423,7 @@ SEPARATELY_ACKNOWLEDGED_NAMES: Final[Mapping[str, str]] = {
     ),
     "possible_next_patient": (
         "a note that stops where a new patient may have arrived "
-        "(check the lines marked [after possible next patient])"
+        "(check the lines marked [next patient?])"
     ),
 }
 SEPARATELY_ACKNOWLEDGED_CODES: frozenset[str] = frozenset(SEPARATELY_ACKNOWLEDGED_NAMES)
@@ -2675,7 +2688,8 @@ def _lead_words(text: str, *, max_chars: int = 60) -> str:
 
 
 # Note-routing-omissions plan D4: the mark on a chooser entry or a line-editor
-# row whose transcript line carries a Check 4 omission (``high_risk_omission``).
+# row whose transcript line carries a Check 4 omission (``high_risk_omission``,
+# and since the validation-run6 plan's D1 ``clinician_line_omitted``).
 # At the FRONT of the label (2026-10-11 live smoke, round 11 SMOKE-MED-001):
 # the closed chooser cuts a long label's END and its open list elides the
 # MIDDLE, so a suffix was never readable. A chooser entry keeps its transcript
@@ -2687,17 +2701,23 @@ FLAGGED_LINE_MARK = "[flagged] "
 # choice, 2026-10-13): the mark on a chooser entry at or after a possible next
 # patient, after any ``FLAGGED_LINE_MARK`` and before the speaker, for the
 # same reason the flagged mark is at the front — a clinician adding a line
-# back is never steered blindly to the other person's lines.
-NEXT_PATIENT_LINE_MARK = "[after possible next patient] "
+# back is never steered blindly to the other person's lines. Validation-run6
+# plan D3 (the 0.3.3 P.2 observation): a SHORT fixed token, so the open
+# chooser's middle elision of a long label cannot cut it.
+NEXT_PATIENT_LINE_MARK = "[next patient?] "
+# The codes whose segment the chooser and the line editor mark
+# ``FLAGGED_LINE_MARK``: Check 4's two (validation-run6 plan D1).
+OMISSION_CODES: Final[frozenset[str]] = frozenset({"high_risk_omission", "clinician_line_omitted"})
 
 
 def flagged_segments(warnings: Sequence[NoteWarning]) -> frozenset[int]:
-    """The transcript segments Check 4 flags in ``warnings``: one
-    ``high_risk_omission`` per segment, located by its coordinates."""
+    """The transcript segments Check 4 flags in ``warnings``: one warning of
+    either ``OMISSION_CODES`` code per segment (the two never share one),
+    located by its coordinates."""
     return frozenset(
         coords.segment_index
         for warning in warnings
-        if warning.note_warning_code == "high_risk_omission"
+        if warning.note_warning_code in OMISSION_CODES
         and (coords := warning.source_coords) is not None
     )
 
@@ -2799,17 +2819,18 @@ FLAGGED_FILTER_EMPTY_LINE = (
 
 
 def flagged_count_line(flagged: Collection[int], offered: Collection[int]) -> str:
-    """The Note tab's count line (D4): how many transcript lines carry a
-    flagged word the note does not, and — by transcript line number — each
-    flagged line the chooser does NOT offer (replaced by a typed line, or
-    only partly in the note; PR-MED-001), which is found on its row in the
-    line editor instead. Empty when nothing is flagged."""
+    """The Note tab's count line (D4): how many flagged transcript lines the
+    note leaves out — a line the clinician said, or a flagged word anyone said
+    (Check 4's two codes, validation-run6 plan D1) — and, by transcript line
+    number, each flagged line the chooser does NOT offer (replaced by a typed
+    line, or only partly in the note; PR-MED-001), which is found on its row
+    in the line editor instead. Empty when nothing is flagged."""
     if not flagged:
         return ""
     count = len(flagged)
     text = (
-        f"{count} {'line' if count == 1 else 'lines'} with a side, negation, number, "
-        f"dose, name or medication {'is' if count == 1 else 'are'} not in the note."
+        f"{count} flagged {'line is' if count == 1 else 'lines are'} not in the note (a line "
+        "you said, or a side, negation, number, dose, name or medication someone said)."
     )
     elsewhere = sorted(index + 1 for index in flagged if index not in offered)
     if elsewhere:
@@ -2852,8 +2873,11 @@ def eligible_utterances(
     segment, ``next_patient_segment``) carries ``NEXT_PATIENT_LINE_MARK``
     after that, flagged or not (validation-pass plan D6); a segment holding a
     suspect word carries ``suspect_prefix`` before its words (invented-text
-    guard D4). So a label reads
-    ``"<n>. [flagged] [after possible next patient] <speaker>: …"``."""
+    guard D4). So a label reads ``"<n>. [flagged] [next patient?] <speaker>: …"``:
+    both front marks before the speaker, the suspect prefix after it (the
+    practitioner's front-mark decision, 2026-10-13), and ``_lead_words``' cut
+    applies to the words only, so no mark is ever cut (validation-run6 plan
+    D3)."""
     choices: list[UtteranceChoice] = []
     for index, segment in enumerate(document.transcript_segments):
         if index in in_note:
@@ -4798,6 +4822,7 @@ __all__ = [
     "FLAGGED_FILTER_EMPTY_LINE",
     "FLAGGED_LINE_MARK",
     "NEXT_PATIENT_LINE_MARK",
+    "OMISSION_CODES",
     "REMOVE_TAIL_ACTION",
     "REMOVE_TAIL_ATTRIBUTION_DROPPED",
     "REMOVE_TAIL_CANCEL",

@@ -349,6 +349,12 @@ NOTE_WARNING_SEVERITY: Final[Mapping[str, NoteWarningSeverity]] = {
     # Check 4 — scoped omission (Task 5.4). Review, never error: a heuristic
     # must not be able to block Complete on a false positive.
     "high_risk_omission": "review",
+    # Check 4's second code (validation-run6 plan D1, decision 0.3 (b)): ONE
+    # per wholly uncovered line of the confirmed clinician that holds a
+    # content word and draws no ``high_risk_omission``, before any next-patient
+    # boundary. Review, never error, for the same reason; only its own
+    # Acknowledge clears it (``ui.models.SEPARATELY_ACKNOWLEDGED_CODES``).
+    "clinician_line_omitted": "review",
     # Check 5 — prose fidelity (note-learning-and-styles plan Task 4.2, D6):
     # a section whose language-model prose failed the fidelity gate is shown
     # as `clean` (its confirmed lines, unchanged) and says so. Review, never

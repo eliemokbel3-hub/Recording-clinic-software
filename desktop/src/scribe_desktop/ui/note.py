@@ -54,7 +54,10 @@ note) is marked on its row instead and named by number in the count line
 (PR-MED-001), never offered as a duplicate Add. "Acknowledge all review
 warnings" never clears this warning — only its own row's Acknowledge does
 (``models.SEPARATELY_ACKNOWLEDGED_CODES``); what Save, Complete, Copy and Write
-require is unchanged.
+require is unchanged. The validation-run6 plan's D1 adds Check 4's second
+code, ``clinician_line_omitted`` — a whole line the confirmed clinician said
+that is in no section and holds none of those words — flagged, filtered,
+counted and acknowledged exactly the same way (``models.OMISSION_CODES``).
 
 Check marks (invented-text guard D5). A quoted line holding a number or a
 word the transcription guard marked ``suspect`` carries ``[check: number]`` /
@@ -72,9 +75,10 @@ The next-patient boundary (validation-pass plan D5, D6). Check 6's
 may have arrived — is in the same separately-acknowledged set: "Acknowledge
 all review warnings" never clears it, only its own row's Acknowledge does. The
 chooser marks every line from that point on with
-``models.NEXT_PATIENT_LINE_MARK`` at the front of its label, after any
-``[flagged]``. The "Acknowledge all" tooltip names every code of the set
-(``models.ACKNOWLEDGE_ALL_TOOLTIP``).
+``models.NEXT_PATIENT_LINE_MARK`` (``[next patient?]`` — short since the
+validation-run6 plan's D3, so the open list's middle elision cannot cut it) at
+the front of its label, after any ``[flagged]``. The "Acknowledge all" tooltip
+names every code of the set (``models.ACKNOWLEDGE_ALL_TOOLTIP``).
 
 Phrase learning (D9 as amended 2026-09-16, Task 5.2). After an add or a move
 of one of the practitioner's OWN lines — ``note.spoken_by_confirmed_clinician``,

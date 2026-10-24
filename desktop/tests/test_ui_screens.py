@@ -4753,6 +4753,10 @@ class TestNoteScreen:
         # it stays DISABLED until every review warning is acknowledged.
         assert not screen.save_button.isEnabled()
         screen._acknowledge_all()
+        # Validation-run6 plan D1: the clinician's unquoted "Please use an ice
+        # pack tonight" is open until its own row's Acknowledge.
+        assert not screen.save_button.isEnabled()
+        screen._acknowledge("clinician_line_omitted")
         assert screen.save_button.isEnabled()
         screen.deleteLater()
 
@@ -4781,13 +4785,18 @@ class TestNoteScreen:
         self._confirm_all(screen)
         assert screen.current_review_state().unacknowledged_reviews > 0
         screen._acknowledge_all()
+        # Validation-run6 plan D1: every group but the clinician line left
+        # out ("Please use an ice pack tonight"), which its own row clears.
+        assert screen.current_review_state().unacknowledged_reviews == 1
+        assert "clinician_line_omitted" not in screen._acknowledged
+        screen._acknowledge("clinician_line_omitted")
         assert screen.current_review_state().unacknowledged_reviews == 0
         screen.deleteLater()
 
     def test_save_calls_callback_when_ratified(self, qapp: Any) -> None:
         screen, record = self._screen()
         self._confirm_all(screen)
-        screen._acknowledge_all()  # Save now requires acknowledgement (Flow 1)
+        _acknowledge_everything(screen)  # Save now requires acknowledgement (Flow 1)
         screen.save()
         assert len(record["saved"]) == 1
         assert isinstance(record["saved"][0], GeneratedNote)
@@ -4854,7 +4863,7 @@ class TestNoteScreen:
     def test_cancel_disabled_after_save(self, qapp: Any) -> None:
         screen, _record = self._screen()
         self._confirm_all(screen)
-        screen._acknowledge_all()  # Save requires acknowledgement (Flow 1)
+        _acknowledge_everything(screen)  # Save requires acknowledgement (Flow 1)
         screen.save()
         assert not screen.cancel_button.isEnabled()  # cancel is a pre-commit escape
         screen.deleteLater()
@@ -4885,7 +4894,7 @@ class TestNoteScreen:
         # Ratify the note: confirm all -> acknowledge all -> save.
         self._confirm_all(screen)
         assert not screen.copy_button.isEnabled()  # unacknowledged reviews still block
-        screen._acknowledge_all()
+        _acknowledge_everything(screen)
         assert not screen.copy_button.isEnabled()  # not yet saved
         screen.save()
         assert screen.copy_button.isEnabled()  # fully ratified
@@ -5078,12 +5087,17 @@ def _acknowledge_everything(screen: Any) -> None:
     line-mark code (invented-text guard D5: the per-line codes "Acknowledge
     all" never clears, ``note.LINE_MARK_CODES``; the validation-pass hedge
     mark's code is among them but already cleared, and acknowledging it again
-    changes nothing) — what a Save-opening review does over a transcript that
-    quotes a number (`_EDIT_TURNS`' plan line carries "two")."""
+    changes nothing) and Check 4's second code (validation-run6 plan D1:
+    ``clinician_line_omitted``, also never cleared by "Acknowledge all") —
+    what a Save-opening review does over a transcript that quotes a number
+    (`_EDIT_TURNS`' plan line carries "two") and leaves clinician lines out
+    (`_NOTE_TURNS`' "Please use an ice pack tonight", `_EDIT_TURNS`' "The knee
+    felt steady on the stairs"). ``high_risk_omission`` is left to the tests
+    that make one."""
     from scribe_desktop.note import LINE_MARK_CODES
 
     screen._acknowledge_all()
-    for code in LINE_MARK_CODES:
+    for code in (*LINE_MARK_CODES, "clinician_line_omitted"):
         if code in _warning_codes(screen):
             screen._acknowledge(code)
 
@@ -5160,7 +5174,7 @@ class TestNoteWriteButton:
     def _save(self, screen: Any) -> None:
         for proposal in screen._draft.note_proposals:
             screen.confirm_proposal(proposal.proposal_id)
-        screen._acknowledge_all()
+        _acknowledge_everything(screen)
         screen.save()
 
     def test_hidden_without_a_binding(self, qapp: Any) -> None:
@@ -5444,7 +5458,7 @@ class TestNoteWriteButton:
         )
         for proposal in screen._draft.note_proposals:
             screen.confirm_proposal(proposal.proposal_id)
-        screen._acknowledge_all()
+        _acknowledge_everything(screen)
         screen.save()
         assert models.write_line("write_pending") in screen.message_label.text()
         assert "WritePendingError" not in screen.message_label.text()
@@ -5525,10 +5539,15 @@ class TestNoteScreenEdits:
             for position in range(screen.utterance_combo.count())
         ]
         assert offered == expected
+        # Validation-run6 plan D1: the clinician's two unquoted lines (3, 5)
+        # are flagged by Check 4's second code; the patient's (4) is not.
+        flagged = models.flagged_segments(screen.current_note().note_warnings)
+        assert flagged == {3, 5}
         for position, index in enumerate(expected):
             segment = document.transcript_segments[index]
             label = screen.utterance_combo.itemText(position)
-            assert label.startswith(f"{index + 1}. {segment.speaker}: ")
+            flag = models.FLAGGED_LINE_MARK if index in flagged else ""
+            assert label.startswith(f"{index + 1}. {flag}{segment.speaker}: ")
         # The section chooser follows the selected line's ownership rule.
         first = _eligible(screen)[expected[0]]
         sections = [
@@ -5667,9 +5686,12 @@ class TestNoteScreenEdits:
         assert "high_risk_omission" in _warning_codes(screen)
         assert screen.current_review_state().blocking_errors == 0
         assert not screen.save_button.isEnabled()
-        # Note-routing-omissions D4: its own row's Acknowledge clears it.
+        # Note-routing-omissions D4: its own row's Acknowledge clears it (and
+        # the clinician's unquoted lines' code, validation-run6 D1, its own).
         screen._acknowledge_all()
         screen._acknowledge("high_risk_omission")
+        assert screen.current_review_state().unacknowledged_reviews == 1
+        screen._acknowledge("clinician_line_omitted")
         assert screen.current_review_state().unacknowledged_reviews == 0
         assert screen.save_button.isEnabled()
         screen.deleteLater()
@@ -5721,20 +5743,25 @@ class TestNoteScreenEdits:
             screen.confirm_proposal(proposal.proposal_id)
         self._remove_the_plan_line(screen)
         summary = models.summarise_warnings(screen.current_note().note_warnings)
-        others = {g.code for g in summary.review} - {"high_risk_omission"}
+        # Validation-run6 plan D1: Check 4's second code (the clinician's
+        # unquoted lines) is open too, and "Acknowledge all" leaves it as well.
+        omissions = {"high_risk_omission", "clinician_line_omitted"}
+        assert omissions <= {g.code for g in summary.review}
+        others = {g.code for g in summary.review} - omissions
         assert others, "the fixture must draw a second review code (clinician_asserted)"
         assert not screen.acknowledge_all_button.isHidden()
         screen._acknowledge_all()
         assert others <= screen._acknowledged
-        assert "high_risk_omission" not in screen._acknowledged
+        assert not omissions & screen._acknowledged
         assert screen.acknowledge_all_button.isHidden()  # nothing left for it to clear
-        assert any(
-            text.startswith(models.WARNING_COPY["high_risk_omission"].title)
-            and "- not acknowledged." in text
-            for text in self._review_row_texts(screen)
-        )
+        for code in sorted(omissions):
+            assert any(
+                text.startswith(models.WARNING_COPY[code].title)
+                and "- not acknowledged." in text
+                for text in self._review_row_texts(screen)
+            ), code
         state = screen.current_review_state()
-        assert state.unacknowledged_reviews == 1
+        assert state.unacknowledged_reviews == 2
         # C6: the open omission still counts where Complete reads it — the
         # same counts on a saved note name the unacknowledged warning.
         assert models.complete_block_reason(
@@ -5742,6 +5769,9 @@ class TestNoteScreenEdits:
         ) == ("Acknowledge the note review warnings before completing.")
         assert not screen.save_button.isEnabled()
         screen._acknowledge("high_risk_omission")
+        assert screen.current_review_state().unacknowledged_reviews == 1
+        assert not screen.save_button.isEnabled()
+        screen._acknowledge("clinician_line_omitted")
         assert screen.current_review_state().unacknowledged_reviews == 0
         assert screen.save_button.isEnabled()
         screen.save()
@@ -5762,29 +5792,39 @@ class TestNoteScreenEdits:
         from PySide6.QtCore import Qt
 
         screen, _record = self._screen(config_root=tmp_path / "config")
-        # The fixture flags nothing: no mark, no count line, never pre-ticked.
+        # Validation-run6 plan D1: the fixture's two unquoted clinician lines
+        # (3, 5) are flagged from the start by Check 4's second code; the
+        # filter is never pre-ticked.
+        classes = (
+            "(a line you said, or a side, negation, number, dose, name or medication "
+            "someone said)."
+        )
         assert not screen.flagged_only_checkbox.isChecked()
-        assert screen.flagged_count_label.isHidden()
-        assert screen.flagged_count_label.text() == ""
+        assert not screen.flagged_count_label.isHidden()
+        assert screen.flagged_count_label.text() == (
+            f"2 flagged lines are not in the note {classes}"
+        )
         assert screen.flagged_count_label.textFormat() == Qt.TextFormat.PlainText
         before = self._chooser_items(screen)
-        assert all(models.FLAGGED_LINE_MARK not in text for _index, text in before)
+        for index, text in before:
+            assert (models.FLAGGED_LINE_MARK in text) is (index in {3, 5}), index
 
         self._remove_the_plan_line(screen)
         after = self._chooser_items(screen)
         # Transcript order kept; the removed plan line is offered again, marked.
         assert [index for index, _text in after] == sorted(index for index, _text in after)
         assert _PLAN_INDEX in [index for index, _text in after]
+        marked = {3, 5, _PLAN_INDEX}
         for index, text in after:
             segment = screen._document.transcript_segments[index]
             # Round 11 SMOKE-MED-001: the mark at the front, after the number.
-            flag = models.FLAGGED_LINE_MARK if index == _PLAN_INDEX else ""
+            flag = models.FLAGGED_LINE_MARK if index in marked else ""
             assert text.startswith(f"{index + 1}. {flag}{segment.speaker}: ")
-            assert (models.FLAGGED_LINE_MARK in text) is (index == _PLAN_INDEX)
+            assert (models.FLAGGED_LINE_MARK in text) is (index in marked)
         assert _eligible(screen)[_PLAN_INDEX].flagged is True
         assert not screen.flagged_count_label.isHidden()
         assert screen.flagged_count_label.text() == (
-            "1 line with a side, negation, number, dose, name or medication is not in the note."
+            f"3 flagged lines are not in the note {classes}"
         )
         # The removed row itself carries no mark: the chooser is where it is found.
         assert not _lines_by_id(screen)[_routed_line(screen, _PLAN_INDEX).assertion_id].flagged
@@ -5831,36 +5871,39 @@ class TestNoteScreenEdits:
         self, qapp: Any, tmp_path: Path
     ) -> None:
         screen, _record = self._screen(config_root=tmp_path / "config")
-        # TWO flagged lines (round 9 PR-LOW-017): the patient's "left" line
-        # and the clinician's "two" line, so the filtered chooser holds two
-        # entries and choosing the SECOND is never Qt's automatic selection.
+        # FOUR flagged lines (round 9 PR-LOW-017): the patient's "left" line
+        # and the clinician's "two" line, and since the validation-run6 plan's
+        # D1 the clinician's two unquoted lines (3, 5), so the filtered chooser
+        # holds four entries and choosing the LAST is never Qt's automatic
+        # selection.
         patient_line = _routed_line(screen, 0)
         assert screen.remove_line(patient_line.assertion_id) is True
         self._remove_the_plan_line(screen)
-        assert {0, _PLAN_INDEX} <= models.flagged_segments(screen.current_note().note_warnings)
+        flagged = [0, 3, 5, _PLAN_INDEX]
+        assert models.flagged_segments(screen.current_note().note_warnings) == set(flagged)
         everything = self._chooser_items(screen)
-        assert len(everything) > 2
+        assert len(everything) > len(flagged)
         screen.flagged_only_checkbox.setChecked(True)
-        assert [index for index, _text in self._chooser_items(screen)] == [0, _PLAN_INDEX]
-        screen.utterance_combo.setCurrentIndex(1)
+        assert [index for index, _text in self._chooser_items(screen)] == flagged
+        screen.utterance_combo.setCurrentIndex(3)
         assert screen.utterance_combo.currentData() == _PLAN_INDEX
         assert screen.add_line_button.isEnabled()
         # A re-finalise (a proposal decision) rebuilds the chooser: the tick
-        # and the choice survive it, and so does the warning.
+        # and the choice survive it, and so do the warnings.
         for proposal in screen._draft.note_proposals:
             screen.confirm_proposal(proposal.proposal_id)
         assert screen.flagged_only_checkbox.isChecked()
-        assert [index for index, _text in self._chooser_items(screen)] == [0, _PLAN_INDEX]
+        assert [index for index, _text in self._chooser_items(screen)] == flagged
         assert screen.utterance_combo.currentData() == _PLAN_INDEX
         # Unticking shows every line again, in transcript order, the choice kept.
         screen.flagged_only_checkbox.setChecked(False)
         assert self._chooser_items(screen) == everything
         assert screen.utterance_combo.currentData() == _PLAN_INDEX
-        # Adding both flagged lines back clears the warning and the count line.
-        for index in (0, _PLAN_INDEX):
+        # Adding every flagged line back clears both codes and the count line.
+        for index in flagged:
             key = _eligible(screen)[index].allowed_sections[0]
             assert screen.add_line(index, key) is True
-        assert "high_risk_omission" not in _warning_codes(screen)
+        assert not _warning_codes(screen) & {"high_risk_omission", "clinician_line_omitted"}
         assert screen.flagged_count_label.isHidden()
         # Ticked with nothing flagged: an empty chooser is explained, never silent.
         screen.flagged_only_checkbox.setChecked(True)
@@ -5912,12 +5955,20 @@ class TestNoteScreenEdits:
         assert row.state == "replaced"
         assert row.flagged is True
         assert row.label.startswith(models.FLAGGED_LINE_MARK)
+        # Validation-run6 plan D1: the clinician's two unquoted lines (3, 5)
+        # are flagged and offered too; only the typed-over line is named.
         assert screen.flagged_count_label.text() == (
-            "1 line with a side, negation, number, dose, name or medication is not in the "
-            f"note. Line {_PLAN_INDEX + 1} is replaced or partly in the note - see its row below."
+            "3 flagged lines are not in the note (a line you said, or a side, negation, "
+            "number, dose, name or medication someone said). "
+            f"Line {_PLAN_INDEX + 1} is replaced or partly in the note - see its row below."
         )
-        # The filter finds nothing else to offer; never a duplicate Add.
+        # The filter offers the other flagged lines only; never a duplicate Add.
         screen.flagged_only_checkbox.setChecked(True)
+        assert [index for index, _text in self._chooser_items(screen)] == [3, 5]
+        # With those two added back, the filter finds nothing else to offer.
+        for index in (3, 5):
+            key = _eligible(screen)[index].allowed_sections[0]
+            assert screen.add_line(index, key) is True
         assert screen.utterance_combo.count() == 0
         assert not screen.add_line_button.isEnabled()
         assert screen.flagged_count_label.text().endswith(
@@ -7046,6 +7097,9 @@ class TestNoteScreenTypedEdits:
         screen.save()
         assert record["saved"] == []
         screen._acknowledge("high_risk_omission")  # note-routing D4: its own row
+        # Validation-run6 plan D1: the clinician's unquoted lines, its own row.
+        assert not screen.save_button.isEnabled()
+        screen._acknowledge("clinician_line_omitted")
         assert screen.save_button.isEnabled()
         screen.save()
         [saved] = record["saved"]
@@ -7074,9 +7128,12 @@ class TestNoteScreenTypedEdits:
         assert "Confirm every proposed line" in screen.message_label.text()
         screen.confirm_proposal(pending.proposal_id)
         screen._acknowledge_all()
-        # Invented-text guard D5: the plan line quotes "two" — its own row.
+        # Invented-text guard D5: the plan line quotes "two" — its own row;
+        # validation-run6 plan D1: the clinician's unquoted lines, theirs.
         assert not screen.save_button.isEnabled()
         screen._acknowledge("number_source")
+        assert not screen.save_button.isEnabled()
+        screen._acknowledge("clinician_line_omitted")
         assert screen.save_button.isEnabled()
         screen.save()
         assert len(record["saved"]) == 1
@@ -8926,7 +8983,7 @@ class TestNoteWiring:
         note_screen = window.note_screen
         for proposal in note_screen._draft.note_proposals:
             note_screen.confirm_proposal(proposal.proposal_id)
-        note_screen._acknowledge_all()
+        _acknowledge_everything(note_screen)
         note_screen.save()
         assert note_screen.queued_learning_count() == 0
         assert "Learned 1" in note_screen.edit_status_label.text()
@@ -8976,7 +9033,7 @@ class TestNoteWiring:
         transcript_screen = window.transcript_screen
         for proposal in note_screen._draft.note_proposals:
             note_screen.confirm_proposal(proposal.proposal_id)
-        note_screen._acknowledge_all()
+        _acknowledge_everything(note_screen)
         note_screen.save()
         assert note_screen.message_label.text().startswith("Save failed:")
         assert not (directory / NOTE_FILENAME).exists()
@@ -9047,7 +9104,7 @@ class TestNoteWiring:
         writes = self._fake_write_note(monkeypatch)
         for proposal in note_screen._draft.note_proposals:
             note_screen.confirm_proposal(proposal.proposal_id)
-        note_screen._acknowledge_all()
+        _acknowledge_everything(note_screen)
         note_screen.save()
         assert len(writes) == 1  # the save went through the window's route
         assert not window.transcript_screen.is_busy  # lease released
@@ -9087,7 +9144,7 @@ class TestNoteWiring:
             note_screen.confirm_proposal(proposal.proposal_id)
         assert not note_screen.copy_button.isEnabled()  # review warnings unacknowledged
         assert note_screen.note_body.textInteractionFlags() == no_interaction
-        note_screen._acknowledge_all()
+        _acknowledge_everything(note_screen)
         assert not note_screen.copy_button.isEnabled()  # not yet saved
         assert note_screen.note_body.textInteractionFlags() == no_interaction
         note_screen.save()  # -> _on_note_save -> save_note under the held lease
@@ -9240,7 +9297,7 @@ class TestNoteWiring:
         for proposal in note_screen._draft.note_proposals:
             note_screen.confirm_proposal(proposal.proposal_id)
         refused_everywhere()  # review warnings unacknowledged
-        note_screen._acknowledge_all()
+        _acknowledge_everything(note_screen)
         refused_everywhere()  # ratified, not yet saved
         assert not note_screen._note_saved
         note_screen.save()
@@ -9284,7 +9341,7 @@ class TestNoteWiring:
         note_screen = window.note_screen
         for proposal in note_screen._draft.note_proposals:
             note_screen.confirm_proposal(proposal.proposal_id)
-        note_screen._acknowledge_all()
+        _acknowledge_everything(note_screen)
         note_screen.save()
         note = note_screen.current_note()
         assert note is not None
@@ -9322,7 +9379,7 @@ class TestNoteWiring:
         self._fake_write_note(monkeypatch)
         for proposal in note_screen._draft.note_proposals:
             note_screen.confirm_proposal(proposal.proposal_id)
-        note_screen._acknowledge_all()
+        _acknowledge_everything(note_screen)
         note_screen.save()
         self._attempt_copy(note_screen)
         assert payloads == []
@@ -9354,7 +9411,7 @@ class TestNoteWiring:
             note_screen.confirm_proposal(proposal.proposal_id)
         self._attempt_copy(note_screen)
         assert payloads == []  # review warnings unacknowledged
-        note_screen._acknowledge_all()
+        _acknowledge_everything(note_screen)
         self._attempt_copy(note_screen)
         assert payloads == []  # not yet saved
         note_screen.save()
@@ -9398,7 +9455,7 @@ class TestNoteWiring:
         self._fake_write_note(monkeypatch)
         for proposal in note_screen._draft.note_proposals:
             note_screen.confirm_proposal(proposal.proposal_id)
-        note_screen._acknowledge_all()
+        _acknowledge_everything(note_screen)
         self._attempt_copy(note_screen)
         assert payloads == [] and mimes == []  # not yet saved
         note_screen.save()
@@ -9446,7 +9503,7 @@ class TestNoteWiring:
         self._fake_write_note(monkeypatch)
         for proposal in note_screen._draft.note_proposals:
             note_screen.confirm_proposal(proposal.proposal_id)
-        note_screen._acknowledge_all()
+        _acknowledge_everything(note_screen)
         note_screen.save()
         return window, note_screen, payloads
 

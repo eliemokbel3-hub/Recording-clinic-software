@@ -503,7 +503,10 @@ EXTRACTIVE_CELLS: tuple[ExtractiveCell, ...] = (
         expected=(
             ExpectedAssertion("presenting_complaint", 2, "Anyway my knee is sore again."),
         ),
-        expected_reviews=(),
+        # Validation-run6 plan D1: the clinician's uncued small talk (segment
+        # 1) is a wholly uncovered line with content words — one
+        # `clinician_line_omitted`; the patient's draws nothing new.
+        expected_reviews=("clinician_line_omitted",),
         material_segments=(),
         expected_mapped=(("t-presenting", (0,)),),
     ),
@@ -718,8 +721,14 @@ EXTRACTIVE_CELLS: tuple[ExtractiveCell, ...] = (
                 "objective_examination", 1, "On examination the knee is tender to touch."
             ),
         ),
-        # Segment 4's "right" is withheld, so Check 4 flags it.
-        expected_reviews=("high_risk_omission", "possible_next_patient"),
+        # Segment 4's "right" is withheld, so Check 4 flags it. The
+        # clinician's uncued closing (segment 2, before the boundary) is a
+        # wholly uncovered line: `clinician_line_omitted` (validation-run6 D1).
+        expected_reviews=(
+            "clinician_line_omitted",
+            "high_risk_omission",
+            "possible_next_patient",
+        ),
         material_segments=(1, 4),
         expected_mapped=(("t-presenting", (0,)), ("t-assessment", (1,))),
         boundary=3,
@@ -735,7 +744,9 @@ EXTRACTIVE_CELLS: tuple[ExtractiveCell, ...] = (
         # The previous patient leaving as the recording starts: no clinical
         # content before the closing, so nothing is cut (D2's head case).
         expected=(ExpectedAssertion("presenting_complaint", 2, "My left knee is sore."),),
-        expected_reviews=(),
+        # No boundary, so the clinician's uncued "Okay, come on in." (segment
+        # 1) draws `clinician_line_omitted` (validation-run6 D1).
+        expected_reviews=("clinician_line_omitted",),
         material_segments=(2,),
         expected_mapped=(("t-presenting", (0,)),),
     ),
@@ -750,14 +761,19 @@ EXTRACTIVE_CELLS: tuple[ExtractiveCell, ...] = (
         clinician_speaker=SPEAKER_2,
         # The closing and the greeting share segment 2, so the cut is the
         # NEXT segment (C4: toward inclusion); segment 2 itself stays in the
-        # request and, uncued, is dropped as it always was.
+        # request and, uncued, is dropped as it always was — and, before the
+        # boundary, draws `clinician_line_omitted` (validation-run6 D1).
         expected=(
             ExpectedAssertion("presenting_complaint", 0, "My left knee is sore."),
             ExpectedAssertion(
                 "objective_examination", 1, "On examination the knee is tender to touch."
             ),
         ),
-        expected_reviews=("high_risk_omission", "possible_next_patient"),
+        expected_reviews=(
+            "clinician_line_omitted",
+            "high_risk_omission",
+            "possible_next_patient",
+        ),
         material_segments=(1, 3),
         expected_mapped=(("t-presenting", (0,)), ("t-assessment", (1,))),
         boundary=3,
@@ -1206,12 +1222,15 @@ MOCK_CELLS: tuple[MockCell, ...] = (
         (),
         _retexted(_AB2_FAITHFUL, 1, "Wilson can walk 20 minutes without pain now."),
     ),
+    # Segment 1's name and number draw `high_risk_omission`; the clinician's
+    # plan line (segment 2) has no flagged word, so, wholly uncovered, it draws
+    # `clinician_line_omitted` (validation-run6 plan D1).
     MockCell(
         "ab2-over-omission",
         AB2_TURNS,
         "over_omission",
         (),
-        ("high_risk_omission",),
+        ("clinician_line_omitted", "high_risk_omission"),
         _AB2_FAITHFUL[:1],
     ),
     MockCell(
@@ -1597,7 +1616,9 @@ class TestAxisCCells:
         warnings = check_note(note, document, _MATRIX_CONFIG)
         errors, reviews = _split_codes(warnings)
         assert errors == []
-        assert reviews == ["clinician_asserted", "clinician_asserted"]
+        # A config line covers no transcript words, so the clinician's spoken
+        # line draws `clinician_line_omitted` too (validation-run6 plan D1).
+        assert reviews == ["clinician_asserted", "clinician_asserted", "clinician_line_omitted"]
 
     def test_absent_trigger_blocks_each_confirmed_assertion(self) -> None:
         spoken = _document(("You should use an ice pack tonight.", SPEAKER_2))
@@ -1651,7 +1672,8 @@ class TestAxisCCells:
         )
         errors, reviews = _split_codes(warnings)
         assert errors == ["unconfirmed_proposal"]
-        assert reviews == ["clinician_asserted"]
+        # The clinician's spoken line is not quoted (validation-run6 plan D1).
+        assert reviews == ["clinician_asserted", "clinician_line_omitted"]
 
     def test_ambiguous_prefill_detection_raises_and_override_selects(self) -> None:
         document = _document(("The knee and the shoulder are both sore.", SPEAKER_1))
@@ -1678,9 +1700,17 @@ class TestAxisCCells:
                 config_digest=first.config_digest,
                 confirmation=declined,
             )
-        # Declined means RESOLVED: it is not pending, so nothing blocks.
+        # Declined means RESOLVED: it is not pending, so nothing blocks. The
+        # one warning left is review — the clinician's spoken line, not in
+        # the note (validation-run6 plan D1), over its five words.
         note = _merge_note(document, (), ())
-        assert check_note(note, document, _MATRIX_CONFIG) == ()
+        assert check_note(note, document, _MATRIX_CONFIG) == (
+            NoteWarning(
+                note_warning_code="clinician_line_omitted",
+                severity="review",
+                source_coords=SourceCoords(0, 0, 4),
+            ),
+        )
 
     def test_mapping_collapse_shares_one_target(self) -> None:
         """Template A's normal shape: several canonical sections legally

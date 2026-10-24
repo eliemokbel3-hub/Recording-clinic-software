@@ -143,6 +143,16 @@ What each check claims — and, recorded with equal care, what it does NOT:
   producer); an uncued sentence with none of those words stays unflagged.
   With no confirmed role there is no clinician to scope names by, and the
   check honestly emits nothing.
+  Its second code, ``clinician_line_omissions`` (validation-run6 plan D1,
+  decision 0.3 (b)), reaches the uncued sentence on the CLINICIAN's side only:
+  one ``clinician_line_omitted`` review warning per segment the confirmed
+  clinician spoke that no assertion's coordinates touch at all, that holds a
+  non-suspect content word (``note.content_tokens``; a one-word "okay" counts,
+  as decided), that draws no ``high_risk_omission`` already, and that lies
+  before the next-patient boundary — its coordinates spanning the whole
+  segment. A partly quoted line is the clinician's own choice and draws
+  nothing new; patient lines draw nothing new (an other-voice predicate was
+  rejected, D1). It warns, never routes.
 - **Check 5, ``fidelity_warnings``** (note-learning-and-styles plan Task
   4.2, D6) — the fidelity GATE over the local language model's prose for one
   section, run by the prose stage AFTER finalisation (it is NOT part of
@@ -1617,6 +1627,25 @@ def _omission_flag_token(text: str, *, first_in_segment: bool, clinician: bool) 
     return clinician and is_name_like_token(text, first_in_segment=first_in_segment)
 
 
+def _covered_words(note: GeneratedNote, document: TranscriptDocument) -> set[tuple[int, int]]:
+    """The ``(segment, word)`` positions some ``transcript`` assertion's
+    resolvable coordinates carry — Check 4's ONE coverage rule, read by both
+    of its codes."""
+    covered: set[tuple[int, int]] = set()
+    for section in note.note_sections:
+        for assertion in section.note_assertions:
+            if assertion.provenance != "transcript":
+                # Coverage is coordinate CARRIAGE: a typed ``clinician`` line
+                # (schema v2) that mentions the same number covers nothing.
+                continue
+            coords = _resolved_coords(assertion)
+            if _words_for_coords(document, coords) is None:
+                continue
+            for word_index in range(coords.first_word_index, coords.last_word_index + 1):
+                covered.add((coords.segment_index, word_index))
+    return covered
+
+
 def omission_warnings(
     note: GeneratedNote, document: TranscriptDocument
 ) -> tuple[NoteWarning, ...]:
@@ -1632,18 +1661,7 @@ def omission_warnings(
     """
     if note.clinician_speaker is None:
         return ()
-    covered: set[tuple[int, int]] = set()
-    for section in note.note_sections:
-        for assertion in section.note_assertions:
-            if assertion.provenance != "transcript":
-                # Coverage is coordinate CARRIAGE: a typed ``clinician`` line
-                # (schema v2) that mentions the same number covers nothing.
-                continue
-            coords = _resolved_coords(assertion)
-            if _words_for_coords(document, coords) is None:
-                continue
-            for word_index in range(coords.first_word_index, coords.last_word_index + 1):
-                covered.add((coords.segment_index, word_index))
+    covered = _covered_words(note, document)
     warnings: list[NoteWarning] = []
     for segment_index, segment in enumerate(document.transcript_segments):
         clinician = segment.speaker == note.clinician_speaker
@@ -1667,6 +1685,51 @@ def omission_warnings(
                     source_coords=SourceCoords(segment_index, min(uncovered), max(uncovered)),
                 )
             )
+    return tuple(warnings)
+
+
+def clinician_line_omissions(
+    note: GeneratedNote, document: TranscriptDocument, config: NoteConfig
+) -> tuple[NoteWarning, ...]:
+    """One ``clinician_line_omitted`` review warning per segment (validation-
+    run6 plan D1, decision 0.3 (b)) when ALL hold: a clinician is confirmed;
+    the confirmed clinician spoke the segment; no word of it is carried by
+    any assertion's coordinates (``_covered_words``, Check 4's own rule); one
+    of its non-suspect words holds a content token (``note.content_tokens`` —
+    disfluencies alone draw nothing, "okay" does); it draws no
+    ``high_risk_omission`` (``omission_warnings``, so the two codes never
+    double-warn a line); and it lies before the next-patient boundary
+    (``note_config.next_patient_boundary``, the one accessor). Coordinates:
+    the whole segment. ``high_risk_omission`` itself is unchanged, the tail
+    included. Codes and coordinates only, never text."""
+    if note.clinician_speaker is None:
+        return ()
+    covered = _covered_words(note, document)
+    already = {
+        coords.segment_index
+        for warning in omission_warnings(note, document)
+        if (coords := warning.source_coords) is not None
+    }
+    segments = document.transcript_segments
+    boundary = next_patient_boundary(document, config)
+    end = len(segments) if boundary is None else boundary
+    warnings: list[NoteWarning] = []
+    for segment_index, segment in enumerate(segments[:end]):
+        words = segment.transcript_words
+        if (
+            not spoken_by_confirmed_clinician(segment.speaker, note.clinician_speaker)
+            or segment_index in already
+            or any((segment_index, word_index) in covered for word_index in range(len(words)))
+            or not any(content_tokens(word.word_text) for word in words if not word.suspect)
+        ):
+            continue
+        warnings.append(
+            NoteWarning(
+                note_warning_code="clinician_line_omitted",
+                severity="review",
+                source_coords=SourceCoords(segment_index, 0, len(words) - 1),
+            )
+        )
     return tuple(warnings)
 
 
@@ -1844,7 +1907,8 @@ def next_patient_warnings(
     segment). No section and no assertion: the warning points at the
     transcript. Role-free: it fires with no confirmed clinician too. Check 4
     is unchanged over the withheld lines (decision 0.5 (a)): their claim
-    words still draw ``high_risk_omission``."""
+    words still draw ``high_risk_omission`` (``clinician_line_omitted``
+    stops at the boundary, validation-run6 plan D1)."""
     boundary = next_patient_boundary(document, config)
     if boundary is None:
         return ()
@@ -1872,7 +1936,9 @@ def check_note(
 ) -> tuple[NoteWarning, ...]:
     """Run Checks 1-4 and Check 6 over a composed note (pipeline order:
     compose -> confirm -> CHECK -> write) and return their warnings, check by
-    check in a deterministic order, Check 6 last (validation-pass plan D5).
+    check in a deterministic order — Check 4's two codes together
+    (``high_risk_omission``, then ``clinician_line_omitted``, validation-run6
+    plan D1), Check 6 last (validation-pass plan D5).
 
     Refuses — rather than silently mis-checks — when the note's recorded
     ``transcript_digest`` or ``config_digest`` does not match the presented
@@ -1900,6 +1966,7 @@ def check_note(
             note, document, resolved, pending_proposals=pending_proposals
         ),
         *omission_warnings(note, document),
+        *clinician_line_omissions(note, document, resolved),
         *next_patient_warnings(document, resolved),
     )
 
@@ -1911,6 +1978,7 @@ __all__ = [
     "FidelityVerdict",
     "NoteCheckError",
     "check_note",
+    "clinician_line_omissions",
     "contradiction_warnings",
     "fidelity_verdict",
     "fidelity_verdicts",

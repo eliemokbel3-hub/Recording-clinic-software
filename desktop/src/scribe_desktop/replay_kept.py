@@ -266,11 +266,14 @@ class NoteDrift:
     """The note leg's numbers (Task 4.1b): checker warnings on the
     regenerated note by severity, and how many sections the clinician's
     saved note holds that the regenerated one does not (None with no saved
-    note). Counts only."""
+    note). ``clinician_lines_omitted`` (validation-run6 plan Task 1.4) is the
+    ``clinician_line_omitted`` count, already inside ``reviews``, kept apart
+    so the replay can follow the new code. Counts only."""
 
     errors: int
     reviews: int
     sections_missing: int | None
+    clinician_lines_omitted: int = 0
 
 
 @dataclass(frozen=True)
@@ -313,7 +316,9 @@ def note_drift(
     every proposal confirmed (``confirm_all``), ``finalise_note``, then
     ``check_note`` (Checks 1–4 and, since the validation-pass plan, Check 6's
     ``possible_next_patient``, counted among the reviews) — and section
-    coverage against ``saved``."""
+    coverage against ``saved``. Since the validation-run6 plan (Task 1.4) the
+    review count's ``clinician_line_omitted`` warnings are also counted on
+    their own, by code name."""
     draft = compose_draft(
         document,
         config,
@@ -333,6 +338,9 @@ def note_drift(
         errors=sum(1 for warning in warnings if warning.severity == "error"),
         reviews=sum(1 for warning in warnings if warning.severity == "review"),
         sections_missing=missing,
+        clinician_lines_omitted=sum(
+            1 for warning in warnings if warning.note_warning_code == "clinician_line_omitted"
+        ),
     )
 
 
@@ -430,8 +438,8 @@ def render_report(
         "",
         "| Session | Seconds | Kept model | New model | Kept words | New words | Edit distance "
         "| Drift WER | Label agreement | Sections missing | Check errors | Check reviews "
-        "| Suspect segments |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "| Suspect segments | Clinician lines omitted |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for row in rows:
         lines.append(
@@ -439,7 +447,7 @@ def render_report(
             f"| {_model(row.new_model)} | {row.kept_words} | {row.new_words} "
             f"| {row.edit_distance} | {_fraction(row.drift)} | {_fraction(row.agreement)} "
             f"| {_count(row.note.sections_missing)} | {row.note.errors} | {row.note.reviews} "
-            f"| {row.suspect_segments} |"
+            f"| {row.suspect_segments} | {row.note.clinician_lines_omitted} |"
         )
     kept_words = sum(row.kept_words for row in rows)
     edits = sum(row.edit_distance for row in rows)
@@ -450,7 +458,9 @@ def render_report(
         f"{sum(row.seconds for row in rows):.1f} s of audio; pooled drift WER "
         f"{_fraction(pooled)} ({edits} edits over {kept_words} kept words). "
         f"Suspect segments in the new transcripts: "
-        f"{sum(row.suspect_segments for row in rows)}.",
+        f"{sum(row.suspect_segments for row in rows)}. "
+        f"Clinician lines omitted (clinician_line_omitted, among the reviews): "
+        f"{sum(row.note.clinician_lines_omitted for row in rows)}.",
     ]
     return "\n".join(lines)
 

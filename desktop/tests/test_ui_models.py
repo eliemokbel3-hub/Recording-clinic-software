@@ -1490,6 +1490,20 @@ class TestReviewEditModels:
         assert "tick 'Show flagged lines only' to find them" in copy.clear_hint
         assert copy.clear_hint.endswith("then acknowledge.")
 
+    def test_the_clinician_line_copy(self) -> None:
+        """Validation-run6 plan D1 (Task 1.2): the second code's own copy —
+        a review, never a block, naming the filter and the add path."""
+        copy = models.WARNING_COPY["clinician_line_omitted"]
+        assert copy.title == "A line you said is not in the note"
+        assert copy.blocks is None
+        assert copy.clear_hint == (
+            "Check the transcript beside the note, tick 'Show flagged lines only' to find it, "
+            "add it with Add line to section if it belongs, then acknowledge."
+        )
+        assert models.SEPARATELY_ACKNOWLEDGED_NAMES["clinician_line_omitted"] == (
+            "a line you said that is not in the note (check its flagged lines)"
+        )
+
     # --- the flagged lines (note-routing-omissions D4, Task 2.2) ------------
 
     def test_the_chooser_marks_a_flagged_line_and_keeps_transcript_order(
@@ -1812,28 +1826,46 @@ class TestReviewEditModels:
                 severity="review",
                 source_coords=SourceCoords(6, 3, 3),
             ),
+            # Validation-run6 plan D1 (Task 1.2): Check 4's second code flags
+            # its line too.
+            NoteWarning(
+                note_warning_code="clinician_line_omitted",
+                severity="review",
+                source_coords=SourceCoords(8, 0, 5),
+            ),
+            NoteWarning(
+                note_warning_code="possible_next_patient",
+                severity="review",
+                source_coords=SourceCoords(9, 0, 1),
+            ),
         )
-        assert models.flagged_segments(warnings) == frozenset({4, 6})
+        assert models.flagged_segments(warnings) == frozenset({4, 6, 8})
         assert models.flagged_segments(()) == frozenset()
+        assert models.OMISSION_CODES == frozenset({"high_risk_omission", "clinician_line_omitted"})
 
     def test_the_count_line_counts_and_names_the_lines_the_chooser_cannot_offer(
         self,
     ) -> None:
-        classes = "with a side, negation, number, dose, name or medication"
+        """Validation-run6 plan Task 1.2: the wording covers both omission
+        codes — a line the clinician said, or a flagged word anyone said."""
+        classes = (
+            "(a line you said, or a side, negation, number, dose, name or medication "
+            "someone said)."
+        )
         assert models.flagged_count_line((), ()) == ""
         assert models.flagged_count_line({4}, {4, 5}) == (
-            f"1 line {classes} is not in the note."
+            f"1 flagged line is not in the note {classes}"
         )
         assert models.flagged_count_line({4, 6}, {4, 6}) == (
-            f"2 lines {classes} are not in the note."
+            f"2 flagged lines are not in the note {classes}"
         )
         # Segment 6 (line 7) is not offered: named by its transcript line number.
         assert models.flagged_count_line({4, 6}, {4}) == (
-            f"2 lines {classes} are not in the note. "
+            f"2 flagged lines are not in the note {classes} "
             "Line 7 is replaced or partly in the note - see its row below."
         )
         assert models.flagged_count_line({11, 4, 6}, {4}) == (
-            f"3 lines {classes} are not in the note. "
+            f"3 flagged lines are not in the note {classes} "
             "Lines 7, 12 are replaced or partly in the note - see their rows below."
         )
 
@@ -1848,9 +1880,16 @@ class TestReviewEditModels:
             review=(group("clinician_asserted"), group("high_risk_omission"), group("mapping_drop"))
         )
         # Invented-text guard D5: the two per-line codes joined the set;
-        # validation-pass plan D5 (Task 1.3): Check 6 joined it.
+        # validation-pass plan D5 (Task 1.3): Check 6 joined it; validation-run6
+        # plan D1 (Task 1.2): Check 4's second code joined it.
         assert models.SEPARATELY_ACKNOWLEDGED_CODES == frozenset(
-            {"high_risk_omission", "number_source", "suspect_source", "possible_next_patient"}
+            {
+                "high_risk_omission",
+                "clinician_line_omitted",
+                "number_source",
+                "suspect_source",
+                "possible_next_patient",
+            }
         )
         assert models.acknowledge_all_codes(summary, ()) == ("clinician_asserted", "mapping_drop")
         assert models.acknowledge_all_codes(summary, {"mapping_drop"}) == ("clinician_asserted",)
@@ -1979,11 +2018,14 @@ class TestPossibleNextPatient:
         assert models.ACKNOWLEDGE_ALL_TOOLTIP == (
             "Acknowledges every review warning except those that each need their own "
             "Acknowledge: something said that is not in the note (check its flagged lines), "
+            "a line you said that is not in the note (check its flagged lines), "
             "a quoted line with a number (check each line marked [check: number]), "
             "a quoted line that may not be speech (check each line marked "
             "[check: possibly not speech]) and a note that stops where a new patient may "
-            "have arrived (check the lines marked [after possible next patient])."
+            "have arrived (check the lines marked [next patient?])."
         )
+        # Validation-run6 plan D3: the name quotes the chooser's mark itself.
+        assert models.NEXT_PATIENT_LINE_MARK.strip() in names["possible_next_patient"]
 
     def test_acknowledge_all_leaves_it_and_its_own_acknowledge_clears_it(self) -> None:
         from scribe_desktop.note import NoteWarning
@@ -2022,9 +2064,9 @@ class TestPossibleNextPatient:
 
     def test_the_front_mark_order(self) -> None:
         """The practitioner's front-mark decision (2026-10-13): ``N.``, then
-        ``[flagged]``, then ``[after possible next patient]``, then the
-        speaker, then the guard's ``[possibly not speech]`` before the
-        words — and a line before the boundary carries no new mark."""
+        ``[flagged]``, then ``[next patient?]`` (short since the validation-run6
+        plan's D3), then the speaker, then the guard's ``[possibly not speech]``
+        before the words — and a line before the boundary carries no new mark."""
         document = _boundary_document()
         choices = {
             choice.segment_index: choice
@@ -2036,23 +2078,35 @@ class TestPossibleNextPatient:
                 boundary=3,
             )
         }
-        assert models.NEXT_PATIENT_LINE_MARK == "[after possible next patient] "
+        assert models.NEXT_PATIENT_LINE_MARK == "[next patient?] "
         assert choices[1].label == "2. [flagged] speaker_2: See you next week."
         assert choices[2].label == "3. speaker_1: Hello, come in."
-        assert choices[3].label == (
-            "4. [flagged] [after possible next patient] speaker_1: My left hip is sore."
-        )
+        assert choices[3].label == "4. [flagged] [next patient?] speaker_1: My left hip is sore."
         assert choices[4].label == (
-            "5. [flagged] [after possible next patient] speaker_1: "
-            "[possibly not speech] Left knee two."
+            "5. [flagged] [next patient?] speaker_1: [possibly not speech] Left knee two."
         )
         assert choices[3].flagged is True
         # Not flagged, after the boundary: the mark alone after the number.
         unflagged = models.eligible_utterances(
             document, clinician_speaker=SPEAKER_2, in_note={0}, boundary=3
         )
-        assert unflagged[2].label == (
-            "4. [after possible next patient] speaker_1: My left hip is sore."
+        assert unflagged[2].label == "4. [next patient?] speaker_1: My left hip is sore."
+        # Validation-run6 plan D3: both front marks sit before the speaker, and
+        # the 60-character cut applies to the words alone — a long line keeps
+        # all its marks whole.
+        words = " ".join(["walking"] * 20)
+        segments = list(document.transcript_segments)
+        segments[3] = segments[3].model_copy(update={"transcript_words": _review_words(words)})
+        long_document = document.model_copy(update={"transcript_segments": tuple(segments)})
+        [long_choice] = [
+            c
+            for c in models.eligible_utterances(
+                long_document, clinician_speaker=SPEAKER_2, in_note={0}, flagged={3}, boundary=3
+            )
+            if c.segment_index == 3
+        ]
+        assert long_choice.label == (
+            "4. [flagged] [next patient?] speaker_1: " + words[:60].rstrip() + "..."
         )
         # No boundary: today's labels, unchanged.
         plain = models.eligible_utterances(document, clinician_speaker=SPEAKER_2, in_note={0})

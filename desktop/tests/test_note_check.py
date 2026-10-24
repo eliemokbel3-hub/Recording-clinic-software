@@ -24,6 +24,7 @@ from fixtures.heldout_transcripts import (
     by_case,
     held_out_set,
     misfiled,
+    script_path,
 )
 from scribe_desktop import note_check as note_check_module
 from scribe_desktop.note import (
@@ -38,6 +39,8 @@ from scribe_desktop.note import (
     NoteSectionKey,
     NoteSpan,
     SourceCoords,
+    compose_draft,
+    finalise_note,
     line_marks,
     reconstruct_span_text,
     render_note,
@@ -53,6 +56,7 @@ from scribe_desktop.note_check import (
     _is_high_risk_token,
     _omission_flag_token,
     check_note,
+    clinician_line_omissions,
     contradiction_warnings,
     omission_warnings,
     provenance_warnings,
@@ -69,6 +73,7 @@ from scribe_desktop.note_config import (
     TemplateTarget,
     build_note_request,
     load_note_config,
+    next_patient_boundary,
 )
 from scribe_desktop.note_fill import autofill_proposals, prefill_proposals
 from scribe_desktop.speech import SAMPLE_RATE
@@ -79,6 +84,8 @@ from scribe_desktop.transcription import (
     TranscriptSegment,
     TranscriptWord,
 )
+from scribe_desktop.ui.models import extractive_provider_from_config, flagged_segments
+from scribe_desktop.validation import confirm_all, first_detected_prefill, load_script
 
 SESSION_ID = "c" * 32
 _NOW = datetime(2026, 8, 11, 10, 0, tzinfo=UTC)
@@ -1887,6 +1894,202 @@ class TestCheck4Omission:
         warnings = omission_warnings(note, document)
         assert _codes(warnings) == ["high_risk_omission"]
         assert warnings[0].source_coords == SourceCoords(0, 10, 10)
+
+
+# The clinician's uncued advice line: no cue routes it and no word of it is a
+# Check 4 flag ("Please" is a common sentence opener, never name-like).
+_ADVICE = "Please keep walking every morning."
+
+
+class TestCheck4ClinicianLineOmission:
+    """Validation-run6 plan D1 (decision 0.3 (b), Task 1.1): Check 4's second
+    code, one per wholly uncovered line of the confirmed clinician that holds
+    a content word and draws no ``high_risk_omission``, before the boundary."""
+
+    def test_a_wholly_uncovered_clinician_line_fires_once_over_the_whole_line(self) -> None:
+        document = _document(("My knee is sore.", SPEAKER_1), (_ADVICE, SPEAKER_2))
+        note = _note(document, (_quoted(document, 0, "presenting_complaint"),))
+        assert omission_warnings(note, document) == ()
+        warnings = clinician_line_omissions(note, document, _CHECK_CONFIG)
+        assert _codes(warnings) == ["clinician_line_omitted"]
+        assert warnings[0].severity == "review"
+        assert warnings[0].source_coords == SourceCoords(1, 0, 4)
+        assert warnings[0].section_key is None and warnings[0].assertion_id is None
+
+    def test_one_warning_per_line_in_transcript_order(self) -> None:
+        document = _document(
+            (_ADVICE, SPEAKER_2),
+            ("My knee is sore.", SPEAKER_1),
+            ("we can try that again soon", SPEAKER_2),
+        )
+        warnings = clinician_line_omissions(_note(document, ()), document, _CHECK_CONFIG)
+        assert [w.source_coords for w in warnings] == [
+            SourceCoords(0, 0, 4),
+            SourceCoords(2, 0, 5),
+        ]
+
+    def test_a_partly_quoted_line_does_not_fire(self) -> None:
+        document = _document((_ADVICE, SPEAKER_2))
+        words = document.transcript_segments[0].transcript_words
+        partial = NoteAssertion(
+            assertion_id="t0",
+            section_key="advice_home_exercise",
+            speaker=SPEAKER_2,
+            note_span=NoteSpan(
+                span_text=reconstruct_span_text(words[0:3]),
+                provenance="transcript",
+                source_coords=SourceCoords(0, 0, 2),
+            ),
+        )
+        assert clinician_line_omissions(_note(document, (partial,)), document, _CHECK_CONFIG) == ()
+
+    def test_a_whole_quoted_line_does_not_fire(self) -> None:
+        document = _document((_ADVICE, SPEAKER_2))
+        note = _note(document, (_quoted(document, 0, "advice_home_exercise"),))
+        assert clinician_line_omissions(note, document, _CHECK_CONFIG) == ()
+
+    def test_a_config_line_covers_nothing(self) -> None:
+        """Coverage is coordinate carriage (Check 4's one rule): a confirmed
+        pre-filled line covers no transcript word."""
+        document = _document((_ADVICE, SPEAKER_2))
+        note = _note(document, (_authored("Walking advised.", "advice_home_exercise", aid="a1"),))
+        assert _codes(clinician_line_omissions(note, document, _CHECK_CONFIG)) == [
+            "clinician_line_omitted"
+        ]
+
+    @pytest.mark.parametrize("text", ["um uh erm", "mm, hmm.", "..."])
+    def test_a_line_of_disfluencies_or_punctuation_does_not_fire(self, text: str) -> None:
+        document = _document((text, SPEAKER_2))
+        assert clinician_line_omissions(_note(document, ()), document, _CHECK_CONFIG) == ()
+
+    def test_a_patient_line_does_not_fire(self) -> None:
+        document = _document((_ADVICE, SPEAKER_1))
+        assert clinician_line_omissions(_note(document, ()), document, _CHECK_CONFIG) == ()
+
+    def test_a_line_that_draws_high_risk_omission_does_not_fire(self) -> None:
+        """The two codes never warn one line: a flagged word keeps the line
+        under ``high_risk_omission`` alone."""
+        document = _document(("Take paracetamol 500 twice daily.", SPEAKER_2))
+        note = _note(document, ())
+        assert _codes(omission_warnings(note, document)) == ["high_risk_omission"]
+        assert clinician_line_omissions(note, document, _CHECK_CONFIG) == ()
+
+    def test_no_confirmed_clinician_means_nothing(self) -> None:
+        document = _document((_ADVICE, SPEAKER_2))
+        note = _note(document, (), clinician_speaker=None)
+        assert clinician_line_omissions(note, document, _CHECK_CONFIG) == ()
+
+    def test_a_suspect_line_does_not_fire(self) -> None:
+        """Invented-text guard D6: a suspect word is never an omission."""
+        document = _suspect_document((_ADVICE, SPEAKER_2), suspect=(0,))
+        assert clinician_line_omissions(_note(document, ()), document, _CHECK_CONFIG) == ()
+
+    def test_a_line_past_the_next_patient_boundary_does_not_fire(self) -> None:
+        """C5: the one boundary accessor. The closing before the boundary
+        fires; the clinician's line after it does not, while Check 4's first
+        code still flags the withheld side (decision 0.5 (a))."""
+        document = _document(
+            ("My left knee is sore.", SPEAKER_1),
+            ("On examination the knee is tender to touch.", SPEAKER_2),
+            ("Okay, see you next week.", SPEAKER_2),
+            ("Hello, come on in.", SPEAKER_1),
+            ("My right shoulder hurts.", SPEAKER_1),
+            (_ADVICE, SPEAKER_2),
+        )
+        assert next_patient_boundary(document, _CHECK_CONFIG) == 3
+        note = _note(
+            document,
+            (
+                _quoted(document, 0, "presenting_complaint", aid="t0"),
+                _quoted(document, 1, "objective_examination", aid="t1"),
+            ),
+        )
+        warnings = clinician_line_omissions(note, document, _CHECK_CONFIG)
+        assert [w.source_coords for w in warnings] == [SourceCoords(2, 0, 4)]
+        assert [w.source_coords for w in omission_warnings(note, document)] == [
+            SourceCoords(4, 1, 1)
+        ]
+
+    @pytest.mark.parametrize("text", ["Okay.", "yeah", "alright", "Sure.", "Is it worse at night?"])
+    def test_an_acknowledgement_or_a_question_fires_under_b(self, text: str) -> None:
+        """Decision 0.3 (b): a one-word acknowledgement is content, and a
+        question is a line. (c)'s two exemptions were to be added only if
+        Task 0.2's real-speech counts broke the budget; its record says they
+        are NOT added, and none exists. ("right" and "no" are a side and a
+        negation, so a one-word "right" or "no" draws the FIRST code.)"""
+        document = _document((text, SPEAKER_2))
+        warnings = clinician_line_omissions(_note(document, ()), document, _CHECK_CONFIG)
+        assert _codes(warnings) == ["clinician_line_omitted"]
+        assert not hasattr(note_check_module, "ACKNOWLEDGEMENT_TOKENS")
+
+    @pytest.mark.parametrize("text", ["right", "no"])
+    def test_a_one_word_side_or_negation_draws_the_first_code_only(self, text: str) -> None:
+        document = _document((text, SPEAKER_2))
+        note = _note(document, ())
+        assert _codes(omission_warnings(note, document)) == ["high_risk_omission"]
+        assert clinician_line_omissions(note, document, _CHECK_CONFIG) == ()
+
+    def test_check_note_runs_it_after_check_4s_first_code_and_before_check_6(self) -> None:
+        document = _document(
+            ("My left knee is sore.", SPEAKER_1),
+            (_ADVICE, SPEAKER_2),
+            ("Take paracetamol 500 twice daily.", SPEAKER_2),
+            ("Okay, see you next week.", SPEAKER_2),
+            ("Hello, come on in.", SPEAKER_1),
+            ("My right shoulder hurts.", SPEAKER_1),
+        )
+        note = _note(document, (_quoted(document, 0, "presenting_complaint", aid="t0"),))
+        warnings = check_note(note, document, _CHECK_CONFIG)
+        omissions = [
+            (w.note_warning_code, w.source_coords)
+            for w in warnings
+            if w.note_warning_code
+            in ("high_risk_omission", "clinician_line_omitted", "possible_next_patient")
+        ]
+        assert omissions == [
+            ("high_risk_omission", SourceCoords(2, 0, 2)),
+            ("high_risk_omission", SourceCoords(5, 1, 1)),
+            ("clinician_line_omitted", SourceCoords(1, 0, 4)),
+            ("clinician_line_omitted", SourceCoords(3, 0, 4)),
+            ("possible_next_patient", SourceCoords(4, 0, 3)),
+        ]
+        assert warnings[-1].note_warning_code == "possible_next_patient"
+
+    @pytest.mark.parametrize("case_id", ["hld-06", "hld-12", "hld-15", "hld-19", "hld-22"])
+    def test_the_five_held_out_silent_facts_are_carried_or_flagged(self, case_id: str) -> None:
+        """Task 0.12's prediction for the five held-out facts silent under
+        0.3.3 (Tasks 0.2 / 0.2a): none stays silent. On the scripts' own
+        words, every MATERIAL fact's line is in the note or flagged by one of
+        Check 4's two codes — the shipped pipeline as the harness runs it."""
+        [case] = [c for c in held_out_set("heldout").all_cases() if c.case_id == case_id]
+        config = load_note_config(_VALIDATION_CONFIG_DIR)
+        document = case.document()
+        draft = compose_draft(
+            document,
+            config,
+            extractive_provider_from_config(config),
+            None,
+            clinician_speaker=case.clinician_speaker,
+            prefill_id=first_detected_prefill(document, config),
+            learned_rules=None,
+            decided_at=_NOW,
+        )
+        note = finalise_note(draft, confirm_all(draft, _NOW), document, config, created_at=_NOW)
+        carried = {
+            a.note_span.source_coords.segment_index
+            for section in note.note_sections
+            for a in section.note_assertions
+            if a.note_span.source_coords is not None
+        }
+        flagged = flagged_segments(note.note_warnings)
+        facts = [
+            fact
+            for fact in load_script(script_path(case_id)).facts
+            if fact.material and fact.kind != "absent"
+        ]
+        assert facts, case_id
+        for fact in facts:
+            assert fact.line in carried | flagged, (case_id, fact.line)
 
 
 # ---------------------------------------------------------------------------
