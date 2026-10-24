@@ -54,8 +54,16 @@ id prefix and its cases (``validation/heldout`` with ``hld-`` and the
 Task 0.10; its cases written in Task 0.12). A set's ``cases_written`` is
 False until its cases exist: such a set holds no case, its scripts — none
 while its folder is absent or empty — get the script lints only, and
-``HELD_OUT_CASES`` gains nothing from it. Both sets are written now; the
-flag stays for the next fresh set (plan decision 0.6's ``heldout-3``).
+``HELD_OUT_CASES`` gains nothing from it. Both sets are written now.
+
+Validation-run6 plan Task 0.17 (D16): ``validation/heldout-3`` with ``h3-``,
+the blind set, is in the table with ``cases_written=False`` until after run
+6 (Task P.4). It is ``tails_by_role`` — an axis script's reference tail start
+is the index of its first ``next_patient`` line, so no case boundary is
+needed — and ``routed_material`` — every material fact on a non-clinician
+line sits in a routed clause. ``script_count`` and ``facts_per_script`` are
+its brief's bounds, linted from metadata only. While any ``h3-`` script is
+in the tree, the suite runs only through ``scripts/lint-held-out-set.py``.
 """
 
 from __future__ import annotations
@@ -593,13 +601,21 @@ class HeldOutSet:
     ``validation/`` (and the harness's set name), ``prefix`` its scripts'
     and scripted cases' id prefix, ``cases`` one per script, ``edge_cases``
     the explicit-turn cases authored with it. ``cases_written`` False: no
-    case yet (the set's scripts get the script lints only)."""
+    case yet (the set's scripts get the script lints only). Task 0.17:
+    ``tails_by_role`` — the tails come from the ``next_patient`` role;
+    ``routed_material`` — every material fact on a non-clinician line is
+    routed; ``script_count`` / ``facts_per_script`` — inclusive bounds, or
+    None for none."""
 
     name: str
     prefix: str
     cases: tuple[HeldOutCase, ...]
     edge_cases: tuple[HeldOutCase, ...] = ()
     cases_written: bool = True
+    tails_by_role: bool = False
+    routed_material: bool = False
+    script_count: tuple[int, int] | None = None
+    facts_per_script: tuple[int, int] | None = None
 
     @property
     def folder(self) -> Path:
@@ -617,7 +633,19 @@ HELD_OUT_SETS: Final[tuple[HeldOutSet, ...]] = (
     HeldOutSet("heldout", "hld-", SCRIPT_CASES, EDGE_CASES),
     # Authored blind in Task 0.10; its ``h2-NN`` cases written in Task 0.12.
     HeldOutSet("heldout-2", "h2-", HELDOUT_2_CASES),
+    # Task 0.17: authored blind; never read before run 6 (D16, C12).
+    HeldOutSet(
+        "heldout-3",
+        "h3-",
+        (),
+        cases_written=False,
+        tails_by_role=True,
+        routed_material=True,
+        script_count=(20, 25),
+        facts_per_script=(3, 6),
+    ),
 )
+NEXT_PATIENT_ROLE: Final = "next_patient"
 SCRIPT_CASE_PREFIXES: Final[tuple[str, ...]] = tuple(s.prefix for s in HELD_OUT_SETS)
 
 HELD_OUT_CASES: Final[tuple[HeldOutCase, ...]] = tuple(

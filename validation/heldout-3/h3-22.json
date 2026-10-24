@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h3-22",
+  "appointment_type": "follow_up",
+  "axes": ["numbers"],
+  "lines": [
+    {"role": "clinician", "text": "How did you get on after the cups last week?"},
+    {"role": "patient", "text": "Without a doubt I'm moving a bit better and I can turn to check my blind spot again."},
+    {"role": "clinician", "text": "Great. Let me have a look. Rotation is about the same both ways now, and the muscles beside your spine feel much softer."},
+    {"role": "clinician", "text": "We'll do the cups again today, then some mobilising."},
+    {"role": "patient", "text": "Fine by me. I suppose I should ask about the gym too, can I lift again?"},
+    {"role": "clinician", "text": "Yes, start light, half your normal weights for two weeks, and build back up from there."},
+    {"role": "clinician", "text": "See you next week."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["turn", "to", "check", "my", "blind", "spot"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["cups", "again", "today"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["half", "your", "normal", "weights", "for", "two", "weeks"], "line": 5, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

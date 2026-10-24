@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h3-13",
+  "appointment_type": "post_operative",
+  "axes": ["end_and_new_patient", "numbers", "rate"],
+  "lines": [
+    {"role": "clinician", "text": "Now then, how's the shoulder since last time? It's four weeks since the op now."},
+    {"role": "patient", "text": "Since last time I can wash my hair with that arm, I'm moving a bit better."},
+    {"role": "clinician", "text": "Brilliant. What are you taking for pain?"},
+    {"role": "patient", "text": "Just what the hospital gave me. I've got the packet."},
+    {"role": "clinician", "text": "So that's paracetamol 500 milligrams, two tablets four times a day, and you can drop to two times a day when you're comfortable."},
+    {"role": "clinician", "text": "Let me have a look. Lift up in front of you. That's a hundred and twenty degrees, up from ninety."},
+    {"role": "clinician", "text": "You can leave the sling off at home now, wear it on the bus though."},
+    {"role": "patient", "text": "Champion. Thanks, love."},
+    {"role": "clinician", "text": "Ta-ra, love, see you in a fortnight."},
+    {"role": "clinician", "text": "Hiya, come in, you're Mr Booth? I'm Kath."},
+    {"role": "next_patient", "text": "Aye, that's me. It's my lower back, I've had sciatica down my left leg for a fortnight."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["wash", "my", "hair", "with", "that", "arm"], "line": 1, "material": true},
+    {"kind": "dose", "tokens": ["paracetamol", "500", "milligrams", "two", "tablets", "four", "times", "a", "day"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["a", "hundred", "and", "twenty", "degrees"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["wear", "it", "on", "the", "bus"], "line": 6, "material": true},
+    {"kind": "absent", "tokens": ["sciatica", "down", "my", "left", "leg"], "line": 10, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}, "rate": 3}
+}

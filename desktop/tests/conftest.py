@@ -73,6 +73,39 @@ def _no_real_exclusion() -> replay_kept.ExclusionLike:
     )
 
 
+# Validation-run6 plan C12 (security-review round 33 SEC-001): while a blind
+# held-out set has a script in the tree, the suite runs only as the child of
+# ``scripts/lint-held-out-set.py``, which sets this variable (the plugin's
+# ``REPORT_ENV``) AND registers the plugin under this name with a guard that
+# has checked the run — a variable left in a shell, or the plugin loaded by
+# hand, is not enough (codex rounds 34-35, PR-MED-045, PR-MED-050);
+# ``test_lint_held_out_set.py`` pins both equal to the plugin's.
+LINT_REPORT_ENV = "SCRIBE_LINT_REPORT"
+LINT_PLUGIN_NAME = "lint_held_out_plugin"
+BLIND_RUN_REFUSAL = (
+    "a blind held-out set has scripts in the tree: run the suite only through "
+    "scripts/lint-held-out-set.py (validation-run6 plan C12)"
+)
+
+
+def lint_runner_active(manager: Any) -> bool:
+    """Whether the lint plugin is registered under its name with the
+    runner's guard registered and its check passed."""
+    guard = getattr(manager.get_plugin(LINT_PLUGIN_NAME), "RUNNER_GUARD", None)
+    return guard is not None and guard.checked is True and manager.is_registered(guard)
+
+
+def blind_run_refusal(sets: Any, environ: Any, plugin_active: bool) -> str | None:
+    """The fixed refusal when a set whose cases are not yet written (blind)
+    has a script in its folder and this run is not the runner's child (the
+    variable set and the runner's guard checked)."""
+    if environ.get(LINT_REPORT_ENV) and plugin_active:
+        return None
+    if any(not s.cases_written and s.script_paths() for s in sets):
+        return BLIND_RUN_REFUSAL
+    return None
+
+
 def pytest_configure(config: pytest.Config) -> None:
     """Installation plan D2, from before collection: a test module's
     import-time code — a ``skipif`` that looks for a local model, a root
@@ -85,7 +118,13 @@ def pytest_configure(config: pytest.Config) -> None:
     lifts the ``part_kernel`` fixture with ``monkeypatch.undo()`` fails
     loudly instead of reaching the real Windows API. So is the replay tool's
     instance exclusion (development-recordings plan Task 4.1a): no test ever
-    takes the app's real ``app.lock``."""
+    takes the app's real ``app.lock``. A run with a blind set's script in the
+    tree and outside the lint runner is refused before collection (C12)."""
+    from fixtures.heldout_transcripts import HELD_OUT_SETS
+
+    refusal = blind_run_refusal(HELD_OUT_SETS, os.environ, lint_runner_active(config.pluginmanager))
+    if refusal is not None:
+        raise pytest.UsageError(refusal)
     install_layout.channel = _production  # type: ignore[assignment]
     install_layout.is_frozen = _not_frozen  # type: ignore[assignment]
     past_sessions.part_kernel = _no_real_part_kernel

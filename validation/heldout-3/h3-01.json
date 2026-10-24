@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h3-01",
+  "appointment_type": "follow_up",
+  "axes": ["end_and_new_patient", "negation", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "Morning, Gareth. How's the back been since last time?"},
+    {"role": "patient", "text": "Since last time it's eased off a lot, I'm moving a bit better in the mornings."},
+    {"role": "clinician", "text": "Good. Any numbness down the legs?"},
+    {"role": "patient", "text": "Nope, no numbness or tingling at all, and no trouble going to the toilet."},
+    {"role": "clinician", "text": "Let me have a look at you bending forward. That's much freer than before, fingertips reach your shins now."},
+    {"role": "clinician", "text": "Keep up the walking, half an hour every day, and add the back extensions lying on your front, ten of them morning and night."},
+    {"role": "clinician", "text": "If you get pain shooting down both legs or any change with your bladder, ring us or go straight to A and E."},
+    {"role": "patient", "text": "Will do. Thanks ever so much."},
+    {"role": "clinician", "text": "Right, Gareth, that's you all done, see you next week."},
+    {"role": "patient", "text": "Cheers, bye now."},
+    {"role": "clinician", "text": "Hiya, come on in, you must be Wendy. Pop your bag down there."},
+    {"role": "next_patient", "text": "Hello. It's my right shoulder, I can't get my arm above my head since I fell off a stepladder."},
+    {"role": "clinician", "text": "Ouch. Right, tell me when it happened."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["eased", "off", "a", "lot"], "line": 1, "material": true},
+    {"kind": "negation", "tokens": ["no", "numbness", "or", "tingling"], "line": 3, "material": true},
+    {"kind": "negation", "tokens": ["no", "trouble", "going", "to", "the", "toilet"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["ten", "of", "them", "morning", "and", "night"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["pain", "shooting", "down", "both", "legs"], "line": 6, "material": true},
+    {"kind": "absent", "tokens": ["can't", "get", "my", "arm", "above", "my", "head"], "line": 11, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

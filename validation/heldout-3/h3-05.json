@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h3-05",
+  "appointment_type": "post_operative",
+  "axes": ["end_and_new_patient", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "How's the knee been since last time?"},
+    {"role": "patient", "text": "Since last time the swelling has gone right down, I can get my heel flat on the floor now."},
+    {"role": "clinician", "text": "Great, let me have a look. Lie back for me."},
+    {"role": "clinician", "text": "Straightens fully, bends to a hundred and ten, scar's healing nicely."},
+    {"role": "clinician", "text": "Now, come in, come in, bring your foot in towards your bottom as far as it'll go. Good, hello, that's new, you've never got that far before."},
+    {"role": "patient", "text": "Wow. That's the furthest yet."},
+    {"role": "clinician", "text": "Welcome to the next stage then, we'll get you on the bike."},
+    {"role": "clinician", "text": "Ten minutes on a static bike every day, low resistance, seat high, and no pivoting or twisting on that leg for another six weeks."},
+    {"role": "patient", "text": "Can I go back to football?"},
+    {"role": "clinician", "text": "Not yet. Football is at least six months away, possibly nine, depending on your strength testing."},
+    {"role": "clinician", "text": "Okay, see you next week."},
+    {"role": "patient", "text": "See you then."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["swelling", "has", "gone", "right", "down"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["bends", "to", "a", "hundred", "and", "ten"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["ten", "minutes", "on", "a", "static", "bike", "every", "day"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["no", "pivoting", "or", "twisting"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["at", "least", "six", "months", "away"], "line": 9, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

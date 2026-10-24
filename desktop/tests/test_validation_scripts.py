@@ -19,18 +19,31 @@ The axis, kind and voice-baseline lints above stay on ``validation/scripts``
 only.
 
 Validation-run6 plan Task 0.11: the held-out lints run per set over the
-fixture's table (``HELD_OUT_SETS``: ``validation/heldout`` and
-``validation/heldout-2``); a set with no scripts yet passes them vacuously,
-and a set whose cases are not yet written gets the script lints only.
+fixture's table (``HELD_OUT_SETS``: ``validation/heldout``,
+``validation/heldout-2`` and, since Task 0.17, ``validation/heldout-3``); a
+set with no scripts yet passes them vacuously, and a set whose cases are not
+yet written gets the script lints only.
+
+Task 0.17 (D16): every lint that reads a held-out script reports through
+content-free problem codes, ``<id>:<code>[:<int>]`` — the id a script stem
+or a set name, the code from ``PROBLEM_CODES``, the integer a fact index, a
+line index or a count — recorded with ``record_property("problems", …)``
+before it is asserted empty. ``scripts/lint-held-out-set.py`` runs this
+module in a child process and prints only those codes; it is the boundary
+that keeps a blind set's words off the console (C12), and the codes are what
+goes back to the set's author.
 """
 
 from __future__ import annotations
 
+import functools
 import hashlib
+import json
 import re
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
+from typing import Any, Final
 
 import pytest
 
@@ -39,6 +52,7 @@ from fixtures.heldout_transcripts import (
     EDGE_CASE_PREFIX,
     HELD_OUT_CASES,
     HELD_OUT_SETS,
+    NEXT_PATIENT_ROLE,
     SCRIPT_CASE_PREFIXES,
     HeldOutCase,
     HeldOutSet,
@@ -62,10 +76,11 @@ from scribe_desktop.transcription import TranscriptDocument
 from scribe_desktop.validation import (
     AXES,
     FACT_KINDS,
-    REFERENCE_GREETING_LINES,
     REFERENCE_MODEL_NAME,
     REFERENCE_TAIL_STARTS,
     EncounterScript,
+    ScriptError,
+    ScriptLine,
     _occurrences,
     document_from_turns,
     load_script,
@@ -80,6 +95,81 @@ MIN_HELDOUT = 16
 MIN_PER_AXIS = 3
 MIN_PER_KIND = 3
 _CLAUSE_END = re.compile(r"(?<=[.?!,;])\s+")
+_NEXT_PATIENT_AXIS = "end_and_new_patient"
+# The run-of-record set as a set-table row, so its scripts go through the
+# same content-free helpers (its folder is ``validation/scripts``).
+_RUN_OF_RECORD = HeldOutSet("scripts", "syn-", (), cases_written=False)
+
+# ---------------------------------------------------------------------------
+# Task 0.17 (D16): the closed problem grammar. ``scripts/lint_held_out_plugin.py``
+# ships the same codes (``CODES``) and validates every recorded entry
+# against the same pattern; ``test_lint_held_out_set.py`` pins the two equal.
+# ---------------------------------------------------------------------------
+
+PROBLEM_CODES: Final[frozenset[str]] = frozenset(
+    {
+        "load-error",
+        "bad-id",
+        "duplicate-id",
+        "no-conditions",
+        "slot-out-of-range",
+        "no-material-fact",
+        "fact-borders-edge",
+        "uncertain-unrouted",
+        "fact-unrouted",
+        "trigger-spoken",
+        "facts-out-of-bounds",
+        "size-out-of-bounds",
+        "next-patient-without-axis",
+        "tail-disagrees",
+        "missing-tail-row",
+        "row-without-axis",
+        "fact-in-tail-not-absent",
+        "absent-fact-before-tail",
+        "tail-out-of-range",
+        "boundary-disagrees",
+        "reference-mismatch",
+        "render-mismatch",
+    }
+)
+_STEM = r"(?:syn|hld|h2|h3)-\d{2}"
+_SET_NAME = r"(?:heldout(?:-\d{1,2})?|scripts)"
+STEM_RE: Final = re.compile(_STEM)
+PROBLEM_RE: Final = re.compile(
+    rf"(?:{_STEM}|{_SET_NAME}):(?:{'|'.join(sorted(map(re.escape, PROBLEM_CODES)))})"
+    r"(?::\d{1,4})?"
+)
+_MAX_PROBLEM_INT = 9999
+_LOAD_CODES: Final = frozenset({"load-error", "bad-id"})
+
+RecordProperty = Callable[[str, object], None]
+
+
+def _problem(stamp: str, code: str, n: int | None = None) -> str:
+    """One problem entry; refuses anything outside the grammar, so a helper
+    can never return a string the runner would not print."""
+    assert code in PROBLEM_CODES, code
+    entry = f"{stamp}:{code}" if n is None else f"{stamp}:{code}:{min(n, _MAX_PROBLEM_INT)}"
+    assert PROBLEM_RE.fullmatch(entry), "a problem entry outside the grammar"
+    return entry
+
+
+def _code(entry: str) -> str:
+    return entry.split(":")[1]
+
+
+def _stamp(path: Path, held_out: HeldOutSet) -> str | None:
+    """The file's stem when it is a well-formed id of the set's prefix, else
+    None (the file then gets ``bad-id`` and no other check)."""
+    stem = path.stem
+    if STEM_RE.fullmatch(stem) and stem.startswith(held_out.prefix):
+        return stem
+    return None
+
+
+def _path_id(path: Path) -> str:
+    """A parametrize id that is never author-typed text."""
+    return path.stem if STEM_RE.fullmatch(path.stem) else "unnamed"
 
 
 def _scripts() -> list[EncounterScript]:
@@ -115,6 +205,20 @@ def _contains(tokens: tuple[str, ...], needle: tuple[str, ...]) -> bool:
     return bool(_occurrences(tokens, needle))
 
 
+@functools.cache
+def _validation_cues() -> Mapping[NoteSectionKey, tuple[tuple[str, ...], ...]]:
+    """The validation config's own cue layer — the table the held-out
+    briefs give their authors."""
+    return load_note_config(CONFIG).normalised_cues()
+
+
+@functools.cache
+def _trigger_phrases() -> tuple[tuple[str, ...], ...]:
+    return tuple(
+        content_tokens(rule.trigger_phrase) for rule in load_note_config(CONFIG).autofill_rules
+    )
+
+
 def _facts_bordering_their_edge_word(
     scripts: Iterable[EncounterScript],
 ) -> list[tuple[str, int]]:
@@ -139,37 +243,194 @@ def _facts_bordering_their_edge_word(
     return offending
 
 
+def _clause_routes(line: ScriptLine, tokens: tuple[str, ...]) -> bool:
+    """Whether a clause of the line holding ``tokens`` routes through the
+    provider's own ``first_matching_section`` with the validation config's
+    cues, its speaker's role and the question test (round 11 MED-003, round
+    12 LOW-016). Clauses split at sentence ends and commas: a synthetic voice
+    pauses at both, and the recogniser may split there."""
+    return any(
+        first_matching_section(
+            _validation_cues(),
+            content_tokens(clause),
+            CANONICAL_SECTION_KEYS,
+            speaker=line.role,
+            clinician_speaker=CLINICIAN_LABEL,
+            # The provider tests the whole utterance; the line may reach it
+            # as one segment, so a clause counts as a question if either it
+            # or its line is one (round 13 LOW-007) — routing holds under
+            # both splits.
+            question=is_interrogative(clause) or is_interrogative(line.text),
+        )
+        is not None
+        for clause in _CLAUSE_END.split(line.text)
+        if _contains(content_tokens(clause), tokens)
+    )
+
+
 def _uncertain_facts_in_unrouted_clauses(
     scripts: Iterable[EncounterScript],
 ) -> list[tuple[str, int]]:
     """(encounter, fact index) for each ``expect_uncertain`` fact with no
-    clause holding it that routes (round 11 MED-003, round 12 LOW-016)."""
-    cues = load_note_config(CONFIG).normalised_cues()
-    unrouted = []
-    for script in scripts:
-        for index, fact in enumerate(script.facts):
-            if not fact.expect_uncertain:
-                continue
-            line = script.lines[fact.line]
-            routed = [
-                first_matching_section(
-                    cues,
-                    content_tokens(clause),
-                    CANONICAL_SECTION_KEYS,
-                    speaker=line.role,
-                    clinician_speaker=CLINICIAN_LABEL,
-                    # The provider tests the whole utterance; the line
-                    # may reach it as one segment, so a clause counts as
-                    # a question if either it or its line is one (round
-                    # 13 LOW-007) — routing holds under both splits.
-                    question=is_interrogative(clause) or is_interrogative(line.text),
-                )
-                for clause in _CLAUSE_END.split(line.text)
-                if _contains(content_tokens(clause), fact.tokens)
-            ]
-            if not any(key is not None for key in routed):
-                unrouted.append((script.encounter_id, index))
-    return unrouted
+    clause holding it that routes."""
+    return [
+        (script.encounter_id, index)
+        for script in scripts
+        for index, fact in enumerate(script.facts)
+        if fact.expect_uncertain and not _clause_routes(script.lines[fact.line], fact.tokens)
+    ]
+
+
+# Task 0.17 (D16): the fact kinds a ``routed_material`` set must route when
+# a non-clinician speaks them — ``absent`` facts belong to the next patient.
+_ROUTED_KINDS: Final = frozenset({"present", "negation", "laterality", "dose"})
+
+
+def _material_facts_in_unrouted_clauses(script: EncounterScript) -> list[int]:
+    """Fact indices of every material ``present`` / ``negation`` /
+    ``laterality`` / ``dose`` fact on a non-clinician line with no routed
+    clause holding it."""
+    return [
+        index
+        for index, fact in enumerate(script.facts)
+        if fact.material
+        and fact.kind in _ROUTED_KINDS
+        and script.lines[fact.line].role != CLINICIAN_LABEL
+        and not _clause_routes(script.lines[fact.line], fact.tokens)
+    ]
+
+
+def _role_tail(script: EncounterScript) -> int | None:
+    """The index of the script's first ``next_patient`` line, or None (D16:
+    a ``tails_by_role`` set's reference tail start)."""
+    for index, line in enumerate(script.lines):
+        if line.role == NEXT_PATIENT_ROLE:
+            return index
+    return None
+
+
+def _checked_problems(stamp: str, script: EncounterScript, held_out: HeldOutSet) -> list[str]:
+    """Every per-script check after a successful load, as problem codes."""
+    problems: list[str] = []
+    conditions = script.conditions
+    if conditions is None:
+        problems.append(_problem(stamp, "no-conditions"))
+    elif any(slot >= len(FAKE_VOICES) for slot in conditions.voice_slots.values()):
+        problems.append(_problem(stamp, "slot-out-of-range"))
+    if not any(fact.material for fact in script.facts):
+        problems.append(_problem(stamp, "no-material-fact"))
+    for _, index in _facts_bordering_their_edge_word([script]):
+        problems.append(_problem(stamp, "fact-borders-edge", index))
+    for _, index in _uncertain_facts_in_unrouted_clauses([script]):
+        problems.append(_problem(stamp, "uncertain-unrouted", index))
+    if held_out is _RUN_OF_RECORD:
+        return problems
+    if held_out.routed_material:
+        for index in _material_facts_in_unrouted_clauses(script):
+            problems.append(_problem(stamp, "fact-unrouted", index))
+    for line_index, line in enumerate(script.lines):
+        tokens = content_tokens(line.text)
+        if any(_contains(tokens, trigger) for trigger in _trigger_phrases()):
+            # No held-out scenario is about autofill, so a trigger would only
+            # add a warning its script does not list.
+            problems.append(_problem(stamp, "trigger-spoken", line_index))
+    bounds = held_out.facts_per_script
+    if bounds is not None and not bounds[0] <= len(script.facts) <= bounds[1]:
+        problems.append(_problem(stamp, "facts-out-of-bounds", len(script.facts)))
+    if _role_tail(script) is not None and _NEXT_PATIENT_AXIS not in script.axes:
+        problems.append(_problem(stamp, "next-patient-without-axis"))
+    return problems
+
+
+def _script_problems(path: Path, held_out: HeldOutSet, index: int) -> list[str]:
+    """Task 0.17 (D16): one script's problems as content-free codes. A file
+    whose stem is not a well-formed id of the set gets only
+    ``<set>:bad-id:<file index>``; a load failure only ``<id>:load-error``
+    (``load_script``'s own message is sanitised, but no message is needed)."""
+    stamp = _stamp(path, held_out)
+    if stamp is None:
+        return [_problem(held_out.name, "bad-id", index)]
+    try:
+        script = load_script(path)
+    except ScriptError:
+        return [_problem(stamp, "load-error")]
+    return _checked_problems(stamp, script, held_out)
+
+
+def _set_problems(held_out: HeldOutSet, paths: list[Path] | None = None) -> list[str]:
+    """Set-level problems: an id the run-of-record set also uses, and a
+    populated set outside its size bounds (``script_count`` when given,
+    otherwise ``MIN_HELDOUT`` once a set has scripts or its cases are
+    written). ``paths`` defaults to the set's own scripts."""
+    if paths is None:
+        paths = held_out.script_paths()
+    problems: list[str] = []
+    if held_out is not _RUN_OF_RECORD:
+        run_of_record = {path.stem for path in SCRIPTS.glob("*.json")}
+        for path in paths:
+            stamp = _stamp(path, held_out)
+            if stamp is not None and stamp in run_of_record:
+                problems.append(_problem(stamp, "duplicate-id"))
+        minimum_only = held_out.script_count is None
+        if minimum_only and (held_out.cases_written or paths) and len(paths) < MIN_HELDOUT:
+            problems.append(_problem(held_out.name, "size-out-of-bounds", len(paths)))
+    bounds = held_out.script_count
+    if paths and bounds is not None and not bounds[0] <= len(paths) <= bounds[1]:
+        problems.append(_problem(held_out.name, "size-out-of-bounds", len(paths)))
+    return problems
+
+
+@functools.cache
+def _all_script_problems(name: str) -> tuple[str, ...]:
+    held_out = _RUN_OF_RECORD if name == _RUN_OF_RECORD.name else held_out_set(name)
+    return tuple(
+        problem
+        for index, path in enumerate(held_out.script_paths())
+        for problem in _script_problems(path, held_out, index)
+    )
+
+
+def _codes(held_out: HeldOutSet, wanted: Iterable[str]) -> list[str]:
+    """The set's script problems with one of the wanted codes, plus every
+    load failure (a script that does not load cannot pass any lint)."""
+    keep = _LOAD_CODES | frozenset(wanted)
+    return [entry for entry in _all_script_problems(held_out.name) if _code(entry) in keep]
+
+
+def _loaded(held_out: HeldOutSet) -> list[EncounterScript]:
+    """The set's scripts that have a well-formed id and load; the others
+    are reported by the load lint."""
+    scripts = []
+    for path in held_out.script_paths():
+        if _stamp(path, held_out) is None:
+            continue
+        try:
+            scripts.append(load_script(path))
+        except ScriptError:
+            continue
+    return scripts
+
+
+def _reference_mismatches(
+    stamp: str, script: EncounterScript, document: TranscriptDocument
+) -> list[str]:
+    """Where the document is not the script's own lines: one
+    ``reference-mismatch:<line>`` per line whose speaker or words differ or
+    hold an uncertain word, and a bare ``reference-mismatch`` for a segment
+    count or model name that differs."""
+    segments = document.transcript_segments
+    problems: list[str] = []
+    if len(segments) != len(script.lines) or document.model_name != REFERENCE_MODEL_NAME:
+        problems.append(_problem(stamp, "reference-mismatch"))
+    for index, (line, segment) in enumerate(zip(script.lines, segments, strict=False)):
+        words = [word.word_text for word in segment.transcript_words]
+        if (
+            segment.speaker != line.role
+            or words != line.text.split()
+            or any(word.uncertain for word in segment.transcript_words)
+        ):
+            problems.append(_problem(stamp, "reference-mismatch", index))
+    return problems
 
 
 def _short_turn(text: str, voice: int, rate: int) -> bytes:
@@ -179,6 +440,20 @@ def _short_turn(text: str, voice: int, rate: int) -> bytes:
     return to_pcm16([level if (index // 20) % 2 else -level for index in range(samples)])
 
 
+def _render_problems(stamp: str, script: EncounterScript) -> list[str]:
+    pcm, labels, placement = render_encounter(script, FAKE_VOICES, _short_turn)
+    track = parse_audacity_labels(labels)
+    rendered = [span.label for span in track.spans] == [line.role for line in script.lines]
+    if len(pcm) == placement.total * 2 and rendered:
+        return []
+    return [_problem(stamp, "render-mismatch")]
+
+
+def _record(record_property: RecordProperty, problems: list[str]) -> list[str]:
+    record_property("problems", problems)
+    return problems
+
+
 class TestScripts:
     def test_every_script_loads(self) -> None:
         scripts = _scripts()
@@ -186,15 +461,17 @@ class TestScripts:
         assert len({script.encounter_id for script in scripts}) == len(scripts)
 
     def test_every_slot_is_in_range_and_the_third_voice_is_the_new_scripts_patient(
-        self,
+        self, record_property: RecordProperty
     ) -> None:
-        used: dict[str, dict[str, int]] = {}
-        for script in _scripts():
-            assert script.conditions is not None, script.encounter_id
-            used[script.encounter_id] = script.conditions.voice_slots
-        assert all(
-            slot < len(FAKE_VOICES) for slots in used.values() for slot in slots.values()
+        problems = _record(
+            record_property, _codes(_RUN_OF_RECORD, {"no-conditions", "slot-out-of-range"})
         )
+        assert problems == []
+        used = {
+            script.encounter_id: script.conditions.voice_slots
+            for script in _scripts()
+            if script.conditions is not None
+        }
         third = {
             encounter_id: [role for role, slot in slots.items() if slot == THIRD_VOICE_SLOT]
             for encounter_id, slots in used.items()
@@ -202,9 +479,14 @@ class TestScripts:
         }
         assert third == {encounter_id: ["patient"] for encounter_id in THIRD_VOICE_SCRIPTS}
 
-    def test_every_script_uses_the_current_voice_baseline(self) -> None:
+    def test_every_script_uses_the_current_voice_baseline(
+        self, record_property: RecordProperty
+    ) -> None:
+        problems = _record(record_property, _codes(_RUN_OF_RECORD, {"no-conditions"}))
+        assert problems == []
         for script in _scripts():
-            assert script.conditions is not None, script.encounter_id
+            if script.conditions is None:
+                continue
             slots = script.conditions.voice_slots
             if script.encounter_id in THIRD_VOICE_SCRIPTS:
                 assert slots == THIRD_VOICE_SCRIPT_SLOTS, script.encounter_id
@@ -223,10 +505,13 @@ class TestScripts:
         used = {script.appointment_type for script in _scripts()}
         assert used == {"initial", "follow_up", "acute", "chronic", "post_operative", "discharge"}
 
-    def test_every_script_is_synthetic_with_material_facts(self) -> None:
-        for script in _scripts():
-            assert script.conditions is not None, script.encounter_id
-            assert any(fact.material for fact in script.facts), script.encounter_id
+    def test_every_script_is_synthetic_with_material_facts(
+        self, record_property: RecordProperty
+    ) -> None:
+        problems = _record(
+            record_property, _codes(_RUN_OF_RECORD, {"no-conditions", "no-material-fact"})
+        )
+        assert problems == []
 
     def test_some_facts_expect_their_uncertainty_surfaced(self) -> None:
         marked = [fact for script in _scripts() for fact in script.facts if fact.expect_uncertain]
@@ -259,7 +544,7 @@ class TestScripts:
         consent, so at least three scripts hold a material fact in a clause
         the provider routes to the consent section — the same clause split,
         speaker and question test as the routed-clause check above."""
-        cues = load_note_config(CONFIG).normalised_cues()
+        cues = _validation_cues()
         covered: set[str] = set()
         for script in _scripts():
             for fact in script.facts:
@@ -288,9 +573,7 @@ class TestValidationConfig:
         assert len(config.autofill_rules) == 3
 
     def test_triggers_are_spoken_only_where_their_warnings_are_expected(self) -> None:
-        triggers = [
-            content_tokens(rule.trigger_phrase) for rule in load_note_config(CONFIG).autofill_rules
-        ]
+        triggers = _trigger_phrases()
         for script in _scripts():
             spoken = [
                 trigger
@@ -309,7 +592,7 @@ class TestValidationConfig:
 
 
 class TestRenderable:
-    @pytest.mark.parametrize("path", sorted(SCRIPTS.glob("*.json")), ids=lambda path: path.stem)
+    @pytest.mark.parametrize("path", sorted(SCRIPTS.glob("*.json")), ids=_path_id)
     def test_every_script_renders_with_fake_voices(self, path: Path) -> None:
         script = load_script(path)
         pcm, labels, placement = render_encounter(script, FAKE_VOICES, _short_turn)
@@ -323,8 +606,10 @@ def _heldout_paths() -> list[Path]:
     return [path for held_out in HELD_OUT_SETS for path in held_out.script_paths()]
 
 
-def _heldout_scripts(held_out: HeldOutSet) -> list[EncounterScript]:
-    return [load_script(path) for path in held_out.script_paths()]
+def _owner(path: Path) -> HeldOutSet:
+    """The held-out set whose folder holds the path."""
+    (held_out,) = (s for s in HELD_OUT_SETS if s.folder == path.parent)
+    return held_out
 
 
 def _set_name(held_out: HeldOutSet) -> str:
@@ -333,11 +618,11 @@ def _set_name(held_out: HeldOutSet) -> str:
 
 # Review round 8 LOW-005 (routed to the held-out author, not edited here —
 # C3): an uncertain fact whose clause has no cue of its own, so a recogniser
-# split at the comma leaves it unquoted. Pinned exactly, so a revision of
-# the script fails this lint until the entry is removed. Empty since the
-# author's revision (stage-2 leg vy3): ``hld-21`` line 5's fact now sits in
-# its routed clause.
-_HELD_OUT_UNROUTED_PENDING: list[tuple[str, int]] = []
+# split at the comma leaves it unquoted. Pinned exactly as problem entries,
+# so a revision of the script fails this lint until the entry is removed.
+# Empty since the author's revision (stage-2 leg vy3): ``hld-21`` line 5's
+# fact now sits in its routed clause.
+_HELD_OUT_UNROUTED_PENDING: list[str] = []
 
 
 class TestHeldOutScripts:
@@ -345,60 +630,80 @@ class TestHeldOutScripts:
     its lint checks only that it is usable — not its axis or kind counts,
     and the same alignment, routing and trigger checks as the run-of-record
     set (review round 8 LOW-004). Since validation-run6 Task 0.11 each lint
-    runs per held-out set."""
+    runs per held-out set; since Task 0.17 each reports problem codes only."""
 
     def test_the_sets_have_distinct_folders_and_prefixes(self) -> None:
         names = [held_out.name for held_out in HELD_OUT_SETS]
-        assert names == ["heldout", "heldout-2"]
+        assert names == ["heldout", "heldout-2", "heldout-3"]
         assert len(set(SCRIPT_CASE_PREFIXES)) == len(SCRIPT_CASE_PREFIXES)
         for prefix in (*SCRIPT_CASE_PREFIXES, EDGE_CASE_PREFIX):
             others = [p for p in (*SCRIPT_CASE_PREFIXES, EDGE_CASE_PREFIX) if p != prefix]
             assert not any(other.startswith(prefix) for other in others), prefix
+        # Every set's ids and its name fit the problem grammar.
+        for held_out in HELD_OUT_SETS:
+            assert STEM_RE.fullmatch(f"{held_out.prefix}01"), held_out.name
+            assert PROBLEM_RE.fullmatch(f"{held_out.name}:bad-id:0"), held_out.name
 
     @pytest.mark.parametrize("held_out", HELD_OUT_SETS, ids=_set_name)
     def test_no_held_out_fact_borders_a_repeat_of_its_own_edge_word(
-        self, held_out: HeldOutSet
+        self, held_out: HeldOutSet, record_property: RecordProperty
     ) -> None:
-        assert _facts_bordering_their_edge_word(_heldout_scripts(held_out)) == []
+        problems = _record(record_property, _codes(held_out, {"fact-borders-edge"}))
+        assert problems == []
 
     @pytest.mark.parametrize("held_out", HELD_OUT_SETS, ids=_set_name)
     def test_every_held_out_uncertain_fact_sits_in_a_routed_clause(
-        self, held_out: HeldOutSet
+        self, held_out: HeldOutSet, record_property: RecordProperty
     ) -> None:
-        unrouted = _uncertain_facts_in_unrouted_clauses(_heldout_scripts(held_out))
+        problems = _record(record_property, _codes(held_out, {"uncertain-unrouted"}))
         pending = [
-            item for item in _HELD_OUT_UNROUTED_PENDING
-            if item[0].startswith(held_out.prefix)
+            entry for entry in _HELD_OUT_UNROUTED_PENDING if entry.startswith(held_out.prefix)
         ]
-        assert unrouted == pending
+        assert problems == pending
 
     @pytest.mark.parametrize("held_out", HELD_OUT_SETS, ids=_set_name)
-    def test_no_held_out_script_speaks_an_autofill_trigger(self, held_out: HeldOutSet) -> None:
-        # No held-out scenario is about autofill, so a trigger would only
-        # add a warning its script does not list.
-        triggers = [
-            content_tokens(rule.trigger_phrase) for rule in load_note_config(CONFIG).autofill_rules
-        ]
-        spoken = [
-            (script.encounter_id, index)
-            for script in _heldout_scripts(held_out)
-            for index, line in enumerate(script.lines)
-            if any(_contains(content_tokens(line.text), trigger) for trigger in triggers)
-        ]
-        assert spoken == []
+    def test_every_material_patient_fact_sits_in_a_routed_clause(
+        self, held_out: HeldOutSet, record_property: RecordProperty
+    ) -> None:
+        """Task 0.17 (D16): in a ``routed_material`` set every material
+        ``present`` / ``negation`` / ``laterality`` / ``dose`` fact a
+        non-clinician speaks sits in a clause that routes — the brief's
+        "say it with one of the cue phrases of a section open to that
+        speaker". Uncued CLINICIAN lines are D1's test and stay."""
+        problems = _record(record_property, _codes(held_out, {"fact-unrouted"}))
+        assert problems == []
 
     @pytest.mark.parametrize("held_out", HELD_OUT_SETS, ids=_set_name)
-    def test_every_held_out_script_loads_with_a_held_out_id(self, held_out: HeldOutSet) -> None:
-        paths = held_out.script_paths()
-        ids = [load_script(path).encounter_id for path in paths]
-        # A set whose cases are not yet written may have no scripts yet
-        # (Task 0.10 authors ``heldout-2``); once it has any, the minimum holds.
-        if held_out.cases_written or ids:
-            assert len(ids) >= MIN_HELDOUT
-        assert len(set(ids)) == len(ids)
-        assert ids == [path.stem for path in paths]
-        assert [i for i in ids if not i.startswith(held_out.prefix)] == []
-        assert not set(ids) & {path.stem for path in SCRIPTS.glob("*.json")}
+    def test_no_held_out_script_speaks_an_autofill_trigger(
+        self, held_out: HeldOutSet, record_property: RecordProperty
+    ) -> None:
+        problems = _record(record_property, _codes(held_out, {"trigger-spoken"}))
+        assert problems == []
+
+    @pytest.mark.parametrize("held_out", HELD_OUT_SETS, ids=_set_name)
+    def test_every_held_out_script_loads_with_a_held_out_id(
+        self, held_out: HeldOutSet, record_property: RecordProperty
+    ) -> None:
+        """Each file's stem is a well-formed id of the set's prefix and its
+        ``encounter_id`` (the loader refuses a different one), no id is the
+        run-of-record set's, and the script loads."""
+        problems = _codes(held_out, set()) + [
+            entry for entry in _set_problems(held_out) if _code(entry) == "duplicate-id"
+        ]
+        assert _record(record_property, problems) == []
+
+    @pytest.mark.parametrize("held_out", HELD_OUT_SETS, ids=_set_name)
+    def test_every_held_out_set_is_within_its_size_bounds(
+        self, held_out: HeldOutSet, record_property: RecordProperty
+    ) -> None:
+        """At least ``MIN_HELDOUT`` scripts once a set has any (or its cases
+        are written — Task 0.10 authors a set before its cases); Task 0.17
+        (D16): ``heldout-3``'s 20–25 scripts and 3–6 facts per script, read
+        from the scripts' metadata only. The absent and empty states pass."""
+        problems = _codes(held_out, {"facts-out-of-bounds"}) + [
+            entry for entry in _set_problems(held_out) if _code(entry) == "size-out-of-bounds"
+        ]
+        assert _record(record_property, problems) == []
 
     def test_the_first_held_out_set_is_present(self) -> None:
         """A missing ``validation/heldout`` folder would pass the per-set
@@ -407,22 +712,37 @@ class TestHeldOutScripts:
 
     @pytest.mark.parametrize("held_out", HELD_OUT_SETS, ids=_set_name)
     def test_every_held_out_script_is_synthetic_with_material_facts(
-        self, held_out: HeldOutSet
+        self, held_out: HeldOutSet, record_property: RecordProperty
     ) -> None:
-        for path in held_out.script_paths():
-            script = load_script(path)
-            assert script.conditions is not None, script.encounter_id
-            slots = script.conditions.voice_slots.values()
-            assert all(slot < len(FAKE_VOICES) for slot in slots), script.encounter_id
-            assert any(fact.material for fact in script.facts), script.encounter_id
+        problems = _codes(held_out, {"no-conditions", "slot-out-of-range", "no-material-fact"})
+        assert _record(record_property, problems) == []
 
-    @pytest.mark.parametrize("path", _heldout_paths(), ids=lambda path: path.stem)
-    def test_every_held_out_script_renders_with_fake_voices(self, path: Path) -> None:
-        script = load_script(path)
-        pcm, labels, placement = render_encounter(script, FAKE_VOICES, _short_turn)
-        assert len(pcm) == placement.total * 2
-        track = parse_audacity_labels(labels)
-        assert [span.label for span in track.spans] == [line.role for line in script.lines]
+    @pytest.mark.parametrize("held_out", HELD_OUT_SETS, ids=_set_name)
+    def test_a_next_patient_line_needs_the_next_patient_axis(
+        self, held_out: HeldOutSet, record_property: RecordProperty
+    ) -> None:
+        """Task 0.17 (D16), the role lint's first rule: a script with a
+        ``next_patient`` line carries the axis ``end_and_new_patient``
+        (every held-out set; the converse — an axis script with no such
+        line — is a boundary negative, not a failure)."""
+        problems = _codes(held_out, {"next-patient-without-axis"})
+        assert _record(record_property, problems) == []
+
+    @pytest.mark.parametrize("path", _heldout_paths(), ids=_path_id)
+    def test_every_held_out_script_renders_with_fake_voices(
+        self, path: Path, record_property: RecordProperty
+    ) -> None:
+        held_out = _owner(path)
+        index = held_out.script_paths().index(path)
+        problems = [
+            entry
+            for entry in _script_problems(path, held_out, index)
+            if _code(entry) in _LOAD_CODES
+        ]
+        stamp = _stamp(path, held_out)
+        if stamp is not None and not problems:
+            problems = _render_problems(stamp, load_script(path))
+        assert _record(record_property, problems) == []
 
 
 def _case_id(case: HeldOutCase) -> str:
@@ -458,14 +778,24 @@ class TestHeldOutTranscripts:
     def test_a_misfiled_divergence_table_is_named(self) -> None:
         """Task 0.11: the per-set divergence tables' check, both ways — a
         well-formed table passes; a missing set, an extra set and a case
-        filed under the wrong set are each named."""
+        filed under the wrong set are each named. Task 0.17: the tables are
+        derived from ``HELD_OUT_SETS``, so a new set row needs no edit here."""
+        names = [held_out.name for held_out in HELD_OUT_SETS]
         first = HELD_OUT_CASES[0].case_id
-        good = {"heldout": {first: None}, "heldout-2": {}}
+        (owner,) = (
+            s.name for s in HELD_OUT_SETS if first in {case.case_id for case in s.all_cases()}
+        )
+        good: dict[str, dict[str, object]] = {
+            name: ({first: None} if name == owner else {}) for name in names
+        }
         assert heldout_transcripts.misfiled(good) == []
-        assert heldout_transcripts.misfiled({"heldout": {}}) == ["set heldout-2"]
-        extra = {**good, "heldout-9": {}}
-        assert heldout_transcripts.misfiled(extra) == ["set heldout-9"]
-        wrong = {"heldout": {}, "heldout-2": {first: None}}
+        for name in names:
+            missing = {key: value for key, value in good.items() if key != name}
+            assert heldout_transcripts.misfiled(missing) == [f"set {name}"]
+        extra: dict[str, dict[str, object]] = {**good, "heldout-99": {}}
+        assert heldout_transcripts.misfiled(extra) == ["set heldout-99"]
+        other = next(name for name in names if name != owner)
+        wrong: dict[str, dict[str, object]] = {**good, owner: {}, other: {first: None}}
         assert heldout_transcripts.misfiled(wrong) == [first]
 
     @pytest.mark.parametrize("case", HELD_OUT_CASES, ids=_case_id)
@@ -512,7 +842,7 @@ class TestHeldOutTranscripts:
         holds no cue of either layer and follows its speaker's cue-routed
         line in a section the clinician does not own (one hop); a hedged
         line is quoted: it routes, or it is a correction."""
-        cues = load_note_config(CONFIG).normalised_cues()
+        cues = _validation_cues()
         turns = case.turns()
 
         def route(index: int) -> NoteSectionKey | None:
@@ -562,7 +892,6 @@ class TestHeldOutTranscripts:
 # a case's expectations and a script's facts are not in the document, so
 # this pin does not cover them.
 _HELD_OUT_DOCUMENTS_SHA256 = "88d190e841448fe0088936ebfcf9bd0f2ca51372a19b9c2678577818e824a1ff"
-_NEXT_PATIENT_AXIS = "end_and_new_patient"
 
 
 def _held_out_documents_sha256() -> str:
@@ -577,23 +906,82 @@ def _held_out_documents_sha256() -> str:
     return digest.hexdigest()
 
 
-def _written_heldout_scripts() -> list[EncounterScript]:
-    """The scripts of the held-out sets whose cases are written: a set's R3
-    table entries are written with its cases (Task 0.12 for ``heldout-2``)."""
+def _table_sets() -> list[HeldOutSet]:
+    """The sets whose axis scripts have rows in the R3 table: the
+    run-of-record set, every held-out set whose cases are written (its rows
+    are written with them — Task 0.12 for ``heldout-2``), and every
+    ``tails_by_role`` set (its rows are the role tails — Task 0.17)."""
     return [
-        script
-        for held_out in HELD_OUT_SETS
-        if held_out.cases_written
-        for script in _heldout_scripts(held_out)
+        _RUN_OF_RECORD,
+        *(s for s in HELD_OUT_SETS if s.cases_written or s.tails_by_role),
     ]
 
 
-def _axis_scripts() -> list[EncounterScript]:
+def _axis_scripts() -> list[tuple[HeldOutSet, EncounterScript]]:
     return [
-        script
-        for script in [*_scripts(), *_written_heldout_scripts()]
+        (held_out, script)
+        for held_out in _table_sets()
+        for script in _loaded(held_out)
         if _NEXT_PATIENT_AXIS in script.axes
     ]
+
+
+def _tail_problems(
+    held_out: HeldOutSet,
+    script: EncounterScript,
+    rows: Mapping[str, int | None],
+    boundaries: Mapping[str, int | None],
+) -> list[str]:
+    """One axis script's R3-table problems (D8, D14, D16), as codes:
+    ``missing-tail-row``; ``tail-disagrees`` (a ``tails_by_role`` set's row
+    is not its first ``next_patient`` line); ``boundary-disagrees`` (a set
+    with written cases: the row is not the case's boundary);
+    ``tail-out-of-range``; ``fact-in-tail-not-absent:<fact>``; and
+    ``absent-fact-before-tail:<fact>`` (a material absent fact before the
+    tail — not applied to a ``tails_by_role`` set, whose welcome line may
+    hold one, D16)."""
+    stamp = script.encounter_id
+    if stamp not in rows:
+        return [_problem(stamp, "missing-tail-row")]
+    tail = rows[stamp]
+    problems: list[str] = []
+    if held_out.tails_by_role:
+        if tail != _role_tail(script):
+            problems.append(_problem(stamp, "tail-disagrees"))
+    elif held_out.cases_written and held_out is not _RUN_OF_RECORD:
+        if tail != boundaries.get(stamp):
+            problems.append(_problem(stamp, "boundary-disagrees"))
+    if tail is not None and not 0 < tail < len(script.lines):
+        problems.append(_problem(stamp, "tail-out-of-range"))
+    for index, fact in enumerate(script.facts):
+        in_tail = tail is not None and fact.line >= tail
+        if in_tail and fact.kind != "absent":
+            problems.append(_problem(stamp, "fact-in-tail-not-absent", index))
+        if not held_out.tails_by_role and fact.kind == "absent" and fact.material and not in_tail:
+            problems.append(_problem(stamp, "absent-fact-before-tail", index))
+    return problems
+
+
+@functools.cache
+def _all_tail_problems() -> tuple[str, ...]:
+    boundaries = {case.case_id: case.boundary for case in HELD_OUT_CASES}
+    axis_ids = {script.encounter_id for _, script in _axis_scripts()}
+    problems = [
+        problem
+        for held_out, script in _axis_scripts()
+        for problem in _tail_problems(held_out, script, REFERENCE_TAIL_STARTS, boundaries)
+    ]
+    problems += [
+        _problem(encounter_id, "row-without-axis")
+        for encounter_id in REFERENCE_TAIL_STARTS
+        if encounter_id not in axis_ids
+    ]
+    return tuple(problems)
+
+
+def _tail_codes(wanted: Iterable[str]) -> list[str]:
+    keep = frozenset(wanted)
+    return [entry for entry in _all_tail_problems() if _code(entry) in keep]
 
 
 class TestReferenceDocument:
@@ -627,16 +1015,22 @@ class TestReferenceDocument:
         assert heldout_transcripts.build_document(turns) is sentinel
         assert seen == [turns]
 
-    @pytest.mark.parametrize("path", _heldout_paths(), ids=lambda path: path.stem)
-    def test_the_reference_document_is_the_scripts_own_lines(self, path: Path) -> None:
-        script = load_script(path)
-        document = reference_document(script)
-        segments = document.transcript_segments
-        assert [segment.speaker for segment in segments] == [line.role for line in script.lines]
-        for line, segment in zip(script.lines, segments, strict=True):
-            assert [word.word_text for word in segment.transcript_words] == line.text.split()
-            assert not any(word.uncertain for word in segment.transcript_words)
-        assert document.model_name == REFERENCE_MODEL_NAME
+    @pytest.mark.parametrize("path", _heldout_paths(), ids=_path_id)
+    def test_the_reference_document_is_the_scripts_own_lines(
+        self, path: Path, record_property: RecordProperty
+    ) -> None:
+        held_out = _owner(path)
+        index = held_out.script_paths().index(path)
+        problems = [
+            entry
+            for entry in _script_problems(path, held_out, index)
+            if _code(entry) in _LOAD_CODES
+        ]
+        stamp = _stamp(path, held_out)
+        if stamp is not None and not problems:
+            script = load_script(path)
+            problems = _reference_mismatches(stamp, script, reference_document(script))
+        assert _record(record_property, problems) == []
 
     def test_every_run_of_record_script_has_a_reference_document(self) -> None:
         for script in _scripts():
@@ -645,81 +1039,243 @@ class TestReferenceDocument:
 
 
 class TestNextPatientReferenceTables:
-    """D8's R3 provenance: both tables name exactly the scripts carrying the
-    axis, a negative (no next patient) is None in both, the greeting line is
-    the tail start or the line before it (a shared closing-and-greeting
-    line), and the tail starts equal the held-out fixture's boundary."""
+    """D8's R3 provenance (D14 since Task 0.17: one table, the tail starts):
+    the table names exactly the scripts carrying the axis, a negative (no
+    next patient) is None, the tail starts equal the held-out fixture's
+    boundary where a set's cases are written, and a ``tails_by_role`` set's
+    rows are its first ``next_patient`` lines."""
 
-    def test_both_tables_name_exactly_the_scripts_with_the_axis(self) -> None:
-        ids = {script.encounter_id for script in _axis_scripts()}
-        assert set(REFERENCE_GREETING_LINES) == ids
-        assert set(REFERENCE_TAIL_STARTS) == ids
+    def test_the_table_names_exactly_the_scripts_with_the_axis(
+        self, record_property: RecordProperty
+    ) -> None:
+        problems = _tail_codes({"missing-tail-row", "row-without-axis"})
+        assert _record(record_property, problems) == []
 
-    def test_the_tail_starts_equal_the_held_out_boundaries(self) -> None:
-        boundaries = {case.case_id: case.boundary for case in HELD_OUT_CASES}
-        for encounter_id, tail in REFERENCE_TAIL_STARTS.items():
-            if encounter_id.startswith(SCRIPT_CASE_PREFIXES):
-                assert tail == boundaries[encounter_id], encounter_id
+    def test_the_tail_starts_equal_the_held_out_boundaries(
+        self, record_property: RecordProperty
+    ) -> None:
+        problems = _tail_codes({"boundary-disagrees"})
+        assert _record(record_property, problems) == []
 
-    def test_the_greeting_line_is_the_tail_start_or_shares_the_closing_line(self) -> None:
-        shared = []
-        for script in _axis_scripts():
-            greeting = REFERENCE_GREETING_LINES[script.encounter_id]
-            tail = REFERENCE_TAIL_STARTS[script.encounter_id]
-            assert (greeting is None) == (tail is None), script.encounter_id
-            if greeting is None or tail is None:
-                continue
-            assert 0 < tail < len(script.lines), script.encounter_id
-            assert greeting in (tail - 1, tail), script.encounter_id
-            if greeting == tail - 1:
-                shared.append(script.encounter_id)
-        assert shared == ["hld-11"]
+    def test_the_rows_equal_the_role_tails(self, record_property: RecordProperty) -> None:
+        """Task 0.17 (D16): a ``tails_by_role`` set's row is the index of
+        its first ``next_patient`` line, or None when it has none — so a
+        non-null row exists exactly when such a line does, and an axis
+        script without one is a boundary negative. The copy from the roles
+        into the table is machine-checked here."""
+        problems = _tail_codes({"tail-disagrees"})
+        assert _record(record_property, problems) == []
 
-    def test_every_material_absent_fact_lies_in_a_tail(self) -> None:
-        for script in _axis_scripts():
-            tail = REFERENCE_TAIL_STARTS[script.encounter_id]
-            for fact in script.facts:
-                if fact.kind == "absent" and fact.material:
-                    assert tail is not None and fact.line >= tail, script.encounter_id
+    def test_every_material_absent_fact_lies_in_a_tail(
+        self, record_property: RecordProperty
+    ) -> None:
+        """Not applied to a ``tails_by_role`` set (peer round 25): a
+        material absent fact on the clinician's welcome line precedes the
+        role tail, and is then never R3 (D16's stated cost)."""
+        problems = _tail_codes({"absent-fact-before-tail"})
+        assert _record(record_property, problems) == []
 
-    def test_every_fact_in_a_tail_is_an_absent_fact(self) -> None:
+    def test_every_fact_in_a_tail_is_an_absent_fact(self, record_property: RecordProperty) -> None:
         """The other side, read off the facts rather than the table: nothing
         the note should hold lies at or after a tail start, so a tail start
         placed on a first-patient fact's line fails. A start moved onto a
-        fact-free line, or a pair moved one line late, passes here and is
-        caught by the boundary equality (held-out) or the exact pin of the
-        six run-of-record pairs (Task 0.9 review). Task 0.12 (2026-10-24):
-        ABSENT, not material absent — ``heldout-2`` puts nonmaterial absent
-        facts in its tails (the note should hold none of them either); R3
-        still counts the material ones only."""
-        for script in _axis_scripts():
-            tail = REFERENCE_TAIL_STARTS[script.encounter_id]
-            if tail is None:
-                continue
-            for fact in script.facts:
-                if fact.line >= tail:
-                    assert fact.kind == "absent", script.encounter_id
+        fact-free line, or one moved a line late, passes here and is caught
+        by the boundary equality (held-out), the role tails (``tails_by_role``)
+        or the exact pin of the six run-of-record rows (Task 0.9 review).
+        Task 0.12 (2026-10-24): ABSENT, not material absent — ``heldout-2``
+        puts nonmaterial absent facts in its tails (the note should hold none
+        of them either); R3 still counts the material ones only. A tail is
+        never line 0 and always names a line."""
+        problems = _tail_codes({"fact-in-tail-not-absent", "tail-out-of-range"})
+        assert _record(record_property, problems) == []
 
-    def test_the_run_of_record_pairs_are_pinned_exactly(self) -> None:
+    def test_the_run_of_record_rows_are_pinned_exactly(self) -> None:
         """The six run-of-record scripts have no held-out boundary to equal,
-        so a pair moved one line late (onto the next patient's fact) would
+        so a row moved one line late (onto the next patient's fact) would
         pass every structural pin above (Task 0.9 review, peer round 13
-        PR-LOW-010): each pair is pinned as read off its script's greeting
-        line on 2026-10-23; a change is a dated decision (C3)."""
+        PR-LOW-010): each tail start is pinned as read off its script on
+        2026-10-23; a change is a dated decision (C3). Task 0.17 (D14): the
+        greeting-line half of the old pairs is gone with its table."""
         run_of_record = {
-            encounter_id: (REFERENCE_GREETING_LINES[encounter_id], tail)
+            encounter_id: tail
             for encounter_id, tail in REFERENCE_TAIL_STARTS.items()
             if not encounter_id.startswith(SCRIPT_CASE_PREFIXES)
         }
         assert run_of_record == {
-            "syn-06": (4, 4),
-            "syn-20": (4, 4),
-            "syn-21": (4, 4),
-            "syn-38": (4, 4),
-            "syn-43": (6, 6),
-            "syn-46": (4, 4),
+            "syn-06": 4,
+            "syn-20": 4,
+            "syn-21": 4,
+            "syn-38": 4,
+            "syn-43": 6,
+            "syn-46": 4,
         }
 
     def test_both_ways(self) -> None:
         tails = list(REFERENCE_TAIL_STARTS.values())
         assert tails.count(None) >= 3 and len(tails) - tails.count(None) >= 3
+
+
+# ---------------------------------------------------------------------------
+# Task 0.17 (D16): the helpers' own output is content-free. A sentinel word
+# planted at the start, middle and end of lines, as an unknown key and in a
+# fed document must never appear in a returned code or a loader message.
+# ---------------------------------------------------------------------------
+
+_SENTINEL = "zqxsentinelwordqz"
+_BLIND = HeldOutSet(
+    "heldout-9",
+    "h3-",
+    (),
+    cases_written=False,
+    tails_by_role=True,
+    routed_material=True,
+    script_count=(20, 25),
+    facts_per_script=(3, 6),
+)
+
+
+def _sentinel_script(encounter_id: str) -> dict[str, Any]:
+    """A well-formed synthetic script with the sentinel at the start, middle
+    and end of its lines, a routed patient fact (the validation config's
+    ``coming in with`` cue) and a next patient."""
+    return {
+        "schema_version": 1,
+        "encounter_id": encounter_id,
+        "appointment_type": "follow_up",
+        "axes": ["end_and_new_patient"],
+        "lines": [
+            {"role": "clinician", "text": f"{_SENTINEL} how is the knee today"},
+            {"role": "patient", "text": f"I am coming in with {_SENTINEL} pain in my left knee"},
+            {"role": "clinician", "text": f"thanks, see you next week {_SENTINEL}"},
+            {"role": "next_patient", "text": f"hello, I have a sore {_SENTINEL} shoulder"},
+        ],
+        "facts": [
+            {"kind": "laterality", "tokens": ["left", "knee"], "line": 1, "material": True},
+            {"kind": "present", "tokens": ["knee"], "line": 0, "material": True},
+            {"kind": "absent", "tokens": ["shoulder"], "line": 3, "material": True},
+        ],
+        "conditions": {"voice_slots": {"clinician": 0, "patient": 1, "next_patient": 2}},
+    }
+
+
+class TestProblemCodesAreContentFree:
+    def _write(self, folder: Path, name: str, body: object) -> Path:
+        path = folder / f"{name}.json"
+        path.write_text(json.dumps(body), encoding="utf-8")
+        return path
+
+    def test_a_broken_set_reports_codes_only(self, tmp_path: Path) -> None:
+        unknown_key = {**_sentinel_script("h3-01"), _SENTINEL: 1}
+        no_conditions = {
+            key: value for key, value in _sentinel_script("h3-02").items() if key != "conditions"
+        }
+        unrouted = _sentinel_script("h3-03")
+        unrouted["lines"][1] = {"role": "patient", "text": f"{_SENTINEL} left knee {_SENTINEL}"}
+        absent_tokens = _sentinel_script("h3-04")
+        absent_tokens["facts"] = [
+            {"kind": "present", "tokens": [_SENTINEL, "elbow"], "line": 1, "material": True}
+        ]
+        paths = [
+            self._write(tmp_path, "h3-01", unknown_key),
+            self._write(tmp_path, "h3-02", no_conditions),
+            self._write(tmp_path, "h3-03", unrouted),
+            self._write(tmp_path, "h3-04", absent_tokens),
+            self._write(tmp_path, f"h3-{_SENTINEL}", _sentinel_script("h3-05")),
+        ]
+        problems = [
+            problem
+            for index, path in enumerate(paths)
+            for problem in _script_problems(path, _BLIND, index)
+        ]
+        codes = {(entry.split(":")[0], _code(entry)) for entry in problems}
+        assert ("h3-01", "load-error") in codes
+        assert ("h3-02", "no-conditions") in codes
+        assert ("h3-03", "fact-unrouted") in codes
+        assert ("h3-04", "load-error") in codes
+        assert "heldout-9:bad-id:4" in problems
+        assert all(PROBLEM_RE.fullmatch(entry) for entry in problems)
+        assert not any(_SENTINEL in entry for entry in problems)
+        for path in paths[:4]:
+            try:
+                load_script(path)
+            except ScriptError as exc:
+                assert _SENTINEL not in str(exc)
+
+    def test_a_well_formed_script_has_no_problem(self, tmp_path: Path) -> None:
+        path = self._write(tmp_path, "h3-06", _sentinel_script("h3-06"))
+        assert _script_problems(path, _BLIND, 0) == []
+
+    def test_a_fed_reference_mismatch_and_a_disagreeing_row_report_codes_only(
+        self, tmp_path: Path
+    ) -> None:
+        script = load_script(self._write(tmp_path, "h3-07", _sentinel_script("h3-07")))
+        turns = [(line.role, f"{line.text} {_SENTINEL}") for line in script.lines]
+        document = document_from_turns(
+            heldout_transcripts.Turn(speaker, text) for speaker, text in turns
+        )
+        mismatches = _reference_mismatches("h3-07", script, document)
+        assert mismatches == [f"h3-07:reference-mismatch:{index}" for index in range(4)]
+        assert _reference_mismatches("h3-07", script, reference_document(script)) == []
+        rows = {"h3-07": 2}
+        disagreeing = _tail_problems(_BLIND, script, rows, {})
+        assert disagreeing == ["h3-07:tail-disagrees"]
+        assert _tail_problems(_BLIND, script, {"h3-07": 3}, {}) == []
+        assert _tail_problems(_BLIND, script, {}, {}) == ["h3-07:missing-tail-row"]
+        for entry in [*mismatches, *disagreeing]:
+            assert PROBLEM_RE.fullmatch(entry) and _SENTINEL not in entry
+
+    def test_the_blind_set_lints_fire(self, tmp_path: Path) -> None:
+        """Round 32 MED-001: the lints that only ``heldout-3`` carries each
+        fire on a synthetic negative (the blind set is never inspected, so a
+        lint that wrongly passed there would go unseen)."""
+        two_facts = _sentinel_script("h3-11")
+        two_facts["facts"] = two_facts["facts"][:2]
+        seven_facts = _sentinel_script("h3-12")
+        seven_facts["facts"] = (
+            seven_facts["facts"]
+            + [{"kind": "present", "tokens": ["knee"], "line": 0, "material": False}] * 4
+        )
+        no_axis = {**_sentinel_script("h3-13"), "axes": ["laterality"]}
+        found = [
+            _script_problems(self._write(tmp_path, stem, body), _BLIND, 0)
+            for stem, body in (("h3-11", two_facts), ("h3-12", seven_facts), ("h3-13", no_axis))
+        ]
+        assert "h3-11:facts-out-of-bounds:2" in found[0]
+        assert "h3-12:facts-out-of-bounds:7" in found[1]
+        assert "h3-13:next-patient-without-axis" in found[2]
+
+        early_absent = _sentinel_script("h3-14")
+        early_absent["facts"].append(
+            {"kind": "absent", "tokens": ["knee"], "line": 0, "material": True}
+        )
+        script = load_script(self._write(tmp_path, "h3-14", early_absent))
+        rows = {"h3-14": 3}
+        assert _tail_problems(_BLIND, script, rows, {}) == []
+        seen = HeldOutSet("heldout-8", "h3-", (), cases_written=False)
+        assert _tail_problems(seen, script, rows, {}) == ["h3-14:absent-fact-before-tail:3"]
+
+        def paths(count: int) -> list[Path]:
+            return [tmp_path / f"h3-{index:02d}.json" for index in range(1, count + 1)]
+
+        assert _set_problems(_BLIND, paths(19)) == ["heldout-9:size-out-of-bounds:19"]
+        assert _set_problems(_BLIND, paths(26)) == ["heldout-9:size-out-of-bounds:26"]
+        assert _set_problems(_BLIND, paths(10)) == ["heldout-9:size-out-of-bounds:10"]
+        assert _set_problems(_BLIND, paths(20)) == []
+        assert _set_problems(_BLIND, paths(25)) == []
+        assert _set_problems(_BLIND, []) == []
+
+    def test_the_grammar_refuses_anything_else(self) -> None:
+        for bad in (
+            f"h3-01:{_SENTINEL}",
+            "h3-01:load-error:12345",
+            f"{_SENTINEL}:load-error",
+            "h3-001:load-error",
+            "edge-01:load-error",
+            "h3-01:load-error ",
+        ):
+            assert not PROBLEM_RE.fullmatch(bad)
+        with pytest.raises(AssertionError):
+            _problem("h3-01", _SENTINEL)
+        with pytest.raises(AssertionError):
+            _problem(_SENTINEL, "load-error")
+        assert _problem("h3-01", "facts-out-of-bounds", 123456) == "h3-01:facts-out-of-bounds:9999"

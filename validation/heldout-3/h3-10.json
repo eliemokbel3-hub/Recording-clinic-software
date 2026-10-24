@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h3-10",
+  "appointment_type": "initial",
+  "axes": ["end_and_new_patient", "laterality", "uncertain", "contradictory"],
+  "lines": [
+    {"role": "clinician", "text": "Come away in. So what are you coming in with?"},
+    {"role": "patient", "text": "I'm coming in with a sore left hip that's been nippy for about a month."},
+    {"role": "patient", "text": "Sorry, I'm coming in with the right hip, not the left."},
+    {"role": "clinician", "text": "Right hip. Does it wake you at night?"},
+    {"role": "patient", "text": "Aye, most nights."},
+    {"role": "clinician", "text": "Any operations in the past?"},
+    {"role": "patient", "text": "I had previous surgery on my back about ten years ago, or was it twelve."},
+    {"role": "clinician", "text": "We'll check the date with your records. Let me have a look at how you walk."},
+    {"role": "clinician", "text": "You're dipping on the right when you stand on that leg, and the hip's pretty tight turning inwards."},
+    {"role": "clinician", "text": "Lie on your good side with a pillow between your knees at night, and keep off the low sofa for now."},
+    {"role": "clinician", "text": "Right, that's you, mind how you go on those stairs."},
+    {"role": "patient", "text": "Cheers, see you."},
+    {"role": "clinician", "text": "Is that you, Morag? Come away ben, hen."},
+    {"role": "next_patient", "text": "Hiya. It's my wrist, I went over on the ice at the bus stop and it's swollen up like a balloon."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["nippy", "for", "about", "a", "month"], "line": 1, "material": true},
+    {"kind": "laterality", "tokens": ["right", "hip"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["previous", "surgery", "on", "my", "back", "about", "ten", "years", "ago"], "line": 6, "material": true, "expect_uncertain": true},
+    {"kind": "laterality", "tokens": ["dipping", "on", "the", "right"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["pillow", "between", "your", "knees"], "line": 9, "material": true},
+    {"kind": "absent", "tokens": ["swollen", "up", "like", "a", "balloon"], "line": 13, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

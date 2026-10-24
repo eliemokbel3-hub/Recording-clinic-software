@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h3-14",
+  "appointment_type": "initial",
+  "axes": ["uncertain", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "What are you coming in with today?"},
+    {"role": "patient", "text": "I'm coming in with heel pain on my right foot, it's worst with the first steps in the morning."},
+    {"role": "clinician", "text": "And has it changed at all?"},
+    {"role": "patient", "text": "Since last time I saw the GP it's spread into the arch as well, although some days I honestly can't tell where it's coming from, and it's stopped all my training."},
+    {"role": "clinician", "text": "Let me have a look. Tender right on the front of the heel bone, and the calf is pretty tight on that side."},
+    {"role": "patient", "text": "No doubt about it, the massage gun on my calf helps loads."},
+    {"role": "clinician", "text": "It sounds like plantar fasciitis, though I'd want to see how it responds before I'm certain."},
+    {"role": "clinician", "text": "Roll your foot over a frozen water bottle for five minutes after runs, and cut your weekly mileage by half for the next fortnight."},
+    {"role": "patient", "text": "Half. Okay, I'm certain I can manage that."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["heel", "pain", "on", "my", "right", "foot"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["spread", "into", "the", "arch"], "line": 3, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["tender", "right", "on", "the", "front", "of", "the", "heel", "bone"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["massage", "gun", "on", "my", "calf", "helps", "loads"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["plantar", "fasciitis"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["cut", "your", "weekly", "mileage", "by", "half"], "line": 7, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

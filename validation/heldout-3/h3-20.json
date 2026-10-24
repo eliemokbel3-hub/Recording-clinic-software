@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h3-20",
+  "appointment_type": "chronic",
+  "axes": ["end_and_new_patient", "uncertain", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "How's the shoulder since last time?"},
+    {"role": "patient", "text": "Since last time it's loosening a little, I'm only guessing though."},
+    {"role": "clinician", "text": "Let me have a look. Out to the side you're at about ninety degrees, so maybe ten better than last month."},
+    {"role": "patient", "text": "The massage on my upper back helped my sleep, I'll tell you that for nothing."},
+    {"role": "clinician", "text": "Your sugar levels can slow this down, so keep the stretches going even when it feels like nothing's changing."},
+    {"role": "clinician", "text": "Lovely, see you in three weeks, take it easy."},
+    {"role": "patient", "text": "Bye, love."},
+    {"role": "clinician", "text": "Morning! Sorry for the wait, come through."},
+    {"role": "next_patient", "text": "No bother. My GP said I've got a trapped nerve in my neck, but I'm honestly not convinced."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["loosening", "a", "little"], "line": 1, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["about", "ninety", "degrees"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["massage", "on", "my", "upper", "back", "helped", "my", "sleep"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["keep", "the", "stretches", "going"], "line": 4, "material": true},
+    {"kind": "absent", "tokens": ["trapped", "nerve", "in", "my", "neck"], "line": 8, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

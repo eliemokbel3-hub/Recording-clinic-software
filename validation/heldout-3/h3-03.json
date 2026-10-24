@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h3-03",
+  "appointment_type": "discharge",
+  "axes": ["end_and_new_patient", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "So this is your last session, how's the ankle holding up?"},
+    {"role": "patient", "text": "Brilliant. Since last time I've done a full five kilometre run with no pain."},
+    {"role": "clinician", "text": "That's what we want. Your hop test is equal on both sides now."},
+    {"role": "clinician", "text": "Keep the balance work going three times a week for another two months, it protects against going over on it again."},
+    {"role": "clinician", "text": "I'll discharge you today. Take care of yourself."},
+    {"role": "patient", "text": "Thanks for everything. Bye."},
+    {"role": "clinician", "text": "Bye now."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["a", "full", "five", "kilometre", "run", "with", "no", "pain"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["hop", "test", "is", "equal", "on", "both", "sides"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["three", "times", "a", "week", "for", "another", "two", "months"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["discharge", "you", "today"], "line": 4, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

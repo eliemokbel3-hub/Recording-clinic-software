@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h3-15",
+  "appointment_type": "follow_up",
+  "axes": ["laterality", "numbers", "contradictory"],
+  "lines": [
+    {"role": "clinician", "text": "How's the knee been since last time?"},
+    {"role": "patient", "text": "Pretty good. Since last time it only aches after I've been on my feet all day at work."},
+    {"role": "clinician", "text": "Let me have a look. Right knee bends to a hundred and thirty degrees."},
+    {"role": "clinician", "text": "Um, sorry, a hundred and twenty, I was reading the wrong line."},
+    {"role": "patient", "text": "Sorry, I meant to say, since last time I've been back on the bike three times a week."},
+    {"role": "clinician", "text": "That's brilliant for it. Add a fourth ride if the knee is happy the next morning, and keep the step downs going, slow on the way down."},
+    {"role": "clinician", "text": "See you next week."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["only", "aches", "after", "i've", "been", "on", "my", "feet", "all", "day"], "line": 1, "material": true},
+    {"kind": "laterality", "tokens": ["right", "knee", "bends"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["a", "hundred", "and", "twenty"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["back", "on", "the", "bike", "three", "times", "a", "week"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["slow", "on", "the", "way", "down"], "line": 5, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

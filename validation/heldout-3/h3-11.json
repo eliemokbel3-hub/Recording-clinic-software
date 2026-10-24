@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h3-11",
+  "appointment_type": "follow_up",
+  "axes": ["end_and_new_patient", "numbers", "small_talk"],
+  "lines": [
+    {"role": "clinician", "text": "How's the elbow since last time?"},
+    {"role": "patient", "text": "From last time I can lift the kettle without wincing, which is a first."},
+    {"role": "clinician", "text": "Grand. And the GP gave you tablets?"},
+    {"role": "patient", "text": "Yeah, I have them here."},
+    {"role": "clinician", "text": "So it says ibuprofen 400 milligrams, three times a day after food, for up to ten days."},
+    {"role": "clinician", "text": "Have a go at gripping my fingers. That's stronger than last week, about two thirds of the other side."},
+    {"role": "clinician", "text": "Keep the slow wrist lowering with the tin of beans, fifteen times, twice a day, it's the lowering part that matters."},
+    {"role": "clinician", "text": "Grand so, mind yourself. Same time next week."},
+    {"role": "patient", "text": "I will. Did you see the hurling at the weekend?"},
+    {"role": "clinician", "text": "I did, sure it was a disaster. Go on, off with you."},
+    {"role": "clinician", "text": "Howya, Siobhan, come in, sit yourself down."},
+    {"role": "next_patient", "text": "Hi. My neck's locked since I slept funny on Tuesday, I can't turn it at all."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["lift", "the", "kettle", "without", "wincing"], "line": 1, "material": true},
+    {"kind": "dose", "tokens": ["ibuprofen", "400", "milligrams", "three", "times", "a", "day"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["about", "two", "thirds", "of", "the", "other", "side"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["fifteen", "times", "twice", "a", "day"], "line": 6, "material": true},
+    {"kind": "absent", "tokens": ["hurling", "at", "the", "weekend"], "line": 8, "material": false},
+    {"kind": "absent", "tokens": ["can't", "turn", "it", "at", "all"], "line": 11, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

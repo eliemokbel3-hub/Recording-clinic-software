@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h3-09",
+  "appointment_type": "acute",
+  "axes": ["end_and_new_patient", "noise", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "That ankle's sprained on the outside, not broken, you can put weight through it."},
+    {"role": "clinician", "text": "The strapping stays on for three days, then walk on it as much as it allows."},
+    {"role": "patient", "text": "Three days. Right."},
+    {"role": "clinician", "text": "Ta-ra then."},
+    {"role": "patient", "text": "Bye."},
+    {"role": "clinician", "text": "Next, come in."},
+    {"role": "next_patient", "text": "Hi, my heel's been agony every morning for weeks."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["sprained", "on", "the", "outside", "not", "broken"], "line": 0, "material": true},
+    {"kind": "present", "tokens": ["stays", "on", "for", "three", "days"], "line": 1, "material": true},
+    {"kind": "absent", "tokens": ["heel's", "been", "agony", "every", "morning"], "line": 6, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}, "snr_db": 15}
+}

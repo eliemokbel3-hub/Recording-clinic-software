@@ -567,49 +567,13 @@ REFERENCE_HEDGES: Final[tuple[str, ...]] = (*HEDGE_PHRASES, *_REFERENCE_ONLY_HED
 
 # D8's R3 reference provenance, frozen in Task 0.9 (synthetic scripts only;
 # ``heldout-2``'s rows written in Task 0.12): for EVERY script carrying the axis
-# ``end_and_new_patient``, the line holding the next patient's greeting and
-# the first line withheld — two tables, since a closing and a greeting can
-# share a line (``hld-11``). None means the script has no next patient (a
-# negative), so no fact of it is ever R3; a script with the axis and no
-# entry is a harness error. The tail starts equal the held-out fixture's
-# ``boundary`` wherever it has one.
-REFERENCE_GREETING_LINES: Final[Mapping[str, int | None]] = {
-    "syn-06": 4,
-    "syn-20": 4,
-    "syn-21": 4,
-    "syn-38": 4,
-    "syn-43": 6,
-    "syn-46": 4,
-    "hld-01": None,
-    "hld-02": None,
-    "hld-03": None,
-    "hld-04": None,
-    "hld-05": None,
-    "hld-06": None,
-    "hld-07": None,
-    "hld-08": None,
-    "hld-09": 5,
-    "hld-10": 4,
-    "hld-11": 3,
-    "hld-12": 5,
-    "hld-13": 5,
-    "hld-14": 5,
-    "h2-01": 13,
-    "h2-02": None,
-    "h2-04": None,
-    "h2-05": 12,
-    "h2-06": None,
-    "h2-07": 10,
-    "h2-09": 9,
-    "h2-10": None,
-    "h2-11": 12,
-    "h2-13": None,
-    "h2-14": 8,
-    "h2-16": None,
-    "h2-17": 10,
-    "h2-21": None,
-    "h2-22": 10,
-}
+# ``end_and_new_patient``, the first line withheld. None means the script has
+# no next patient (a negative), so no fact of it is ever R3; a script with the
+# axis and no entry is a harness error. The tail starts equal the held-out
+# fixture's ``boundary`` wherever it has one; a ``tails_by_role`` set's rows
+# (``heldout-3``) are the index of its first ``next_patient`` line. The
+# greeting-line table beside it was deleted on 2026-10-24 (validation-run6
+# plan D14, Task 0.17): R3 reads the reference document's own boundary.
 REFERENCE_TAIL_STARTS: Final[Mapping[str, int | None]] = {
     "syn-06": 4,
     "syn-20": 4,
@@ -646,6 +610,23 @@ REFERENCE_TAIL_STARTS: Final[Mapping[str, int | None]] = {
     "h2-17": 10,
     "h2-21": None,
     "h2-22": 10,
+    "h3-01": 11,
+    "h3-02": 10,
+    "h3-03": None,
+    "h3-04": None,
+    "h3-05": None,
+    "h3-06": None,
+    "h3-07": None,
+    "h3-08": None,
+    "h3-09": 6,
+    "h3-10": 13,
+    "h3-11": 11,
+    "h3-12": 11,
+    "h3-13": 10,
+    "h3-17": 8,
+    "h3-18": 9,
+    "h3-20": 8,
+    "h3-23": None,
 }
 
 
@@ -2844,7 +2825,6 @@ __all__ = [
     "ENROLMENT_DIRNAME",
     "FACT_KINDS",
     "FACT_VERDICTS",
-    "REFERENCE_GREETING_LINES",
     "REFERENCE_HEDGES",
     "REFERENCE_MODEL_NAME",
     "REFERENCE_TAIL_STARTS",

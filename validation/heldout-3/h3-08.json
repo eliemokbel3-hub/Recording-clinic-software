@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h3-08",
+  "appointment_type": "follow_up",
+  "axes": ["end_and_new_patient", "scribe_instruction", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "How's the shoulder been since last time?"},
+    {"role": "patient", "text": "Since last time it still catches when I reach up into the cupboard."},
+    {"role": "clinician", "text": "Have you had any treatment elsewhere?"},
+    {"role": "patient", "text": "I had some massage at the gym spa, it helped for a day."},
+    {"role": "receptionist", "text": "Sorry to barge in. Your next one's phoned to say she's running twenty minutes late."},
+    {"role": "clinician", "text": "Thanks, Joan, no problem."},
+    {"role": "clinician", "text": "Scribe, leave that last bit out of the note."},
+    {"role": "clinician", "text": "Right, let me have a look. Arms up for me. There's a painful arc between about eighty and a hundred and twenty degrees."},
+    {"role": "clinician", "text": "I'm going to take you through some needling today if you're happy, then we'll do the band work."},
+    {"role": "patient", "text": "Yes, go ahead with the needles."},
+    {"role": "clinician", "text": "Do the band pulls against the door handle, three sets of fifteen, every other day, stopping if the pain goes above four out of ten."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["catches", "when", "i", "reach", "up"], "line": 1, "material": true},
+    {"kind": "absent", "tokens": ["running", "twenty", "minutes", "late"], "line": 4, "material": false},
+    {"kind": "absent", "tokens": ["leave", "that", "last", "bit", "out"], "line": 6, "material": false},
+    {"kind": "present", "tokens": ["between", "about", "eighty", "and", "a", "hundred", "and", "twenty", "degrees"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["three", "sets", "of", "fifteen"], "line": 10, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "receptionist": 1}}
+}

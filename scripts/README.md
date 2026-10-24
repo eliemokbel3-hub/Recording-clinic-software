@@ -126,6 +126,17 @@ set up and build it, and make releases; the installed app needs none of them.
   Task 0.4 matrix), and prints the model's I/O shapes, the embedding dimension
   and the cosine matrix. Text-free: file names, durations and numbers only. Run
   by the practitioner from a normal terminal (Task 0.4).
+- `lint-held-out-set.py <set-folder> [--log-dir DIR] [--timeout SECONDS]
+  [--verbose]` (validation-run6 plan Task 0.17, C12) — runs the desktop test
+  suite while a blind held-out set (`validation/heldout-3`) is in the tree,
+  in a child pytest whose output goes only to a log under
+  `.cursor/loops/held-out-lint/` that nobody opens; `lint_held_out_plugin.py`
+  (with its `RunnerGuard`, which refuses any configuration the runner did not
+  set) reports through a separate file, and this console gets fixed lines
+  only: test node ids with their outcome, problem codes from a closed
+  grammar, the counts, `FAIL <code>` for a run that cannot be trusted, and
+  the exit code. While any `h3-` script is in the tree, run pytest only this
+  way (the conftest refuses a bare run).
 - `probe-cliniko.py` (Cliniko workflow safeguards plan Task 1.3, run at Task
   P.1) — read-only feasibility check of one clinic through the app's own Cliniko
   client (`scribe_desktop.cliniko_client`: GET only, host pinned from the key's
