@@ -1,4 +1,4 @@
-# Data-Flow Map (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot, kept recordings, invented-text guard, validation pass)
+# Data-Flow Map (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot, kept recordings, invented-text guard, validation pass, validation run 6)
 
 Every place data lives or moves in the implemented system. Since Phase 2 the
 desktop app carries **clinical data**: consultation audio, transcripts, and —
@@ -428,6 +428,19 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     each reader and never logged or sent; Check 6's warning, which names its
     segment by position (no text), is saved with the note's other warnings in
     `note.enc`.
+    **Check 4's second code and the hedge scope (validation-run6 plan D1, D5;
+    0.3.4).** Check 4 also raises `clinician_line_omitted`, a review warning,
+    once per segment the confirmed clinician said that no part of the note
+    quotes (before the next-patient cut; the same in-memory reads as the first
+    code); Check 1's `hedged_source` also reads the adjacent segment of the
+    same speaker for a hedge joined mid-sentence (`note.segment_hedged`). Both
+    are pure functions of the note and transcript already in memory: no new
+    store, field, log line or network use. The new warning names its segment
+    by position (`source_coords`, no text) and is saved with the note's other
+    warnings in `note.enc` — the stored note's only change; 0.3.3 or 0.3.2
+    reads it as a review warning from a newer version, and a build below
+    0.3.2 refuses the note (threat model, Phase 3A surface 5, "Rolling
+    back").
     Inside the app, the plaintext note and the full transcript coexist in memory
     only for the review window (threat model, Phase 3A §3) and, since the
     privacy-professional-controls plan, while an opened Past-sessions entry is

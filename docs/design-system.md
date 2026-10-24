@@ -152,27 +152,36 @@ view patterns · tokens · microcopy.
   box; edits freeze at Save.
 - **Flagged lines are findable, not reordered (since 0.3.1).** A transcript line whose
   side, negation, number, dose, name or medication is not in the note (Check 4's
-  `high_risk_omission`) is marked `[flagged]` at the FRONT of its label — in the Line
+  `high_risk_omission`), or — since 0.3.4 — a whole line the confirmed clinician said
+  that no part of the note quotes, holding a content word not marked possibly not speech,
+  before any possible next patient (Check 4's second code, `clinician_line_omitted`,
+  validation-run6 plan D1), is marked `[flagged]` at the FRONT of its label — in the Line
   chooser after its transcript number (`<n>. [flagged] <speaker>: …`), on a line-editor
   row before its section (`[flagged] <section> - …`) — because the closed chooser cuts a
   label's end and its open list elides the middle (the 2026-10-11 live smoke). The chooser
   keeps transcript order; a "Show flagged lines only" tick, never pre-ticked and cleared
-  with the note, lists the flagged lines alone; one count line under it says "N lines with
-  a side, negation, number, dose, name or medication are not in the note." and names by
+  with the note, lists the flagged lines alone; one count line under it says "N flagged
+  lines are not in the note (a line you said, or a side, negation, number, dose, name or
+  medication someone said)." ("1 flagged line is …" for one; this wording since 0.3.4,
+  covering both codes) and names by
   transcript number each flagged line the chooser cannot offer (typed over, or only partly
   in the note — "Line 7 is replaced or partly in the note - see its row below."), and with
   the tick on and nothing offered flagged it says "No line in the list is flagged -
   untick 'Show flagged lines only' to see every line." (`ui/models.py`
-  `FLAGGED_LINE_MARK` / `flagged_count_line` / `FLAGGED_FILTER_EMPTY_LINE`;
-  note-routing-omissions plan D4).
+  `FLAGGED_LINE_MARK` / `OMISSION_CODES` / `flagged_count_line` /
+  `FLAGGED_FILTER_EMPTY_LINE`; note-routing-omissions plan D4).
 - **Lines after a possible next patient are marked, not hidden (since 0.3.3).** When
   the note stops at a possible next patient (Check 6, `possible_next_patient`), every
-  Line chooser entry from that line on carries `[after possible next patient]` at the
+  Line chooser entry from that line on carries `[next patient?]` at the
   FRONT, after any `[flagged]` and before the speaker
-  (`<n>. [flagged] [after possible next patient] <speaker>: …`), flagged or not, for
+  (`<n>. [flagged] [next patient?] <speaker>: …`), flagged or not, for
   the reason flagged lines are marked there — so a line that belongs to this patient
   can be added back knowingly (`ui/models.py` `NEXT_PATIENT_LINE_MARK`; validation-pass
-  plan D6, the practitioner's front-mark choice of 2026-10-13).
+  plan D6, the practitioner's front-mark choice of 2026-10-13). Until 0.3.4 the mark was
+  `[after possible next patient]`, which the open list's middle elision could cut short
+  on a long line (the 0.3.3 install smoke); since 0.3.4 both front marks are short fixed
+  tokens and the 60-character cut applies to the line's words only, after the marks
+  (validation-run6 plan D3).
 - **The next patient's lines are removed only by the clinician, from the Transcript
   tab (since 0.3.3).** When a live recording's transcript shows a possible next
   patient, the "Generate note" group shows the plain-text line "A possible next patient
@@ -219,6 +228,9 @@ view patterns · tokens · microcopy.
   follows the same convention (after `number` and `possibly not speech`): a quoted line
   spoken by someone other than the confirmed clinician that holds a listed hedge ("I
   think", "probably", "maybe" …; Check 1's `hedged_source`, validation-pass plan D7) —
+  or, since 0.3.4, is joined mid-sentence to a same-speaker neighbour that holds one (the
+  earlier line ends in a comma, semicolon, colon or en or em dash; `note.quoted_line_marks`, the one
+  rule Check 1 and the line editor both call, validation-run6 plan D5) —
   its review row reads "A quoted line says the speaker was unsure", and unlike the other
   two it IS cleared by "Acknowledge all". The pre-filled mark and a check mark never meet
   on one line. ONE map renders them all (`note.line_marks_by_assertion`). Copy — the
@@ -400,13 +412,18 @@ view patterns · tokens · microcopy.
   hint: "Later lines were left out - add back any that belong with Add line to section,
   then acknowledge. If they are another patient's, use Cancel review and regenerate,
   then remove them from the recording on the Transcript tab."), because it withholds
-  content (validation-pass plan D5). The button's tooltip names every code of the set
+  content (validation-pass plan D5). Since 0.3.4 it also holds Check 4's second code,
+  `clinician_line_omitted` ("A line you said is not in the note"; its hint: "Check the
+  transcript beside the note, tick 'Show flagged lines only' to find it, add it with Add
+  line to section if it belongs, then acknowledge."), an omission like the first
+  (validation-run6 plan D1). The button's tooltip names every code of the set
   from the same mapping, so the two cannot drift apart: "Acknowledges every review
   warning except those that each need their own Acknowledge: something said that is not
-  in the note (check its flagged lines), a quoted line with a number (check each line
-  marked [check: number]), a quoted line that may not be speech (check each line marked
-  [check: possibly not speech]) and a note that stops where a new patient may have
-  arrived (check the lines marked [after possible next patient])." (`ui/models.py`
+  in the note (check its flagged lines), a line you said that is not in the note (check
+  its flagged lines), a quoted line with a number (check each line marked [check:
+  number]), a quoted line that may not be speech (check each line marked [check:
+  possibly not speech]) and a note that stops where a new patient may have arrived
+  (check the lines marked [next patient?])." (`ui/models.py`
   `SEPARATELY_ACKNOWLEDGED_NAMES` / `ACKNOWLEDGE_ALL_TOOLTIP`).
 - **Guard live custody with a controller lease, not a button flag.** A destructive or
   view-swapping action during a live generation/review is refused through the controller-
@@ -846,7 +863,10 @@ provenance tags, pre-filled marks or "[includes …]" lines reach the chart.
   negation, number, dose, name or medication someone said is not in the note" / "Check
   the transcript beside the note (a line you removed can raise this too), tick 'Show
   flagged lines only' to find them, then acknowledge." (`WARNING_COPY["high_risk_omission"]`,
-  0.3.1).
+  0.3.1). Its sibling for a whole line the clinician said names the line, never its
+  words: "A line you said is not in the note" / "Check the transcript beside the note,
+  tick 'Show flagged lines only' to find it, add it with Add line to section if it
+  belongs, then acknowledge." (`WARNING_COPY["clinician_line_omitted"]`, 0.3.4).
 - The draft write's lines (`ui/models.py` `WRITE_LINES`, the ONE source; no id,
   patient or practitioner name, answer text or key is ever formatted into one). Each
   refusal gives its next step, and offers Copy where copying the note is the way

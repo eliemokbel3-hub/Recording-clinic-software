@@ -159,7 +159,9 @@ result is recorded there as a dated RUN line.
   Cliniko id and no session id. Describe what the app did in terms of the app
   (its category and the part of the app), never the patient.
 - **Synthetic encounter ids** (`syn-01` …, and the held-out set's `hld-01` …) may appear in the register; they
-  identify invented content only. A real consultation's encounter is `—`, and
+  identify invented content only. From validation run 6 (0.3.4) two more held-out
+  sets add `h2-01` … (`heldout-2`) and `h3-01` … (`heldout-3`), accepted in the
+  register once its Encounter check names them (that run's register update). A real consultation's encounter is `—`, and
   a smoke measurement's `k-01` … name stays in your pilot log.
 - **Real consultations are never fed to the validation harness** (pilot plan
   Constraint 8). Since 0.3.0 a real consultation's recording may be kept with

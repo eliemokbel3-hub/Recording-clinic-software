@@ -10,8 +10,10 @@ approved by the practitioner the same day; the kept-recording line added 2026-10
 version 0.3.0, awaiting the practitioner's approval; the background-music, marked-line and
 number lines added 2026-10-12 for version 0.3.2, awaiting the practitioner's approval; the
 next-patient, removing-lines, self-correction and "unsure" lines added 2026-10-13 for
-version 0.3.3, approved by the practitioner on 2026-10-22). For the practitioner, before saving a
-note and before finalising it in Cliniko.
+version 0.3.3, approved by the practitioner on 2026-10-22; the left-out-line, wider-doubt and
+shorter next-patient-mark lines added 2026-10-24 for version 0.3.4, awaiting the
+practitioner's approval). For the practitioner, before saving a note and before finalising
+it in Cliniko.
 
 **Why this matters.** Ahpra's guidance on AI in healthcare ("Meeting your professional
 obligations when using AI in healthcare") makes you responsible for checking the accuracy
@@ -101,16 +103,20 @@ where each line came from: the transcript, something you typed, or your own pre-
    speech") that **"Acknowledge all review warnings" does not clear** — press its own
    Acknowledge. Most notes quote a number, so most notes need that click before you can
    save. A line someone other than you said with words of doubt ("I think", "probably",
-   "maybe", "I guess" and a few others) is marked `[check: unsure]` the same way, with
+   "maybe", "I guess", "I'm not sure", "I don't know", "I reckon" and others) is marked
+   `[check: unsure]` the same way, with
    the review warning "A quoted line says the speaker was unsure": check that the note
-   does not state as fact what they were unsure of. "Acknowledge all review warnings"
-   does clear that one, and doubt said in other words ("not sure", "I don't know") is
-   not marked. The copied note and the draft written to Cliniko leave the check marks out.
+   does not state as fact what they were unsure of. When the speech software split one
+   sentence of theirs into two lines at a comma (or a semicolon, colon or long dash), and the
+   words of doubt are in one half, both halves are marked. "Acknowledge all review
+   warnings" does clear that one. Doubt said in other words (for example "not too sure" or
+   "I dunno"), or shown only by tone, is not marked, and words of doubt in a separate
+   sentence (after a full stop) mark only their own line. The copied note and the draft written to Cliniko leave the check marks out.
 5. **The note stops where a new patient may have arrived.** When the Transcript tab
    named a possible next patient (above) and you generated anyway, the note leaves out
    every line from there on, and the review warning "The note stops where a new patient
    may have arrived" is shown. In the line list under **Edit the note**, those lines are
-   marked `[after possible next patient]`. If any of them belongs to this patient — the
+   marked `[next patient?]`. If any of them belongs to this patient — the
    goodbye and greeting were part of this consultation — add it back with **Add line to
    section**. If they are another patient's, use **Cancel review and regenerate**, then
    remove them on the Transcript tab. This warning, too, is cleared only by its own
@@ -121,9 +127,17 @@ where each line came from: the transcript, something you typed, or your own pre-
    read and acknowledged** — for example most other dose differences, a left/right
    difference, or a side, number, dose, "not" or medicine someone said (or a name you
    said) that the note left out; that last warning, too, is cleared only by its own
-   Acknowledge, and it ignores words marked as possibly not speech. The checks are a
-   safety net, not a guarantee: they look for particular kinds of mismatch and cannot
-   tell you the note is complete or correct.
+   Acknowledge, and it ignores words marked as possibly not speech. A whole line you said,
+   with none of those words, that the note leaves out — advice, a plan, a safety-net line that none of your
+   headings' phrases picked up — has its own review warning, "A line you said is not in
+   the note", also cleared only by its own Acknowledge. Tick **Show flagged lines only**
+   under **Edit the note** to find these lines (each is marked `[flagged]`), and add any
+   that belongs with **Add line to section**. A short reply such as "okay" can raise it
+   too: acknowledge it once you have looked. A line of yours that the app labelled as the
+   other speaker's raises no such warning, and neither does a line whose words are all
+   marked as possibly not speech, so still read the transcript through. The
+   checks are a safety net, not a guarantee: they look for particular kinds of mismatch
+   and cannot tell you the note is complete or correct.
 7. **Writing styles.** If you use a prose style (Narrative or Own voice), the app turns
    your confirmed lines into sentences on this computer and checks each section against
    them; a section that fails the check is shown as plain lines instead, and you

@@ -17,7 +17,8 @@ This register is in the repository, which is public. A row holds **no clinical
 content**: no name, no date of birth, nothing that was said or written in a note,
 no Cliniko id and no session id. Describe what the app did in terms of the app —
 its category, the part of the app and the control — never the patient. An
-encounter is named only by a synthetic id (`syn-01` …, or a held-out `hld-01` …); a real consultation —
+encounter is named only by a synthetic id (`syn-01` …, or a held-out `hld-01` …, and from
+validation run 6 `h2-01` … or `h3-01` …, once the register's check accepts them); a real consultation —
 shadow, reviewed, everyday, or a kept recording measured in the smoke — is `—`,
 and its own detail stays in Cliniko and in your off-repository pilot log.
 
@@ -31,6 +32,8 @@ and its own detail stays in Cliniko and in your off-repository pilot log.
 - **Stage** — `validation`, `smoke` (a kept recording's measurement in the
   clinic 1 smoke), `shadow`, `reviewed`, `everyday` or `other`.
 - **Encounter** — a synthetic id (`syn-NN`, or `hld-NN` from the held-out set), or `—`.
+  `h2-NN` (`heldout-2`) and `h3-NN` (`heldout-3`) join them with validation run 6's
+  register update, when the register's check accepts them.
 - **Severity** — `high`, `medium` or `low` (below).
 - **Category** — one of:
   - the rubric's R4 kinds: `wrong-side`, `wrong-dose`, `negation-flipped`,

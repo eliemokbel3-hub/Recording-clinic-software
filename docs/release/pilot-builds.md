@@ -63,6 +63,24 @@ the repository's visibility may have changed. If no attestation can be made, the
 check above can never pass, and the build of record needs a decision — never an
 install without that check.
 
+## Rolling back below 0.3.4
+
+From 0.3.4 (the validation-run6 build) one thing can be new: **a saved note
+can carry a new kind of review warning**, "A line you said is not in the
+note" — one per whole line you said that the note left out. 0.3.3 (and 0.3.2)
+show each as "A review warning from a newer version of the app" (below), all
+of them in that one row with their count, and keep each warning's place in the
+transcript; that build's "Acknowledge all review warnings" clears the row. So
+on the older build such a line no longer needs its own Acknowledge — the
+separate click is lost — but no warning is dropped (validation-run6 plan
+Task 1.3 pins it). A note the older build generates, or generates again, is
+checked by its own rules: no such warning, and a line joined mid-sentence to a
+hedged one is not marked `[check: unsure]`.
+
+Nothing else changes on disk (the `[next patient?]` mark is on screen only), so
+no recording needs finishing first for 0.3.4's sake. Below 0.3.3, the rules
+that follow apply as well.
+
 ## Rolling back below 0.3.3
 
 From 0.3.3 (the validation-pass build) two things can be new:

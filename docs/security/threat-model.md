@@ -499,6 +499,31 @@ note inherit exactly that posture.
    review warnings" leaves it and only its own Acknowledge clears it, and the
    Line chooser marks each flagged line `[flagged]` with a "Show flagged lines
    only" filter — a review aid that adds no text widget and no copy path.
+   Since 0.3.4 (validation-run6 plan D1) Check 4 has a SECOND review code,
+   `clinician_line_omitted` ("A line you said is not in the note"): once per
+   segment the confirmed clinician spoke, with text, of which NO word is
+   quoted by any transcript line of the note, holding at least one content
+   word that is not suspect (fillers alone never fire it), that does not
+   already draw `high_risk_omission`, and that lies before the next-patient
+   boundary (`note_config.next_patient_boundary`) — the uncued advice, plan
+   or safety-netting line that no cue routes and no flagged word names. It
+   never fires without a confirmed clinician, on another speaker's line or on
+   a partly quoted line (the clinician's partial choice; the first code still
+   flags words there). Its line is marked `[flagged]` like the first code's,
+   both codes are counted on the one count line, and "Acknowledge all review
+   warnings" leaves it too. It never deletes or re-routes a line (C4). NAMED
+   RESIDUES (second code): a one-word acknowledgement the clinician said
+   ("okay", "yeah"; a one-word "right" or "no" is a side or a negation, so
+   it draws the first code instead) fires it — no exemption list was added (decision 0.3
+   (b): only two enrolled kept recordings existed, fewer than the three the
+   budget's real-speech test needed, so the test fell back to the synthetic
+   counts; on those two its load was above the budget's maximum); a
+   clinician line the speaker step gave to the
+   other voice (a quiet turn under the enrolment threshold) is not the
+   clinician's, so it fires nothing — and an uncued patient line with no
+   flagged word stays unwarned, as before; coverage is by quoted
+   coordinates, so a line that triggered a confirmed autofill line still
+   fires it (the config line quotes nothing).
    NEXT PATIENT (0.3.3, validation-pass plan D1–D6 and D9; until 0.3.3 the
    NEXT-PATIENT RESIDUE of 0.3.1): routing tries the practitioner's cues and
    then the shipped cues, so a next patient's words recorded before the
@@ -529,8 +554,10 @@ note inherit exactly that posture.
    withheld lines' side, number, dose, negation and medication words (decision
    0.5 (a)), Check 3 and the role preselection still read the whole
    transcript, and the Line chooser marks every line it offers from the
-   boundary on `[after possible next patient]` (after any `[flagged]`), so a
-   withheld line that belongs to this patient is added back by hand. The
+   boundary on `[next patient?]` (after any `[flagged]`; `[after possible
+   next patient]` until 0.3.4, shortened so the chooser's middle elision
+   cannot cut it), so a withheld line that belongs to this patient is added
+   back by hand; Check 4's second code stops at the boundary. The
    boundary NEVER deletes anything: only the clinician's confirmed trim does
    (THE TRIM, below). NAMED RESIDUES (next patient): (a) it is a phrase
    heuristic over two short lists — a next patient greeted, or a consultation
@@ -621,16 +648,27 @@ note inherit exactly that posture.
    removes the retracted line.
    THE UNSURE MARK (0.3.3, validation-pass plan D7, decision 0.1 (a)): Check 1
    adds a REVIEW code, `hedged_source`, once per quoted line spoken by anyone
-   but the confirmed clinician that holds one of 16 frozen hedge phrases
-   (`note_check.HEDGE_PHRASES` — "i think", "probably", "maybe", "i guess" …),
-   after its reconstruction check; it marks the line `[check: unsure]` the
+   but the confirmed clinician that holds one of the frozen hedge phrases
+   (`note_check.HEDGE_PHRASES` — "i think", "probably", "maybe", "i guess" …;
+   16 in 0.3.3, 33 since 0.3.4 from named published sources, validation-run6
+   plan Task 0.9), or — since 0.3.4 (D5, `note.segment_hedged`) — whose
+   segment is joined mid-sentence to an adjacent segment of the same speaker
+   that holds one (the earlier of the two ends in a comma, semicolon, colon
+   or en or em dash, never a hyphen: the recogniser cut one sentence in two),
+   after its reconstruction
+   check; it marks the line `[check: unsure]` the
    way surface 5's marks are shown (after a Clean line, inside the verbatim
    label, at the front of the line editor's row, counted on a prose section's
    "[includes …]" line). "Acknowledge all review warnings" clears it, and no
    copy or Cliniko draft carries it (surface 4). SCOPE AND COARSENESS (named):
-   a hedge outside the list ("not sure", "I don't know", "I reckon") marks
-   nothing; the mark is per LINE, so a hedge about one clause, or about the
-   cause rather than the clinical fact, marks the whole line; the clinician's
+   a hedge outside the list (a bare "not sure", "not too sure", "I dunno",
+   an idiom, or doubt carried by tone alone) marks nothing; a hedge the
+   recogniser split off after a full stop, behind a bare cut with no
+   trailing mark, or with a segment between (a textless one included) is not
+   joined, and a listed hedge with other words inside it ("I don't really
+   know") is not found; the mark is per LINE, so a hedge about one clause, or about the
+   cause rather than the clinical fact, marks the whole line, and a joined
+   hedge marks both halves; the clinician's
    own hedges are never marked; a suspect word supplies no hedge; and with no
    confirmed clinician every speaker's hedged line is marked (the app's
    Generate always has one). It is a review aid for spoken uncertainty, not a
@@ -649,8 +687,11 @@ note inherit exactly that posture.
    medications in the clinician's segments only; and since 0.3.2 never a word
    the transcription guard marked suspect, surface 5 — but it is a token
    heuristic, not a low-confidence or materiality detector: an uncued
-   sentence with none of those words stays unflagged; see the honest limit
-   below). Plaintext transcript and note
+   sentence with none of those words stays unflagged — since 0.3.4 unless
+   the confirmed clinician said it and no word of it is quoted (Check 4's
+   second code, `clinician_line_omitted`, surface 2), so an uncued line of
+   another speaker's with none of those words is still unflagged; see the
+   honest limit below). Plaintext transcript and note
    therefore coexist in memory for the review duration. This is inside
    boundary 2 (a same-user process can already read process memory); the Note
    tab's transcript panel stays display-only (`NoTextInteraction`) so casual
@@ -828,8 +869,9 @@ note inherit exactly that posture.
      row and as a count on a prose section's "[includes …]" line.
      "Acknowledge all review warnings" never clears either
      (`ui/models.py` `SEPARATELY_ACKNOWLEDGED_CODES`, beside 0.3.1's
-     `high_risk_omission` and, since 0.3.3, Check 6's `possible_next_patient`
-     — surface 2's NEXT PATIENT; the button's tooltip names all four from the
+     `high_risk_omission`, since 0.3.3 Check 6's `possible_next_patient`
+     — surface 2's NEXT PATIENT — and since 0.3.4 Check 4's second code
+     `clinician_line_omitted`; the button's tooltip names all five from the
      same mapping, `SEPARATELY_ACKNOWLEDGED_NAMES`), so Save, Complete and
      Copy wait for each group's own Acknowledge. 0.3.3's `[check: unsure]`
      (surface 2's THE UNSURE MARK) is shown the same way but IS cleared by
@@ -857,7 +899,12 @@ note inherit exactly that posture.
      unknown error code is still refused), so a later rollback to 0.3.2 opens
      those notes — 0.3.3's `possible_next_patient` and `hedged_source`
      included, which 0.3.2's "Acknowledge all" then clears
-     (`docs/release/pilot-builds.md`, "Rolling back below 0.3.3").
+     (`docs/release/pilot-builds.md`, "Rolling back below 0.3.3"). 0.3.4's
+     `clinician_line_omitted` reads the same way on 0.3.3 or 0.3.2: each
+     warning kept with its coordinates, all grouped as one newer-version row
+     that the older build's "Acknowledge all" clears, so the
+     separately-acknowledged control is lost after a rollback while no
+     warning is dropped ("Rolling back below 0.3.4").
 
    NAMED RESIDUES — the guard is a heuristic and the mark a review aid, not a
    filter:
@@ -4478,4 +4525,6 @@ validation pass (0.3.3): a change to the closing or greeting phrases, the
 correction markers or the hedge phrases (each a new dated decision with a
 repeated validation run), a boundary the note acts on without the
 clinician (an automatic trim), a second writer of the shortened transcript,
-an audit fact for the trim, or a rollback below 0.3.3 (residue (20)).
+an audit fact for the trim, or a rollback below 0.3.3 (residue (20)). For
+0.3.4: a change to Check 4's second code's predicate (an exemption list, an
+other-voice line), a widened hedge scope, or a rollback below 0.3.4.

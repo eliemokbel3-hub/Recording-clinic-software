@@ -7,7 +7,7 @@
 - a written decision, BEFORE run 6, on the recogniser-level and tone-level residues (rule v1 kept, or a ratified rule v2);
 - a fresh held-out set by an independent author, written predictions before the build, and run 6 as the run of record.
 
-**Overall Progress:** `63%` (19 of 30 buildable tasks; `[2026-10-24, stage-3]` Tasks 4.1–4.4 built and verified (suite 8605 passed, review rounds 44–45, codex peer round 46 applied, simplify round 47 clean); `[2026-10-24, stage-2]` Task 3.1 built and verified (suite 8504 passed, review round 41, codex peer round 42 converged); `[2026-10-24, stage-1]` Tasks 1.1–1.4 built and verified (suite 8425 passed, review round 38, codex peer round 39 converged); `[2026-10-24, peer round 25]` the convention, stated: the 8 `[decision]` tasks — all taken — are outside the count; 38 checkboxes in all, 22 ticked)
+**Overall Progress:** `70%` (21 of 30 buildable tasks; `[2026-10-24, stage-4]` Tasks 5.1 and 5.2 built and verified (suite 8614 collected, 8605 passed, 0 failed, 9 skipped, `npm run qa` 313 / 313, review round 48, codex peer round 49 applied); `[2026-10-24, stage-3]` Tasks 4.1–4.4 built and verified (suite 8605 passed, review rounds 44–45, codex peer round 46 applied, simplify round 47 clean); `[2026-10-24, stage-2]` Task 3.1 built and verified (suite 8504 passed, review round 41, codex peer round 42 converged); `[2026-10-24, stage-1]` Tasks 1.1–1.4 built and verified (suite 8425 passed, review round 38, codex peer round 39 converged); `[2026-10-24, peer round 25]` the convention, stated: the 8 `[decision]` tasks — all taken — are outside the count; 38 checkboxes in all, 22 ticked)
 
 ## Lifecycle State
 - Active
@@ -341,7 +341,7 @@ See the Planning Extraction Summary (the canonical list).
 
 ## Current State / Handoff Note
 - Loop config: executor=claude-p model="claude-opus-5-5" effort=high profile=default; peer=codex model="gpt-6-astra" effort=medium; architect=off; cadence=every-phase; caps=review:3,peer:5; gates=executor; cap-raise=executor; high-auto=on; peer-max=12; notify=action-only; scope=all; autocommit=on; isolation=none; merge=off; perms=scoped; liveness=10; monitor-delivery=auto; verify=composer.
-- COMPOSER RUN-STATE: iso=validation-run6-20261024-125936-4d21; runkeys stage-1=Phase 1, stage-2=Phase 3, stage-3=Phase 4, stage-4=Phase 5, stage-5=H1-H4; started 2026-10-24 by the practitioner's /execute-loop (wizard confirmed); current: stage-3 closed (Phases 1, 3 and 4 committed locally); next stage-4 (Phase 5).
+- COMPOSER RUN-STATE: iso=validation-run6-20261024-125936-4d21; runkeys stage-1=Phase 1, stage-2=Phase 3, stage-3=Phase 4, stage-4=Phase 5, stage-5=H1-H4; started 2026-10-24 by the practitioner's /execute-loop (wizard confirmed); current: stage-4 closed (Phases 1, 3, 4 and 5 committed locally); next stage-5 (H1-H4).
 - **Order:** 0.2 (measure) → 0.2a (the same audio counts under an enrolment, D11) → 0.13 (the D1 decision) → 0.9 (dated commit) → 0.14 (the harness enrols; its own dated commit) → 0.11 (fixtures over a set table, before the set) → 0.10 (`heldout-2`, independent author, empty folder) → 0.12 (diagnosis, the `h2-NN` cases and divergence entries, predictions; frozen) → Phases 1–5 → H1–H4 → P.1 → H5 → P.2 → P.3.
 - Line references were taken at `0be35d7`; `desktop/src` is unchanged at `4ff5f26`. A build leg re-locates symbols before editing.
 - `[2026-10-22]` Decisions taken ("take all the recommendations"): 0.1 median ≤ 2, maximum ≤ 5; 0.3 (b), (c) only if over budget; 0.4's rule (values owed after Task 0.2); 0.5 (a); 0.6 lexicon (b), scope (ii); 0.7 (b) with the written override; 0.8 all three sets. Recorded on each task. Later the same day: "joined" = `note.ends_mid_sentence` (D5).
@@ -663,6 +663,112 @@ See the Planning Extraction Summary (the canonical list).
   - Live-user smoke: the practitioner carried it to P.1's run of record (in chat, 2026-10-24; recorded on P.1).
   - Committed locally with the rx3 commit message above; not pushed.
   - Next: stage-4, Phase 5 (Task 5.1 documents, Task 5.2 version 0.3.4).
+- `[2026-10-24T18:16+11:00]` **Executor (stage-4, leg rx1) — Phase 5 BUILT (Tasks 5.1 and 5.2, both 🟨); the suites are the composer's.** No MUST-PAUSE: nothing at HEAD changed WHAT is built.
+  - **Last completed:** Task 5.1's documents and sweep (record on the task: every D10 file, the sweep's counts and file:line, changed vs correct already); Task 5.2's six version fields by hand and "Rolling back below 0.3.4" (record on the task).
+  - **In progress:** none. **Next:** the composer runs the desktop suite through `scripts/lint-held-out-set.py validation/heldout-3` (it covers `test_install_layout.py::test_the_version_is_the_same_everywhere` and `test_pilot_docs.py`) and `npm run qa` in `extension/`; then resumes this executor to fix any failure and run `/review-loop` from round 48 (history check OK: 16 round entries + 47 headings).
+  - **Checks run here:** ruff clean; mypy clean (66 source files). pytest NOT run (blind rule); npm not available in this leg.
+  - **Most likely suite risk:** none expected — the only Python change is `__version__`; the pilot documents' edits are prose outside the tables and hold no id-shaped string.
+  - **One LOW routed (headless Include in plan, recorded on P.3):** `docs/pilot/exit-gate.md`'s "Validation passed" line and `docs/pilot/README.md` step 3 still describe rule v1; reconciling a signed exit-gate line with D15 is the practitioner's wording, so it waits for P.3.
+  - **For the practitioner (not a pause):** the clinician review guide's 0.3.4 lines await approval (as the 0.3.3 lines did); the shipping gate's 0.3.2 clarification still awaits initials (unchanged; the new 0.3.4 note sits after it, outside it).
+  - **Blind rule:** no file under `validation/heldout-3/` was opened, read, listed or returned by a search; searches ran over `docs/`, `desktop/`, `extension/`, `validation/README.md`, `validation/rules/rule-v2.json` and `CHANGELOG.md` only. No lint log opened, pytest not run, no subagent spawned: children=0.
+  - **Proposed commit message for Phase 5** (the composer's to commit, after green suites):
+    ```
+    Documents and version 0.3.4, the rollback line (0.3.4 Phase 5, Tasks 5.1-5.2)
+
+    - version 0.3.4 in the six fields (pyproject, __version__,
+      package.json, package-lock.json x2, manifest.ts)
+    - docs/release/pilot-builds.md: "Rolling back below 0.3.4" - the new
+      review warning reads on 0.3.3 as a newer-version warning that its
+      Acknowledge all clears; no warning dropped, nothing else on disk
+    - threat model (Phase 3A surfaces 2, 3, 5; re-review triggers),
+      data-flow flow 10, design system, shipping gate (a note), kept
+      recordings (the replay's new column, a 0.3.4 paragraph), three
+      stale validation-harness lines, phase history (the old mark),
+      validation/README (rule v2), the pilot README and register prose
+      (h2-, h3-), the clinician review guide's 0.3.4 lines (awaiting the
+      practitioner's approval), CHANGELOG
+    - the Task 5.1 sweep recorded in the plan; the exit gate's rule v1
+      wording routed to P.3
+
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+    ```
+- `[2026-10-24T18:34+11:00]` **Executor (stage-4, leg rx2) — `/review-loop` CONVERGED at round 48 (1 round of the cap of 3).**
+  - **Before the loop:** the composer's runs over rx1 were green — `npm run qa` 313 / 313 (typecheck and lint clean; the package reports 0.3.4); the desktop suite through the blind runner 8614 collected, 8605 passed, 0 failed, 9 skipped.
+  - **Round 48** (record in the Findings Log): 0 CRIT / 0 HIGH / 0 MED / 10 LOW, all applied. The document-accuracy lens was a read-only Explore subagent given the blind rule verbatim; it confirmed every quoted on-screen string character for character. The substantive corrections: a one-word "right" draws the first code, not the new one (threat model, kept-recordings); the threat model's unfound-hedge example was in fact found ("not, I think, sure" holds "i think"); the join is an en or em dash, never a hyphen; `heldout-3` has no R2 ceiling (`validation/README.md`); only 0.3.3 / 0.3.2 read the new code as a newer-version warning, a build below 0.3.2 refuses the note (data-flow); the register's first `h2-` / `h3-` mention now carries its condition; the guide's two clauses tightened; the CHANGELOG's R1 wording; the harness's "what stays silent" boundary clause.
+  - **Checks:** history check OK (17 round entries + 48 headings; the next round is 49). No Python changed in rx2 (ruff and mypy were clean in rx1).
+  - **Owed:** the review changed documents a test reads (`docs/pilot/findings-register.md`, `docs/practice/`, `validation/README.md`), so the composer re-runs the desktop suite through `scripts/lint-held-out-set.py validation/heldout-3`. `npm run qa` is unaffected (no extension file changed in rx2). Then, per the loop config, the codex peer pass over Phase 5 (cadence every-phase) is the composer's to schedule — `docs/lessons.md`: a docs-only phase still draws peer findings.
+  - **Blind rule:** no file under `validation/heldout-3/` was opened, read, listed or returned by a search in rx2, by the executor or the subagent; no lint log opened; pytest not run. One subagent was spawned and has finished: children=0.
+  - **Proposed commit message for Phase 5** (amended for rx2; it supersedes rx1's; the composer commits it after a green suite):
+    ```
+    Documents and version 0.3.4, the rollback line (0.3.4 Phase 5, Tasks 5.1-5.2)
+
+    - version 0.3.4 in the six fields (pyproject, __version__,
+      package.json, package-lock.json x2, manifest.ts)
+    - docs/release/pilot-builds.md: "Rolling back below 0.3.4" - the new
+      review warning reads on 0.3.3 as a newer-version warning that its
+      Acknowledge all clears; no warning dropped, nothing else on disk
+    - threat model (Phase 3A surfaces 2, 3, 5; re-review triggers),
+      data-flow flow 10, design system, shipping gate (a note), kept
+      recordings (the replay's new column, a 0.3.4 paragraph), three
+      stale validation-harness lines, phase history (the old mark),
+      validation/README (rule v2), the pilot README and register prose
+      (h2-, h3-), the clinician review guide's 0.3.4 lines (awaiting the
+      practitioner's approval), CHANGELOG
+    - the Task 5.1 sweep recorded in the plan; the exit gate's rule v1
+      wording routed to P.3
+    - review-loop round 48 (10 LOW, applied): a one-word "right" draws
+      the first code; the unfound-hedge example; en or em dash only;
+      heldout-3 has no R2 ceiling; which builds read the new code; the
+      register's id condition; the guide's two clauses; R1's mark
+
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+    ```
+- `[2026-10-24T18:47+11:00]` **Executor (stage-4, leg rx3) — codex peer round 49 (2 LOW) verified and applied.**
+  - **Before:** the composer's suite over round 48's changes was green (8614 collected, 8605 passed, 0 failed, 9 skipped).
+  - **PR-LOW-001** — surface=docs; rec=Fix-now, applied — evidence: `validation.py:1865` (`segment_hedged` on the mark's segment) and `:1937` (`script_line_hedged`). The harness document's `uncertainty_surfaced` and "Hedge marks on unhedged segments" summaries now describe the hedge scope (a joined same-speaker neighbour included). No sibling restates the old predicate outside the dated 2026-10-13 amendment paragraph, which is history.
+  - **PR-LOW-002** — surface=docs; rec=Fix-now, applied — evidence: `note_check.py:1730` (no non-suspect content token → no second code), and the first code excludes suspect words. The "what stays silent" sentence names the exception. Siblings fixed in the same pass: `validation-harness.md` :85 and :184, `design-system.md:155`, CHANGELOG's 0.3.4 entry, and the review guide in plain English ("a line whose words are all marked as possibly not speech").
+  - **Cap verdict: converge.** Both findings were LOW, docs-only, and confirmed against the code; the peer otherwise confirmed Phase 5. Neither recurs from round 48 (they are new omissions in older harness lines and in conditions lists, not regressions from round 48's fixes), and the fixes change wording only. A second peer round would review a dozen words of documentation.
+  - **Checks:** history check OK (18 round entries + 49 headings; the next round is 50). No Python, test or extension file changed in rx3.
+  - **Owed:** documents a test reads changed (`docs/practice/clinician-review-guide.md`), so the composer re-runs the desktop suite through `scripts/lint-held-out-set.py validation/heldout-3`; then commits Phase 5.
+  - **Blind rule:** no file under `validation/heldout-3/` was opened, read, listed or returned by a search in rx3; no lint log opened; pytest not run; no subagent spawned: children=0.
+  - **Proposed commit message for Phase 5** (amended for rx3; it supersedes rx1's and rx2's; the composer commits it after a green suite):
+    ```
+    Documents and version 0.3.4, the rollback line (0.3.4 Phase 5, Tasks 5.1-5.2)
+
+    - version 0.3.4 in the six fields (pyproject, __version__,
+      package.json, package-lock.json x2, manifest.ts)
+    - docs/release/pilot-builds.md: "Rolling back below 0.3.4" - the new
+      review warning reads on 0.3.3 as a newer-version warning that its
+      Acknowledge all clears; no warning dropped, nothing else on disk
+    - threat model (Phase 3A surfaces 2, 3, 5; re-review triggers),
+      data-flow flow 10, design system, shipping gate (a note), kept
+      recordings (the replay's new column, a 0.3.4 paragraph), stale
+      validation-harness lines, phase history (the old mark),
+      validation/README (rule v2), the pilot README and register prose
+      (h2-, h3-), the clinician review guide's 0.3.4 lines (awaiting the
+      practitioner's approval), CHANGELOG
+    - the Task 5.1 sweep recorded in the plan; the exit gate's rule v1
+      wording routed to P.3
+    - review-loop round 48 (10 LOW, applied: a one-word "right" draws
+      the first code; the unfound-hedge example; en or em dash only;
+      heldout-3 has no R2 ceiling; which builds read the new code; the
+      register's id condition; the guide's two clauses; R1's mark) and
+      codex peer round 49 (2 LOW, applied: the harness's hedge-credit
+      summaries read the hedge scope; a clinician line whose every
+      content word is suspect draws no warning, named in the harness,
+      the design system, the review guide and CHANGELOG)
+
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+    ```
+
+- `[2026-10-24T18:55+11:00]` **Composer — Phase 5 CLOSED (stage-4).**
+  - The full suite through the blind runner: over rx1 8614 collected, 8605 passed, 0 failed; over rx2 (review round 48) the same; over rx3 (peer round 49) 8614 collected, 8605 passed, 0 failed, 9 skipped. `npm run qa` in `extension/`: typecheck, lint, 313 / 313 tests (the package at 0.3.4) — `test_install_layout.py`'s version agreement and `test_pilot_docs.py` green inside the suite.
+  - Review rounds: review-loop round 48 (10 LOW, applied; converged); codex peer round 49 (`gpt-6-astra` medium, read-only, pass stage-4.p1) 2 LOW, recorded by the composer (census 49 > 48), verified and applied by the executor in rx3 with five pattern siblings, whose cap verdict was converge (documents only, no regression from round 48), accepted under cap-raise=executor.
+  - /simplify: not run — Phase 5 changed documents and six version strings only (the repository's rule: never for docs; no source logic changed).
+  - Live-user smoke: none of its own — documents and the version string only; the version shown on the Status tab is read by P.2's install smoke ("the Status tab shows 0.3.4").
+  - The review guide's 0.3.4 lines await the practitioner's approval (marked in the guide); the exit gate's rule v1 wording is routed to P.3.
+  - Committed locally with the rx3 commit message above; not pushed.
+  - Next: stage-5, the hardening stage H1–H4 over the whole run.
 
 ## Review History
 - 2026-10-22 `/review-plan` (Opus 5.5): Plan-subagent design critique + Explore subagent + coverage, practicality, risk and simplicity lenses, every finding checked against `0be35d7` / `4ff5f26`. Plan-scoped; no code reviewed. Step 3.5 gate: missed-speech warning Include in plan; chooser mark Include in plan; ui-refresh at its merge; larger model Excluded.
@@ -694,6 +800,8 @@ See the Planning Extraction Summary (the canonical list).
 - 2026-10-24 round 45: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=none; action=none
 - 2026-10-24 round 46: 0 CRIT / 0 HIGH / 0 MED / 2 LOW; skew=none; action=none
 - 2026-10-24 round 47: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
+- 2026-10-24 round 48: 0 CRIT / 0 HIGH / 0 MED / 10 LOW; skew=none; action=none
+- 2026-10-24 round 49: 0 CRIT / 0 HIGH / 0 MED / 2 LOW; skew=same-family; action=none
 
 ## Review Findings Log
 ### Round 1 — 2026-10-22
@@ -1972,6 +2080,59 @@ Round status: Closed (0 pending)
 - Consciously left alone: the verdicts computed in `render_report` and again in `_verdict_lines` (repeated work only, same function); `main`'s own `--set` refusals beside `set_row` (routing through it changes the refusal text); the `hedged` loop's coordinate range beside `_marked_words` (pre-existing, it also counts `hedge_marks_unhedged`); `r3`'s defensive `tail_start is not None` (hand-built readings in tests); `FactOutcome` built then `replace`d with the residue flags (R1 reads the canonical `silent_omission`, C5); `run_passed` under schema 1 beside `run_passed_v1` (D8's printed v1 verdict); `class_counts`' two dicts and `_check_sets`' name regex (taste); the duplicated reference fields (already known, round 44).
 - Last reviewed: 2026-10-24
 
+### Round 48 — 2026-10-24
+Source: Claude Code review-loop (Opus 5.5, executor stage-4 rx2). Passes: correctness, plan deviation (D10, Tasks 5.1–5.2, the Phase 1/3/4 records), structural and missed-issue — the executor; document accuracy against the code — one read-only Explore subagent given the blind rule verbatim (every quoted on-screen string against `ui/models.py`, `ui/note.py` and `replay_kept.py` character for character; every behavioural claim against `note_check.clinician_line_omissions`, `note.segment_hedged` / `quoted_line_marks` / `ends_mid_sentence`, `HEDGE_PHRASES`, `acknowledge_all_codes`, `flagged_segments`, `eligible_utterances`, the forward-tolerant reader, `note_drift`, `rule-v2.json`; the practice documents' banner and plain English; the register against `test_pilot_docs.py`'s pins).
+Round status: Closed (0 pending)
+
+**Scope:** Phase 5's working-tree diff against `0782bbc` — the 20 paths in `git status --short` (the documents, CHANGELOG, the five version files, `validation/README.md`, the plan). The blind rule held: no `validation/heldout-3/` file opened, listed or returned by a search, no lint log opened, no pytest; the subagent reported the same.
+
+- **LOW-001** — `docs/security/threat-model.md:515` and `docs/testing/kept-recordings.md:57`: a one-word "right" was said to fire `clinician_line_omitted`. It is a side word (`note_check._LATERALITY_TOKENS`), so it draws `high_risk_omission` and the second code skips the line (`test_note_check.py::test_a_one_word_side_or_negation_draws_the_first_code_only`). Found by both the executor and the subagent. Triage: Fix-now. Decision: Applied — "okay", "yeah", with the "right" / "no" case named in both.
+- **LOW-002** — `docs/security/threat-model.md:666`: the example of an unfound hedge, "not, I think, sure", IS marked (its content tokens hold the listed "i think"). Triage: Fix-now. Decision: Applied — "a listed hedge with other words inside it ("I don't really know")", the harness document's own wording. The same example in `note.segment_hedged`'s docstring is left (code, outside this phase; a docstring only).
+- **LOW-003** — the 0.3.4 passages said "dash" where the join reads only an en or em dash (`note._CONTINUATION_MARKS`; a hyphen never joins): threat-model :657, design-system :231, kept-recordings :57, CHANGELOG; the guide says "long dash" (plain English). Triage: Fix-now. Decision: Applied. The pre-0.3.4 passages that say "dash" for the bounded carry (threat-model :334, kept-recordings :44, the harness document) are older wording, left.
+- **LOW-004** — `validation/README.md:8`: "literal ceilings for R1, R2 and R3" per set, but `heldout-3`'s row has no R2 ceiling (refused on a set whose uncertainty is reported, `validation.py` `_check_sets`). Triage: Fix-now. Decision: Applied.
+- **LOW-005** — `docs/security/data-flow-map.md:440`: "a build before 0.3.4 reads it as a review warning from a newer version" — only 0.3.3 and 0.3.2 do; below 0.3.2 the note is refused. Triage: Fix-now. Decision: Applied.
+- **LOW-006** — `docs/pilot/findings-register.md:20`: the first prose mention of `h2-` / `h3-` lacked the condition the column bullet and the pilot README carry (the register's check accepts only `syn-` / `hld-` until P.3). Triage: Fix-now. Decision: Applied ("once the register's check accepts them").
+- **LOW-007** — `docs/practice/clinician-review-guide.md:130`: "A whole line you said that the note leaves out … has its own review warning" — true only for a line with none of the first warning's words. Triage: Fix-now. Decision: Applied ("with none of those words").
+- **LOW-008** — `CHANGELOG.md`: R1 was described as always carrying a review mark; the mark is required only of a fact reported wrong (D8). Triage: Fix-now. Decision: Applied.
+- **LOW-009** — `docs/practice/clinician-review-guide.md:112`: "doubt … split off from its sentence by a full stop is not marked" read as if the doubting line itself were unmarked. Triage: Fix-now. Decision: Applied ("words of doubt in a separate sentence (after a full stop) mark only their own line").
+- **LOW-010** — `docs/testing/validation-harness.md:180`: "what stays silent … since 0.3.4 only on another speaker's line, or a partly quoted clinician line" omitted the boundary condition. Triage: Fix-now. Decision: Applied ("or past a next-patient boundary").
+
+**Verified correct (no finding):** every quoted string (the five `SEPARATELY_ACKNOWLEDGED_NAMES` and the rendered tooltip, the `WARNING_COPY` titles and hints, the count line both ways, `FLAGGED_FILTER_EMPTY_LINE`, both front marks, the `ui/note.py` labels, the replay's 14 columns and totals clause); the new warning's seven conditions; `OMISSION_CODES` / `flagged_segments`; what Acknowledge all clears; the hedge scope (adjacent index, same label, the earlier segment's mark, suspect words supply nothing); `HEDGE_PHRASES` = 33 with the guide's listed and unlisted examples; `eligible_utterances`' marks and 60-character cut; the 0.3.3 reader (fields kept, one row, cleared by Acknowledge all); the practice banners and plain English; the register's tables unchanged and no `_ID_SHAPED` string; the six version fields (diff read).
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 10 LOW
+Round Classification: 🆕 10 (the first review round over Phase 5); skew=none
+Finding verification: 11 candidates; 1 merged (LOW-001, found twice); 0 dropped; each confirmed against the code named above
+Missed-issue pass: re-read `pilot-builds.md`'s new section, the review guide's diff, the threat model's new paragraph and the version diff; result: LOW-009, LOW-010
+Convergence: no CRIT, HIGH or MED — converged at round 1 of the cap of 3 (all LOW, all applied). Documents a test reads changed (`docs/pilot/`, `docs/practice/`, `validation/README.md`), so the suite is owed to the composer.
+- Last reviewed: 2026-10-24
+
+### Round 49 — 2026-10-24
+Source: independent cross-family codex peer review (composer-recorded from the read-only peer's output, `.cursor/loops/stage-4-peer-r49.log`; pass stage-4.p1, peer_round 1 of cap 5)
+Reviewer: codex gpt-6-astra (medium)
+Round status: Closed (0 pending)
+
+**Scope:** Phase 5's working-tree diff against `0782bbc` (the documents, CHANGELOG, `validation/README.md`, the five version files), checked against the definitions the documents quote at HEAD (`ui/models.py`, `ui/note.py`, `note_check.py`, `note.py`, `replay_kept.py`), `test_pilot_docs.py`, `test_install_layout.py` and the plan's Phase 1, 3, 4 and 5 records and Round 48. Read-only; no suite, no network. The blind rule held: no `validation/heldout-3/` file was opened or listed.
+
+#### Findings
+
+- **PR-LOW-001** (LOW, docs-only, `docs/testing/validation-harness.md:70`): The metric summary still describes the pre-0.3.4 hedge predicate. It incorrectly says marks without a hedge in their own words receive no credit; line 64 repeats that requirement. — Evidence: “which marks only a line holding one. Such a mark credits nothing”. At `desktop/src/scribe_desktop/note.py:475`, a same-speaker neighbour supplies the hedge when joined mid-sentence; `:522` uses that segment scope for the mark. The Phase 3 record at `.cursor/plans/plan-validation-run6.md:2269` explicitly states: “`hedge_marks_unhedged` now counts a mark whose segment is not hedged within the scope.” Recommendation: Fix-now — Update both metric summaries to describe segment scope, including a joined neighbour, consistently with the amendment paragraph. /fix decision: Applied
+  - /fix notes:
+    - **Verified:** `validation.py:1865` counts a mark unhedged unless `segment_hedged(document, coords.segment_index)`, and `:1937` reads the script term through `script_line_hedged` (Phase 3's record). The two summaries still described the 0.3.3 reading: "whose own words hold one too" (`uncertainty_surfaced`, :64) and "words that hold no spoken hedge … marks only a line holding one" (:70).
+    - **Fix:** both now name the hedge scope since the metric amendments of 2026-10-22 — its own words, or a same-speaker neighbour joined mid-sentence (`script_line_hedged` over the script, `segment_hedged` over the transcript) — and :70 says the shipped checker marks by the same rule.
+    - **Pattern siblings:** a search of `docs/` for the old predicate ("own words hold", "holding one", `words_hold_hedge`, "marks only a line") found only :81, the dated 2026-10-13 amendment paragraph — history, superseded in place by :85, left. The threat model, design system, review guide and kept-recordings were moved to the scope in rx1 (Task 5.1); none restates the old predicate.
+  - /fix date: 2026-10-24
+- **PR-LOW-002** (LOW, docs-only, `docs/testing/validation-harness.md:180`): The new exhaustive description of remaining silent omissions omits the suspect-word exception and therefore overstates Check 4’s coverage. A wholly uncovered clinician line before the boundary can remain unwarned when all its content words are suspect. — Evidence: “since 0.3.4 only on another speaker's line, on a clinician's line the note quotes in part, or past a next-patient boundary”. However, `desktop/src/scribe_desktop/note_check.py:1730` skips the new warning when `not any(content_tokens(word.word_text) for word in words if not word.suspect)`; the first omission code also excludes suspect words at `:1682`. Recommendation: Fix-now — Include this exception and qualify the following assertion that every wholly unquoted clinician line “draws Check 4's second code”. /fix decision: Applied
+  - /fix notes:
+    - **Verified:** `note_check.clinician_line_omissions` skips a segment when `not any(content_tokens(word.word_text) for word in words if not word.suspect)` (`note_check.py:1730`), and the first code leaves suspect words out, so a wholly uncovered clinician line whose every content word is suspect draws neither code and stays silent.
+    - **Fix (:180):** the "what stays silent" list gains "on one whose every content word the guard marked suspect", and the next clause reads "any other wholly unquoted line … draws Check 4's second code".
+    - **Pattern siblings fixed in the same pass** (a condition list that left out the suspect-word exception): `validation-harness.md:85` ("a content word not marked suspect") and `:184` (the same, plus "before any next-patient boundary"); `docs/design-system.md:155` (the flagged-lines bullet: "holding a content word not marked possibly not speech, before any possible next patient"); `CHANGELOG.md`'s 0.3.4 entry ("a content word not marked possibly not speech"); `docs/practice/clinician-review-guide.md:137`, in plain English ("and neither does a line whose words are all marked as possibly not speech").
+    - **Checked, already right:** the threat model's paragraph (:504-506 names "at least one content word that is not suspect"); `kept-recordings.md`'s 0.3.4 paragraph ("with a content word that is not suspect"); the data-flow map's flow 10 (it names no condition list, "the same in-memory reads as the first code").
+    - **Left as summaries** (they name the warning, they do not state its conditions): the kept-recordings column row, the shipping-gate note, "Rolling back below 0.3.4" in `pilot-builds.md` and the practice README's sentence.
+  - /fix date: 2026-10-24
+
+- Verification counts: 2 defect claims checked, 2 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-10-24
+
 ## Tasks
 
 ### Phase 0 — Budget, measurement, decisions, freeze, predictions
@@ -2197,9 +2358,28 @@ Nothing to build. Tasks 2.1 and 2.2 are removed (their text survives in D2 and t
   - `[2026-10-24]` **Amended:** D15's and D17's disclosure text verbatim (the gate change after a predicted failure and before the run, its reason, the Honest forecast's quoted line, the critic's objection and the four loosenings named); D13 and D14 as dated metric amendments; `heldout-3`, its brief's bounds and its scope qualifier; the deleted greeting table; the four-set run and `--set`; "the three-set gate" in the task line above reads as D15's; `validation-harness.md:122` ("still silent … fails the run") qualified — true for the gate sets, reported for `heldout` and `heldout-2`. `[2026-10-24, peer round 25]` D18's falsifiers and D15's "unchanged" clause are worded as residue-adjusted counts (an R1-cleared silent omission within the ceiling passes v2).
 
 ### Phase 5 — Documents and version
-- [ ] 🟥 **5.1 Documents (D10)** — as D10 lists; exact on-screen strings quoted from `ui/models.py`; the review guide's 0.3.4 lines marked as awaiting the practitioner's approval; a sweep of `docs/` for "high_risk_omission", "omission warning", "after possible next patient", "Acknowledge all" and "hedge" reconciled and recorded here. `test_pilot_docs.py` green.
+- [x] 🟩 **5.1 Documents (D10)** — as D10 lists; exact on-screen strings quoted from `ui/models.py`; the review guide's 0.3.4 lines marked as awaiting the practitioner's approval; a sweep of `docs/` for "high_risk_omission", "omission warning", "after possible next patient", "Acknowledge all" and "hedge" reconciled and recorded here. `test_pilot_docs.py` green.
   - `[2026-10-24]` **Amended:** `heldout-3` (`h3-`) beside `h2-` in `docs/pilot/README.md:161` and the register's prose; `validation/README.md` already names it (0.17); the review guide unchanged by the re-plan.
-- [ ] 🟥 **5.2 Version 0.3.4 and the rollback line** — the six version places (`npm version 0.3.4 --no-git-tag-version` needs npm; a leg without it sets them by hand); "Rolling back below 0.3.4" in `docs/release/pilot-builds.md`: the new code reads as a newer-build review warning on 0.3.3, cleared by its Acknowledge all, so the separately-acknowledged control is lost there; nothing else changes on disk. Done when: `test_install_layout.py:867` green; `npm run qa`.
+  - **`[2026-10-24]` Built (stage-4 rx1; documents only; `test_pilot_docs.py` and the suite owed to the composer through the blind runner).** Every on-screen string quoted was copied from `ui/models.py` at HEAD (`WARNING_COPY["clinician_line_omitted"]` title and hint, `["high_risk_omission"]`, `["hedged_source"]` title, `["possible_next_patient"]`; `ACKNOWLEDGE_ALL_TOOLTIP` as its f-string renders over the five `SEPARATELY_ACKNOWLEDGED_NAMES`; `flagged_count_line`'s plural form; `NEXT_PATIENT_LINE_MARK`) and from `ui/note.py` ("Show flagged lines only", "Add line to section", "Edit the note"); the replay's column and totals clause from `replay_kept.py`.
+    - **Per D10's list:**
+      - `docs/security/threat-model.md` — surface 2: a 0.3.4 paragraph after Check 4's warning (the second code's seven conditions, `[flagged]`, the one count line, separately acknowledged, never deletes; named residues: a one-word acknowledgement fires it, a clinician line attributed to the other voice fires nothing, coordinate coverage and a confirmed autofill line); NEXT PATIENT's mark → `[next patient?]` (the old mark named as history) and "Check 4's second code stops at the boundary"; THE UNSURE MARK: 33 phrases (16 in 0.3.3) and scope (ii), its SCOPE AND COARSENESS residues rewritten (the old examples "not sure" / "I don't know" / "I reckon" were stale: the last two are listed since Task 0.9); surface 3's "an uncued sentence … stays unflagged" qualified for the clinician's wholly unquoted line; surface 5's separately-acknowledged set (five, the tooltip names all five) and its "Rolling back" (0.3.4's code on 0.3.3 / 0.3.2); the re-review triggers gain a 0.3.4 line.
+      - `docs/security/data-flow-map.md` — flow 10 gains the 0.3.4 paragraph (in-memory reads only; the new warning's position-only coordinates saved in `note.enc`, the stored note's only change); flow 7 needed nothing (0.3.4 changes no transcription); the title names the plan.
+      - `docs/release/pilot-builds.md` — "Rolling back below 0.3.4" (Task 5.2).
+      - `docs/testing/validation-harness.md` — reconciled, not rewritten (Task 4.4 wrote it): three stale lines in Known limits — "Material facts in an uncued sentence" (what stays silent, since 0.3.4), "Expected uncertainty" (the hedge scope, 16 → 33, a split hedge not joined), "Spoken contradictions" (`clinician_line_omitted` among the review warnings, read by `warned`).
+      - `docs/testing/shipping-gate.md` — a dated note after the 0.3.2 clarification (not a rubric change, not inside the clarification awaiting initials): the two rows cleared only by their own Acknowledge since 0.3.3 / 0.3.4, and `[check: unsure]` cleared by "Acknowledge all".
+      - `docs/testing/kept-recordings.md` — the "Clinician lines omitted" column row and a 0.3.4 paragraph (Check reviews can rise; Sections missing unchanged; 14 columns).
+      - `docs/design-system.md` — the flagged-lines bullet (both codes, the count line's 0.3.4 wording, `OMISSION_CODES`), the next-patient bullet (`[next patient?]`, D3's reason), the check-marks bullet (scope (ii)), the two-button bullet (the fifth code, its copy, the tooltip word for word), the omission-copy bullet (its sibling's copy).
+      - `docs/practice/clinician-review-guide.md` — the 0.3.4 lines, marked "added 2026-10-24 for version 0.3.4, awaiting the practitioner's approval" in the guide's header (the wording the 0.3.2 lines used): step 4 (the wider doubt list, the joined halves, what stays unmarked), step 5 (`[next patient?]`), step 6 (the new warning, how to find and add the line, a one-word reply can raise it, a misattributed line raises nothing). Plain English, no file or code names (the guide quotes the screen word for word). `docs/practice/README.md`'s "updated on …" sentence gains 0.3.3 and 0.3.4 (both guide-only) — 0.3.3 was missing.
+      - `docs/pilot/README.md:161` and the register's prose (:20, :33) — `h2-01` … and `h3-01` … named as joining with run 6's register update, "once its Encounter check names them" — prose only; the table and `test_pilot_docs.py`'s Encounter pattern stay P.3's, so the prose does not claim the check accepts them yet.
+      - `docs/architecture/phase-history.md:55` — the two quotes of the old mark keep their history and gain "(`[next patient?]` since 0.3.4)"; `:51` holds no quote of the mark (its "hedge" is 0.3.3's history, correct).
+      - `validation/README.md` — the `rules/` line names `rule-v2.json` (schema 2, four set rows, the gate flag, `heldout-3`'s uncertainty reported, `--set`), checked against the file.
+      - `CHANGELOG.md` — the 0.3.4 entry (Phases 0–5) in the 0.3.3 entry's style. AGENTS.md not edited (the composer's `/document`).
+    - **The sweep (2026-10-24, before the edits):** searched `docs/` (all files), `validation/README.md` and `CHANGELOG.md` — never `validation/` as a whole, never `validation/heldout-3/` (no `h3-` line returned). Terms, case-insensitive: "high_risk_omission", "omission warning", "after possible next patient", "Acknowledge all" (44 matching lines in 8 files: threat-model 12, design-system 10, validation-harness 10, phase-history 3, pilot-builds 3, practice guide 3, kept-recordings 2, shipping-gate 1); "hedge" (42 occurrences in 10 files: validation-harness 14, threat-model 10, findings-register 9, design-system 2, phase-history 2, and one each in cross-agent-orchestration, exit-gate, pilot README, pilot-builds, kept-recordings); `CHANGELOG.md` 3 (the 0.3.1–0.3.3 entries, history); `validation/README.md` 0.
+      - **Changed (stale against 0.3.4 as built):** threat-model :497-501 (extended), :532, :622-637, :643-653, :829-836, :855-860, :4478; design-system :153-175, :218-223, :409-421, :845-849; practice guide :101-113 and the header; kept-recordings :40 (a row after it) and a paragraph after :53; shipping-gate :102 (a note after it); validation-harness :180, :182, :184; phase-history :55 (×2); pilot README :161, register :20, :33; validation/README :8.
+      - **Correct already, left:** phase-history :51, :55's other hedge mentions, :75, :77 (0.3.1 and 0.3.3 history); design-system :388-408 (the 0.3.1–0.3.3 behaviour, still true; extended after it); threat-model :498, :527, :629 ("Acknowledge all" clears the unsure mark — still true), :781, :793, :836-838, :877 (0.3.2 history and still-true reader lists); kept-recordings :47, :52 (0.3.2 / 0.3.3 paragraphs, still true as history); pilot-builds :21, :22 (builds of record, history) and :73 (0.3.3's rollback, true); validation-harness :23, :64, :67, :77, :81, :85, :87, :163, :166, :167, :186 (Task 4.4's text or dated history); shipping-gate :102 itself (awaiting initials; not edited); the register's rows :105-:190 (P.3's table); cross-agent-orchestration :1471 (an unrelated "hedge"); CHANGELOG's three (history).
+      - **Found, not D10's, routed (LOW, headless Include in plan → P.3):** `docs/pilot/exit-gate.md:16-25` ("Validation passed … under rule v1 as amended") and `docs/pilot/README.md:83-99` (step 3's `--rule …option-a-proposed.json`) describe the validation run as rule v1's; under D15 run 6's gate is rule v2 on the 50 and `heldout-3`. Rewording a signed exit-gate line is the practitioner's, so it was not edited here; added to P.3 below.
+- [x] 🟩 **5.2 Version 0.3.4 and the rollback line** — the six version places (`npm version 0.3.4 --no-git-tag-version` needs npm; a leg without it sets them by hand); "Rolling back below 0.3.4" in `docs/release/pilot-builds.md`: the new code reads as a newer-build review warning on 0.3.3, cleared by its Acknowledge all, so the separately-acknowledged control is lost there; nothing else changes on disk. Done when: `test_install_layout.py:867` green; `npm run qa`.
+  - **`[2026-10-24]` Built (stage-4 rx1; by hand — no npm in the leg; `test_install_layout.py` and `npm run qa` owed to the composer).** 0.3.3 → 0.3.4 in the six fields the version test reads: `desktop/pyproject.toml` `[project] version`, `desktop/src/scribe_desktop/__init__.py` `__version__`, `extension/package.json` `version`, `extension/package-lock.json` top-level `version` and `packages[""].version`, `extension/src/manifest.ts` `version:` — nothing else in those files touched. No other `"0.3.3"` literal under `desktop/` or `extension/` (node_modules excluded). "Rolling back below 0.3.4" sits above "Rolling back below 0.3.3": one new stored thing (the review warning), read on 0.3.3 / 0.3.2 as "A review warning from a newer version of the app", one row with its count, coordinates kept, cleared by that build's "Acknowledge all" — the separate click lost, no warning dropped (Task 1.3's pin named); a note the older build generates is checked by its own rules; the `[next patient?]` mark is on screen only; no recording needs finishing for 0.3.4's sake; below 0.3.3 the older rules apply. ruff and mypy clean (66 source files).
 
 ### Hardening stage
 - [ ] 🟥 **H1** `/review-loop` to convergence over the whole run.
@@ -2226,6 +2406,7 @@ Nothing to build. Tasks 2.1 and 2.2 are removed (their text survives in D2 and t
   - `[2026-10-24]` **Amended:** rows for `heldout` and `heldout-2` from run 6 by class — an unrouted patient statement silently absent (control: the chooser lists every unrouted line; the clinician's review), hedge idioms outside every list, the confident recogniser errors, the closing gap — and `heldout-3`'s after P.4; the Encounter cell pattern gains `h2-` and `h3-` with both-ways cases.
   - Move rows to `resolved` ("0.3.4 (commit <H4 short hash>)") or keep them `controlled` (control text ≤ 200 characters) by the run's result; new rows from `heldout-2` as `h2-NN` and (`[2026-10-24]`) from `heldout-3` as `h3-NN` after P.4 — the Encounter cell pattern in `test_pilot_docs.py:113` becomes `(?:syn|hld|h2|h3)-` with both-ways cases (:266-292), and the register's prose (:20, :33) and `docs/pilot/README.md:161` name the third and fourth id forms.
   - Put the P.5 question (shadow off?) to the practitioner as a dated decision on `plan-pilot.md`.
+  - `[2026-10-24, stage-4 Task 5.1 sweep; LOW, headless Include in plan]` Reconcile `docs/pilot/exit-gate.md`'s "Validation passed" line (rule v1 as amended) and `docs/pilot/README.md` step 3 (`--rule …option-a-proposed.json`) with D15's gate (rule v2, `--set`, the 50 and `heldout-3`, `heldout` and `heldout-2` reported) — the exit-gate wording is the practitioner's.
   - Done when: `test_pilot_docs.py` green and committed.
 
 - [ ] 🟥 **P.4 The `heldout-3` diagnosis, after run 6 (D16)**
