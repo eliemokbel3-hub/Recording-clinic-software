@@ -19,7 +19,10 @@ No clinical content: invented sentences only.
 
 from __future__ import annotations
 
+import ast
 import dataclasses
+import inspect
+import textwrap
 import typing
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -48,6 +51,7 @@ from scribe_desktop.note import (
     segment_hedged,
     text_digest,
     text_holds_hedge,
+    whole_utterance_assertion,
 )
 from scribe_desktop.note_check import (
     _LATERALITY_TOKENS,
@@ -55,6 +59,7 @@ from scribe_desktop.note_check import (
     _POLARITY_TOKENS,
     _STRENGTH_UNITS,
     _omission_flag_token,
+    clinician_line_omissions,
     omission_warnings,
     reconstruction_warnings,
 )
@@ -67,18 +72,29 @@ from scribe_desktop.transcription import (
     TranscriptSegment,
     TranscriptWord,
 )
+from scribe_desktop.ui.models import OMISSION_CODES
 from scribe_desktop.validation import (
+    REFERENCE_HEDGES,
     EncounterMetrics,
     EncounterOutcome,
     EncounterScript,
     FactOutcome,
+    HarnessInputs,
     PassRule,
     ProseCounts,
+    ReferenceReading,
+    RuleError,
     WordErrors,
+    class_breaches,
+    class_counts,
     confirm_all,
     encounter_metrics,
     is_structured_claim_word,
+    reference_reading,
     rule_failures,
+    run_passed,
+    run_passed_v1,
+    v1_failures,
     word_errors,
 )
 
@@ -109,6 +125,7 @@ def _script(
     *lines: tuple[str, str],
     facts: Sequence[dict[str, Any]] = (),
     expected_warnings: Sequence[str] = (),
+    axes: Sequence[str] = ("negation",),
 ) -> EncounterScript:
     """``lines`` are ``(role, text)`` in spoken order."""
     return EncounterScript.model_validate(
@@ -116,7 +133,7 @@ def _script(
             "schema_version": 1,
             "encounter_id": "syn-test",
             "appointment_type": "follow_up",
-            "axes": ["negation"],
+            "axes": list(axes),
             "lines": [{"role": role, "text": text} for role, text in lines],
             "facts": list(facts),
             "expected_warnings": list(expected_warnings),
@@ -897,19 +914,23 @@ class TestSegmentBoundaries:
 
 class TestOmissionWarnings:
     def test_an_unrelated_warning_in_the_same_segment_leaves_the_omission_silent(self) -> None:
-        """Segment 0 = [rest, the, knee, and, take, 2, tablets]; nothing is in
-        the note. The real Check 4 warns on the uncovered "2" (word 5). The
-        material fact [rest, the, knee] holds no high-risk word of its own,
-        so the warning does not count for it: a silent omission. The fact
-        [2, tablets] owns the warned word: a warned omission."""
+        """Segment 0 (the PATIENT's, SPEAKER_2) = [rest, the, knee, and, take,
+        2, tablets]; nothing is in the note. The real Check 4 warns on the
+        uncovered "2" (word 5). The material fact [rest, the, knee] holds no
+        high-risk word of its own, so the warning does not count for it: a
+        silent omission. The fact [2, tablets] owns the warned word: a warned
+        omission. (Since validation-run6 D13 the same line spoken by the
+        confirmed clinician credits both facts — ``TestFlaggedLineCredit``;
+        a patient's line keeps this rule.)"""
         script = _script(
-            ("clinician", "rest the knee and take 2 tablets"),
-            facts=[_fact("present", "rest the knee", 0), _fact("dose", "2 tablets", 0)],
+            ("clinician", "how is it"),
+            ("patient", "rest the knee and take 2 tablets"),
+            facts=[_fact("present", "rest the knee", 1), _fact("dose", "2 tablets", 1)],
         )
-        document = _doc((SPEAKER_1, "rest the knee and take 2 tablets"))
+        document = _doc((SPEAKER_1, "how is it"), (SPEAKER_2, "rest the knee and take 2 tablets"))
         note = _checked(document)
         assert [(w.note_warning_code, w.source_coords) for w in note.note_warnings] == [
-            ("high_risk_omission", SourceCoords(0, 5, 5))
+            ("high_risk_omission", SourceCoords(1, 5, 5))
         ]
         metrics = encounter_metrics(document, note, script)
         rest, dose = metrics.facts
@@ -918,17 +939,19 @@ class TestOmissionWarnings:
         assert (metrics.silent_omissions, metrics.warned_omissions) == (1, 1)
 
     def test_between_two_high_risk_words_is_still_silent_and_fails_option_a(self) -> None:
-        """Segment 0 = [use, 2, cold, packs, over, the, sore, calf, 3, times]:
-        Check 4's ONE warning spans words 1..8 (the two numbers). The fact
-        [sore, calf] lies inside that interval but holds no high-risk word —
-        an interval proves nothing (peer round 4): silent, and option (a)
-        fails the encounter."""
+        """Segment 0 = [use, 2, cold, packs, over, the, sore, calf, 3, times],
+        its first word quoted in the note: Check 4's ONE warning spans words
+        1..8 (the two numbers). The fact [sore, calf] lies inside that
+        interval but holds no high-risk word — an interval proves nothing
+        (peer round 4): silent, and option (a) fails the encounter. (The line
+        is partly in the note, so validation-run6 D13's whole-line credit
+        does not reach it.)"""
         script = _script(
             ("clinician", "use 2 cold packs over the sore calf 3 times"),
             facts=[_fact("present", "sore calf", 0)],
         )
         document = _doc((SPEAKER_1, "use 2 cold packs over the sore calf 3 times"))
-        note = _checked(document)
+        note = _checked(document, (0, 0, 0))
         assert [w.source_coords for w in note.note_warnings] == [SourceCoords(0, 1, 8)]
         metrics = encounter_metrics(document, note, script)
         fact = _only_fact(metrics)
@@ -992,6 +1015,8 @@ class TestOmissionMetricAmendment:
         assert (fact.verdict, fact.warned, fact.silent_omission) == ("omitted", True, False)
         assert fact.silent_omission_v1
         assert (metrics.silent_omissions, metrics.silent_omissions_v1) == (0, 1)
+        # 0.3.3's predicate warned it too (the fact's own flagged word).
+        assert metrics.silent_omissions_v033 == 0
         assert rule_failures(OPTION_A, _measured(metrics)) == ()
 
     def test_the_run_1_column_keeps_run_1s_clinician_only_scope(self) -> None:
@@ -1021,36 +1046,238 @@ class TestOmissionMetricAmendment:
 
     def test_a_provider_that_routes_nothing_still_fails_rule_v1(self, tmp_path: Path) -> None:
         """Through the real compose -> confirm -> finalise pipeline with a
-        provider that places nothing. The material fact [rest, the, knee]
-        holds no token ``_omission_flag_token`` accepts for its speaker (no
-        side, number, dose, unit, negation, medication, nor a name-like
-        token on this clinician line), so it stays SILENT and option (a)
+        provider that places nothing. Since validation-run6 D13 the
+        clinician's wholly uncovered line (it draws ``high_risk_omission`` on
+        "2") credits every word on it, so [rest, the, knee] is warned —
+        though still silent under the 0.3.3 predicate, which holds no token
+        of it. The PATIENT's [worse, at, night] holds no token
+        ``_omission_flag_token`` accepts for a patient (no side, number,
+        dose, unit, negation, medication, nor a name-like token) and D13
+        never reaches a patient line, so it stays SILENT and option (a)
         fails the encounter; the warned facts are never counted as placed.
-        The run-1 column can only count as many silent omissions or more."""
+        The run-1 and 0.3.3 columns can only count as many silent omissions
+        or more. (Clinician-only speech routed nowhere would now be fully
+        warned — the loosening D15 names (1).)"""
         script = _script(
             ("clinician", "rest the knee and take 2 tablets"),
-            ("patient", "my left knee is sore"),
+            ("patient", "it is worse at night"),
             facts=[
                 _fact("present", "rest the knee", 0),
                 _fact("dose", "2 tablets", 0),
-                _fact("laterality", "left knee", 1),
+                _fact("present", "worse at night", 1),
             ],
         )
         document = _doc(
-            (SPEAKER_2, "rest the knee and take 2 tablets"), (SPEAKER_1, "my left knee is sore")
+            (SPEAKER_2, "rest the knee and take 2 tablets"), (SPEAKER_1, "it is worse at night")
         )
         config = _pipeline_config(tmp_path)
         draft = compose_draft(document, config, _RouteNothing(), clinician_speaker=SPEAKER_2)
         note = finalise_note(draft, confirm_all(draft, _NOW), document, config, created_at=_NOW)
         assert note.note_sections == ()
+        assert [
+            (w.note_warning_code, w.source_coords)
+            for w in note.note_warnings
+            if w.note_warning_code in OMISSION_CODES
+        ] == [("high_risk_omission", SourceCoords(0, 5, 5))]
         metrics = encounter_metrics(document, note, script)
-        rest, dose, side = metrics.facts
-        assert (rest.verdict, rest.warned) == ("omitted", False)
-        assert (dose.verdict, dose.warned) == ("omitted", True)
-        assert (side.verdict, side.warned) == ("omitted", True)
-        assert (metrics.silent_omissions, metrics.silent_omissions_v1) == (1, 2)
+        rest, dose, night = metrics.facts
+        assert (rest.verdict, rest.warned, rest.silent_omission_v033) == ("omitted", True, True)
+        assert (dose.verdict, dose.warned, dose.silent_omission_v033) == ("omitted", True, False)
+        assert (night.verdict, night.warned, night.silent_omission) == ("omitted", False, True)
+        assert (
+            metrics.silent_omissions,
+            metrics.silent_omissions_v033,
+            metrics.silent_omissions_v1,
+        ) == (1, 2, 2)
         assert metrics.silent_omissions_v1 >= metrics.silent_omissions
+        assert metrics.silent_omissions_v033 >= metrics.silent_omissions
         assert rule_failures(OPTION_A, _measured(metrics)) == ("silent_omission",)
+
+
+def _warning(code: str, segment: int, first: int, last: int) -> NoteWarning:
+    """A hand-made review warning on ``(segment, first..last)``, no section
+    and no assertion — a stub checker's mark."""
+    return NoteWarning(
+        note_warning_code=code,
+        severity="review",
+        source_coords=SourceCoords(segment, first, last),
+    )
+
+
+class TestFlaggedLineCredit:
+    """Metric amendment 2026-10-24 (validation-run6 plan D13, amending D7):
+    an omitted fact is ``warned`` when its aligned word lies on a segment
+    that (1) an omission warning of either code anchors, (2) the confirmed
+    clinician spoke, (3) no note line touches and (4) lies before Check 6's
+    boundary — each condition pinned both ways here. 0.3.3's predicate is
+    kept for the "Silent (0.3.3 predicate)" column; no rule reads it."""
+
+    _LINE = "rest the knee tonight"
+
+    def _script(self, *lines: tuple[str, str], line: int = 0) -> EncounterScript:
+        return _script(*lines, facts=[_fact("present", "rest the knee", line)])
+
+    @pytest.mark.parametrize("code", sorted(OMISSION_CODES))
+    def test_a_wholly_uncovered_flagged_clinician_line_is_credited(self, code: str) -> None:
+        """Segment 0 (the clinician, SPEAKER_1) = [rest, the, knee, tonight],
+        nothing in the note, one warning of ``code`` on the segment. No word
+        of the fact is a 0.3.3 flag word, so 0.3.3 and run 1 left it silent;
+        D13 credits the whole line."""
+        document = _doc((SPEAKER_1, self._LINE))
+        note = _note(document, warnings=[_warning(code, 0, 0, 3)])
+        metrics = encounter_metrics(document, note, self._script(("clinician", self._LINE)))
+        fact = _only_fact(metrics)
+        assert (fact.verdict, fact.warned, fact.silent_omission) == ("omitted", True, False)
+        assert (fact.silent_omission_v033, fact.silent_omission_v1) == (True, True)
+        assert (
+            metrics.silent_omissions,
+            metrics.silent_omissions_v033,
+            metrics.silent_omissions_v1,
+        ) == (0, 1, 1)
+        assert metrics.warned_omissions == 1
+        assert rule_failures(OPTION_A, _measured(metrics)) == ()
+
+    def test_the_real_check_4_code_on_an_uncovered_clinician_line_credits_it(
+        self, tmp_path: Path
+    ) -> None:
+        """Through the real checker: ``clinician_line_omissions`` warns the
+        clinician's uncovered line (it holds no high-risk word), and the
+        harness credits it."""
+        document = _doc((SPEAKER_1, self._LINE))
+        bare = _note(document)
+        warnings = clinician_line_omissions(bare, document, _pipeline_config(tmp_path))
+        assert [(w.note_warning_code, w.source_coords) for w in warnings] == [
+            ("clinician_line_omitted", SourceCoords(0, 0, 3))
+        ]
+        note = _note(document, warnings=warnings)
+        fact = _only_fact(
+            encounter_metrics(document, note, self._script(("clinician", self._LINE)))
+        )
+        assert (fact.warned, fact.silent_omission, fact.silent_omission_v033) == (
+            True,
+            False,
+            True,
+        )
+
+    def test_a_warning_on_another_segment_credits_nothing(self) -> None:
+        """Condition (1): the anchor is the fact's own segment."""
+        document = _doc((SPEAKER_1, self._LINE), (SPEAKER_1, "see you soon"))
+        note = _note(document, warnings=[_warning("clinician_line_omitted", 1, 0, 2)])
+        script = self._script(("clinician", self._LINE), ("clinician", "see you soon"))
+        fact = _only_fact(encounter_metrics(document, note, script))
+        assert (fact.verdict, fact.warned, fact.silent_omission) == ("omitted", False, True)
+
+    def test_a_line_with_no_omission_warning_credits_nothing(self) -> None:
+        """Condition (1): an uncovered clinician line with no omission
+        warning at all (a stub checker that raised none) — silent."""
+        document = _doc((SPEAKER_1, self._LINE))
+        fact = _only_fact(
+            encounter_metrics(document, _note(document), self._script(("clinician", self._LINE)))
+        )
+        assert (fact.warned, fact.silent_omission) == (False, True)
+
+    def test_a_patient_line_is_never_credited(self) -> None:
+        """Condition (2): the same warning on the PATIENT's line credits
+        nothing — the remedy D13 credits is the clinician's own line."""
+        document = _doc((SPEAKER_1, "how is it"), (SPEAKER_2, self._LINE))
+        note = _note(document, warnings=[_warning("clinician_line_omitted", 1, 0, 3)])
+        script = self._script(("clinician", "how is it"), ("patient", self._LINE), line=1)
+        fact = _only_fact(encounter_metrics(document, note, script))
+        assert (fact.verdict, fact.warned, fact.silent_omission) == ("omitted", False, True)
+
+    def test_no_confirmed_clinician_credits_nothing(self) -> None:
+        """Condition (2): with no clinician confirmed, no line is the
+        clinician's."""
+        document = _doc((SPEAKER_1, self._LINE))
+        note = _note(
+            document, warnings=[_warning("clinician_line_omitted", 0, 0, 3)], clinician=None
+        )
+        fact = _only_fact(
+            encounter_metrics(document, note, self._script(("clinician", self._LINE)))
+        )
+        assert (fact.warned, fact.silent_omission) == (False, True)
+
+    def test_a_partly_covered_line_is_not_credited(self) -> None:
+        """Condition (3): the note quotes "tonight" (word 3), so the line is
+        not wholly uncovered; the hand-made ``high_risk_omission`` still
+        anchors it, but no word of the fact is a flag word — silent."""
+        document = _doc((SPEAKER_1, self._LINE))
+        note = _note(document, (0, 3, 3), warnings=[_warning("high_risk_omission", 0, 0, 2)])
+        fact = _only_fact(
+            encounter_metrics(document, note, self._script(("clinician", self._LINE)))
+        )
+        assert (fact.verdict, fact.warned, fact.silent_omission) == ("omitted", False, True)
+
+    @pytest.mark.parametrize(("boundary", "credited"), [(0, False), (1, True)])
+    def test_only_a_line_before_the_next_patient_boundary_is_credited(
+        self, boundary: int, credited: bool
+    ) -> None:
+        """Condition (4): Check 6's ``possible_next_patient`` warning on
+        segment 0 puts the line past the boundary (the remedy, adding it,
+        would put the next patient's words in this note); on segment 1 the
+        line is before it."""
+        document = _doc((SPEAKER_1, self._LINE), (SPEAKER_1, "good morning come on in"))
+        note = _note(
+            document,
+            warnings=[
+                _warning("clinician_line_omitted", 0, 0, 3),
+                _warning("possible_next_patient", boundary, 0, 4 if boundary else 3),
+            ],
+        )
+        script = self._script(("clinician", self._LINE), ("clinician", "good morning come on in"))
+        fact = _only_fact(encounter_metrics(document, note, script))
+        assert (fact.warned, fact.silent_omission) == (credited, not credited)
+
+    def test_a_suspect_word_is_never_credited(self) -> None:
+        """The invented-text guard's invariant (D6) holds for D13 too: the
+        harness's ``warned`` never counts a suspect word."""
+        document = _all_suspect(_doc((SPEAKER_1, self._LINE)))
+        note = _note(document, warnings=[_warning("clinician_line_omitted", 0, 0, 3)])
+        fact = _only_fact(
+            encounter_metrics(document, note, self._script(("clinician", self._LINE)))
+        )
+        assert (fact.warned, fact.silent_omission) == (False, True)
+
+    def test_a_wrong_verdict_with_a_0_3_3_silent_alternative(self) -> None:
+        """ref [ice], hyp [heat, cold]: two optimal alignments of cost 2 — A
+        (ice->heat, insert cold): "heat" is quoted, so the fact is WRONG; B
+        (insert heat, ice->cold): "cold" is on segment 1, wholly uncovered
+        and anchored by ``clinician_line_omitted`` — omitted, credited under
+        D13, silent under 0.3.3. The verdict is A's; only the 0.3.3 column
+        counts B's silent omission."""
+        script = _script(("clinician", "ice"), facts=[_fact("present", "ice", 0)])
+        document = _doc((SPEAKER_1, "heat"), (SPEAKER_1, "cold"))
+        note = _note(document, 0, warnings=[_warning("clinician_line_omitted", 1, 0, 0)])
+        metrics = encounter_metrics(document, note, script)
+        fact = _only_fact(metrics)
+        assert (fact.verdict, fact.ambiguous) == ("wrong", True)
+        assert (
+            metrics.material_wrong,
+            metrics.silent_omissions,
+            metrics.silent_omissions_v033,
+            metrics.silent_omissions_v1,
+        ) == (1, 0, 1, 1)
+
+    def test_the_walk_state_holds_ten_flags(self) -> None:
+        """D13 and D8 each added a flag to the fact walk's state (0.3.3's
+        ``warned`` and R1's review mark): ten flags, so at most 2**10 states
+        per alignment cell."""
+        assert validation._FactState._fields == (
+            "all_matched",
+            "all_deleted",
+            "in_any",
+            "in_all",
+            "warned",
+            "surfaced",
+            "warned_v1",
+            "hedged",
+            "warned_v033",
+            "marked",
+        )
+        # Flags only (never a history or a position), so equal states merge
+        # and a cell holds at most 2**10 — D7's repeated-token bound is the
+        # state's shape, pinned here, rather than one measured walk.
+        assert set(typing.get_type_hints(validation._FactState).values()) == {bool}
 
 
 class TestDeletedByTranscription:
@@ -1824,6 +2051,813 @@ class TestPassRule:
         assert "word_error_rate" not in rule_failures(OPTION_A, _measured(metrics))
         ceiling = PassRule(schema_version=1, rule_name="option-b", max_word_error_rate=0.2)
         assert "word_error_rate" in rule_failures(ceiling, _measured(metrics))
+
+
+# ---------------------------------------------------------------------------
+# validation-run6 plan D8 (as amended by D14): the residue classes
+# ---------------------------------------------------------------------------
+
+# The run's reading of the script's own words, built by hand: fact 0 right
+# on the reference, no boundary there, no tail.
+_RIGHT_ON_REFERENCE = ReferenceReading(facts_right=frozenset({0}), boundary=None, tail_start=None)
+
+
+class TestResidueR1:
+    """R1 — a recogniser error: a material fact reported ``wrong`` or a
+    silent omission, no alternative of any statement matching every token,
+    right on the reference reading, and (for ``wrong``) every wrong
+    alternative carrying a review mark. It clears ``material_wrong`` and
+    ``silent_omission`` only."""
+
+    _SCRIPT_LINE = "the ankle is swollen"
+
+    def _script(self, **fact: Any) -> EncounterScript:
+        return _script(
+            ("clinician", self._SCRIPT_LINE), facts=[_fact("present", "ankle", 0, **fact)]
+        )
+
+    def _misheard(
+        self, *warnings: NoteWarning, reference: ReferenceReading | None = _RIGHT_ON_REFERENCE
+    ) -> EncounterMetrics:
+        """ref [the, ankle, is, swollen], hyp [the, angle, is, swollen]: one
+        optimal alignment (cost 1), ankle->angle inside the quoted line — the
+        fact is ``wrong``; "angle" is no structured-claim word, so the line
+        stays supported."""
+        document = _doc((SPEAKER_1, "the angle is swollen"))
+        return encounter_metrics(
+            document, _note(document, 0, warnings=warnings), self._script(), reference=reference
+        )
+
+    def test_a_marked_mishearing_right_on_the_reference_is_r1(self) -> None:
+        metrics = self._misheard(_warning("low_confidence_source", 0, 1, 1))
+        fact = _only_fact(metrics)
+        assert (fact.verdict, fact.residue_r1, fact.residue_r2, fact.residue_r3) == (
+            "wrong",
+            True,
+            False,
+            False,
+        )
+        assert (metrics.material_wrong, metrics.material_wrong_v2, metrics.r1_facts) == (1, 0, 1)
+        assert metrics.unsupported_clinical_lines == 0
+
+    @pytest.mark.parametrize("code", sorted(validation.REVIEW_MARK_CODES))
+    def test_every_review_mark_code_counts(self, code: str) -> None:
+        assert _only_fact(self._misheard(_warning(code, 0, 0, 3))).residue_r1
+
+    def test_an_unmarked_mishearing_is_not_r1(self) -> None:
+        """A confidently misheard word on an unmarked line still fails."""
+        fact = _only_fact(self._misheard())
+        assert (fact.verdict, fact.residue_r1) == ("wrong", False)
+
+    def test_a_mark_that_is_no_review_mark_is_not_r1(self) -> None:
+        fact = _only_fact(self._misheard(_warning("high_risk_omission", 0, 0, 3)))
+        assert fact.residue_r1 is False
+
+    def test_wrong_on_the_reference_too_is_not_r1(self) -> None:
+        reading = ReferenceReading(facts_right=frozenset(), boundary=None, tail_start=None)
+        mark = _warning("low_confidence_source", 0, 1, 1)
+        assert _only_fact(self._misheard(mark, reference=reading)).residue_r1 is False
+
+    def test_without_a_reference_reading_no_class_needing_one_holds(self) -> None:
+        mark = _warning("low_confidence_source", 0, 1, 1)
+        assert _only_fact(self._misheard(mark, reference=None)).residue_r1 is False
+
+    def test_a_non_material_fact_is_never_r1(self) -> None:
+        document = _doc((SPEAKER_1, "the angle is swollen"))
+        note = _note(document, 0, warnings=[_warning("low_confidence_source", 0, 1, 1)])
+        metrics = encounter_metrics(
+            document, note, self._script(material=False), reference=_RIGHT_ON_REFERENCE
+        )
+        assert _only_fact(metrics).residue_r1 is False
+
+    def test_every_token_matched_is_a_routing_error_not_r1(self) -> None:
+        """The transcript is right and the note quotes only "the ankle": the
+        fact [ankle, is, swollen] is ``wrong`` with every token MATCHED — the
+        product's routing, never the recogniser."""
+        script = _script(
+            ("clinician", self._SCRIPT_LINE), facts=[_fact("present", "ankle is swollen", 0)]
+        )
+        document = _doc((SPEAKER_1, self._SCRIPT_LINE))
+        note = _note(document, (0, 0, 1), warnings=[_warning("low_confidence_source", 0, 1, 1)])
+        fact = _only_fact(encounter_metrics(document, note, script, reference=_RIGHT_ON_REFERENCE))
+        assert (fact.verdict, fact.residue_r1) == ("wrong", False)
+
+    def test_a_fact_the_recogniser_deleted_is_r1_and_clears_the_silent_omission(self) -> None:
+        """ref [the, ankle, is, swollen, today], hyp [the, is, swollen,
+        today]: the one alignment deletes "ankle" — not transcribed, a silent
+        omission on a quoted line; R1 clears it (no review mark is needed for
+        an omission)."""
+        script = _script(
+            ("clinician", "the ankle is swollen today"), facts=[_fact("present", "ankle", 0)]
+        )
+        document = _doc((SPEAKER_1, "the is swollen today"))
+        metrics = encounter_metrics(
+            document, _note(document, 0), script, reference=_RIGHT_ON_REFERENCE
+        )
+        fact = _only_fact(metrics)
+        assert (fact.verdict, fact.not_transcribed, fact.silent_omission) == (
+            "omitted",
+            True,
+            True,
+        )
+        assert (fact.residue_r1, fact.silent_omission_v2) == (True, False)
+        assert (metrics.silent_omissions, metrics.silent_omissions_v2) == (1, 0)
+
+    def test_one_r1_fact_clears_both_raw_counts_and_counts_once(self) -> None:
+        """ref [rest, ice], hyp [heat] (the peer's PR-MED-056 case): A
+        omits [ice] unwarned, B renders it as the marked "heat" — wrong and
+        silent on the raw counts; one R1 fact clears both."""
+        script = _script(("clinician", "rest ice"), facts=[_fact("present", "ice", 0)])
+        document = _doc((SPEAKER_1, "heat"))
+        note = _note(document, 0, warnings=[_warning("low_confidence_source", 0, 0, 0)])
+        metrics = encounter_metrics(document, note, script, reference=_RIGHT_ON_REFERENCE)
+        fact = _only_fact(metrics)
+        assert (fact.verdict, fact.silently_omitted_somewhere, fact.residue_r1) == (
+            "wrong",
+            True,
+            True,
+        )
+        assert (metrics.material_wrong, metrics.silent_omissions) == (1, 1)
+        assert (metrics.material_wrong_v2, metrics.silent_omissions_v2) == (0, 0)
+        assert metrics.r1_facts == 1
+
+    @pytest.mark.parametrize(
+        ("marks", "r1"), [(((0, 0, 0),), False), (((0, 0, 0), (0, 2, 2)), True)]
+    )
+    def test_every_statement_wrong_must_be_marked(
+        self, marks: tuple[tuple[int, int, int], ...], r1: bool
+    ) -> None:
+        """The fact stated twice, both misheard (ice->heat twice, one
+        alignment of cost 2): one mark leaves the second statement unmarked,
+        so the fact is no R1; marks on both make it one."""
+        script = _script(("clinician", "ice then ice"), facts=[_fact("present", "ice", 0)])
+        document = _doc((SPEAKER_1, "heat then heat"))
+        warnings = [_warning("low_confidence_source", *mark) for mark in marks]
+        note = _note(document, 0, warnings=warnings)
+        fact = _only_fact(encounter_metrics(document, note, script, reference=_RIGHT_ON_REFERENCE))
+        assert (fact.verdict, fact.residue_r1) == ("wrong", r1)
+
+    @pytest.mark.parametrize(("marked_segments", "r1"), [((0,), False), ((0, 1), True)])
+    def test_every_wrong_alternative_across_segments_must_be_marked(
+        self, marked_segments: tuple[int, ...], r1: bool
+    ) -> None:
+        """ref [ice], hyp [heat | cold] over two quoted segments: two optimal
+        alignments of cost 2 — A (ice->heat, insert cold), B (insert heat,
+        ice->cold) — both ``wrong``. A mark on "heat" alone leaves B
+        unmarked, so the fact is no R1; marks on both make it one."""
+        script = _script(("clinician", "ice"), facts=[_fact("present", "ice", 0)])
+        document = _doc((SPEAKER_1, "heat"), (SPEAKER_1, "cold"))
+        warnings = [_warning("low_confidence_source", s, 0, 0) for s in marked_segments]
+        note = _note(document, 0, 1, warnings=warnings)
+        fact = _only_fact(encounter_metrics(document, note, script, reference=_RIGHT_ON_REFERENCE))
+        assert (fact.verdict, fact.ambiguous, fact.residue_r1) == ("wrong", False, r1)
+
+    def test_r1_does_not_clear_an_unsurfaced_uncertainty(self) -> None:
+        """A misheard fact expected uncertain on a line that voices doubt in
+        words ("might", a reference hedge): R1 clears the wrong verdict, and
+        nothing clears the missed uncertainty (R2 alone may, and the words
+        rule it out)."""
+        script = _script(
+            ("clinician", "the ankle might be swollen"),
+            facts=[_fact("present", "ankle", 0, uncertain=True)],
+        )
+        document = _doc((SPEAKER_1, "the angle might be swollen"))
+        note = _note(document, 0, warnings=[_warning("number_source", 0, 0, 4)])
+        metrics = encounter_metrics(document, note, script, reference=_RIGHT_ON_REFERENCE)
+        fact = _only_fact(metrics)
+        assert (fact.residue_r1, fact.residue_r2, fact.uncertainty_surfaced) == (True, False, False)
+        assert (metrics.material_wrong_v2, metrics.uncertainty_missed_v2) == (0, 1)
+
+    def test_the_one_alignment_carries_r1(self) -> None:
+        """D8: R1 reads ``_Alignment``'s walk, never ``align_transcripts``."""
+        tree = ast.parse(textwrap.dedent(inspect.getsource(validation.encounter_metrics)))
+        names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+        assert "_Alignment" in names
+        assert "align_transcripts" not in names
+
+
+class TestResidueR2:
+    """R2 — doubt carried by tone only: an unsurfaced uncertainty whose
+    script line, within the hedge scope, holds no ``REFERENCE_HEDGES``
+    phrase. It clears ``uncertainty_not_surfaced`` only, and needs no
+    reference reading."""
+
+    def _metrics(
+        self, script_line: str, transcript: str, *spans: Span, checked: bool = False
+    ) -> EncounterMetrics:
+        script = _script(
+            ("clinician", script_line), facts=[_fact("present", "ankle", 0, uncertain=True)]
+        )
+        document = _doc((SPEAKER_1, transcript))
+        note = _checked(document, *spans) if checked else _note(document, *spans)
+        return encounter_metrics(document, note, script)
+
+    def test_an_unsurfaced_uncertainty_on_an_unhedged_line_is_r2(self) -> None:
+        metrics = self._metrics("the ankle is swollen", "the ankle is swollen", 0)
+        fact = _only_fact(metrics)
+        assert (fact.verdict, fact.uncertainty_surfaced, fact.residue_r2) == (
+            "correct",
+            False,
+            True,
+        )
+        assert (metrics.uncertainty_missed, metrics.uncertainty_missed_v2, metrics.r2_facts) == (
+            1,
+            0,
+            1,
+        )
+        assert rule_failures(OPTION_A, _measured(metrics)) == ("uncertainty_not_surfaced",)
+
+    def test_a_reference_only_hedge_rules_r2_out(self) -> None:
+        """"might" is in the reference lexicon and not the product's: the
+        product cannot credit it, and the words voice the doubt — no R2."""
+        line = "the ankle might be swollen"
+        assert not text_holds_hedge(line)
+        assert text_holds_hedge(line, phrases=REFERENCE_HEDGES)
+        metrics = self._metrics(line, line, 0)
+        fact = _only_fact(metrics)
+        assert (fact.uncertainty_surfaced, fact.residue_r2) == (False, False)
+        assert (metrics.uncertainty_missed, metrics.uncertainty_missed_v2) == (1, 1)
+
+    def test_a_surfaced_uncertainty_is_never_r2(self) -> None:
+        metrics = self._metrics("the ankle is swollen", "the ?ankle is swollen", 0, checked=True)
+        fact = _only_fact(metrics)
+        assert (fact.uncertainty_surfaced, fact.residue_r2) == (True, False)
+        assert metrics.r2_facts == 0
+
+    def test_a_fact_not_expected_uncertain_is_never_r2(self) -> None:
+        script = _script(
+            ("clinician", "the ankle is swollen"), facts=[_fact("present", "ankle", 0)]
+        )
+        document = _doc((SPEAKER_1, "the ankle is swollen"))
+        fact = _only_fact(encounter_metrics(document, _note(document, 0), script))
+        assert (fact.uncertainty_surfaced, fact.residue_r2) == (None, False)
+
+    def test_r2_does_not_clear_a_silent_omission(self) -> None:
+        metrics = self._metrics("the ankle is swollen", "the ankle is swollen")
+        fact = _only_fact(metrics)
+        assert (fact.verdict, fact.silent_omission, fact.residue_r2) == ("omitted", True, True)
+        assert (metrics.silent_omissions_v2, metrics.uncertainty_missed_v2) == (1, 0)
+        assert rule_failures(_RULE_V2, _measured(metrics), set_name="gate") == (
+            "silent_omission",
+        )
+
+
+class TestResidueR3:
+    """R3 — an unbroken next patient (D14): a material fact ``wrongly_present``
+    in a next-patient-axis script, on a line at or after the reference tail
+    start, with no boundary on the measured transcript (Check 6's warning
+    absent) nor on the script's own words. Counted per ENCOUNTER; it clears
+    ``material_wrong`` only."""
+
+    _LINES = (
+        ("clinician", "see you next week"),
+        ("patient", "lovely weather today"),
+        ("clinician", "good morning come on in"),
+        ("patient", "my wrist hurts"),
+    )
+    _SPEAKERS = (SPEAKER_1, SPEAKER_2, SPEAKER_1, SPEAKER_2)
+
+    def _metrics(
+        self,
+        *,
+        axes: Sequence[str] = ("end_and_new_patient",),
+        reference: ReferenceReading | None = None,
+        boundary: int | None = None,
+        material: bool = True,
+        extra: tuple[tuple[str, str], ...] = (),
+    ) -> EncounterMetrics:
+        """Every line quoted; facts: absent [weather] (line 1, before the
+        tail start 2) and absent [wrist], [hurts] (line 3); ``extra`` lines
+        (the clinician's) after them."""
+        lines = (*self._LINES, *extra)
+        script = _script(
+            *lines,
+            facts=[
+                _fact("absent", "weather", 1, material=material),
+                _fact("absent", "wrist", 3, material=material),
+                _fact("absent", "hurts", 3, material=material),
+            ],
+            axes=axes,
+        )
+        speakers = (*self._SPEAKERS, *(SPEAKER_1 for _line in extra))
+        document = _doc(*zip(speakers, (text for _role, text in lines), strict=True))
+        warnings = [] if boundary is None else [_warning("possible_next_patient", boundary, 0, 2)]
+        note = _note(document, *range(len(lines)), warnings=warnings)
+        if reference is None:
+            reference = ReferenceReading(frozenset(), boundary=None, tail_start=2)
+        return encounter_metrics(document, note, script, reference=reference)
+
+    def test_the_next_patients_facts_after_the_tail_are_r3_once(self) -> None:
+        metrics = self._metrics()
+        assert [f.verdict for f in metrics.facts] == ["wrongly_present"] * 3
+        assert [f.residue_r3 for f in metrics.facts] == [False, True, True]
+        assert metrics.r3_event
+        assert (metrics.material_wrong, metrics.material_wrong_v2) == (3, 1)
+        outcome = _measured(metrics)
+        (_r1, _r2, r3) = class_counts(_RULE_V2, [outcome], "gate")
+        assert (r3.total, r3.members) == (1, (("syn-test", None),))
+
+    @pytest.mark.parametrize(
+        "case",
+        ["measured boundary", "reference boundary", "no tail", "no axis"],
+    )
+    def test_each_condition_is_required(self, case: str) -> None:
+        reference = ReferenceReading(
+            frozenset(),
+            boundary=2 if case == "reference boundary" else None,
+            tail_start=None if case == "no tail" else 2,
+        )
+        metrics = self._metrics(
+            axes=("negation",) if case == "no axis" else ("end_and_new_patient",),
+            reference=reference,
+            boundary=2 if case == "measured boundary" else None,
+        )
+        assert not any(f.residue_r3 for f in metrics.facts)
+        assert (metrics.material_wrong, metrics.material_wrong_v2) == (3, 3)
+
+    def test_a_boundary_that_fired_after_the_fact_still_rules_r3_out(self) -> None:
+        """D8 (peer round 3 PR-MED-018): a measured boundary anywhere — here
+        on segment 4, after the facts on line 3 — leaves the facts failing,
+        the conservative reading."""
+        metrics = self._metrics(boundary=4, extra=(("clinician", "it is sore"),))
+        assert [f.verdict for f in metrics.facts] == ["wrongly_present"] * 3
+        assert not any(f.residue_r3 for f in metrics.facts)
+        assert (metrics.material_wrong, metrics.material_wrong_v2) == (3, 3)
+
+    def test_a_non_material_fact_consumes_no_allowance(self) -> None:
+        metrics = self._metrics(material=False)
+        assert [f.verdict for f in metrics.facts] == ["wrongly_present"] * 3
+        assert not any(f.residue_r3 for f in metrics.facts)
+        assert not metrics.r3_event
+        assert (metrics.material_wrong, metrics.material_wrong_v2) == (0, 0)
+
+    def test_the_metrics_record_the_reference_reading(self) -> None:
+        reference = ReferenceReading(frozenset(), boundary=None, tail_start=2)
+        metrics = self._metrics(reference=reference)
+        assert (
+            metrics.next_patient_axis,
+            metrics.reference_tail_start,
+            metrics.reference_boundary,
+        ) == (True, 2, None)
+
+
+# The reference reading's scripts (D8, D14): ``next_patient_boundary`` on the
+# script's own words. "On examination" is a shipped cue (the head-case
+# guard's earlier content); the closing and the greeting are frozen phrases.
+_CUED = ("clinician", "On examination the left knee is tender.")
+_BOUNDARY_CASES = {
+    "closing two lines before the greeting": (
+        (
+            _CUED,
+            ("clinician", "See you next week."),
+            ("patient", "Thank you."),
+            ("clinician", "Good morning, take a seat."),
+            ("patient", "My wrist hurts."),
+        ),
+        3,
+    ),
+    "a closing with no cued content before it": (
+        (
+            ("clinician", "See you next week."),
+            ("clinician", "Good morning, take a seat."),
+            ("patient", "My wrist hurts."),
+        ),
+        None,
+    ),
+    "closing and greeting in one line": (
+        (
+            _CUED,
+            ("clinician", "See you next week. Good morning, take a seat."),
+            ("patient", "My wrist hurts."),
+        ),
+        2,
+    ),
+    "the closing four lines before the greeting": (
+        (
+            _CUED,
+            ("clinician", "See you next week."),
+            ("patient", "Thank you."),
+            ("clinician", "Fine."),
+            ("patient", "Okay."),
+            ("clinician", "Good morning, take a seat."),
+        ),
+        None,
+    ),
+}
+# D14's two gaps (D15's loosening (2)): an unlisted closing before a listed
+# greeting, and a listed closing before an unlisted greeting — the product's
+# rule finds no boundary in either, so a next patient after it is R3.
+_GAP_CASES = {
+    "closing gap": (
+        _CUED,
+        ("clinician", "Right, all done for today."),
+        ("clinician", "Good morning, take a seat."),
+        ("patient", "My wrist hurts."),
+    ),
+    "greeting gap": (
+        _CUED,
+        ("clinician", "See you next week."),
+        ("clinician", "Come through, grab a chair."),
+        ("patient", "My wrist hurts."),
+    ),
+}
+_BOUNDARY_CASES.update({case: (lines, None) for case, lines in _GAP_CASES.items()})
+
+
+class _QuoteAll:
+    """A note provider quoting every utterance the request carries (the
+    boundary's withheld lines are not in it)."""
+
+    provider_name = "quote-all"
+
+    def generate_sections(self, request: NoteRequest) -> tuple[GeneratedSection, ...]:
+        assertions = [
+            assertion
+            for utterance in request.transcript_utterances
+            if (
+                assertion := whole_utterance_assertion(
+                    f"q{utterance.segment_index:04d}",
+                    "presenting_complaint",
+                    segment_index=utterance.segment_index,
+                    speaker=utterance.speaker,
+                    words=utterance.transcript_words,
+                )
+            )
+            is not None
+        ]
+        if not assertions:
+            return ()
+        return (
+            GeneratedSection(section_key="presenting_complaint", note_assertions=tuple(assertions)),
+        )
+
+
+def _reading_inputs(tmp_path: Path) -> HarnessInputs:
+    """The shipped pipeline's inputs with no speech model (the reference
+    reading transcribes nothing) and a provider that quotes everything."""
+    return HarnessInputs(
+        provider=typing.cast(Any, None),
+        frame_probability=typing.cast(Any, None),
+        config=_pipeline_config(tmp_path),
+        note_provider_factory=lambda config: _QuoteAll(),
+    )
+
+
+class TestReferenceReading:
+    """D8 and D14: the same pipeline over the script's own words — the facts
+    it gets right (R1) and the product's boundary rule on those words (R3) —
+    with the script's reference tail start."""
+
+    @pytest.mark.parametrize("case", sorted(_BOUNDARY_CASES))
+    def test_the_boundary_is_the_products_rule_on_the_scripts_words(
+        self, tmp_path: Path, case: str
+    ) -> None:
+        lines, boundary = _BOUNDARY_CASES[case]
+        script = _script(*lines)
+        reading = reference_reading(script, _reading_inputs(tmp_path), _NOW)
+        assert (reading.boundary, reading.tail_start) == (boundary, None)
+
+    def test_a_fact_the_pipeline_gets_right_on_the_scripts_words(self, tmp_path: Path) -> None:
+        lines, _boundary = _BOUNDARY_CASES["closing two lines before the greeting"]
+        script = _script(*lines, facts=[_fact("laterality", "left knee", 0)])
+        reading = reference_reading(script, _reading_inputs(tmp_path), _NOW)
+        assert reading.facts_right == frozenset({0})
+
+    def test_the_tail_start_comes_from_the_table(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(validation, "REFERENCE_TAIL_STARTS", {"syn-test": 3})
+        lines, _boundary = _BOUNDARY_CASES["closing two lines before the greeting"]
+        script = _script(*lines, axes=("end_and_new_patient",))
+        # One set of inputs: ``_pipeline_config`` creates its folder once.
+        inputs = _reading_inputs(tmp_path)
+        reading = reference_reading(script, inputs, _NOW)
+        assert (reading.boundary, reading.tail_start, reading.next_patient_axis) == (3, 3, True)
+        assert validation.reference_tail_start(_script(*lines)) is None
+        no_axis = reference_reading(_script(*lines), inputs, _NOW)
+        assert no_axis.next_patient_axis is False
+
+    @pytest.mark.parametrize("case", sorted(_GAP_CASES))
+    def test_a_gap_on_the_scripts_words_makes_the_next_patient_r3(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+    ) -> None:
+        """End to end (D14): the reference reading of a closing-gap or a
+        greeting-gap script finds no boundary, and the next patient's
+        material ``absent`` fact, quoted with no measured boundary, is R3."""
+        monkeypatch.setattr(validation, "REFERENCE_TAIL_STARTS", {"syn-test": 3})
+        script = _script(
+            *_GAP_CASES[case],
+            facts=[_fact("absent", "wrist", 3)],
+            axes=("end_and_new_patient",),
+        )
+        reading = reference_reading(script, _reading_inputs(tmp_path), _NOW)
+        assert (reading.boundary, reading.tail_start) == (None, 3)
+        document = validation.reference_document(script)
+        note = _note(document, 0, 1, 2, 3, clinician=validation.CLINICIAN_LABEL)
+        fact = _only_fact(encounter_metrics(document, note, script, reference=reading))
+        assert (fact.verdict, fact.residue_r3) == ("wrongly_present", True)
+
+    def test_an_axis_script_with_no_row_is_a_harness_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(validation, "REFERENCE_TAIL_STARTS", {})
+        lines, _boundary = _BOUNDARY_CASES["closing two lines before the greeting"]
+        script = _script(*lines, axes=("end_and_new_patient",))
+        with pytest.raises(validation.ResidueTableError):
+            validation.reference_tail_start(script)
+        with pytest.raises(validation.ResidueTableError):
+            reference_reading(script, _reading_inputs(tmp_path), _NOW)
+
+    def test_every_tail_row_is_an_index_or_none(self) -> None:
+        for encounter_id, start in validation.REFERENCE_TAIL_STARTS.items():
+            assert validation._ENCOUNTER_ID_RE.fullmatch(encounter_id)
+            assert start is None or (isinstance(start, int) and start >= 0)
+
+
+# ---------------------------------------------------------------------------
+# validation-run6 plan D8, D15, D17: rule v2 (schema 2) and the set layer
+# ---------------------------------------------------------------------------
+
+_RULE_V2 = PassRule.model_validate(
+    {
+        "schema_version": 2,
+        "rule_name": "rule-v2-test",
+        "sets": {
+            "gate": {"gate": True, "max_r1_facts": 1, "max_r2_facts": 1, "max_r3_encounters": 1},
+            "reported": {
+                "gate": False,
+                "max_r1_facts": 1,
+                "max_r3_encounters": 1,
+                "require_uncertainty_surfaced": False,
+            },
+        },
+    }
+)
+
+
+def _residue_fact(fact_index: int = 0, **overrides: Any) -> FactOutcome:
+    values: dict[str, Any] = {
+        "fact_index": fact_index,
+        "kind": "present",
+        "material": True,
+        "verdict": "correct",
+        "warned": False,
+        "uncertainty_surfaced": None,
+        "not_transcribed": False,
+        "ambiguous": False,
+    }
+    values.update(overrides)
+    return FactOutcome(**values)
+
+
+def _residue_outcome(encounter_id: str, *facts: FactOutcome) -> EncounterOutcome:
+    metrics = EncounterMetrics(
+        words=WordErrors(1, 1, 0),
+        spelling_normalised_words=0,
+        transcript_lines=1,
+        config_lines=0,
+        unsupported_clinical_lines=0,
+        other_unsupported_words=0,
+        checker_tally=(),
+        checker_failures=(),
+        checker_failure_count=0,
+        expected_warnings_absent=(),
+        facts=facts,
+    )
+    return EncounterOutcome(
+        encounter_id, "measured", segment_count=1, words=metrics.words, metrics=metrics
+    )
+
+
+# One member of each class, as one encounter holds it.
+_CLASS_MEMBER: dict[str, FactOutcome] = {
+    "R1": _residue_fact(verdict="wrong", residue_r1=True),
+    "R2": _residue_fact(uncertainty_surfaced=False, residue_r2=True),
+    "R3": _residue_fact(kind="absent", verdict="wrongly_present", residue_r3=True),
+}
+
+
+class TestRuleV2:
+    def test_the_repository_rule_v2_file(self) -> None:
+        """Decision 0.7 as amended 2026-10-24 (D14, D15, D17): option (a)'s
+        top-level fields and four literal set rows."""
+        path = validation.REPO_ROOT / "validation" / "rules" / "rule-v2.json"
+        rule = validation.load_pass_rule(path)
+        assert rule == PassRule.model_validate(
+            {
+                "schema_version": 2,
+                "rule_name": "rule-v2",
+                "sets": {
+                    "scripts": {
+                        "gate": True,
+                        "max_r1_facts": 2,
+                        "max_r2_facts": 2,
+                        "max_r3_encounters": 2,
+                    },
+                    "heldout": {
+                        "gate": False,
+                        "max_r1_facts": 1,
+                        "max_r2_facts": 1,
+                        "max_r3_encounters": 1,
+                    },
+                    "heldout-2": {
+                        "gate": False,
+                        "max_r1_facts": 1,
+                        "max_r2_facts": 1,
+                        "max_r3_encounters": 1,
+                    },
+                    "heldout-3": {
+                        "gate": True,
+                        "max_r1_facts": 1,
+                        "max_r3_encounters": 1,
+                        "require_uncertainty_surfaced": False,
+                    },
+                },
+            }
+        )
+        assert (rule.max_material_wrong, rule.max_silent_omissions) == (0, 0)
+        assert rule.require_uncertainty_surfaced is True
+        assert rule.max_word_error_rate is None
+        assert validation.RULE_SCHEMA_VERSION == 2
+
+    @pytest.mark.parametrize(
+        ("payload", "message"),
+        [
+            (
+                {"schema_version": 1, "sets": {"a": {"gate": True, "max_r1_facts": 0,
+                                                     "max_r2_facts": 0,
+                                                     "max_r3_encounters": 0}}},
+                "a schema-1 rule holds no set ceilings",
+            ),
+            ({"schema_version": 1, "max_r1_facts": 1}, "Extra inputs are not permitted"),
+            ({"schema_version": 2}, "a schema-2 rule names at least one set"),
+            ({"schema_version": 2, "sets": {}}, "a schema-2 rule names at least one set"),
+            (
+                {"schema_version": 2, "sets": {"a": {"max_r1_facts": 0, "max_r2_facts": 0,
+                                                     "max_r3_encounters": 0}}},
+                "gate",
+            ),
+            (
+                {"schema_version": 2, "sets": {"a": {"gate": True, "max_r1_facts": 0,
+                                                     "max_r3_encounters": 0}}},
+                "needs max_r2_facts",
+            ),
+            (
+                {"schema_version": 2, "sets": {"a": {"gate": True, "max_r1_facts": 0,
+                                                     "max_r2_facts": 0, "max_r3_encounters": 0,
+                                                     "require_uncertainty_surfaced": False}}},
+                "takes no max_r2_facts",
+            ),
+            (
+                {"schema_version": 2, "sets": {"Held Out": {"gate": True, "max_r1_facts": 0,
+                                                            "max_r2_facts": 0,
+                                                            "max_r3_encounters": 0}}},
+                "set names must match",
+            ),
+            (
+                {"schema_version": 2, "sets": {"a": {"gate": True, "max_r1_facts": -1,
+                                                     "max_r2_facts": 0,
+                                                     "max_r3_encounters": 0}}},
+                "greater than or equal to 0",
+            ),
+            (
+                {"schema_version": 2, "sets": {"a": {"gate": True, "max_r1_facts": 0,
+                                                     "max_r2_facts": 0, "max_r3_encounters": 0,
+                                                     "max_r4_facts": 0}}},
+                "Extra inputs are not permitted",
+            ),
+            ({"schema_version": 3}, "schema_version"),
+        ],
+    )
+    def test_a_malformed_rule_is_refused(self, payload: dict[str, Any], message: str) -> None:
+        with pytest.raises(ValueError, match=message):
+            PassRule.model_validate({"rule_name": "test-rule", **payload})
+
+    def test_the_rule_uncertainty_field_is_the_default_a_set_overrides(self) -> None:
+        """D17: a set row's ``require_uncertainty_surfaced`` overrides the
+        rule's; absent, the rule's holds. Both ways, on one outcome whose
+        uncertainty is missed and no R2."""
+        missed = _residue_outcome("syn-a", _residue_fact(uncertainty_surfaced=False))
+        assert rule_failures(_RULE_V2, missed, set_name="gate") == ("uncertainty_not_surfaced",)
+        assert rule_failures(_RULE_V2, missed, set_name="reported") == ()
+        relaxed = PassRule.model_validate(
+            {
+                "schema_version": 2,
+                "rule_name": "relaxed",
+                "require_uncertainty_surfaced": False,
+                "sets": {
+                    "inherits": {"gate": True, "max_r1_facts": 0, "max_r3_encounters": 0},
+                    "requires": {
+                        "gate": True,
+                        "max_r1_facts": 0,
+                        "max_r2_facts": 0,
+                        "max_r3_encounters": 0,
+                        "require_uncertainty_surfaced": True,
+                    },
+                },
+            }
+        )
+        assert rule_failures(relaxed, missed, set_name="inherits") == ()
+        assert rule_failures(relaxed, missed, set_name="requires") == (
+            "uncertainty_not_surfaced",
+        )
+        # Rule v1's verdict reads the top-level field alone.
+        assert v1_failures(_RULE_V2, missed) == ("uncertainty_not_surfaced",)
+        assert v1_failures(relaxed, missed) == ()
+
+    def test_the_set_must_be_one_the_rule_names(self) -> None:
+        outcome = _residue_outcome("syn-a", _residue_fact())
+        with pytest.raises(RuleError) as info:
+            rule_failures(_RULE_V2, outcome, set_name="Margaret")
+        assert str(info.value) == "the set must be one the rule names: gate, reported"
+        with pytest.raises(RuleError):
+            rule_failures(_RULE_V2, outcome)
+        with pytest.raises(RuleError, match="a schema-1 rule has no sets"):
+            rule_failures(OPTION_A, outcome, set_name="gate")
+        with pytest.raises(RuleError):
+            class_counts(OPTION_A, [outcome], "gate")
+
+    @pytest.mark.parametrize("residue_class", ["R1", "R2", "R3"])
+    @pytest.mark.parametrize(("encounters", "within"), [(1, True), (2, False)])
+    def test_each_class_ceiling_at_n_and_n_plus_1(
+        self, residue_class: str, encounters: int, within: bool
+    ) -> None:
+        """The gate set's ceilings are 1: one member passes, two fail at the
+        set level, while every encounter passes on its own (each class
+        clears its own failure)."""
+        member = _CLASS_MEMBER[residue_class]
+        outcomes = [_residue_outcome(f"syn-{n}", member) for n in range(encounters)]
+        assert all(rule_failures(_RULE_V2, o, set_name="gate") == () for o in outcomes)
+        counts = {c.residue_class: c for c in class_counts(_RULE_V2, outcomes, "gate")}
+        assert (counts[residue_class].total, counts[residue_class].ceiling) == (encounters, 1)
+        assert counts[residue_class].within is within
+        breaches = class_breaches(_RULE_V2, outcomes, "gate")
+        assert [c.residue_class for c in breaches] == ([] if within else [residue_class])
+        assert run_passed(_RULE_V2, outcomes, set_name="gate") is within
+        # Rule v1 reads the raw counts: every member fails it.
+        assert run_passed_v1(_RULE_V2, outcomes) is False
+
+    def test_r3_counts_encounters_not_facts(self) -> None:
+        two_facts = _residue_outcome("syn-a", _CLASS_MEMBER["R3"], _residue_fact(
+            1, kind="absent", verdict="wrongly_present", residue_r3=True
+        ))
+        counts = {c.residue_class: c for c in class_counts(_RULE_V2, [two_facts], "gate")}
+        assert (counts["R3"].total, counts["R3"].members) == (1, (("syn-a", None),))
+        assert run_passed(_RULE_V2, [two_facts], set_name="gate")
+
+    def test_r2_has_no_ceiling_where_uncertainty_is_only_reported(self) -> None:
+        outcomes = [_residue_outcome(f"syn-{n}", _CLASS_MEMBER["R2"]) for n in range(3)]
+        counts = {c.residue_class: c for c in class_counts(_RULE_V2, outcomes, "reported")}
+        assert (counts["R2"].total, counts["R2"].ceiling, counts["R2"].within) == (3, None, True)
+        assert run_passed(_RULE_V2, outcomes, set_name="reported")
+
+    def test_a_class_never_clears_another_classes_failure(self) -> None:
+        """R1 clears wrong and silent, R2 unsurfaced, R3 wrong — and nothing
+        else: an R2 fact omitted silently still fails."""
+        r2_silent = _residue_outcome(
+            "syn-a",
+            _residue_fact(verdict="omitted", uncertainty_surfaced=False, residue_r2=True),
+        )
+        assert rule_failures(_RULE_V2, r2_silent, set_name="gate") == ("silent_omission",)
+        r1_missed = _residue_outcome(
+            "syn-b",
+            _residue_fact(verdict="wrong", uncertainty_surfaced=False, residue_r1=True),
+        )
+        assert rule_failures(_RULE_V2, r1_missed, set_name="gate") == (
+            "uncertainty_not_surfaced",
+        )
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"residue_r1": True},
+            {"residue_r1": True, "material": False, "verdict": "wrong"},
+            {"residue_r2": True, "uncertainty_surfaced": None},
+            {"residue_r2": True, "uncertainty_surfaced": True},
+            {"residue_r3": True, "kind": "absent", "verdict": "correctly_absent"},
+            {"residue_r3": True, "verdict": "wrong"},
+        ],
+    )
+    def test_a_class_only_ever_names_a_failing_fact(self, overrides: dict[str, Any]) -> None:
+        with pytest.raises(ValueError, match="names a"):
+            _residue_fact(**overrides)
+
+    def test_the_same_outcomes_fail_rule_v1_and_pass_rule_v2(self) -> None:
+        """Through the metrics (an R1 mishearing): rule v1's verdict and the
+        raw counts are unchanged; rule v2 excuses the one class member."""
+        script = _script(
+            ("clinician", "the ankle is swollen"), facts=[_fact("present", "ankle", 0)]
+        )
+        document = _doc((SPEAKER_1, "the angle is swollen"))
+        note = _note(document, 0, warnings=[_warning("low_confidence_source", 0, 1, 1)])
+        metrics = encounter_metrics(document, note, script, reference=_RIGHT_ON_REFERENCE)
+        outcome = _measured(metrics)
+        assert metrics.material_wrong == 1
+        assert v1_failures(_RULE_V2, outcome) == ("material_wrong",)
+        assert rule_failures(_RULE_V2, outcome, set_name="gate") == ()
+        assert run_passed_v1(_RULE_V2, [outcome]) is False
+        assert run_passed(_RULE_V2, [outcome], set_name="gate") is True
+        assert rule_failures(OPTION_A, outcome) == ("material_wrong",)
 
 
 # ---------------------------------------------------------------------------

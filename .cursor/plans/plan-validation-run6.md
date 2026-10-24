@@ -7,7 +7,7 @@
 - a written decision, BEFORE run 6, on the recogniser-level and tone-level residues (rule v1 kept, or a ratified rule v2);
 - a fresh held-out set by an independent author, written predictions before the build, and run 6 as the run of record.
 
-**Overall Progress:** `50%` (15 of 30 buildable tasks; `[2026-10-24, stage-2]` Task 3.1 built and verified (suite 8504 passed, review round 41, codex peer round 42 converged); `[2026-10-24, stage-1]` Tasks 1.1–1.4 built and verified (suite 8425 passed, review round 38, codex peer round 39 converged); `[2026-10-24, peer round 25]` the convention, stated: the 8 `[decision]` tasks — all taken — are outside the count; 38 checkboxes in all, 22 ticked)
+**Overall Progress:** `63%` (19 of 30 buildable tasks; `[2026-10-24, stage-3]` Tasks 4.1–4.4 built and verified (suite 8605 passed, review rounds 44–45, codex peer round 46 applied, simplify round 47 clean); `[2026-10-24, stage-2]` Task 3.1 built and verified (suite 8504 passed, review round 41, codex peer round 42 converged); `[2026-10-24, stage-1]` Tasks 1.1–1.4 built and verified (suite 8425 passed, review round 38, codex peer round 39 converged); `[2026-10-24, peer round 25]` the convention, stated: the 8 `[decision]` tasks — all taken — are outside the count; 38 checkboxes in all, 22 ticked)
 
 ## Lifecycle State
 - Active
@@ -341,7 +341,7 @@ See the Planning Extraction Summary (the canonical list).
 
 ## Current State / Handoff Note
 - Loop config: executor=claude-p model="claude-opus-5-5" effort=high profile=default; peer=codex model="gpt-6-astra" effort=medium; architect=off; cadence=every-phase; caps=review:3,peer:5; gates=executor; cap-raise=executor; high-auto=on; peer-max=12; notify=action-only; scope=all; autocommit=on; isolation=none; merge=off; perms=scoped; liveness=10; monitor-delivery=auto; verify=composer.
-- COMPOSER RUN-STATE: iso=validation-run6-20261024-125936-4d21; runkeys stage-1=Phase 1, stage-2=Phase 3, stage-3=Phase 4, stage-4=Phase 5, stage-5=H1-H4; started 2026-10-24 by the practitioner's /execute-loop (wizard confirmed); current: stage-2 closed (Phases 1 and 3 committed locally); next stage-3 (Phase 4).
+- COMPOSER RUN-STATE: iso=validation-run6-20261024-125936-4d21; runkeys stage-1=Phase 1, stage-2=Phase 3, stage-3=Phase 4, stage-4=Phase 5, stage-5=H1-H4; started 2026-10-24 by the practitioner's /execute-loop (wizard confirmed); current: stage-3 closed (Phases 1, 3 and 4 committed locally); next stage-4 (Phase 5).
 - **Order:** 0.2 (measure) → 0.2a (the same audio counts under an enrolment, D11) → 0.13 (the D1 decision) → 0.9 (dated commit) → 0.14 (the harness enrols; its own dated commit) → 0.11 (fixtures over a set table, before the set) → 0.10 (`heldout-2`, independent author, empty folder) → 0.12 (diagnosis, the `h2-NN` cases and divergence entries, predictions; frozen) → Phases 1–5 → H1–H4 → P.1 → H5 → P.2 → P.3.
 - Line references were taken at `0be35d7`; `desktop/src` is unchanged at `4ff5f26`. A build leg re-locates symbols before editing.
 - `[2026-10-22]` Decisions taken ("take all the recommendations"): 0.1 median ≤ 2, maximum ≤ 5; 0.3 (b), (c) only if over budget; 0.4's rule (values owed after Task 0.2); 0.5 (a); 0.6 lexicon (b), scope (ii); 0.7 (b) with the written override; 0.8 all three sets. Recorded on each task. Later the same day: "joined" = `note.ends_mid_sentence` (D5).
@@ -470,6 +470,199 @@ See the Planning Extraction Summary (the canonical list).
   - Live-user smoke: the practitioner carried it to P.2's mock smoke (in chat, 2026-10-24; recorded on P.2).
   - Committed locally with the rx2 commit message above; not pushed.
   - Next: stage-3, Phase 4 (the harness, Tasks 4.1–4.4, as amended by D13–D17).
+- `[2026-10-24T16:28+11:00]` **Executor (stage-3, leg rx1) — Phase 4 BUILT, Tasks 4.1–4.4 🟨; the suite is the composer's (verify=composer).**
+  - **Done:** ruff clean and mypy clean (66 source files), each run with the exact command shapes. Pytest was not run (the blind rule).
+  - **Built:**
+    - `validation.py`:
+      - D13's flagged-line credit, folded into `_WordInfo.warned`. 0.3.3's reading is kept as the walk flag `warned_v033`, with `silently_omitted_v033`, `silent_omissions_v033` and the column "Silent (0.3.3 predicate)".
+      - `_FactState` is a 10-field NamedTuple: `warned_v033` and `marked`, plus `_WordInfo.review_marked`.
+      - D8's R1 and R2, and R3 as D14 amends it (`ReferenceReading`, `reference_reading`, `reference_tail_start`, `ResidueTableError`). These live in `FactOutcome.residue_r1/r2/r3`, with invariants: a class only ever names a failing fact.
+      - The residue-adjusted counts (`*_v2`). The raw counts are unchanged.
+      - `PassRule` schema `Literal[1, 2]` with `sets: dict[str, SetCeilings]`, and D17's per-set `require_uncertainty_surfaced`.
+      - `rule_failures(..., set_name=)`, `v1_failures`, `class_counts` / `class_breaches` (R3 counted in encounters), `run_passed(..., set_name=)` and `run_passed_v1`.
+      - The report:
+        - a heading with both verdicts;
+        - the v2 and v1 verdict lines, naming the gate and reported sets;
+        - the 28-column table;
+        - a "Residue class" column in the Facts table;
+        - a residue section (each class against its ceiling, with members; adjusted versus raw counts; Surfaced / expected; the `clinician_line_omitted` total, median and maximum; D14's reference-boundary record and its mismatches).
+      - `main --set`: refused with a schema-1 rule; missing or unknown with a schema-2 rule, printing the rule's set names and never the typed name.
+    - `validation/rules/rule-v2.json`: four rows, with ceilings only from D8/D15/D17 as amended.
+    - `docs/testing/validation-harness.md` (Task 4.4):
+      - the `heldout-2` and `heldout-3` paragraphs, with the brief's bounds and the scope qualifier;
+      - `--set` and the four-set run, plus the refusal;
+      - the D5/D7 (2026-10-22) and D13 (2026-10-24) metric amendments;
+      - the new columns;
+      - the schema-2 rule file;
+      - a "Rule v2" section: Task 0.7's override, D15's Decided / Disclosure / critic's-objection bullets and D17's Decided bullet, all quoted verbatim; the classes; the set layer and its ceiling table; the fitted-ceiling statement; D18's falsifiers worded as residue-adjusted counts; the report;
+      - the qualification on `:122` and the rule v1 "still silent" sentence.
+    - Task 0.14's attribution paragraph was cross-checked against `enrolled_clinician` / `attribution_seconds` as built. It agrees, and its test class names exist.
+  - **Tests:**
+    - `test_validation_metrics.py`, new classes: `TestFlaggedLineCredit`, `TestResidueR1`, `TestResidueR2`, `TestResidueR3`, `TestReferenceReading`, `TestRuleV2`.
+    - `test_validation_harness.py`: the new report tests, the `--set` refusals, `"set"` in the refusal-chaining parametrize, a rule-v2 full run (windows_only), and the runner's `ResidueTableError` before any store.
+    - Every class ceiling is pinned at n and n + 1. `[rx2, round 44]` This line said "every predicate both ways", which overclaimed: the closing-gap and greeting-gap R3 pins, the boundary-after-the-fact pin and R3's non-material pin were missing. Round 44 added them (F1–F3).
+  - **Re-pinned deliberately** (each is a D13 or report change, not a loosening of what the test guards):
+    - `test_an_unrelated_warning_in_the_same_segment_leaves_the_omission_silent`: the line is now the PATIENT's, because a clinician's wholly uncovered flagged line is credited by D13.
+    - `test_between_two_high_risk_words_is_still_silent_and_fails_option_a`: one word is quoted, so the line is partly covered.
+    - `test_a_provider_that_routes_nothing_still_fails_rule_v1`: the patient fact is now unflaggable ("worse at night"). The clinician's rest fact is now warned under D13 and still silent in the 0.3.3 column, and the test still fails rule v1 on the patient line. Stated: clinician-only speech routed nowhere is now fully warned. This is D15's loosening (1), documented.
+    - The 28-column report test.
+    - `_CLUSTERING_BASELINE_C5F3179`: the new 0.3.3 cell (0) and the Residue class cell (`-`) are stripped before the compare. The baseline constant itself is unchanged.
+  - **Interpretations (no MUST-PAUSE):**
+    1. D13's credit never counts a SUSPECT word. This keeps the invented-text guard's stated invariant that the harness's `warned` mirrors Check 4. The guard already excludes suspect words from both omission codes.
+    2. The measured boundary is read from Check 6's warning, `next_patient_segment(note.note_warnings)`, for both D13 (iv) and R3. Check 6 fires exactly when `next_patient_boundary` does.
+    3. A schema-1 file holding `sets` is refused by a model validator. A schema-1 file with a top-level ceiling key is still refused by `extra="forbid"` (pinned).
+    4. `gate` is a field of each set row in the rule file. The report names the gate and reported sets from it, and the verdict computation does not read it: rule v2 decides per `--set`.
+    5. The reference reading runs FIRST in `evaluate_encounter`, before the label track, the WAV or any store. An axis script with no row is therefore an error outcome with no store (pinned).
+    6. PR-LOW-016 is applied under rule v2's report only, as the task line says. A schema-1 report keeps runs 1–5's zeros (pinned both ways).
+    7. Task 4.1's original pin "a shared closing-and-greeting line read as the greeting line" is superseded by D14. It is replaced by `TestReferenceReading`'s shared-line case (reference boundary = the line after).
+    8. `validation/README.md`'s `rules/` line does not yet name `rule-v2.json`. That is D10's document list, Task 5.1.
+  - **Blind rule:** no file under `validation/heldout-3/` was opened, read, listed or returned by a search in rx1. Searches ran over `desktop/`, `docs/`, the plan and `validation/README.md` only, and no `h3-` line was returned. No lint log was opened, pytest was not run and no subagent was spawned. `REFERENCE_TAIL_STARTS` was read as code (ids and integers).
+  - **Owed:**
+    - the composer's full desktop suite through `scripts/lint-held-out-set.py validation/heldout-3`;
+    - then /review-loop from round 44 (history check: 12 round entries plus 43 headings);
+    - the codex peer pass (cadence every-phase).
+    - The tests most likely to need a numeric fix are `TestReferenceReading`'s boundary cases and `TestResidueR1`'s token-level cases. Their expectations were derived by hand from `consultation_boundary` and the walk.
+  - **Proposed commit message for Phase 4** (the composer's to commit, after a green suite):
+    ```
+    Rule v2, the residue classes and the flagged-line credit in the harness (0.3.4 Phase 4, Tasks 4.1-4.4)
+
+    - validation: D13's flagged-line credit in warned (either omission
+      code, the confirmed clinician's wholly uncovered line before Check
+      6's boundary; never a suspect word), 0.3.3's reading kept as
+      "Silent (0.3.3 predicate)"; the residue classes R1 (recogniser),
+      R2 (tone only) and R3 (unbroken next patient, by the reference
+      boundary, per encounter) with residue-adjusted counts, the raw
+      counts unchanged
+    - validation: PassRule schema 2 - per-set literal ceilings, a gate
+      flag and a per-set require_uncertainty_surfaced (D15, D17);
+      --set required under schema 2; the report's two verdicts, the
+      residue section and the Facts table's class column; PR-LOW-016
+      under rule v2's report
+    - validation/rules/rule-v2.json: scripts 2/2/2, heldout and
+      heldout-2 1/1/1 (reported), heldout-3 R1 1 / R3 1, uncertainty
+      reported
+    - docs/testing/validation-harness.md: the amendments, rule v2 with
+      Task 0.7's override and D15's and D17's disclosure verbatim, the
+      set layer, heldout-2 and heldout-3
+    - tests: every class condition both ways, each ceiling at n and
+      n + 1, the uncertainty override both ways, v1 FAIL beside v2 PASS
+      on the same outcomes, the --set refusals
+
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+    ```
+- `[2026-10-24T16:53+11:00]` **Executor (stage-3, leg rx2) — review-loop CONVERGED at round 45 (2 rounds of the cap of 3).**
+  - **Before the loop:** the composer's suite over rx1 was green (8604 collected, 8595 passed, 0 failed, 9 skipped).
+  - **Round 44** (1 MED, 9 LOW, all applied). The plan-deviation lens was a read-only subagent given the blind rule verbatim.
+    - **Confirmed clean:** the rule file's ceilings and gate flags; every residue predicate and the D13 credit; the four D15/D17 quotes; and all eight rx1 interpretations as faithful readings.
+    - **MED-001:** D14's closing-gap and greeting-gap R3 pins were missing (D15's loosening (2)). Added `_GAP_CASES` and an end-to-end `reference_reading` → R3 test.
+    - **Other R3 pins:** the boundary-after-the-fact pin, and R3's non-material pin.
+    - **Walk state:** it is pinned as flags only (the 2^10 bound).
+    - **D14 record:** now covers role-unresolved encounters too. `ReferenceReading.next_patient_axis` and `EncounterOutcome.reference` were added, and no rule reads them.
+    - **Harness document:** Task 0.7's quote now has its last sentence; D18's bands are now numbers; `syn-38` / `syn-46` are noted as rule v2 R3 encounters.
+    - **Plan:** the rx1 bullet's overclaim was reworded.
+    - **C5:** the D13 speaker test now calls `note.spoken_by_confirmed_clinician`.
+  - **Round 45** (1 LOW, applied): the outcome's type-guard pin now also names `reference`.
+  - **Checks:** the Review History integrity check is OK after each round (14 round entries plus 45 headings), so the next round is 46. ruff and mypy are clean (66 source files).
+  - **Owed:**
+    - The review changed CODE AND TESTS (`validation.py`, `test_validation_metrics.py`, `test_validation_harness.py`). The composer needs to re-run the full suite through `scripts/lint-held-out-set.py validation/heldout-3`.
+    - Then the codex peer pass (cadence every-phase).
+    - The tests most likely to need a numeric fix are the two new gap cases (their expected `None` boundaries were derived by hand from `consultation_boundary`).
+  - **Blind rule:** no file under `validation/heldout-3/` was opened, read, listed or returned by a search in rx2, by the executor or by the subagent. No lint log was opened, and pytest was not run. One subagent was spawned and has finished: children=0.
+  - **Proposed commit message for Phase 4** (amended for rx2; the composer commits it after a green suite):
+    ```
+    Rule v2, the residue classes and the flagged-line credit in the harness (0.3.4 Phase 4, Tasks 4.1-4.4)
+
+    - validation: D13's flagged-line credit in warned (either omission
+      code, the confirmed clinician's wholly uncovered line before Check
+      6's boundary, Check 4's own speaker test; never a suspect word),
+      0.3.3's reading kept as "Silent (0.3.3 predicate)"; the residue
+      classes R1 (recogniser), R2 (tone only) and R3 (unbroken next
+      patient, by the reference boundary, per encounter) with
+      residue-adjusted counts, the raw counts unchanged
+    - validation: PassRule schema 2 - per-set literal ceilings, a gate
+      flag and a per-set require_uncertainty_surfaced (D15, D17);
+      --set required under schema 2; the report's two verdicts, the
+      residue section and the Facts table's class column; D14's
+      reference-boundary record over every next-patient script the run
+      read (the reading kept on measured and role-unresolved outcomes);
+      PR-LOW-016 under rule v2's report
+    - validation/rules/rule-v2.json: scripts 2/2/2, heldout and
+      heldout-2 1/1/1 (reported), heldout-3 R1 1 / R3 1, uncertainty
+      reported
+    - docs/testing/validation-harness.md: the amendments, rule v2 with
+      Task 0.7's override and D15's and D17's disclosure verbatim, D18's
+      bands, the set layer, heldout-2 and heldout-3
+    - tests: every class condition both ways (the closing and greeting
+      gaps end to end), each ceiling at n and n + 1, the uncertainty
+      override both ways, v1 FAIL beside v2 PASS on the same outcomes,
+      the --set refusals; review-loop rounds 44 (1 MED, 9 LOW) and 45
+      (1 LOW), applied
+
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+    ```
+- `[2026-10-24T17:10+11:00]` **Executor (stage-3, leg rx3) — the suite failure fixed, and codex peer round 46 (2 LOW) applied.** ruff and mypy are clean (66 source files). No MUST-PAUSE.
+  - **The suite failure** (the composer's run over rx2: 8612 collected, 8602 passed, 1 failed): `test_validation_metrics.py::TestReferenceReading::test_the_tail_start_comes_from_the_table`.
+    - **Cause:** a TEST-side bug introduced by round 44's edit. The test called `_reading_inputs(tmp_path)` twice, and `_pipeline_config` creates its folder without `exist_ok`, so the second call raised `FileExistsError`.
+    - **Fix:** the inputs are built once and used for both readings.
+    - **Product side:** `reference_reading` matches Task 4.1 as amended by D14 (the axis flag, boundary 3 and tail start 3, as asserted), so it needed no change.
+  - **Round 46 PR-LOW-001:**
+    - **Verify tuple:** surface=test-harness; rec=Fix-now, applied — evidence: with `measured` empty, `_residue_section` printed `count.total` (0), `_flag(count.within)` (`yes`) and `sum(...)` totals of 0.
+    - **What changed:** every count in the section now reads `-` when nothing is measured. That covers the pattern siblings named in the Round 46 notes: Count and Within, the members line, the adjusted and raw totals, "Surfaced / expected" and the load total.
+    - **Clean elsewhere:** the rest of the rule v2 report was checked and was clean.
+    - **Pin:** the parametrized error-only and role-unresolved-only test.
+  - **Round 46 PR-LOW-002:**
+    - **Verify tuple:** surface=docs; rec=Fix-now, applied — evidence: `encounter_metrics` reads `REVIEW_MARK_CODES` (all four marks) for R1.
+    - **What changed:** the Known limits bullet now names the three places metrics read the warnings, including `possible_next_patient`'s segment, which was found while verifying.
+  - **Cap verdict: converge.**
+    - Both findings were LOW. The peer confirmed rule v2's predicates, ceilings and quotes otherwise.
+    - The code change is report rendering only: no predicate, count or verdict changes, and measured zeros are pinned unchanged.
+    - No finding recurred from rounds 44 and 45.
+  - **Checks:** the Review History integrity check is OK. The round 46 line was already present, so the next round is 47.
+  - **Owed:** the review changed CODE AND TESTS (`validation.py`, `test_validation_metrics.py`, `test_validation_harness.py`). The composer needs to re-run the full desktop suite through `scripts/lint-held-out-set.py validation/heldout-3`, then commit Phase 4.
+  - **Blind rule:** no file under `validation/heldout-3/` was opened, read, listed or returned by a search in rx3. No lint log was opened, pytest was not run, and no subagent was spawned: children=0.
+  - **Proposed commit message for Phase 4** (amended for rx3; it supersedes rx2's above; the composer commits it after a green suite):
+    ```
+    Rule v2, the residue classes and the flagged-line credit in the harness (0.3.4 Phase 4, Tasks 4.1-4.4)
+
+    - validation: D13's flagged-line credit in warned (either omission
+      code, the confirmed clinician's wholly uncovered line before Check
+      6's boundary, Check 4's own speaker test; never a suspect word),
+      0.3.3's reading kept as "Silent (0.3.3 predicate)"; the residue
+      classes R1 (recogniser), R2 (tone only) and R3 (unbroken next
+      patient, by the reference boundary, per encounter) with
+      residue-adjusted counts, the raw counts unchanged
+    - validation: PassRule schema 2 - per-set literal ceilings, a gate
+      flag and a per-set require_uncertainty_surfaced (D15, D17);
+      --set required under schema 2; the report's two verdicts, the
+      residue section and the Facts table's class column; D14's
+      reference-boundary record over every next-patient script the run
+      read (the reading kept on measured and role-unresolved outcomes);
+      PR-LOW-016 under rule v2's report, its residue section included
+    - validation/rules/rule-v2.json: scripts 2/2/2, heldout and
+      heldout-2 1/1/1 (reported), heldout-3 R1 1 / R3 1, uncertainty
+      reported
+    - docs/testing/validation-harness.md: the amendments, rule v2 with
+      Task 0.7's override and D15's and D17's disclosure verbatim, D18's
+      bands, the set layer, heldout-2 and heldout-3
+    - tests: every class condition both ways (the closing and greeting
+      gaps end to end), each ceiling at n and n + 1, the uncertainty
+      override both ways, v1 FAIL beside v2 PASS on the same outcomes,
+      the --set refusals; review-loop rounds 44 (1 MED, 9 LOW) and 45
+      (1 LOW), and codex peer round 46 (2 LOW: the residue section's
+      unmeasured counts read '-', pinned for error-only and
+      role-unresolved-only reports; R1's review-mark dependency
+      documented), applied; the reference-reading test builds its
+      inputs once
+
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+    ```
+
+- `[2026-10-24T17:30+11:00]` **Composer — Phase 4 CLOSED (stage-3).**
+  - The full suite through the blind runner: over rx1 8604 collected, 8595 passed, 0 failed; over rx2 (review rounds 44–45) 8612 collected, 8602 passed, 1 failed (a test-side double build, fixed in rx3); over rx3 8614 collected, 8605 passed, 0 failed, 9 skipped. ruff and mypy clean (66 source files).
+  - Review rounds: review-loop rounds 44 (1 MED, 9 LOW) and 45 (1 LOW), applied; codex peer round 46 (`gpt-6-astra` medium, read-only, pass stage-3.p1) 2 LOW, recorded by the composer (census 46 > 45), verified and applied by the executor in rx3, whose cap verdict was converge (report rendering and a document line only; no predicate, count or verdict changed); /simplify round 47, 0 findings.
+  - Live-user smoke: the practitioner carried it to P.1's run of record (in chat, 2026-10-24; recorded on P.1).
+  - Committed locally with the rx3 commit message above; not pushed.
+  - Next: stage-4, Phase 5 (Task 5.1 documents, Task 5.2 version 0.3.4).
 
 ## Review History
 - 2026-10-22 `/review-plan` (Opus 5.5): Plan-subagent design critique + Explore subagent + coverage, practicality, risk and simplicity lenses, every finding checked against `0be35d7` / `4ff5f26`. Plan-scoped; no code reviewed. Step 3.5 gate: missed-speech warning Include in plan; chooser mark Include in plan; ui-refresh at its merge; larger model Excluded.
@@ -497,6 +690,10 @@ See the Planning Extraction Summary (the canonical list).
 - 2026-10-24 round 41: 0 CRIT / 0 HIGH / 0 MED / 2 LOW; skew=none; action=none
 - 2026-10-24 round 42: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
 - 2026-10-24 round 43: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
+- 2026-10-24 round 44: 0 CRIT / 0 HIGH / 1 MED / 9 LOW; skew=none; action=none
+- 2026-10-24 round 45: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=none; action=none
+- 2026-10-24 round 46: 0 CRIT / 0 HIGH / 0 MED / 2 LOW; skew=none; action=none
+- 2026-10-24 round 47: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
 
 ## Review Findings Log
 ### Round 1 — 2026-10-22
@@ -1628,6 +1825,153 @@ Round status: Closed (0 pending)
 - Consciously left alone: `quoted_line_marks`'s `UNSURE_LINE_MARK not in kinds` guard (it keeps the order and the one-per-line rule explicit and costs one tuple scan); `encounter_metrics`' `marked` now read only for emptiness (unchanged from HEAD's shape, a coordinate-validity guard).
 - Last reviewed: 2026-10-24
 
+### Round 44 — 2026-10-24
+Source: Claude Code review-loop (Opus 5.5, executor stage-3 rx2). Passes, in sequence:
+- correctness and security, structural quality, post-fix regression and missed-issue — the executor;
+- plan deviation — one read-only Explore subagent, given the blind rule verbatim. It checked: every `rule-v2.json` value against D8 as amended, D15 and option (a); every residue predicate and the D13 credit against D8, D13 and D14; every "verbatim" quote in the harness document against the plan, by exact escaped-regex search; the document against D15 and D18; the Phase 4 task lines and the eight interpretations.
+
+Round status: Closed (0 pending)
+
+**Scope:** Phase 4's six uncommitted paths against HEAD `9de1a1f`: `validation.py`, `test_validation_harness.py`, `test_validation_metrics.py`, `docs/testing/validation-harness.md`, `validation/rules/rule-v2.json` and the plan.
+- Before the round, the composer's suite over rx1 was green: 8604 collected, 8595 passed, 0 failed, 9 skipped.
+- The blind rule held: searches named `desktop/`, `docs/`, the plan, the rule file and `validation/README.md`; no `h3-` file was read or returned. The subagent ran no shell command and no pytest.
+- What the subagent confirmed:
+  - **Rule file:** every value matches.
+  - **Predicates:** every term of D8, D13 and D14 is present.
+  - **Verbatim quotes:** the four D15/D17 quotes are identical to the plan.
+  - **Interpretations:** all eight in the rx1 handoff are faithful readings.
+
+- **MED-001** — `test_validation_metrics.py`: Task 4.1's D14 amendment has no "closing gap" or "greeting gap" pin.
+  - The amendment reads: "Pins both ways: a closing gap and a greeting gap both R3".
+  - D15 lists this as its loosening (2), the main widening D14 makes, and nothing pinned it. The four reference-reading cases had none, and the R3 tests built `ReferenceReading` by hand.
+  - Triage: Fix-now. Decision: Applied.
+    - `_GAP_CASES`: an unlisted closing before a listed greeting, and a listed closing before an unlisted greeting. Each is added to `_BOUNDARY_CASES` with the expectation `None`.
+    - `TestReferenceReading.test_a_gap_on_the_scripts_words_makes_the_next_patient_r3`, end to end: `reference_reading` → `encounter_metrics` → `residue_r3`, for both gaps.
+- **LOW-002** — `TestResidueR3`: the "measured boundary" case put the boundary BEFORE the facts.
+  - Task 4.1 reads: "a boundary that fired after the fact not R3".
+  - Triage: Fix-now. Decision: Applied. `test_a_boundary_that_fired_after_the_fact_still_rules_r3_out` adds a fifth line and puts the boundary on segment 4.
+- **LOW-003** — `TestResidueR3`: no non-material case.
+  - Task 4.1 reads: "a nonmaterial `wrong` or `wrongly_present` fact consuming no allowance".
+  - R1's non-material case was pinned; R3's was not.
+  - Triage: Fix-now. Decision: Applied (`test_a_non_material_fact_consumes_no_allowance`).
+- **LOW-004** — `test_the_walk_state_holds_ten_flags` pinned only the field names.
+  - Task 4.2 reads: "the repeated-token state-count bound within 2^10".
+  - Triage: Fix-now. Decision: Applied. It now also asserts that every field's type is `bool`. The bound is structural (flags only, so equal states merge and a cell holds at most 2^10 states), so the state's shape is what is pinned rather than one measured walk. Recorded here as the reading of that pin.
+- **LOW-005** — `validation.py` `_residue_section`: D14's recorded check covered only measured encounters.
+  - D14 reads: "for every axis script of every set … record `(id, reference boundary, tail)` as integers".
+  - The reference reading is taken before the label track, but a role-unresolved outcome dropped it.
+  - Triage: Fix-now. Decision: Applied.
+    - `ReferenceReading` gains `next_patient_axis`.
+    - `EncounterOutcome` gains `reference` (validated type, no rule reads it), set on measured AND role-unresolved outcomes.
+    - The section reads the record from the outcome.
+    - An error outcome still has none, and the document says so.
+    - Pins: `TestReport.test_the_reference_boundary_record_covers_every_script_the_run_read` (role unresolved recorded, a mismatch named, an off-axis script and an error outcome absent); the runner's role-unresolved test asserts the reading is kept.
+- **LOW-006** — `docs/testing/validation-harness.md`: Task 0.7's override, labelled "quoted verbatim", dropped its last sentence.
+  - The missing sentence: "The practitioner may add a sentence of their own here before Task 0.12; it is not required."
+  - Triage: Fix-now. Decision: Applied (sentence restored).
+- **LOW-007** — `docs/testing/validation-harness.md`: D18's bands were referred to but not given.
+  - The document said "outside the band is a finding" with no numbers.
+  - Triage: Fix-now. Decision: Applied. D18's expected counts and reported bands are now stated.
+- **LOW-008** — `docs/testing/validation-harness.md` Known limits ("End of consultation and new patient").
+  - The text says `syn-38` and `syn-46` "stay expected fails". That reads as current, but it is rule v1's reading.
+  - Triage: Fix-now. Decision: Applied. Added: under rule v2 (D14) each is one R3 encounter, within the 50's ceiling of 2.
+- **LOW-009** — the plan's rx1 handoff bullet: "every predicate both ways" overclaimed, given MED-001 and LOW-002 to LOW-004.
+  - Triage: Fix-now. Decision: Applied (reworded, with a dated note).
+- **LOW-010** — `validation.py` D13 credit: the speaker test was re-spelled as `speaker == clinician_speaker` plus a None check.
+  - Check 4's `clinician_line_omissions` uses `note.spoken_by_confirmed_clinician`, and C5 says one function per rule.
+  - Triage: Fix-now. Decision: Applied (it calls the shared function; behaviour unchanged).
+
+**Looked at and left alone:**
+- The metrics' own `next_patient_axis` / `reference_tail_start` / `reference_boundary` fields now duplicate the outcome's `reference`. They are kept: `encounter_metrics` takes the reading as its input and records it, and `TestResidueR3` pins them. Folding them away is a later simplification.
+- `render_report` with a schema-2 rule and no `set_name` raises `RuleError` from `set_row`. That is acceptable, because `main` refuses that combination before any encounter runs.
+
+Findings: 0 CRIT / 0 HIGH / 1 MED / 9 LOW
+Round Classification: 🆕 10 (the first code round over Phase 4); skew=none
+Finding verification: 11 candidates; 0 dropped; 1 kept as left-alone (the duplicated metrics fields); MED-001 confirmed against `_BOUNDARY_CASES` (no gap case) and `TestResidueR3` (hand-built readings); LOW-005 confirmed against `evaluate_encounter`'s role-unresolved branch
+Missed-issue pass: re-read `encounter_metrics`' fact loop and D13 credit, `PassRule._check_sets`, `class_counts`, `run_passed`, `_verdict_lines`, `_residue_section`, `main`'s `--set` block; result: LOW-010
+Convergence: one MED, so round 45 follows (cap 3). Code and tests changed, so the suite is owed to the composer. ruff and mypy are clean (66 source files).
+
+### Round 45 — 2026-10-24
+Source: Claude Code review-loop (Opus 5.5, executor stage-3 rx2; post-fix regression and missed-issue passes over round 44's changes)
+Round status: Closed (0 pending)
+
+**Scope:** round 44's edits.
+- **Read in full:**
+  - `ReferenceReading.next_patient_axis` and `EncounterOutcome.reference` with its type guard;
+  - `evaluate_encounter`'s two outcome constructions;
+  - `_residue_section`'s record;
+  - the D13 speaker test.
+- **Tests read:** `TestResidueR3`'s widened `_metrics`, the two new R3 tests, `_GAP_CASES` and the end-to-end gap test, the walk-state pin, and the harness's `_measured_outcome` / `_axis_reading` / record test.
+- **Document read:** the four harness-document edits.
+- **Gap cases:** walked by hand through `consultation_boundary`. In the closing gap, no listed closing sits in the greeting's window. In the greeting gap, no listed greeting appears on any line. So both give `None`.
+- **Blind rule:** held as in round 44.
+
+- **LOW-001** — `test_validation_harness.py` `test_an_outcome_holds_only_its_validated_types`. This is round 12 LOW-002's run-time type guard, parametrized over the outcome's typed slots, and it did not name the new `reference` slot. Triage: Fix-now; Decision: Applied (`"reference"` added; its message is "reference must be a ReferenceReading").
+
+**Looked at and left alone:** `TestTextFreeTypes`' str-field census. `EncounterOutcome.reference`'s hint holds no `str` or `Literal`, so the listed set is unchanged.
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 1 LOW
+Round Classification: 🆕 1 (no round-44 finding recurred; no fix-induced defect); skew=none
+Finding verification: 2 candidates; 1 dropped (the census, by its own rule); 0 downgraded
+Missed-issue pass: re-read the outcome's `__post_init__`, `class_counts`, `_verdict_lines` and the report heading under schema 1 and schema 2; result: none beyond LOW-001
+Convergence: no CRIT, HIGH or MED; the LOW applied (ruff and mypy clean, 66 source files). Converged at round 2 of the cap of 3. A test changed, so the suite is owed to the composer.
+
+### Round 46 — 2026-10-24
+Source: independent cross-family codex peer review (composer-recorded from the read-only peer's output, `.cursor/loops/stage-3-peer-r46.log`; pass stage-3.p1, peer_round 1 of cap 5)
+Reviewer: codex gpt-6-astra (medium)
+Round status: Closed (0 pending)
+
+**Scope:** Phase 4's working-tree diff against `9de1a1f` (`validation.py`, `test_validation_metrics.py`, `test_validation_harness.py`, `docs/testing/validation-harness.md`), `validation/rules/rule-v2.json`, the plan's D7, D8, D13–D15, D17, D18 and Phase 4 records, plus the named supporting functions. Read-only; no suite, no network. The blind rule held: no `validation/heldout-3/` file was opened or listed.
+
+#### Findings
+
+- **PR-LOW-001** (LOW, test-harness, `desktop/src/scribe_desktop/validation.py:3182`): the residue section prints unmeasured metrics as zeros. When every outcome is an error or role-unresolved, no note metrics exist, yet the class counts print `0` with `Within yes`, and the adjusted and raw totals, "Surfaced / expected" and the warning-load totals also print zero. — Evidence: `measured = [o.metrics for o in outcomes if o.metrics is not None]`; the table prints `count.total` with `_flag(count.within)`; line 3209 prints `"total {sum(loads)}"` — against the report's own convention that a cell or total nothing measured reads `-` (PR-LOW-016). Recommendation: Fix-now — availability checks throughout the residue section, pinned for error-only and role-unresolved-only reports, measured zeros kept. /fix decision: Applied
+  - /fix notes:
+    - **Verified:** with `measured` empty, `class_counts` returns totals of 0, and `_flag(count.within)` printed `yes`.
+    - **Fix:** `_residue_section` now takes `any_measured` and a local `total()` built on `_count`.
+    - **Pattern siblings fixed in the same pass** (every measured-looking `0` in the section):
+      - the class Count;
+      - its Within flag (`-`);
+      - the members line (`- (no encounter measured)`, where it previously read `none`);
+      - the three adjusted totals and the three raw totals;
+      - "Surfaced / expected";
+      - the `clinician_line_omitted` load total. The median and maximum already read `-`.
+    - **Sections checked and found clean:**
+      - the main table and TOTAL row (PR-LOW-016);
+      - the Checker warnings and Facts sections (they list measured outcomes only);
+      - `_verdict_lines` and the header ("set-level errors: N" and "N measured" are real counts);
+      - D14's reference record (it lists outcomes, or `none`).
+    - **Pin:** `test_validation_harness.py` `TestReport.test_a_residue_section_with_nothing_measured_reads_dash`, parametrized over error-only and role-unresolved-only reports. In the role-unresolved case the D14 record still prints `syn-001: none, 4`. A measured zero still reads `0`, pinned by `test_a_schema_2_report_names_both_verdicts_and_the_set_layer` (`| R2 tone only | 0 | facts | 1 | yes |`).
+    - **Docs:** the harness document's rule v2 report paragraph names the convention for the section.
+    - **Gates:** ruff and mypy clean (66 source files). The suite is owed to the composer.
+  - /fix date: 2026-10-24
+- **PR-LOW-002** (LOW, docs-only, `docs/testing/validation-harness.md:184`): Known limits says only the hedge warning feeds a metric, but R1 now reads the other review marks. — Evidence: "Only `hedged_source` is read by a metric"; `validation.py:1681` `REVIEW_MARK_CODES = {"number_source", "low_confidence_source", "suspect_source", "hedged_source"}`, read for R1 at :1851 and :1903. Recommendation: Fix-now — describe R1's review-mark dependency beside the uncertainty credit. /fix decision: Applied
+  - /fix notes:
+    - **Verified:** `encounter_metrics` takes `review_marked = _marked_words(note, REVIEW_MARK_CODES)` and R1 requires every wrong state `marked`.
+    - **Also found while verifying:** the D13 credit and R3 read Check 6's `possible_next_patient` for its segment, through `next_patient_segment(note.note_warnings)`.
+    - **Fix:** the Known limits bullet's last sentence is replaced. It now says metrics read the warnings in three places, none failing an encounter on the warning itself:
+      - `hedged_source` → the uncertainty credit;
+      - all four review marks (`REVIEW_MARK_CODES`, named) → R1, so a confidently misheard word on an unmarked line still fails;
+      - `possible_next_patient` → its segment only, as the measured boundary.
+    - **Gates:** a docs-only change.
+  - /fix date: 2026-10-24
+
+- Verification counts: 2 claims checked, 2 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-10-24
+
+### Round 47 — 2026-10-24
+Source: Claude Code simplify (composer-run via a read-only subagent, propose-only, before Phase 4's local commit)
+Round status: Closed (0 pending)
+
+**Scope:** Phase 4's source diff against `9de1a1f` (`validation.py`), every touched function read in full (the residue types and properties, `_WordInfo` / `_FactState` / the walk, `encounter_metrics`, `SetCeilings` / `PassRule`, `rule_failures` / `v1_failures` / `class_counts` / `class_breaches`, `reference_reading` / `evaluate_encounter`, `run_passed` / `run_passed_v1`, `render_report`, `_verdict_lines`, `_residue_section`, `main`'s `--set`), with D7, D8, D13–D15, D17 and C1–C14. The blind rule held: searches named `desktop/` only; no pytest; no file edited.
+
+#### Findings
+
+(none) — no simplifications worth a maintainer's attention.
+
+- Consciously left alone: the verdicts computed in `render_report` and again in `_verdict_lines` (repeated work only, same function); `main`'s own `--set` refusals beside `set_row` (routing through it changes the refusal text); the `hedged` loop's coordinate range beside `_marked_words` (pre-existing, it also counts `hedge_marks_unhedged`); `r3`'s defensive `tail_start is not None` (hand-built readings in tests); `FactOutcome` built then `replace`d with the residue flags (R1 reads the canonical `silent_omission`, C5); `run_passed` under schema 1 beside `run_passed_v1` (D8's printed v1 verdict); `class_counts`' two dicts and `_check_sets`' name regex (taste); the duplicated reference fields (already known, round 44).
+- Last reviewed: 2026-10-24
+
 ## Tasks
 
 ### Phase 0 — Budget, measurement, decisions, freeze, predictions
@@ -1842,14 +2186,14 @@ Nothing to build. Tasks 2.1 and 2.2 are removed (their text survives in D2 and t
     - **Not here:** the report header's citation of the scope as a metric amendment (Task 4.2/4.3's header work); the documents (Task 5.1).
 
 ### Phase 4 — The harness (`validation.py`, `validation/rules/`, `docs/testing/validation-harness.md`), its own dated commit before run 6
-- [ ] 🟥 **4.1 The residue classifiers (D8)** — R1 through `_fact_end_states` (no `all_matched` state) plus the `reference_document` run plus the review-mark term over the walk's `marked` flag on every wrong end state of every occurrence (its numeric near-emptiness documented); R2 only on an unsurfaced fact, through `script_line_hedged` over `REFERENCE_HEDGES`; R3 (axis, the fact at or after `REFERENCE_TAIL_STARTS`, no boundary on the measured document, no listed greeting on the `REFERENCE_GREETING_LINES` line). Each class a field on `FactOutcome` that clears ONLY its own failure predicates, through residue-adjusted counts (D8). Pins both ways for each condition, plus: an already-surfaced fact is not R2 and uses no ceiling; an R2 fact that is also `omitted` still fails `silent_omissions` unless R1; an R1 fact with an unsurfaced uncertainty still fails `uncertainty_missed` unless R2; a fact reported `wrong` with a silently omitted alternative cleared from BOTH counts by one R1 and counted once against R1; a nonmaterial `wrong` or `wrongly_present` fact consuming no allowance; a split-segment fact and a repeated-token fact where only ONE wrong alternative is marked NOT R1, and both marked R1; an unrelated `absent` fact before the tail start not R3; a boundary that fired after the fact not R3; a shared closing-and-greeting line read as the greeting line; a script with the axis and no entry in either table a harness error; the raw counts unchanged, the same outcomes giving v1 FAIL and v2 PASS. `align_transcripts` not used.
+- [x] 🟩 **4.1 The residue classifiers (D8)** — R1 through `_fact_end_states` (no `all_matched` state) plus the `reference_document` run plus the review-mark term over the walk's `marked` flag on every wrong end state of every occurrence (its numeric near-emptiness documented); R2 only on an unsurfaced fact, through `script_line_hedged` over `REFERENCE_HEDGES`; R3 (axis, the fact at or after `REFERENCE_TAIL_STARTS`, no boundary on the measured document, no listed greeting on the `REFERENCE_GREETING_LINES` line). Each class a field on `FactOutcome` that clears ONLY its own failure predicates, through residue-adjusted counts (D8). Pins both ways for each condition, plus: an already-surfaced fact is not R2 and uses no ceiling; an R2 fact that is also `omitted` still fails `silent_omissions` unless R1; an R1 fact with an unsurfaced uncertainty still fails `uncertainty_missed` unless R2; a fact reported `wrong` with a silently omitted alternative cleared from BOTH counts by one R1 and counted once against R1; a nonmaterial `wrong` or `wrongly_present` fact consuming no allowance; a split-segment fact and a repeated-token fact where only ONE wrong alternative is marked NOT R1, and both marked R1; an unrelated `absent` fact before the tail start not R3; a boundary that fired after the fact not R3; a shared closing-and-greeting line read as the greeting line; a script with the axis and no entry in either table a harness error; the raw counts unchanged, the same outcomes giving v1 FAIL and v2 PASS. `align_transcripts` not used.
   - `[2026-10-24]` **Amended by D14:** R3 reads `next_patient_boundary(reference_document(script), config) is None` (the reference boundary computed in `evaluate_encounter` from the run's `--config` and passed to `encounter_metrics`) and `REFERENCE_TAIL_STARTS` only (`REFERENCE_GREETING_LINES` is already gone — Task 0.17); R3 is counted per ENCOUNTER (one tail = one event; the residue-adjusted count drops every R3 fact of that encounter) while R1 and R2 stay per fact; an axis script with no `REFERENCE_TAIL_STARTS` row is a harness error, pinned; the reference-boundary mismatch per axis script is printed as integers (D14's recorded check). Pins both ways: a closing gap and a greeting gap both R3; a script whose reference boundary fires is not R3; two absent facts after one tail count once. R1 and R2 unchanged (D17's rejected items are not built).
-- [ ] 🟥 **4.2 The warned amendments (D7)** — `warned` reads `clinician_line_omitted` on the fact's segment (the deletion-edge term, its `_FactState` flags and their pins were DROPPED 2026-10-23 with the missed-speech warning — not built); today's `warned` carried as the walk flag `warned_v033`, with `silently_omitted_v033` across every alternative, printed as "Silent (0.3.3 predicate)" (D7); `warned_v1` unchanged and still labelled as run 1's; `_FactState`'s new fields; the report header cites the amendments (`test_validation_harness.py:1198`); D7's retained pins (an omitted fact on a segment carrying `clinician_line_omitted` credited, and the same fact with the code on another segment not; a patient-side omission warned by 0.3.3 and not by run 1; a reported-`wrong` fact with a 0.3.3-silent alternative; the repeated-token state-count bound within 2^10). The deletion-edge pins (partial deletion vs substitution, edges, cross-segment, suspect-filtered, a line beside a pause) went with their term and are not built (peer round 7 PR-MED-026).
+- [x] 🟩 **4.2 The warned amendments (D7)** — `warned` reads `clinician_line_omitted` on the fact's segment (the deletion-edge term, its `_FactState` flags and their pins were DROPPED 2026-10-23 with the missed-speech warning — not built); today's `warned` carried as the walk flag `warned_v033`, with `silently_omitted_v033` across every alternative, printed as "Silent (0.3.3 predicate)" (D7); `warned_v1` unchanged and still labelled as run 1's; `_FactState`'s new fields; the report header cites the amendments (`test_validation_harness.py:1198`); D7's retained pins (an omitted fact on a segment carrying `clinician_line_omitted` credited, and the same fact with the code on another segment not; a patient-side omission warned by 0.3.3 and not by run 1; a reported-`wrong` fact with a 0.3.3-silent alternative; the repeated-token state-count bound within 2^10). The deletion-edge pins (partial deletion vs substitution, edges, cross-segment, suspect-filtered, a line beside a pause) went with their term and are not built (peer round 7 PR-MED-026).
   - `[2026-10-24]` **Amended by D13:** `_WordInfo.warned` also holds on a fact whose aligned segment is anchored by `high_risk_omission` OR `clinician_line_omitted`, spoken by `note.clinician_speaker`, wholly uncovered and before `next_patient_segment` — read from the note's warnings, not from `ui.models.flagged_segments` (so no dependency on Task 1.2). Pins both ways: a wholly uncovered flagged clinician line credited; a partly covered one not; a patient line not; a `high_risk_omission` past the boundary not; a wholly uncovered clinician line with NO warning not; the 0.3.3 column unchanged by all of these.
-- [ ] 🟥 **4.3 Rule v2, the set layer and the report** — `PassRule` `Literal[1, 2]` with per-set literal ceilings keyed by set name; `validation/rules/rule-v2.json`; each class clearing only its own failure predicates through the residue-adjusted counts, the raw counts and the v1 verdict untouched (D8); `run_passed`'s set-level check and a set-level failure line; `main` takes the set name (from the folder or a flag) to pick the ceilings; report: per-set class counts, a class column in the Facts table, the v1 verdict line beside the v2 verdict, the one-verdict heading replaced; every positional pin re-pinned (`"---|" * 25`, `cells = ["-"] * 18`, `cells.insert(17, …)`, the TOTAL row, `test_validation_harness.py:1184-1209`); ceilings pinned at n and n + 1; a schema-1 file with ceiling fields refused; a schema-2 file refused by a `Literal[1]` reader (documented, not tested here).
+- [x] 🟩 **4.3 Rule v2, the set layer and the report** — `PassRule` `Literal[1, 2]` with per-set literal ceilings keyed by set name; `validation/rules/rule-v2.json`; each class clearing only its own failure predicates through the residue-adjusted counts, the raw counts and the v1 verdict untouched (D8); `run_passed`'s set-level check and a set-level failure line; `main` takes the set name (from the folder or a flag) to pick the ceilings; report: per-set class counts, a class column in the Facts table, the v1 verdict line beside the v2 verdict, the one-verdict heading replaced; every positional pin re-pinned (`"---|" * 25`, `cells = ["-"] * 18`, `cells.insert(17, …)`, the TOTAL row, `test_validation_harness.py:1184-1209`); ceilings pinned at n and n + 1; a schema-1 file with ceiling fields refused; a schema-2 file refused by a `Literal[1]` reader (documented, not tested here).
   - `[2026-10-24]` **Amended by D15 and D17:** four set rows in `rule-v2.json` (`scripts`, `heldout`, `heldout-2`, `heldout-3`) with D8's amended ceilings; a per-set `require_uncertainty_surfaced` overriding the top-level field (default: the top-level value; false for `heldout-3`), pinned both ways; `--set` REQUIRED under schema 2 and refused for an unknown name (schema 1 keeps today's command line); the set row passed into `rule_failures`, `run_passed` and `render_report` (none takes a set today); R3's ceiling counts encounters; the report prints per-set v1 and v2 verdict lines, "Surfaced / expected" per set, and names the gate sets (the 50 and `heldout-3`) beside the reported ones.
   - Deferred here 2026-10-23 (PR-LOW-016, practitioner-confirmed): an unmeasured cell shows `-`, never `0` — an error outcome's segment count, and each legacy TOTAL counter (reference words, spelling changes, unsupported content, facts, omissions, uncertainty, checker failures, suspect segments) when no outcome contributes to it; a measured zero stays `0`. Word-level, note-level and suspect totals take separate availability checks (a role-unresolved encounter still supplies transcription measurements). Under rule v2's report only; `--attribution clustering` under rule v1 keeps `_CLUSTERING_BASELINE_C5F3179`'s shape unless this task re-pins it deliberately.
-- [ ] 🟥 **4.4 The harness document** — `docs/testing/validation-harness.md`: the amendments (dated), the rule v2 section with its override text (verbatim from Task 0.7) and the set layer, `heldout-2`, the three-set gate, the fitted-ceiling statement; Task 0.14's attribution amendment paragraph cross-checked against the policy as built.
+- [x] 🟩 **4.4 The harness document** — `docs/testing/validation-harness.md`: the amendments (dated), the rule v2 section with its override text (verbatim from Task 0.7) and the set layer, `heldout-2`, the three-set gate, the fitted-ceiling statement; Task 0.14's attribution amendment paragraph cross-checked against the policy as built.
   - `[2026-10-24]` **Amended:** D15's and D17's disclosure text verbatim (the gate change after a predicted failure and before the run, its reason, the Honest forecast's quoted line, the critic's objection and the four loosenings named); D13 and D14 as dated metric amendments; `heldout-3`, its brief's bounds and its scope qualifier; the deleted greeting table; the four-set run and `--set`; "the three-set gate" in the task line above reads as D15's; `validation-harness.md:122` ("still silent … fails the run") qualified — true for the gate sets, reported for `heldout` and `heldout-2`. `[2026-10-24, peer round 25]` D18's falsifiers and D15's "unchanged" clause are worded as residue-adjusted counts (an R1-cleared silent omission within the ceiling passes v2).
 
 ### Phase 5 — Documents and version
@@ -1871,6 +2215,7 @@ Nothing to build. Tasks 2.1 and 2.2 are removed (their text survives in D2 and t
   - Record in `validation-harness.md` "Runs of record" and `plan-pilot.md` P.3: commit, manifest hash, voices, rule and cue blobs, the amendments in force (`[2026-10-24]` D7/D13, D8/D14, D11, D15, D17 by date), per-set v1 and v2 verdict lines with the gate sets named, the residue counts by class, "Surfaced / expected" per set, the new code's count, the attribution policy (enrolment, D11) and both attribution-seconds totals, `heldout-3`'s set commit, its pre-registration hash and its isolation log's name, and each D18 falsifier's outcome.
   - Read against predictions v1 and v2 (the seen sets) and D18's bands and falsifiers (`heldout-3`); anything outside them is a finding, never a rule edit; a falsifier on `heldout-3` is a FAIL of the gate (`[2026-10-24]`).
   - Delete the folders; check `%TEMP%` for `scribe-speaker-eval-*`.
+  - `[2026-10-24]` It is also Phase 4's live-user smoke (the harness under rule v2 and `--set`, over the four sets): the practitioner carried it here in chat during stage-3 of the same run. Phase 4 was committed without a separate smoke.
 - [ ] 🟥 **P.2 Install 0.3.4 and smoke it**
   - Verify (`gh attestation verify`, hashes) and install at a pilot-allowed point; reload the extension; restart Chrome.
   - Mock smoke (desktop-started, no patient, shadow on, no development tick, Discarded): an uncued clinician advice line shows "A line you said is not in the note", Acknowledge all leaves it, the per-code click clears it; a hedge after a comma-cut line shows `[check: unsure]`; the chooser's `[flagged]` / `[next patient?]` marks are readable; the count line reads correctly; the Status tab shows 0.3.4.

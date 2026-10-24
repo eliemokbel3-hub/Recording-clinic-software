@@ -77,12 +77,13 @@ import hashlib
 import math
 import os
 import re
+import statistics
 import sys
 import tempfile
 from array import array
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final, Literal, NamedTuple, Protocol, get_args
@@ -102,6 +103,7 @@ from scribe_desktop.note import (
     content_tokens,
     finalise_note,
     segment_hedged,
+    spoken_by_confirmed_clinician,
     strip_token_punctuation,
 )
 
@@ -138,6 +140,7 @@ from scribe_desktop.note_config import (
     bind_template_profile,
     is_learned_rule_id,
     load_note_config,
+    next_patient_boundary,
 )
 from scribe_desktop.note_fill import detect_prefill_candidates
 from scribe_desktop.speaker_embedding import build_speaker_embedder, speaker_model_available
@@ -177,10 +180,12 @@ from scribe_desktop.transcription import (
     words_hold_suspect,
 )
 from scribe_desktop.ui.models import (
+    OMISSION_CODES,
     ProseStage,
     build_prose_stage,
     extractive_provider_from_config,
     language_model_available,
+    next_patient_segment,
 )
 from scribe_desktop.ui.note_review import ProposalDecision, build_resolutions, prefilled_ids
 
@@ -189,7 +194,9 @@ from scribe_desktop.ui.note_review import ProposalDecision, build_resolutions, p
 # ---------------------------------------------------------------------------
 
 SCRIPT_SCHEMA_VERSION: Final = 1
-RULE_SCHEMA_VERSION: Final = 1
+# The newest pass-rule schema (rule v2's set layer, validation-run6 plan D8);
+# a schema-1 file still reads unchanged.
+RULE_SCHEMA_VERSION: Final = 2
 # Ids are the only names a report prints: lower-case, digits and hyphens.
 ENCOUNTER_ID_PATTERN: Final = r"^[a-z0-9][a-z0-9-]{0,63}$"
 ROLE_PATTERN: Final = r"^[a-z][a-z_]{0,31}$"
@@ -402,7 +409,14 @@ class EncounterScript(BaseModel):
 def _schema_field_names() -> frozenset[str]:
     return frozenset(
         name
-        for model in (ScriptLine, ExpectedFact, SyntheticConditions, EncounterScript, PassRule)
+        for model in (
+            ScriptLine,
+            ExpectedFact,
+            SyntheticConditions,
+            EncounterScript,
+            PassRule,
+            SetCeilings,
+        )
         for name in model.model_fields
     )
 
@@ -639,6 +653,26 @@ REFERENCE_TAIL_STARTS: Final[Mapping[str, int | None]] = {
     "h3-20": 8,
     "h3-23": None,
 }
+NEXT_PATIENT_AXIS: Final = "end_and_new_patient"
+
+
+class ResidueTableError(ValidationHarnessError):
+    """A script carrying ``NEXT_PATIENT_AXIS`` has no ``REFERENCE_TAIL_STARTS``
+    row (D8, D14): a harness error, never an R3. Fixed text only."""
+
+
+def reference_tail_start(script: EncounterScript) -> int | None:
+    """``script``'s reference tail start (D8's R3 table, read in this one
+    place): its ``REFERENCE_TAIL_STARTS`` row when it carries
+    ``NEXT_PATIENT_AXIS`` (None for a negative), and None for any other
+    script. Raises ``ResidueTableError`` for an axis script with no row."""
+    if NEXT_PATIENT_AXIS not in script.axes:
+        return None
+    if script.encounter_id not in REFERENCE_TAIL_STARTS:
+        raise ResidueTableError(
+            "a script with the next-patient axis has no reference tail start"
+        )
+    return REFERENCE_TAIL_STARTS[script.encounter_id]
 
 
 class EncounterFiles(NamedTuple):
@@ -774,7 +808,23 @@ class FactOutcome:
     runs 1-4's predicate alone (a ``low_confidence_source`` warning on an
     aligned word, with no hedge credit) — the report's comparison column
     only, never read by a rule (metric amendment 2026-10-13, validation-pass
-    plan D7); None as ``uncertainty_surfaced`` is."""
+    plan D7); None as ``uncertainty_surfaced`` is. ``silently_omitted_v033``:
+    ``silently_omitted_somewhere`` under 0.3.3's ``warned`` (the predicate
+    before the validation-run6 amendments D7 and D13) — the report's "Silent
+    (0.3.3 predicate)" column only, never read by a rule.
+
+    The residue classes (validation-run6 plan D8 as amended by D14; rule v2
+    reads them, rule v1 never does): ``residue_r1`` — a recogniser error the
+    product cannot fix (every equal-cost alignment puts a word error on the
+    fact's own tokens, the same pipeline gets it right on the script's own
+    words, and a wrong rendering carries a review mark on every alternative);
+    ``residue_r2`` — doubt carried by tone only (its uncertainty unsurfaced
+    and its script line, within the hedge scope, holding no
+    ``REFERENCE_HEDGES`` phrase); ``residue_r3`` — an unbroken next patient
+    (a material ``absent`` fact wrongly present at or after the reference
+    tail start, no boundary on the measured transcript nor on the script's
+    own words). Each excuses only its own failure predicates
+    (``material_wrong_v2``, ``silent_omission_v2``, ``uncertainty_missed_v2``)."""
 
     fact_index: int
     kind: FactKind
@@ -787,6 +837,10 @@ class FactOutcome:
     silently_omitted_somewhere: bool = False
     silently_omitted_v1: bool = False
     uncertainty_surfaced_acoustic: bool | None = None
+    silently_omitted_v033: bool = False
+    residue_r1: bool = False
+    residue_r2: bool = False
+    residue_r3: bool = False
 
     def __post_init__(self) -> None:
         _require_count(self.fact_index, "fact_index")
@@ -799,6 +853,10 @@ class FactOutcome:
             "ambiguous",
             "silently_omitted_somewhere",
             "silently_omitted_v1",
+            "silently_omitted_v033",
+            "residue_r1",
+            "residue_r2",
+            "residue_r3",
         ):
             if not isinstance(getattr(self, name), bool):
                 raise ValueError(f"{name} must be a flag")
@@ -806,6 +864,16 @@ class FactOutcome:
             value = getattr(self, name)
             if value is not None and not isinstance(value, bool):
                 raise ValueError(f"{name} must be a flag or None")
+        # A class only ever names a failing fact, so a passing one never
+        # consumes a ceiling (D8, peer round 1 PR-HIGH-001).
+        if self.residue_r1 and not (
+            self.material and (self.verdict == "wrong" or self.silent_omission)
+        ):
+            raise ValueError("residue_r1 names a material wrong or silently omitted fact")
+        if self.residue_r2 and self.uncertainty_surfaced is not False:
+            raise ValueError("residue_r2 names a fact whose uncertainty was not surfaced")
+        if self.residue_r3 and not (self.material and self.verdict == "wrongly_present"):
+            raise ValueError("residue_r3 names a material wrongly present fact")
 
     @property
     def silent_omission(self) -> bool:
@@ -831,8 +899,34 @@ class FactOutcome:
         return self.silent_omission or (self.material and self.silently_omitted_v1)
 
     @property
+    def silent_omission_v033(self) -> bool:
+        """``silent_omission`` read with 0.3.3's ``warned`` (the report's
+        "Silent (0.3.3 predicate)" column). Today's ``warned`` is 0.3.3's
+        or D13's flagged-line credit, so a current silent omission is a
+        0.3.3 one too — kept true by construction here as well."""
+        return self.silent_omission or (self.material and self.silently_omitted_v033)
+
+    @property
     def material_wrong(self) -> bool:
         return self.material and self.verdict in ("wrong", "wrongly_present")
+
+    @property
+    def material_wrong_v2(self) -> bool:
+        """``material_wrong`` unless a class excuses it (D8): R1 for a
+        ``wrong`` verdict, R3 (always ``wrongly_present``)."""
+        excused = (self.residue_r1 and self.verdict == "wrong") or self.residue_r3
+        return self.material_wrong and not excused
+
+    @property
+    def silent_omission_v2(self) -> bool:
+        """``silent_omission`` unless R1 excuses it (D8) — R1 alone may."""
+        return self.silent_omission and not self.residue_r1
+
+    @property
+    def uncertainty_missed_v2(self) -> bool:
+        """An unsurfaced uncertainty unless R2 excuses it (D8) — R2 alone
+        may."""
+        return self.uncertainty_surfaced is False and not self.residue_r2
 
 
 @dataclass(frozen=True)
@@ -852,7 +946,13 @@ class EncounterMetrics:
     plan D7): the note's ``hedged_source`` warnings whose segment holds no
     spoken hedge within the hedge scope (``note.segment_hedged``,
     re-derived; validation-run6 plan D5) — expected 0 from the shipped
-    checker; reported, never failing, and never credited."""
+    checker; reported, never failing, and never credited.
+    ``next_patient_axis``, ``reference_tail_start`` and
+    ``reference_boundary`` (validation-run6 plan D14's recorded check, set
+    only when the reference reading was taken): whether the script carries
+    the next-patient axis, its ``REFERENCE_TAIL_STARTS`` row and the
+    product's boundary on the script's own words — integers, reported,
+    never failing."""
 
     words: WordErrors
     spelling_normalised_words: int
@@ -866,6 +966,9 @@ class EncounterMetrics:
     expected_warnings_absent: tuple[str, ...]
     facts: tuple[FactOutcome, ...]
     hedge_marks_unhedged: int = 0
+    next_patient_axis: bool = False
+    reference_tail_start: int | None = None
+    reference_boundary: int | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -878,6 +981,11 @@ class EncounterMetrics:
             "hedge_marks_unhedged",
         ):
             _require_count(getattr(self, name), name)
+        if not isinstance(self.next_patient_axis, bool):
+            raise ValueError("next_patient_axis must be a flag")
+        for name in ("reference_tail_start", "reference_boundary"):
+            if getattr(self, name) is not None:
+                _require_count(getattr(self, name), name)
         for code, count in self.checker_tally:
             _require_member(code, NOTE_WARNING_SEVERITY, "checker_tally code")
             _require_count(count, "checker_tally count")
@@ -905,6 +1013,12 @@ class EncounterMetrics:
         return sum(1 for fact in self.facts if fact.silent_omission_v1)
 
     @property
+    def silent_omissions_v033(self) -> int:
+        """0.3.3's silent-omission count (the comparison column; no rule
+        reads it — validation-run6 plan D7)."""
+        return sum(1 for fact in self.facts if fact.silent_omission_v033)
+
+    @property
     def warned_omissions(self) -> int:
         return sum(1 for fact in self.facts if fact.verdict == "omitted" and fact.warned)
 
@@ -923,6 +1037,45 @@ class EncounterMetrics:
     def ambiguous_facts(self) -> int:
         return sum(1 for fact in self.facts if fact.ambiguous)
 
+    @property
+    def uncertainty_expected(self) -> int:
+        """How many facts are marked ``expect_uncertain`` (the "Surfaced /
+        expected" denominator, validation-run6 plan D17)."""
+        return sum(1 for fact in self.facts if fact.uncertainty_surfaced is not None)
+
+    @property
+    def uncertainty_surfaced(self) -> int:
+        return sum(1 for fact in self.facts if fact.uncertainty_surfaced)
+
+    # Validation-run6 plan D8: the residue-adjusted counts, read only by a
+    # schema-2 rule; the raw counts above stay rule-independent (rule v1's
+    # verdict and the report totals read them — peer round 2 PR-MED-007).
+    @property
+    def material_wrong_v2(self) -> int:
+        return sum(1 for fact in self.facts if fact.material_wrong_v2)
+
+    @property
+    def silent_omissions_v2(self) -> int:
+        return sum(1 for fact in self.facts if fact.silent_omission_v2)
+
+    @property
+    def uncertainty_missed_v2(self) -> int:
+        return sum(1 for fact in self.facts if fact.uncertainty_missed_v2)
+
+    @property
+    def r1_facts(self) -> int:
+        return sum(1 for fact in self.facts if fact.residue_r1)
+
+    @property
+    def r2_facts(self) -> int:
+        return sum(1 for fact in self.facts if fact.residue_r2)
+
+    @property
+    def r3_event(self) -> bool:
+        """An unbroken next patient — ONE event per encounter however many
+        of its facts are R3 (validation-run6 plan D14)."""
+        return any(fact.residue_r3 for fact in self.facts)
+
 
 class _WordInfo(NamedTuple):
     """What one canonical transcript token means to the fact walk — flags
@@ -939,7 +1092,10 @@ class _WordInfo(NamedTuple):
     2026-10-09). ``hedged`` (metric amendment 2026-10-13): the word sits
     under a ``hedged_source`` mark whose segment holds a spoken hedge
     (``note.segment_hedged``, the hedge scope since validation-run6 plan
-    D5)."""
+    D5). ``warned_v033`` is 0.3.3's ``warned``; ``warned`` itself also holds
+    on a segment D13's flagged-line credit names (validation-run6 plan D7 as
+    amended by D13). ``review_marked`` (D8's R1): the word lies inside the
+    coordinates of a review mark (``REVIEW_MARK_CODES``)."""
 
     covered_any: bool
     covered_all: bool
@@ -947,6 +1103,8 @@ class _WordInfo(NamedTuple):
     warned_v1: bool
     low_confidence: bool
     hedged: bool
+    warned_v033: bool
+    review_marked: bool
 
 
 def _merged(words: Sequence[_WordInfo]) -> _WordInfo:
@@ -958,6 +1116,8 @@ def _merged(words: Sequence[_WordInfo]) -> _WordInfo:
         warned_v1=any(word.warned_v1 for word in words),
         low_confidence=any(word.low_confidence for word in words),
         hedged=any(word.hedged for word in words),
+        warned_v033=any(word.warned_v033 for word in words),
+        review_marked=any(word.review_marked for word in words),
     )
 
 
@@ -1104,32 +1264,58 @@ def transcript_wer(reference_words: Sequence[str], hypothesis_words: Sequence[st
     return WordErrors(len(reference_words), len(hypothesis_words), total)
 
 
-# The fact walk's state: (every token matched, every token deleted, some
-# aligned word in a note line, every aligned word in a note line, warned,
-# uncertainty surfaced by the recogniser, warned under run 1's predicate, some
-# aligned word under a hedge mark — metric amendment 2026-10-13). Eight
-# flags, so at most 256 states per cell.
-_FactState = tuple[bool, bool, bool, bool, bool, bool, bool, bool]
-_INITIAL_STATE: Final[_FactState] = (True, True, False, True, False, False, False, False)
+class _FactState(NamedTuple):
+    """The fact walk's state on one alignment: flags only, never a history,
+    so equal states merge and the walk stays bounded — ten flags, at most
+    2^10 states per cell (validation-run6 plan D7, D8). ``hedged``: some
+    aligned word under a hedge mark (metric amendment 2026-10-13);
+    ``warned_v033``: warned under 0.3.3's predicate (D7); ``marked``: some
+    hypothesis word aligned to one of the fact's tokens, by a match or a
+    substitution, carries a review mark (D8's R1)."""
+
+    all_matched: bool
+    all_deleted: bool
+    in_any: bool
+    in_all: bool
+    warned: bool
+    surfaced: bool
+    warned_v1: bool
+    hedged: bool
+    warned_v033: bool
+    marked: bool
+
+
+_INITIAL_STATE: Final = _FactState(
+    all_matched=True,
+    all_deleted=True,
+    in_any=False,
+    in_all=True,
+    warned=False,
+    surfaced=False,
+    warned_v1=False,
+    hedged=False,
+    warned_v033=False,
+    marked=False,
+)
 
 
 def _after_word(state: _FactState, matched: bool, info: _WordInfo) -> _FactState:
-    all_matched, _deleted, in_any, in_all, warned, surfaced, warned_v1, hedged = state
-    return (
-        all_matched and matched,
-        False,
-        in_any or info.covered_any,
-        in_all and info.covered_all,
-        warned or info.warned,
-        surfaced or info.low_confidence,
-        warned_v1 or info.warned_v1,
-        hedged or info.hedged,
+    return _FactState(
+        all_matched=state.all_matched and matched,
+        all_deleted=False,
+        in_any=state.in_any or info.covered_any,
+        in_all=state.in_all and info.covered_all,
+        warned=state.warned or info.warned,
+        surfaced=state.surfaced or info.low_confidence,
+        warned_v1=state.warned_v1 or info.warned_v1,
+        hedged=state.hedged or info.hedged,
+        warned_v033=state.warned_v033 or info.warned_v033,
+        marked=state.marked or info.review_marked,
     )
 
 
 def _after_deletion(state: _FactState) -> _FactState:
-    _matched, deleted, in_any, in_all, warned, surfaced, warned_v1, hedged = state
-    return (False, deleted, in_any, in_all, warned, surfaced, warned_v1, hedged)
+    return state._replace(all_matched=False)
 
 
 def _fact_end_states(
@@ -1172,6 +1358,7 @@ class _Judged(NamedTuple):
     not_transcribed: bool
     warned_v1: bool
     surfaced_acoustic: bool | None
+    warned_v033: bool
 
 
 def _judge(
@@ -1185,22 +1372,31 @@ def _judge(
     (``script_hedged``) AND an aligned word sits under a ``hedged_source``
     mark whose segment holds one (``_WordInfo.hedged``) — each within the
     hedge scope since validation-run6 plan D5."""
-    all_matched, all_deleted, in_any, in_all, warned, surfaced, warned_v1, hedged = state
     verdict: FactVerdict
     if kind == "absent":
-        verdict = "wrongly_present" if in_any else "correctly_absent"
-    elif not in_any:
+        verdict = "wrongly_present" if state.in_any else "correctly_absent"
+    elif not state.in_any:
         verdict = "omitted"
-    elif all_matched and in_all:
+    elif state.all_matched and state.in_all:
         verdict = "correct"
     else:
         # Some of the fact's words are in a note line, but not all of them
         # matched and carried: the note states something other than the fact.
         verdict = "wrong"
-    if not expect_uncertain:
-        return _Judged(verdict, warned, None, all_deleted, warned_v1, None)
-    credited = hedged and script_hedged and verdict == "correct"
-    return _Judged(verdict, warned, surfaced or credited, all_deleted, warned_v1, surfaced)
+    surfaced: bool | None = None
+    surfaced_acoustic: bool | None = None
+    if expect_uncertain:
+        credited = state.hedged and script_hedged and verdict == "correct"
+        surfaced, surfaced_acoustic = state.surfaced or credited, state.surfaced
+    return _Judged(
+        verdict,
+        state.warned,
+        surfaced,
+        state.all_deleted,
+        state.warned_v1,
+        surfaced_acoustic,
+        state.warned_v033,
+    )
 
 
 # Outcomes from best to worst. A warned omission is better than a silent one
@@ -1478,8 +1674,61 @@ def _note_lines(
     return lines, config_lines
 
 
+# Validation-run6 plan D8's R1: the review marks that tell the clinician to
+# check a quoted line — a number, a low-confidence word, a word the
+# transcription guard suspects, a spoken hedge (Check 1's per-line codes).
+REVIEW_MARK_CODES: Final[frozenset[str]] = frozenset(
+    {"number_source", "low_confidence_source", "suspect_source", "hedged_source"}
+)
+
+
+def _marked_words(note: GeneratedNote, codes: frozenset[str]) -> set[tuple[int, int]]:
+    """Every ``(segment, word)`` inside the coordinates of a warning whose
+    code is in ``codes``."""
+    marked: set[tuple[int, int]] = set()
+    for warning in note.note_warnings:
+        coords = warning.source_coords
+        if warning.note_warning_code in codes and coords is not None:
+            marked.update(
+                (coords.segment_index, index)
+                for index in range(coords.first_word_index, coords.last_word_index + 1)
+            )
+    return marked
+
+
+@dataclass(frozen=True)
+class ReferenceReading:
+    """What the run makes of the SCRIPT's own words, for the residue classes
+    (validation-run6 plan D8, D14): ``facts_right`` — the indices of the
+    facts the same pipeline judges ``correct`` on
+    ``reference_document(script)`` (R1); ``boundary`` —
+    ``note_config.next_patient_boundary`` on that document (R3, D14);
+    ``tail_start`` — ``reference_tail_start(script)`` (R3);
+    ``next_patient_axis`` — the script carries ``NEXT_PATIENT_AXIS`` (D14's
+    recorded check covers every such script the run read). Indices and a
+    flag only."""
+
+    facts_right: frozenset[int]
+    boundary: int | None
+    tail_start: int | None
+    next_patient_axis: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.next_patient_axis, bool):
+            raise ValueError("next_patient_axis must be a flag")
+        for index in self.facts_right:
+            _require_count(index, "facts_right index")
+        for name in ("boundary", "tail_start"):
+            if getattr(self, name) is not None:
+                _require_count(getattr(self, name), name)
+
+
 def encounter_metrics(
-    document: TranscriptDocument, note: GeneratedNote, script: EncounterScript
+    document: TranscriptDocument,
+    note: GeneratedNote,
+    script: EncounterScript,
+    *,
+    reference: ReferenceReading | None = None,
 ) -> EncounterMetrics:
     """Task 2.3's metric contract over one encounter (D8), exactly:
 
@@ -1514,9 +1763,16 @@ def encounter_metrics(
       check's predicate for its speaker (``_omission_flag_token`` since the
       metric amendment of 2026-10-09), and its segment carries a
       ``high_risk_omission`` warning — a warning's interval proves nothing,
-      and a warning elsewhere in the segment never counts. Run 1's predicate
-      with its clinician-only scope is kept beside it for the report's
-      ``silent (run-1 predicate)`` column, which no rule reads.
+      and a warning elsewhere in the segment never counts — or (the metric
+      amendments of 2026-10-22 and 2026-10-24, validation-run6 plan D7 and
+      D13) the aligned word, never a suspect one, lies on a segment an
+      omission warning of either
+      code anchors, that the confirmed clinician spoke, that no note line
+      touches and that lies before the next-patient boundary (Check 6's
+      warning): the clinician sees that whole line marked, and adding it
+      restores the fact. Run 1's predicate with its clinician-only scope is
+      kept beside it for the report's ``silent (run-1 predicate)`` column,
+      and 0.3.3's for ``Silent (0.3.3 predicate)``; no rule reads either.
       ``uncertainty_surfaced`` (for ``expect_uncertain`` facts): a
       ``low_confidence_source`` warning sits on one of the fact's aligned
       words, or (the metric amendment of 2026-10-13, validation-pass plan
@@ -1538,10 +1794,28 @@ def encounter_metrics(
       and its uncertainty counts as surfaced only when every alternative
       surfaces it, and it counts as a silent omission when any alternative
       omits it unwarned (peer round 14, PR-MED-056).
+    - The residue classes (validation-run6 plan D8 as amended by D14), on
+      ``FactOutcome``. R1 and R3 need ``reference`` (the run's reading of the
+      script's own words); without it — a unit test, or the reference run
+      itself — they never hold. R1: a material fact reported ``wrong`` or a
+      silent omission, where NO alternative of any statement of it matches
+      every token (a word error on its own tokens every time), the
+      reference reading gets it ``correct``, and — for ``wrong`` — every
+      alternative judged ``wrong`` carries a review mark on an aligned word
+      (``REVIEW_MARK_CODES``; a ``number_source`` mark makes this term
+      nearly always hold for a numeric fact, so a confidently misheard WORD
+      on an unmarked line is what still fails). R2: an unsurfaced
+      uncertainty whose script line, within the hedge scope, holds no
+      ``REFERENCE_HEDGES`` phrase (``script_line_hedged``). R3: a material
+      fact ``wrongly_present`` in a next-patient-axis script, on a line at
+      or after the reference tail start, with no boundary on the measured
+      transcript (Check 6's warning absent) nor on the script's own words.
+      The one alignment (``_Alignment``) carries R1, never
+      ``align_transcripts``.
     """
-    reference = _reference(script)
+    canonical_reference = _reference(script)
     hypothesis = _canonical_hypothesis(document)
-    alignment = _Alignment(reference.tokens, hypothesis.tokens)
+    alignment = _Alignment(canonical_reference.tokens, hypothesis.tokens)
     segments = document.transcript_segments
 
     lines, config_lines = _note_lines(note, document)
@@ -1553,14 +1827,28 @@ def encounter_metrics(
         for warning in note.note_warnings
         if warning.note_warning_code == "high_risk_omission" and warning.source_coords is not None
     }
-    low_confidence: set[tuple[int, int]] = set()
-    for warning in note.note_warnings:
-        coords = warning.source_coords
-        if warning.note_warning_code == "low_confidence_source" and coords is not None:
-            low_confidence.update(
-                (coords.segment_index, index)
-                for index in range(coords.first_word_index, coords.last_word_index + 1)
-            )
+    # Validation-run6 plan D13 (amending D7): the flagged-line credit — a
+    # SUBSET of the chooser's ``[flagged]`` lines, read from the note alone:
+    # anchored by either omission code, spoken by the confirmed clinician,
+    # wholly uncovered, and before Check 6's boundary (where the clinician's
+    # remedy, adding the line, restores the fact).
+    boundary = next_patient_segment(note.note_warnings)
+    covered_segments = {segment_index for segment_index, _word in covered}
+    credited_segments = {
+        coords.segment_index
+        for warning in note.note_warnings
+        if warning.note_warning_code in OMISSION_CODES
+        and (coords := warning.source_coords) is not None
+        and coords.segment_index < len(segments)
+        # Check 4's own speaker test (C5): no confirmed clinician, no credit.
+        and spoken_by_confirmed_clinician(
+            segments[coords.segment_index].speaker, note.clinician_speaker
+        )
+        and coords.segment_index not in covered_segments
+        and (boundary is None or coords.segment_index < boundary)
+    }
+    low_confidence = _marked_words(note, frozenset({"low_confidence_source"}))
+    review_marked = _marked_words(note, REVIEW_MARK_CODES)
     # Metric amendment 2026-10-13 (D7): a hedge mark credits only the words
     # under it, and only when their segment is hedged (re-derived, never
     # trusted from the warning) — since validation-run6 plan D5 within the
@@ -1596,19 +1884,23 @@ def encounter_metrics(
         flaggable = (
             position not in covered and segment_index in omission_segments and not word.suspect
         )
+        warned_v033 = flaggable and _omission_flag_token(
+            word_text, first_in_segment=first_in_segment, clinician=clinician
+        )
         return _WordInfo(
             covered_any=position in covered,
             covered_all=position in covered,
-            warned=flaggable
-            and _omission_flag_token(
-                word_text, first_in_segment=first_in_segment, clinician=clinician
-            ),
+            # D13's credit skips a suspect word too: the harness's ``warned``
+            # never counts one (invented-text guard D6).
+            warned=warned_v033 or (segment_index in credited_segments and not word.suspect),
             # Run 1's predicate AND its clinician-only scope (D3).
             warned_v1=flaggable
             and clinician
             and _is_high_risk_token(word_text, first_in_segment=first_in_segment),
             low_confidence=position in low_confidence,
             hedged=position in hedged,
+            warned_v033=warned_v033,
+            review_marked=position in review_marked,
         )
 
     # PR-MED-020: any/all over every word a canonical token consumed.
@@ -1632,6 +1924,7 @@ def encounter_metrics(
             j for j in flagged if not is_structured_claim_word(hypothesis.tokens[j])
         )
 
+    next_patient_axis = NEXT_PATIENT_AXIS in script.axes
     facts: list[FactOutcome] = []
     for index, fact in enumerate(script.facts):
         # Found on the line's CONTENT tokens exactly as the loader finds it,
@@ -1642,15 +1935,23 @@ def encounter_metrics(
         # within the hedge scope since validation-run6 plan D5 (without it a
         # scope-(ii) mark could never be credited).
         script_hedged = script_line_hedged(script, fact.line)
-        judged: set[_Judged] = set()
+        # Every end state of every statement of the fact, with its judgement
+        # (R1 reads the states themselves: ``all_matched``, ``marked``).
+        walked: list[tuple[_FactState, _Judged]] = []
         for start in _occurrences(line_tokens, fact.tokens):
-            first_content = reference.line_offsets[fact.line] + start
-            first = reference.content_map[first_content][0]
-            last = reference.content_map[first_content + len(fact.tokens) - 1][1]
+            first_content = canonical_reference.line_offsets[fact.line] + start
+            first = canonical_reference.content_map[first_content][0]
+            last = canonical_reference.content_map[first_content + len(fact.tokens) - 1][1]
             for state in _fact_end_states(alignment, first, last, infos):
-                judged.add(
-                    _judge(state, fact.kind, fact.expect_uncertain, script_hedged=script_hedged)
+                walked.append(
+                    (
+                        state,
+                        _judge(
+                            state, fact.kind, fact.expect_uncertain, script_hedged=script_hedged
+                        ),
+                    )
                 )
+        judged = {judgement for _state, judgement in walked}
         worst = max(judged, key=_severity)
         # Round 11 LOW-008: surfacing is judged on its own, conservatively —
         # the worst verdict's alternative may surface the uncertainty while
@@ -1662,29 +1963,57 @@ def encounter_metrics(
         )
         # Ambiguity is judged on the reported metric only: alternatives that
         # differ in nothing but a comparison flag (run 1's omission predicate,
-        # the acoustic-only surfacing) are not ambiguous.
-        outcomes = {j._replace(warned_v1=False, surfaced_acoustic=None) for j in judged}
-        facts.append(
-            FactOutcome(
-                fact_index=index,
-                kind=fact.kind,
-                material=fact.material,
-                verdict=worst.verdict,
-                warned=worst.warned,
-                uncertainty_surfaced=surfaced,
-                not_transcribed=worst.not_transcribed,
-                ambiguous=len(outcomes) > 1,
-                # Peer round 14 (PR-MED-056): the silent-omission tally is
-                # conservative on its own, like surfacing above.
-                silently_omitted_somewhere=any(
-                    j.verdict == "omitted" and not j.warned for j in judged
-                ),
-                silently_omitted_v1=any(
-                    j.verdict == "omitted" and not j.warned_v1 for j in judged
-                ),
-                uncertainty_surfaced_acoustic=surfaced_acoustic,
-            )
+        # the acoustic-only surfacing, 0.3.3's warned) are not ambiguous.
+        outcomes = {
+            j._replace(warned_v1=False, surfaced_acoustic=None, warned_v033=False) for j in judged
+        }
+        outcome = FactOutcome(
+            fact_index=index,
+            kind=fact.kind,
+            material=fact.material,
+            verdict=worst.verdict,
+            warned=worst.warned,
+            uncertainty_surfaced=surfaced,
+            not_transcribed=worst.not_transcribed,
+            ambiguous=len(outcomes) > 1,
+            # Peer round 14 (PR-MED-056): the silent-omission tally is
+            # conservative on its own, like surfacing above.
+            silently_omitted_somewhere=any(
+                j.verdict == "omitted" and not j.warned for j in judged
+            ),
+            silently_omitted_v1=any(j.verdict == "omitted" and not j.warned_v1 for j in judged),
+            uncertainty_surfaced_acoustic=surfaced_acoustic,
+            silently_omitted_v033=any(
+                j.verdict == "omitted" and not j.warned_v033 for j in judged
+            ),
         )
+        # D8's residue classes (as amended by D14). Each reads the walk or
+        # the reference reading, never an encounter id.
+        r1 = r3 = False
+        if reference is not None:
+            r1 = (
+                outcome.material
+                and (outcome.verdict == "wrong" or outcome.silent_omission)
+                and not any(state.all_matched for state, _judgement in walked)
+                and index in reference.facts_right
+                and (
+                    outcome.verdict != "wrong"
+                    or all(state.marked for state, j in walked if j.verdict == "wrong")
+                )
+            )
+            r3 = (
+                outcome.material
+                and outcome.verdict == "wrongly_present"
+                and next_patient_axis
+                and reference.tail_start is not None
+                and fact.line >= reference.tail_start
+                and boundary is None
+                and reference.boundary is None
+            )
+        r2 = outcome.uncertainty_surfaced is False and not script_line_hedged(
+            script, fact.line, phrases=REFERENCE_HEDGES
+        )
+        facts.append(replace(outcome, residue_r1=r1, residue_r2=r2, residue_r3=r3))
 
     tally = Counter(warning.note_warning_code for warning in note.note_warnings)
     expected = set(script.expected_warnings)
@@ -1695,7 +2024,9 @@ def encounter_metrics(
         and (NOTE_WARNING_SEVERITY[code] == "error" or code in CONTRADICTION_CODES)
     )
     return EncounterMetrics(
-        words=WordErrors(len(reference.tokens), len(hypothesis.tokens), alignment.total),
+        words=WordErrors(
+            len(canonical_reference.tokens), len(hypothesis.tokens), alignment.total
+        ),
         spelling_normalised_words=hypothesis.rewritten,
         transcript_lines=len(lines),
         config_lines=config_lines,
@@ -1707,6 +2038,9 @@ def encounter_metrics(
         expected_warnings_absent=tuple(sorted(expected - set(tally))),
         facts=tuple(facts),
         hedge_marks_unhedged=hedge_marks_unhedged,
+        next_patient_axis=next_patient_axis,
+        reference_tail_start=None if reference is None else reference.tail_start,
+        reference_boundary=None if reference is None else reference.boundary,
     )
 
 
@@ -1727,21 +2061,95 @@ RuleFailure = Literal[
 ]
 
 
+_RULE_CONFIG = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+# Validation-run6 plan D8: the residue classes a schema-2 rule ceilings.
+ResidueClass = Literal["R1", "R2", "R3"]
+RESIDUE_CLASSES: Final[tuple[ResidueClass, ...]] = ("R1", "R2", "R3")
+RESIDUE_CLASS_NAMES: Final[Mapping[str, str]] = {
+    "R1": "recogniser",
+    "R2": "tone only",
+    "R3": "unbroken next patient",
+}
+
+
+class SetCeilings(BaseModel):
+    """One set's row of a schema-2 rule (validation-run6 plan D8 as amended
+    by D14, D15 and D17): LITERAL ceilings — R1 and R2 count facts, R3
+    counts encounters (one unbroken next patient is one event) — never a
+    formula over measured encounters and never an encounter id. ``gate``:
+    the set is one the gate reads (D15) rather than one only reported.
+    ``require_uncertainty_surfaced``: overrides the rule's own field for
+    this set (None = the rule's value; D17). Where uncertainty is required
+    the R2 ceiling is required; where it is only reported R2 has none."""
+
+    model_config = _RULE_CONFIG
+
+    gate: bool
+    max_r1_facts: int = Field(ge=0)
+    max_r2_facts: int | None = Field(default=None, ge=0)
+    max_r3_encounters: int = Field(ge=0)
+    require_uncertainty_surfaced: bool | None = None
+
+
 class PassRule(BaseModel):
     """The pass rule, as data (Task 2.4). Five failures are fixed by the
     metric contract and design, not by the rule: a harness error and an
     unresolved role (D9), any unsupported clinical line and any checker
     failure (Task 2.3), and a requested prose stage that could not run. The
-    rule sets the rest; option (a) of decision 3.5 is every default here."""
+    rule sets the rest; option (a) of decision 3.5 is every default here.
 
-    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+    Schema 2 (rule v2, validation-run6 plan D8, decision 0.7) adds ``sets``:
+    per set name, the residue classes' ceilings (``SetCeilings``). Its
+    top-level fields keep their schema-1 meaning, so rule v1's verdict is
+    still computed beside rule v2's (``v1_failures``). A schema-1 rule holds
+    no set rows and a schema-2 rule holds at least one; an older harness
+    refuses a schema-2 file by its ``Literal[1]``."""
 
-    schema_version: Literal[1]
+    model_config = _RULE_CONFIG
+
+    schema_version: Literal[1, 2]
     rule_name: str = Field(pattern=RULE_NAME_PATTERN)
     max_material_wrong: int = Field(default=0, ge=0)
     max_silent_omissions: int = Field(default=0, ge=0)
     require_uncertainty_surfaced: bool = True
     max_word_error_rate: float | None = Field(default=None, ge=0.0)
+    sets: dict[str, SetCeilings] | None = None
+
+    @model_validator(mode="after")
+    def _check_sets(self) -> PassRule:
+        if self.schema_version == 1:
+            if self.sets is not None:
+                raise ValueError("a schema-1 rule holds no set ceilings")
+            return self
+        if not self.sets:
+            raise ValueError("a schema-2 rule names at least one set")
+        for name, row in self.sets.items():
+            if not re.fullmatch(RULE_NAME_PATTERN, name):
+                raise ValueError(f"set names must match {RULE_NAME_PATTERN}")
+            required = self.uncertainty_required(row)
+            if required and row.max_r2_facts is None:
+                raise ValueError("a set that requires uncertainty surfaced needs max_r2_facts")
+            if not required and row.max_r2_facts is not None:
+                raise ValueError("a set that only reports uncertainty takes no max_r2_facts")
+        return self
+
+    def uncertainty_required(self, row: SetCeilings) -> bool:
+        """Whether ``row``'s set requires every uncertainty surfaced: its own
+        field, else the rule's (D17)."""
+        if row.require_uncertainty_surfaced is None:
+            return self.require_uncertainty_surfaced
+        return row.require_uncertainty_surfaced
+
+    def set_row(self, set_name: str | None) -> SetCeilings:
+        """The named set's row of a schema-2 rule; ``RuleError`` for a
+        schema-1 rule, or a name the rule does not hold (never printed)."""
+        if self.sets is None:
+            raise RuleError("a schema-1 rule has no sets")
+        if set_name is None or set_name not in self.sets:
+            raise RuleError(
+                "the set must be one the rule names: " + ", ".join(sorted(self.sets))
+            )
+        return self.sets[set_name]
 
 
 def load_pass_rule(path: Path) -> PassRule:
@@ -1835,6 +2243,11 @@ class EncounterOutcome:
     # None when no clinician was confirmed. Recorded; no rule reads them.
     clinician_as_other_seconds: float | None = None
     other_as_clinician_seconds: float | None = None
+    # Validation-run6 plan D14: the run's reading of the script's own words
+    # (indices and a flag), kept on a measured AND a role-unresolved outcome
+    # so the recorded reference-boundary check covers every next-patient
+    # script the run read; None for an error outcome. No rule reads it.
+    reference: ReferenceReading | None = None
 
     def __post_init__(self) -> None:
         if not _ENCOUNTER_ID_RE.fullmatch(self.encounter_id):
@@ -1858,14 +2271,18 @@ class EncounterOutcome:
             ("words", WordErrors),
             ("metrics", EncounterMetrics),
             ("prose", ProseCounts),
+            ("reference", ReferenceReading),
         ):
             value = getattr(self, name)
             if value is not None and not isinstance(value, kind):
                 raise ValueError(f"{name} must be a {kind.__name__}")
 
 
-def rule_failures(rule: PassRule, outcome: EncounterOutcome) -> tuple[RuleFailure, ...]:
-    """Why ``outcome`` fails ``rule`` — empty when it passes."""
+def _encounter_failures(
+    rule: PassRule, outcome: EncounterOutcome, *, residues: bool, require_uncertainty: bool
+) -> tuple[RuleFailure, ...]:
+    """The per-encounter test: on the raw counts, or (``residues``) on the
+    residue-adjusted ones (validation-run6 plan D8)."""
     if outcome.status == "error":
         return ("harness_error",)
     if outcome.status == "role_unresolved":
@@ -1873,16 +2290,21 @@ def rule_failures(rule: PassRule, outcome: EncounterOutcome) -> tuple[RuleFailur
     metrics = outcome.metrics
     if metrics is None:
         return ("harness_error",)
+    wrong, silent, missed = (
+        (metrics.material_wrong_v2, metrics.silent_omissions_v2, metrics.uncertainty_missed_v2)
+        if residues
+        else (metrics.material_wrong, metrics.silent_omissions, metrics.uncertainty_missed)
+    )
     failures: list[RuleFailure] = []
     if metrics.unsupported_clinical_lines:
         failures.append("unsupported_clinical_line")
     if metrics.checker_failure_count:
         failures.append("checker_failure")
-    if metrics.material_wrong > rule.max_material_wrong:
+    if wrong > rule.max_material_wrong:
         failures.append("material_wrong")
-    if metrics.silent_omissions > rule.max_silent_omissions:
+    if silent > rule.max_silent_omissions:
         failures.append("silent_omission")
-    if rule.require_uncertainty_surfaced and metrics.uncertainty_missed:
+    if require_uncertainty and missed:
         failures.append("uncertainty_not_surfaced")
     if rule.max_word_error_rate is not None and metrics.words.rate > rule.max_word_error_rate:
         failures.append("word_error_rate")
@@ -1890,6 +2312,87 @@ def rule_failures(rule: PassRule, outcome: EncounterOutcome) -> tuple[RuleFailur
         # Asked for (--prose) and not measured: the run did not do its job.
         failures.append("prose_unavailable")
     return tuple(failures)
+
+
+def rule_failures(
+    rule: PassRule, outcome: EncounterOutcome, *, set_name: str | None = None
+) -> tuple[RuleFailure, ...]:
+    """Why ``outcome`` fails ``rule`` — empty when it passes. A schema-1
+    rule reads the raw counts (``set_name`` must be None); a schema-2 rule
+    reads the named set's row (``PassRule.set_row``): the residue-adjusted
+    counts, each class clearing only its own failure predicates, and the
+    set's uncertainty requirement (D8, D17). The set's class ceilings are
+    ``class_breaches``'s, never an encounter's."""
+    if rule.schema_version == 1:
+        if set_name is not None:
+            raise RuleError("a schema-1 rule has no sets")
+        return v1_failures(rule, outcome)
+    row = rule.set_row(set_name)
+    return _encounter_failures(
+        rule, outcome, residues=True, require_uncertainty=rule.uncertainty_required(row)
+    )
+
+
+def v1_failures(rule: PassRule, outcome: EncounterOutcome) -> tuple[RuleFailure, ...]:
+    """The per-encounter test on the RAW counts with the rule's top-level
+    fields — rule v1's verdict, printed beside rule v2's (D8: the v1
+    verdict stays visible); for a schema-1 rule, ``rule_failures`` itself."""
+    return _encounter_failures(
+        rule, outcome, residues=False, require_uncertainty=rule.require_uncertainty_surfaced
+    )
+
+
+class ClassCount(NamedTuple):
+    """One residue class over a set's outcomes: its total (facts for R1 and
+    R2, encounters for R3), the set's ceiling (None: R2 where uncertainty is
+    only reported) and the members — ``(encounter id, fact index)`` pairs,
+    or for R3 ``(encounter id, None)`` once per encounter."""
+
+    residue_class: ResidueClass
+    total: int
+    ceiling: int | None
+    members: tuple[tuple[str, int | None], ...]
+
+    @property
+    def within(self) -> bool:
+        return self.ceiling is None or self.total <= self.ceiling
+
+
+def class_counts(
+    rule: PassRule, outcomes: Sequence[EncounterOutcome], set_name: str | None
+) -> tuple[ClassCount, ...]:
+    """R1, R2 and R3 over ``outcomes`` against the named set's ceilings
+    (D8 as amended by D14: R3 counts DISTINCT encounters)."""
+    row = rule.set_row(set_name)
+    members: dict[str, list[tuple[str, int | None]]] = {name: [] for name in RESIDUE_CLASSES}
+    for outcome in outcomes:
+        metrics = outcome.metrics
+        if metrics is None:
+            continue
+        for fact in metrics.facts:
+            if fact.residue_r1:
+                members["R1"].append((outcome.encounter_id, fact.fact_index))
+            if fact.residue_r2:
+                members["R2"].append((outcome.encounter_id, fact.fact_index))
+        if metrics.r3_event:
+            members["R3"].append((outcome.encounter_id, None))
+    ceilings: dict[str, int | None] = {
+        "R1": row.max_r1_facts,
+        "R2": row.max_r2_facts,
+        "R3": row.max_r3_encounters,
+    }
+    return tuple(
+        ClassCount(name, len(members[name]), ceilings[name], tuple(members[name]))
+        for name in RESIDUE_CLASSES
+    )
+
+
+def class_breaches(
+    rule: PassRule, outcomes: Sequence[EncounterOutcome], set_name: str | None
+) -> tuple[ClassCount, ...]:
+    """The classes over their set's ceiling — the set-level failures of a
+    schema-2 rule (D8); empty when every class is within it."""
+    return tuple(count for count in class_counts(rule, outcomes, set_name) if not count.within)
 
 
 def clinician_speaker(document: TranscriptDocument, track: LabelTrack) -> str | None:
@@ -2075,6 +2578,48 @@ def suspect_segment_count(document: TranscriptDocument) -> int:
     )
 
 
+def _compose_note(
+    document: TranscriptDocument, clinician: str, inputs: HarnessInputs, now: datetime
+) -> GeneratedNote:
+    """The shipped pipeline from a transcript to a finalised note under D9's
+    declared policies (the earliest prefill region, every proposal
+    confirmed) — one path for the measured transcript and the reference."""
+    config = inputs.config
+    draft = compose_draft(
+        document,
+        config,
+        inputs.note_provider_factory(config),
+        inputs.template_profile_id,
+        clinician_speaker=clinician,
+        prefill_id=first_detected_prefill(document, config),
+        learned_rules=None,
+        decided_at=now,
+    )
+    return finalise_note(draft, confirm_all(draft, now), document, config, created_at=now)
+
+
+def reference_reading(
+    script: EncounterScript, inputs: HarnessInputs, now: datetime
+) -> ReferenceReading:
+    """Validation-run6 plan D8 and D14: the same pipeline over the script's
+    own words (``reference_document``: one segment per line, the role as
+    its speaker, so the clinician is ``clinician``) — the facts it judges
+    ``correct`` (R1's reference test) and the product's complete boundary
+    rule on those words (``note_config.next_patient_boundary``, R3) — with
+    the script's reference tail start (``ResidueTableError`` for an axis
+    script with no row)."""
+    tail_start = reference_tail_start(script)
+    document = reference_document(script)
+    note = _compose_note(document, CLINICIAN_LABEL, inputs, now)
+    metrics = encounter_metrics(document, note, script)
+    return ReferenceReading(
+        facts_right=frozenset(f.fact_index for f in metrics.facts if f.verdict == "correct"),
+        boundary=next_patient_boundary(document, inputs.config),
+        tail_start=tail_start,
+        next_patient_axis=NEXT_PATIENT_AXIS in script.axes,
+    )
+
+
 def evaluate_encounter(
     encounter_id: str, script: EncounterScript, wav: Path, labels: Path, inputs: HarnessInputs
 ) -> EncounterOutcome:
@@ -2091,7 +2636,14 @@ def evaluate_encounter(
     every word-level number is the same — and the ENROLLED document is
     judged, its clinician confirmed by ``enrolled_clinician``; under
     ``clustering`` it is runs 1-5's path exactly (``clinician_speaker`` on
-    the plain document)."""
+    the plain document).
+
+    The residue classes' reading of the script's own words
+    (``reference_reading``, validation-run6 plan D8, D14) needs no audio, so
+    it is taken first — an axis script with no reference tail start is a
+    ``ResidueTableError`` before any store exists."""
+    now = inputs.now()
+    reference = reference_reading(script, inputs, now)
     track = read_label_track(labels)
     enrolment: EnrolmentInputs | None = None
     if inputs.attribution == "enrolment":
@@ -2126,21 +2678,10 @@ def evaluate_encounter(
             segment_count=segment_count,
             words=word_errors(document, script),
             suspect_segments=suspect_segments,
+            reference=reference,
         )
     as_other, as_clinician = attribution_seconds(document, track, clinician)
-    config = inputs.config
-    now = inputs.now()
-    draft = compose_draft(
-        document,
-        config,
-        inputs.note_provider_factory(config),
-        inputs.template_profile_id,
-        clinician_speaker=clinician,
-        prefill_id=first_detected_prefill(document, config),
-        learned_rules=None,
-        decided_at=now,
-    )
-    note = finalise_note(draft, confirm_all(draft, now), document, config, created_at=now)
+    note = _compose_note(document, clinician, inputs, now)
     prose: ProseCounts | None = None
     if inputs.prose_stage is not None:
         result = inputs.prose_stage(note)
@@ -2151,7 +2692,7 @@ def evaluate_encounter(
         )
     # One alignment per encounter (review round 25): the metrics carry the
     # word errors ``word_errors`` would compute from the same inputs.
-    metrics = encounter_metrics(document, note, script)
+    metrics = encounter_metrics(document, note, script, reference=reference)
     return EncounterOutcome(
         encounter_id,
         "measured",
@@ -2162,6 +2703,7 @@ def evaluate_encounter(
         suspect_segments=suspect_segments,
         clinician_as_other_seconds=as_other,
         other_as_clinician_seconds=as_clinician,
+        reference=reference,
     )
 
 
@@ -2247,10 +2789,29 @@ class RunInfo:
     attribution: Attribution = "enrolment"
 
 
-def run_passed(rule: PassRule, outcomes: Sequence[EncounterOutcome], *, errors: int = 0) -> bool:
+def run_passed(
+    rule: PassRule,
+    outcomes: Sequence[EncounterOutcome],
+    *,
+    errors: int = 0,
+    set_name: str | None = None,
+) -> bool:
     """The run passes when at least one encounter ran, no set-level error
-    occurred and every encounter passes ``rule``."""
-    return bool(outcomes) and not errors and all(not rule_failures(rule, o) for o in outcomes)
+    occurred and every encounter passes ``rule`` — and, under a schema-2
+    rule, every residue class is within the named set's ceiling (D8)."""
+    if not outcomes or errors:
+        return False
+    if any(rule_failures(rule, o, set_name=set_name) for o in outcomes):
+        return False
+    return rule.schema_version == 1 or not class_breaches(rule, outcomes, set_name)
+
+
+def run_passed_v1(
+    rule: PassRule, outcomes: Sequence[EncounterOutcome], *, errors: int = 0
+) -> bool:
+    """``run_passed`` on the raw counts with the rule's top-level fields —
+    rule v1's verdict, printed beside rule v2's (D8)."""
+    return bool(outcomes) and not errors and all(not v1_failures(rule, o) for o in outcomes)
 
 
 def _rate(value: float) -> str:
@@ -2285,15 +2846,106 @@ _ATTRIBUTION_TEXT: Final[dict[str, str]] = {
 }
 
 
+def _count(value: int, available: bool) -> str:
+    """A TOTAL counter: ``-`` when no outcome contributes to it, a measured
+    zero ``0`` (PR-LOW-016, deferred to validation-run6 Task 4.3; rule v2's
+    report only — a schema-1 report passes ``available`` True)."""
+    return str(value) if available else "-"
+
+
+def _verdict(passed: bool) -> str:
+    return "PASS" if passed else "FAIL"
+
+
+def _failing_encounters(
+    outcomes: Sequence[EncounterOutcome],
+    failures_of: Callable[[EncounterOutcome], tuple[RuleFailure, ...]],
+) -> str:
+    """``id (failure, ...)`` for every failing encounter, or ``none``."""
+    failing = [
+        f"{outcome.encounter_id} ({', '.join(failures)})"
+        for outcome in outcomes
+        if (failures := failures_of(outcome))
+    ]
+    return "; ".join(failing) or "none"
+
+
+def _verdict_lines(
+    outcomes: Sequence[EncounterOutcome], rule: PassRule, set_name: str, *, errors: int
+) -> list[str]:
+    """A schema-2 run's two verdict lines (validation-run6 plan D8, D15):
+    rule v2's for the named set — the gate sets named beside the reported
+    ones — and rule v1's on the same outcomes."""
+    sets = rule.sets or {}
+    gate = sorted(name for name, row in sets.items() if row.gate)
+    reported = sorted(name for name, row in sets.items() if not row.gate)
+    role = "a gate set" if rule.set_row(set_name).gate else "a reported set"
+    breaches = class_breaches(rule, outcomes, set_name)
+    v2 = run_passed(rule, outcomes, errors=errors, set_name=set_name)
+    set_level = "; ".join(
+        f"{count.residue_class} {count.total} over the ceiling of {count.ceiling}"
+        for count in breaches
+    )
+    v1 = run_passed_v1(rule, outcomes, errors=errors)
+    return [
+        f"- Rule v2 verdict, set `{set_name}` ({role}): {_verdict(v2)}. Failing encounters: "
+        + _failing_encounters(outcomes, lambda o: rule_failures(rule, o, set_name=set_name))
+        + f"; set-level: {set_level or 'none'}; set-level errors: {errors}. The gate is a "
+        "rule v2 pass on every gate set ("
+        + ", ".join(f"`{name}`" for name in gate)
+        + "); the other sets are reported in full ("
+        + (", ".join(f"`{name}`" for name in reported) or "none")
+        + ").",
+        f"- Rule v1 verdict (the same outcomes on the raw counts, no residue class): "
+        f"{_verdict(v1)}. Failing encounters: "
+        + _failing_encounters(outcomes, lambda o: v1_failures(rule, o))
+        + ".",
+    ]
+
+
 def render_report(
-    outcomes: Sequence[EncounterOutcome], rule: PassRule, info: RunInfo, *, errors: int = 0
+    outcomes: Sequence[EncounterOutcome],
+    rule: PassRule,
+    info: RunInfo,
+    *,
+    errors: int = 0,
+    set_name: str | None = None,
 ) -> str:
     """The Markdown report. Every printed field comes from the result types
     (numbers, flags, closed vocabularies, synthetic ids), the rule and the
-    run information — no transcript, note or script text."""
-    verdict = "PASS" if run_passed(rule, outcomes, errors=errors) else "FAIL"
+    run information — no transcript, note or script text. A schema-2 rule
+    needs ``set_name`` (its row picks the ceilings) and adds the two verdict
+    lines and the residue-class section (validation-run6 plan D8, D15, D17)."""
+    verdict = _verdict(run_passed(rule, outcomes, errors=errors, set_name=set_name))
+    if set_name is None:
+        heading = [f"## Validation run - rule `{rule.rule_name}` - {verdict}"]
+    else:
+        v1 = _verdict(run_passed_v1(rule, outcomes, errors=errors))
+        heading = [
+            f"## Validation run - rule `{rule.rule_name}` - set `{set_name}` - "
+            f"rule v2 {verdict}, rule v1 {v1}",
+            "",
+            *_verdict_lines(outcomes, rule, set_name, errors=errors),
+        ]
+    amendments = (
+        " The hedge credit reads the hedge scope (the line's own words, or a "
+        "same-speaker neighbour joined mid-sentence), metric amendment 2026-10-22 "
+        "(validation-run6 D5); a silent omission's `warned` also holds on a wholly "
+        "uncovered line of the confirmed clinician that an omission warning flags before "
+        "the next-patient boundary, metric amendments 2026-10-22 and 2026-10-24 "
+        "(validation-run6 D7, D13; 0.3.3's reading: Silent (0.3.3 predicate))."
+    )
+    if set_name is not None:
+        amendments += (
+            " Rule v2 (schema 2; decision 0.7 of 2026-10-22, amended 2026-10-24 by "
+            "validation-run6 D14, D15 and D17): the residue classes R1 recogniser and R2 "
+            "tone only (counted in facts) and R3 unbroken next patient (counted in "
+            "encounters) each excuse only their own failures, within the set's literal "
+            "ceilings; the raw counts in the tables and the rule v1 verdict are unchanged. "
+            "A cell or total nothing measured reads `-`; a measured zero reads 0."
+        )
     lines = [
-        f"## Validation run - rule `{rule.rule_name}` - {verdict}",
+        *heading,
         "",
         f"Whisper model `{info.whisper_model}`"
         + (" (FALLBACK - --allow-small)" if info.whisper_fallback else "")
@@ -2307,23 +2959,32 @@ def render_report(
         "(the recogniser's alone: Surfaced (acoustic only)). Attribution "
         f"`{info.attribution}`, metric amendment 2026-10-23: "
         f"{_ATTRIBUTION_TEXT[info.attribution]}; the two seconds columns show the "
-        "attribution residue both ways (recorded, never failing).",
+        "attribution residue both ways (recorded, never failing)." + amendments,
         "",
         "| Encounter | Status | Segments | Ref words | WER | Spelling-normalised words "
         "| Unsupported clinical lines "
         "| Other unsupported words | Transcript lines | Config lines | Facts | Correct "
         "| Wrong (material) | Omitted | Silent omissions | Silent (run-1 predicate) "
+        "| Silent (0.3.3 predicate) "
         "| Warned omissions | Uncertainty missed | Surfaced (acoustic only) "
         "| Hedge marks on unhedged segments | Ambiguous facts | Checker failures "
         "| Suspect segments | Clinician speech labelled other (s) "
         "| Other speech labelled clinician (s) | Prose p/f/e | Rule |",
-        "|" + "---|" * 27,
+        "|" + "---|" * 28,
     ]
     totals = Counter[str]()
+    # PR-LOW-016 (validation-run6 Task 4.3, under rule v2's report only — a
+    # schema-1 report keeps runs 1-5's shape): word-level, note-level and
+    # suspect totals each need an outcome that measured them (a
+    # role-unresolved encounter still supplies its transcription's).
+    legacy = set_name is None
+    any_words = legacy or any(o.words is not None for o in outcomes)
+    any_metrics = legacy or any(o.metrics is not None for o in outcomes)
+    any_suspect = legacy or any(o.suspect_segments is not None for o in outcomes)
     as_other_total: list[float] = []
     as_clinician_total: list[float] = []
     for outcome in outcomes:
-        failures = rule_failures(rule, outcome)
+        failures = rule_failures(rule, outcome, set_name=set_name)
         words = outcome.words
         metrics = outcome.metrics
         wer = _rate(words.rate) if words is not None else "-"
@@ -2332,7 +2993,7 @@ def render_report(
             totals["ref"] += words.reference_tokens
             totals["distance"] += words.edit_distance
         if metrics is None:
-            cells = ["-"] * 18
+            cells = ["-"] * 19
         else:
             facts = metrics.facts
             counts = {
@@ -2345,6 +3006,7 @@ def render_report(
                 "omitted": sum(1 for f in facts if f.verdict == "omitted"),
                 "silent": metrics.silent_omissions,
                 "silent_v1": metrics.silent_omissions_v1,
+                "silent_v033": metrics.silent_omissions_v033,
                 "warned": metrics.warned_omissions,
                 "missed": metrics.uncertainty_missed,
                 "acoustic": metrics.uncertainty_surfaced_acoustic,
@@ -2366,6 +3028,8 @@ def render_report(
                 str(counts["omitted"]),
                 str(counts["silent"]),
                 str(counts["silent_v1"]),
+                # Validation-run6 plan D7: 0.3.3's reading beside run 1's.
+                str(counts["silent_v033"]),
                 str(counts["warned"]),
                 str(counts["missed"]),
                 # Metric amendment 2026-10-13 (D7): the comparison columns.
@@ -2385,7 +3049,7 @@ def render_report(
         suspect = outcome.suspect_segments
         if suspect is not None:
             totals["suspect"] += suspect
-        cells.insert(17, "-" if suspect is None else str(suspect))
+        cells.insert(18, "-" if suspect is None else str(suspect))
         # Metric amendment 2026-10-23 (D11): after the suspect count, before
         # the prose cell; "-" where no clinician was confirmed.
         as_other = outcome.clinician_as_other_seconds
@@ -2394,22 +3058,43 @@ def render_report(
             as_other_total.append(as_other)
         if as_clinician is not None:
             as_clinician_total.append(as_clinician)
-        cells[18:18] = [_seconds(as_other), _seconds(as_clinician)]
+        cells[19:19] = [_seconds(as_other), _seconds(as_clinician)]
         status = outcome.status + (f" ({outcome.error_type})" if outcome.error_type else "")
+        # PR-LOW-016: an error outcome made no transcript to count.
+        segments = (
+            "-" if outcome.status == "error" and not legacy else str(outcome.segment_count)
+        )
         lines.append(
-            f"| {outcome.encounter_id} | {status} | {outcome.segment_count} | {ref} | {wer} | "
+            f"| {outcome.encounter_id} | {status} | {segments} | {ref} | {wer} | "
             + " | ".join(cells)
             + f" | {'PASS' if not failures else 'FAIL: ' + ', '.join(failures)} |"
         )
     total_wer = _rate(totals["distance"] / totals["ref"]) if totals["ref"] else "-"
+    note_totals = " | ".join(
+        _count(totals[name], any_metrics)
+        for name in (
+            "facts",
+            "correct",
+            "wrong",
+            "omitted",
+            "silent",
+            "silent_v1",
+            "silent_v033",
+            "warned",
+            "missed",
+            "acoustic",
+            "unhedged",
+            "ambiguous",
+            "checker",
+        )
+    )
     lines.append(
         f"| TOTAL | {sum(1 for o in outcomes if o.status == 'measured')} measured | - "
-        f"| {totals['ref']} | {total_wer} | {totals['spelling']} | {totals['unsupported']} "
-        f"| {totals['other']} | - | - "
-        f"| {totals['facts']} | {totals['correct']} | {totals['wrong']} | {totals['omitted']} "
-        f"| {totals['silent']} | {totals['silent_v1']} | {totals['warned']} | {totals['missed']} "
-        f"| {totals['acoustic']} | {totals['unhedged']} "
-        f"| {totals['ambiguous']} | {totals['checker']} | {totals['suspect']} "
+        f"| {_count(totals['ref'], any_words)} | {total_wer} "
+        f"| {_count(totals['spelling'], any_metrics)} "
+        f"| {_count(totals['unsupported'], any_metrics)} "
+        f"| {_count(totals['other'], any_metrics)} | - | - | {note_totals} "
+        f"| {_count(totals['suspect'], any_suspect)} "
         f"| {_seconds_total(as_other_total)} | {_seconds_total(as_clinician_total)} "
         f"| - | {verdict} |"
     )
@@ -2432,8 +3117,8 @@ def render_report(
         "### Facts",
         "",
         "| Encounter | Fact | Kind | Material | Verdict | Warned | Uncertainty surfaced "
-        "| Not transcribed | Ambiguous |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| Not transcribed | Ambiguous | Residue class |",
+        "|" + "---|" * 10,
     ]
     for outcome in outcomes:
         if outcome.metrics is None:
@@ -2443,9 +3128,127 @@ def render_report(
                 f"| {outcome.encounter_id} | {fact.fact_index} | {fact.kind} "
                 f"| {_flag(fact.material)} | {fact.verdict} | {_flag(fact.warned)} "
                 f"| {_flag(fact.uncertainty_surfaced)} | {_flag(fact.not_transcribed)} "
-                f"| {_flag(fact.ambiguous)} |"
+                f"| {_flag(fact.ambiguous)} | {_fact_classes(fact)} |"
             )
+    if set_name is not None:
+        lines += _residue_section(outcomes, rule, set_name)
     return "\n".join(lines)
+
+
+def _fact_classes(fact: FactOutcome) -> str:
+    """The Facts table's class cell (validation-run6 plan D8): the classes
+    the fact meets, ``+``-joined, or ``-``."""
+    met = [
+        name
+        for name, flag in zip(
+            RESIDUE_CLASSES, (fact.residue_r1, fact.residue_r2, fact.residue_r3), strict=True
+        )
+        if flag
+    ]
+    return "+".join(met) or "-"
+
+
+def _median(values: Sequence[int]) -> str:
+    if not values:
+        return "-"
+    middle = statistics.median(values)
+    return str(int(middle)) if middle == int(middle) else f"{middle:.1f}"
+
+
+def _residue_section(
+    outcomes: Sequence[EncounterOutcome], rule: PassRule, set_name: str
+) -> list[str]:
+    """A schema-2 run's set layer (validation-run6 plan D8, D14, D17): each
+    class against the set's ceiling with its members, the residue-adjusted
+    totals beside the raw ones, "Surfaced / expected", the new omission
+    code's load and D14's reference-boundary record — ids and integers."""
+    row = rule.set_row(set_name)
+    measured = [o.metrics for o in outcomes if o.metrics is not None]
+    # PR-LOW-016's convention here too (peer round 46 PR-LOW-001): with no
+    # measured encounter every count below reads ``-``, never a measured 0.
+    any_measured = bool(measured)
+
+    def total(value: int) -> str:
+        return _count(value, any_measured)
+
+    lines = [
+        "",
+        f"### Residue classes (rule v2, set `{set_name}`, "
+        + ("a gate set" if row.gate else "a reported set")
+        + ")",
+        "",
+        "| Class | Count | Unit | Ceiling | Within |",
+        "|---|---|---|---|---|",
+    ]
+    counts = class_counts(rule, outcomes, set_name)
+    for count in counts:
+        unit = "encounters" if count.residue_class == "R3" else "facts"
+        ceiling = "none (reported)" if count.ceiling is None else str(count.ceiling)
+        lines.append(
+            f"| {count.residue_class} {RESIDUE_CLASS_NAMES[count.residue_class]} "
+            f"| {total(count.total)} | {unit} | {ceiling} "
+            f"| {_flag(count.within if any_measured else None)} |"
+        )
+    lines.append("")
+    for count in counts:
+        members = ", ".join(
+            encounter if fact is None else f"{encounter}/f{fact}"
+            for encounter, fact in count.members
+        )
+        empty = "none" if any_measured else "- (no encounter measured)"
+        lines.append(f"- {count.residue_class}: {members or empty}")
+    wrong = total(sum(m.material_wrong for m in measured))
+    silent = total(sum(m.silent_omissions for m in measured))
+    missed = total(sum(m.uncertainty_missed for m in measured))
+    lines.append(
+        "- After the classes (the counts rule v2 reads): material wrong "
+        f"{total(sum(m.material_wrong_v2 for m in measured))} (raw {wrong}), silent "
+        f"omissions {total(sum(m.silent_omissions_v2 for m in measured))} (raw {silent}), "
+        f"uncertainty missed {total(sum(m.uncertainty_missed_v2 for m in measured))} "
+        f"(raw {missed})."
+    )
+    required = rule.uncertainty_required(row)
+    lines.append(
+        f"- Surfaced / expected: {total(sum(m.uncertainty_surfaced for m in measured))} / "
+        f"{total(sum(m.uncertainty_expected for m in measured))} ("
+        + ("required in this set" if required else "reported, not required, in this set")
+        + ")."
+    )
+    loads = [dict(m.checker_tally).get("clinician_line_omitted", 0) for m in measured]
+    lines.append(
+        f"- clinician_line_omitted per measured encounter: total {total(sum(loads))}, median "
+        f"{_median(loads)}, maximum {max(loads) if loads else '-'}."
+    )
+    records = [
+        (outcome.encounter_id, outcome.reference)
+        for outcome in outcomes
+        if outcome.reference is not None and outcome.reference.next_patient_axis
+    ]
+
+    def number(value: int | None) -> str:
+        return "none" if value is None else str(value)
+
+    mismatches = [
+        encounter
+        for encounter, reading in records
+        if reading.boundary is not None and reading.boundary != reading.tail_start
+    ]
+    lines.append(
+        "- Reference boundary on the script's own words, every next-patient script the "
+        "run read, measured or role unresolved (id: reference boundary, tail start): "
+        + (
+            "; ".join(
+                f"{encounter}: {number(reading.boundary)}, {number(reading.tail_start)}"
+                for encounter, reading in records
+            )
+            or "none"
+        )
+        + ". Mismatches (a reference boundary that is neither none nor the tail start; "
+        "never R3, a finding): "
+        + (", ".join(mismatches) or "none")
+        + "."
+    )
+    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -2547,6 +3350,16 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--rule", type=Path, required=True, help="the pass-rule JSON file")
     parser.add_argument(
+        "--set",
+        dest="set_name",
+        default=None,
+        help=(
+            "the set this folder was built from, one the rule names (scripts, heldout, "
+            "heldout-2, heldout-3): required with a schema-2 rule, whose row for it holds "
+            "the ceilings; not taken with a schema-1 rule"
+        ),
+    )
+    parser.add_argument(
         "--template-profile", default=None, help="template profile id (default: the only one)"
     )
     parser.add_argument(
@@ -2592,7 +3405,10 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
     encounter runs; 1 otherwise. Refusals, in order: a packaged build
     (``install_layout.channel``, read at call time — the tests' seam), a
     missing set or config folder, the app's own config folder, an unusable
-    rule or config, a config carrying the app's learned content, a template
+    rule, a ``--set`` that does not fit the rule (given with a schema-1 rule;
+    missing, or not one of its sets, with a schema-2 rule — validation-run6
+    plan D17), an unusable config, a config carrying the app's learned
+    content, a template
     profile that cannot be bound, then the models (by name, before any is
     constructed; under ``enrolment`` attribution the speaker model too), an
     unreadable set folder, an enrolment WAV the set's scripts need missing
@@ -2632,6 +3448,19 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
         rule_refusal = str(exc)
     if rule_refusal is not None:
         print(f"[refused] {rule_refusal}")
+        return 2
+    # Validation-run6 plan D17: a schema-2 rule's ceilings are per set, and
+    # the set folder's path cannot name its set, so --set does. A typed
+    # name the rule does not hold is never printed.
+    set_name: str | None = args.set_name
+    if rule.sets is None and set_name is not None:
+        print("[refused] --set is taken only with a schema-2 rule (a schema-1 rule has no sets)")
+        return 2
+    if rule.sets is not None and set_name not in rule.sets:
+        print(
+            "[refused] a schema-2 rule needs --set naming one of its sets: "
+            + ", ".join(sorted(rule.sets))
+        )
         return 2
     config_failure: str | None = None
     try:
@@ -2835,8 +3664,8 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
         attribution=attribution,
     )
     print()
-    print(render_report(outcomes, rule, info, errors=errors))
-    return 0 if run_passed(rule, outcomes, errors=errors) else 1
+    print(render_report(outcomes, rule, info, errors=errors, set_name=set_name))
+    return 0 if run_passed(rule, outcomes, errors=errors, set_name=set_name) else 1
 
 
 __all__ = [
@@ -2847,15 +3676,21 @@ __all__ = [
     "ENROLMENT_DIRNAME",
     "FACT_KINDS",
     "FACT_VERDICTS",
+    "NEXT_PATIENT_AXIS",
     "REFERENCE_HEDGES",
     "REFERENCE_MODEL_NAME",
     "REFERENCE_TAIL_STARTS",
     "REPO_ROOT",
+    "RESIDUE_CLASSES",
+    "RESIDUE_CLASS_NAMES",
+    "REVIEW_MARK_CODES",
     "ROLE_TIE_SECONDS",
+    "RULE_SCHEMA_VERSION",
     "SCRIPT_SCHEMA_VERSION",
     "UNNAMED_ENCOUNTER",
     "Attribution",
     "CanonicalTokens",
+    "ClassCount",
     "EncounterFiles",
     "EncounterMetrics",
     "EncounterOutcome",
@@ -2866,10 +3701,14 @@ __all__ = [
     "HarnessInputs",
     "PassRule",
     "ProseCounts",
+    "ReferenceReading",
+    "ResidueClass",
+    "ResidueTableError",
     "RuleError",
     "RunInfo",
     "ScriptError",
     "ScriptLine",
+    "SetCeilings",
     "SpokenTurn",
     "SyntheticConditions",
     "TranscriptAlignment",
@@ -2878,6 +3717,8 @@ __all__ = [
     "align_transcripts",
     "attribution_seconds",
     "canonical_tokens",
+    "class_breaches",
+    "class_counts",
     "clinician_speaker",
     "confirm_all",
     "document_from_turns",
@@ -2898,13 +3739,17 @@ __all__ = [
     "read_commit",
     "read_label_track",
     "reference_document",
+    "reference_reading",
+    "reference_tail_start",
     "render_report",
     "rule_failures",
     "run_encounters",
     "run_passed",
+    "run_passed_v1",
     "script_line_hedged",
     "suspect_segment_count",
     "transcript_wer",
+    "v1_failures",
     "word_errors",
 ]
 

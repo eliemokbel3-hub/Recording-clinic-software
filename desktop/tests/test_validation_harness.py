@@ -619,6 +619,10 @@ class TestRunner:
         assert outcome.metrics is None and outcome.words is not None
         # Invented-text guard D8: a transcript was made, so it is counted.
         assert outcome.suspect_segments == 0
+        # Validation-run6 D14: the reference reading, taken first, is kept.
+        assert outcome.reference == validation.ReferenceReading(
+            frozenset({0}), boundary=None, tail_start=None
+        )
         assert validation.rule_failures(OPTION_A, outcome) == ("role_unresolved",)
         assert not validation.run_passed(OPTION_A, [outcome])
 
@@ -685,6 +689,23 @@ class TestRunner:
         (outcome,) = run_encounters(encounters, _inputs(tmp_path), progress=lines.append)
         assert (outcome.status, outcome.error_type) == ("error", "ScriptError")
         assert lines[-1].startswith("[error] syn-001.json:")
+
+    def test_a_next_patient_script_with_no_tail_row_is_an_error_before_any_store(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Validation-run6 D8/D14: a script carrying ``end_and_new_patient``
+        with no ``REFERENCE_TAIL_STARTS`` row is a harness error, never an
+        R3 — raised by the reference reading, which runs before the label
+        track, the WAV or any store."""
+        monkeypatch.setattr(validation, "REFERENCE_TAIL_STARTS", {})
+        script = {**_two_turn_script(), "axes": ["laterality", "end_and_new_patient"]}
+        encounters, _ = find_encounters(_set_folder(tmp_path / "set", script=script))
+        before = _temp_stores()
+        lines: list[str] = []
+        (outcome,) = run_encounters(encounters, _inputs(tmp_path), progress=lines.append)
+        assert _temp_stores() == before
+        assert (outcome.status, outcome.error_type) == ("error", "ResidueTableError")
+        assert lines[-1] == "[error] syn-001: ResidueTableError"
 
     def test_an_error_type_no_outcome_can_hold_is_reported_as_exception(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -935,7 +956,9 @@ class TestEnrolledAttribution:
         assert plain[0].status == "measured"
         # Peer round 17 PR-LOW-014: against a FIXED baseline, not the current
         # code — the report's rows and fact table as ``c5f3179`` (before D11)
-        # rendered these inputs, the two new seconds cells removed.
+        # rendered these inputs, the two new seconds cells removed; and since
+        # validation-run6 D7/D13 and D8 the 0.3.3 silent column (a 0 here)
+        # and the facts table's residue-class cell (a ``-``) removed too.
         report = render_report(
             plain,
             OPTION_A,
@@ -944,10 +967,22 @@ class TestEnrolledAttribution:
         rows = report[6:8]
         for index, row in enumerate(rows):
             cells = row.split(" | ")
-            assert cells[23:25] == ["0.0", "0.0"]
-            del cells[23:25]
+            assert cells[24:26] == ["0.0", "0.0"]
+            del cells[24:26]
+            assert cells[16] == "0"
+            del cells[16]
             rows[index] = " | ".join(cells)
-        assert [*rows, *report[8:]] == list(_CLUSTERING_BASELINE_C5F3179)
+        facts = report[8:]
+        header, separator, fact_row = facts[-3:]
+        assert header.endswith("| Ambiguous | Residue class |")
+        assert separator == "|" + "---|" * 10
+        assert fact_row.endswith("| no | - |")
+        facts[-3:] = [
+            header.removesuffix(" Residue class |"),
+            "|" + "---|" * 9,
+            fact_row.removesuffix(" - |"),
+        ]
+        assert [*rows, *facts] == list(_CLUSTERING_BASELINE_C5F3179)
 
     def test_an_enrolment_that_matches_the_patient_is_role_unresolved(
         self, tmp_path: Path
@@ -1013,6 +1048,14 @@ class _NeverBuilt:
 def _rule_file(tmp_path: Path) -> Path:
     path = tmp_path / "rule.json"
     path.write_text(json.dumps({"schema_version": 1, "rule_name": "test-rule"}), encoding="utf-8")
+    return path
+
+
+def _rule_v2_file(tmp_path: Path) -> Path:
+    """``_rule_file``'s path rewritten as ``_rule_v2()`` (validation-run6
+    D8) — called after ``_argv``, which writes the schema-1 file."""
+    path = tmp_path / "rule.json"
+    path.write_text(_rule_v2().model_dump_json(), encoding="utf-8")
     return path
 
 
@@ -1179,6 +1222,39 @@ class TestRunValidationMain:
         assert "[refused] the rule file: " in out
         assert "rule.json" not in out  # peer round 27 (PR-HIGH-068): never its name
 
+    def test_set_is_refused_with_a_schema_1_rule(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Validation-run6 D17: a schema-1 rule has no sets, so ``--set`` is a
+        refusal, not ignored."""
+        assert validation.main(_argv(tmp_path, "--set", "scripts")) == 2
+        out = capsys.readouterr().out
+        assert "[refused] --set is taken only with a schema-2 rule" in out
+        assert "Whisper" not in out
+
+    @pytest.mark.parametrize("given", [None, "Margaret"])
+    def test_a_schema_2_rule_needs_one_of_its_sets(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], given: str | None
+    ) -> None:
+        """D17: missing, or a name the rule does not hold — refused before
+        any model, naming the rule's sets and never the typed name."""
+        argv = _argv(tmp_path) if given is None else _argv(tmp_path, "--set", given)
+        _rule_v2_file(tmp_path)
+        assert validation.main(argv) == 2
+        out = capsys.readouterr().out
+        assert "[refused] a schema-2 rule needs --set naming one of its sets: heldout, " in out
+        assert "heldout-3, scripts" in out
+        assert "Margaret" not in out
+        assert "Whisper" not in out
+
+    def test_a_schema_2_rule_and_one_of_its_sets_go_on(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        argv = _argv(tmp_path, "--set", "heldout-3")
+        _rule_v2_file(tmp_path)
+        assert validation.main(argv) == 2  # refused later, at the models
+        assert "[refused] no Whisper model is installed in" in capsys.readouterr().out
+
     def test_an_interrupted_run_prints_no_traceback(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -1244,7 +1320,18 @@ class TestRunValidationMain:
 
     @pytest.mark.parametrize(
         "site",
-        ["rule", "config", "profile", "models", "speaker", "listing", "slot", "enrol", "custody"],
+        [
+            "rule",
+            "set",
+            "config",
+            "profile",
+            "models",
+            "speaker",
+            "listing",
+            "slot",
+            "enrol",
+            "custody",
+        ],
     )
     def test_a_refusal_that_cannot_be_written_chains_nothing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, site: str
@@ -1291,6 +1378,8 @@ class TestRunValidationMain:
             monkeypatch.setattr(validation, "build_speaker_embedder", unlistable)
         if site == "rule":
             _rule_file(tmp_path).write_text("{}", encoding="utf-8")
+        elif site == "set":
+            _rule_v2_file(tmp_path)  # schema 2 and no --set (validation-run6 D17)
         elif site == "config":
             (tmp_path / "config" / "autofill_rules.json").write_text(
                 '{"schema_version": 1, "autofill_rules": [{"rule_id": "x", "Margaret": 1}]}',
@@ -1345,6 +1434,23 @@ class TestRunValidationMain:
         assert f"[error] {validation.UNNAMED_ENCOUNTER}: 1 file(s) skipped" in out
         assert "Margaret" not in out
         assert "[run ] syn-001" in out and "- FAIL" in out
+
+    @windows_only
+    def test_a_full_run_under_rule_v2_names_its_set(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Validation-run6 D8, D17 through ``main``: ``--set`` picks the
+        rule's row, and the report carries both verdicts and the set layer."""
+        pytest.importorskip("numpy")
+        _FakeModels.install(monkeypatch)
+        argv = _argv(tmp_path, "--attribution", "clustering", "--set", "scripts")
+        _rule_v2_file(tmp_path)
+        _set_folder(tmp_path / "set")
+        assert validation.main(argv, repo_root=tmp_path) == 0
+        out = capsys.readouterr().out
+        assert "- set `scripts` - rule v2 PASS, rule v1 PASS" in out
+        assert "### Residue classes (rule v2, set `scripts`, a gate set)" in out
+        assert "- R1: none" in out and "- R3: none" in out
 
 
 class _FakeModels:
@@ -1505,6 +1611,117 @@ class TestBuildInformation:
         assert digest is not None and len(digest) == 64
 
 
+def _rule_v2() -> PassRule:
+    """A schema-2 rule of three sets (validation-run6 D8, D15, D17): two
+    gate sets — one requiring uncertainty surfaced, one only reporting it —
+    and one reported set."""
+    return PassRule.model_validate(
+        {
+            "schema_version": 2,
+            "rule_name": "rule-v2-test",
+            "sets": {
+                "scripts": {
+                    "gate": True,
+                    "max_r1_facts": 1,
+                    "max_r2_facts": 1,
+                    "max_r3_encounters": 1,
+                },
+                "heldout": {
+                    "gate": False,
+                    "max_r1_facts": 1,
+                    "max_r2_facts": 1,
+                    "max_r3_encounters": 1,
+                },
+                "heldout-3": {
+                    "gate": True,
+                    "max_r1_facts": 1,
+                    "max_r3_encounters": 1,
+                    "require_uncertainty_surfaced": False,
+                },
+            },
+        }
+    )
+
+
+def _fact_outcome(fact_index: int = 0, **overrides: Any) -> validation.FactOutcome:
+    values: dict[str, Any] = {
+        "fact_index": fact_index,
+        "kind": "present",
+        "material": True,
+        "verdict": "correct",
+        "warned": False,
+        "uncertainty_surfaced": None,
+        "not_transcribed": False,
+        "ambiguous": False,
+    }
+    values.update(overrides)
+    return validation.FactOutcome(**values)
+
+
+def _metrics_of(*facts: validation.FactOutcome, **overrides: Any) -> validation.EncounterMetrics:
+    values: dict[str, Any] = {
+        "words": validation.WordErrors(1, 1, 0),
+        "spelling_normalised_words": 0,
+        "transcript_lines": 1,
+        "config_lines": 0,
+        "unsupported_clinical_lines": 0,
+        "other_unsupported_words": 0,
+        "checker_tally": (),
+        "checker_failures": (),
+        "checker_failure_count": 0,
+        "expected_warnings_absent": (),
+        "facts": facts,
+    }
+    values.update(overrides)
+    return validation.EncounterMetrics(**values)
+
+
+def _measured_outcome(
+    encounter_id: str,
+    *facts: validation.FactOutcome,
+    reference: validation.ReferenceReading | None = None,
+    **overrides: Any,
+) -> EncounterOutcome:
+    metrics = _metrics_of(*facts, **overrides)
+    return EncounterOutcome(
+        encounter_id,
+        "measured",
+        segment_count=1,
+        words=metrics.words,
+        metrics=metrics,
+        reference=reference,
+    )
+
+
+def _axis_reading(boundary: int | None, tail_start: int | None) -> validation.ReferenceReading:
+    """A next-patient script's reference reading (D14's recorded check)."""
+    return validation.ReferenceReading(
+        frozenset(), boundary=boundary, tail_start=tail_start, next_patient_axis=True
+    )
+
+
+def _residue_outcomes() -> list[EncounterOutcome]:
+    """``syn-001``: one R1 fact (a material wrong one); ``syn-002``: a
+    correct fact and one R3 fact on a next-patient script whose reference
+    reading found no boundary (tail start 4)."""
+    return [
+        _measured_outcome(
+            "syn-001",
+            _fact_outcome(verdict="wrong", residue_r1=True),
+            checker_tally=(("clinician_line_omitted", 3),),
+        ),
+        _measured_outcome(
+            "syn-002",
+            _fact_outcome(),
+            _fact_outcome(1, kind="absent", verdict="wrongly_present", residue_r3=True),
+            checker_tally=(("clinician_line_omitted", 2),),
+            next_patient_axis=True,
+            reference_tail_start=4,
+            reference=_axis_reading(None, 4),
+        ),
+    ]
+
+
 class TestReport:
     def test_errors_and_set_level_errors_fail_the_run(self) -> None:
         outcomes = [EncounterOutcome("syn-001", "error", "OSError")]
@@ -1526,8 +1743,11 @@ class TestReport:
         prose cell; since the metric amendment of 2026-10-13 (validation-pass
         plan D7) two more after ``Uncertainty missed``; since the metric
         amendment of 2026-10-23 (validation-run6 plan D11) the two attribution
-        seconds after ``Suspect segments`` — so the header, the separator, a
-        measured row, an unmeasured row and the totals all carry 27 cells."""
+        seconds after ``Suspect segments``; since the metric amendments of
+        2026-10-22 and 2026-10-24 (validation-run6 plan D7, D13) ``Silent
+        (0.3.3 predicate)`` after the run-1 column — so the header, the
+        separator, a measured row, an unmeasured row and the totals all carry
+        28 cells."""
         fact = validation.FactOutcome(
             fact_index=0,
             kind="present",
@@ -1571,7 +1791,19 @@ class TestReport:
         report = render_report(outcomes, OPTION_A, info)
         table = [line for line in report.splitlines() if line.startswith("|")]
         header, separator, measured, unmeasured, total = table[:5]
-        assert "| Silent omissions | Silent (run-1 predicate) | Warned omissions |" in header
+        assert (
+            "| Silent omissions | Silent (run-1 predicate) | Silent (0.3.3 predicate) "
+            "| Warned omissions |"
+        ) in header
+        # Validation-run6 D5, D7 and D13: the header line names the
+        # amendments and their dates.
+        assert "metric amendment 2026-10-22 (validation-run6 D5)" in report
+        assert (
+            "metric amendments 2026-10-22 and 2026-10-24 (validation-run6 D7, D13; 0.3.3's "
+            "reading: Silent (0.3.3 predicate))"
+        ) in report
+        # PR-LOW-016 is rule v2's report only (Task 4.3): not cited here.
+        assert "a measured zero reads 0" not in report
         # Metric amendment 2026-10-11 (D10): one more column right after WER,
         # and the header line names the amendment.
         assert "| WER | Spelling-normalised words | Unsupported clinical lines |" in header
@@ -1595,9 +1827,9 @@ class TestReport:
             "| Hedge marks on unhedged segments | Ambiguous facts |"
         ) in header
         assert "metric amendment 2026-10-13" in report
-        assert separator == "|" + "---|" * 27
+        assert separator == "|" + "---|" * 28
         for row in (header, separator, measured, unmeasured, total):
-            assert len(row.strip().strip("|").split("|")) == 27
+            assert len(row.strip().strip("|").split("|")) == 28
         # Missed, acoustic, unhedged, ambiguous, checker, suspect, the two
         # attribution seconds, prose, rule.
         assert measured.endswith("| 0 | 0 | 3 | 0 | 0 | 2 | 1.5 | 2.0 | - | PASS |")
@@ -1632,9 +1864,10 @@ class TestReport:
         zero_report = render_report([zero], OPTION_A, info)
         (zero_total,) = [line for line in zero_report.splitlines() if line.startswith("| TOTAL")]
         assert zero_total.endswith("| 0.0 | 0.0 | - | PASS |")
-        # Omitted, silent, silent (run-1), warned — in that order.
-        assert "| 1 | 0 | 1 | 1 |" in measured
-        assert "| 1 | 0 | 1 | 1 |" in total
+        # Omitted, silent, silent (run-1), silent (0.3.3), warned — in that
+        # order.
+        assert "| 1 | 0 | 1 | 0 | 1 |" in measured
+        assert "| 1 | 0 | 1 | 0 | 1 |" in total
         # WER, then the spelling count (a measured cell and its total).
         assert "| 0.000 | 3 | 0 |" in measured
         assert "| 0.000 | 3 | 0 |" in total
@@ -1643,7 +1876,193 @@ class TestReport:
         # never fails an encounter, and neither does an unhedged hedge mark.
         assert validation.rule_failures(OPTION_A, outcomes[0]) == ()
 
-    @pytest.mark.parametrize("slot", ["words", "metrics", "prose"])
+    def test_an_unmeasured_total_reads_dash_and_a_measured_zero_reads_0(self) -> None:
+        """Peer round 18 PR-LOW-016 (deferred to validation-run6 Task 4.3,
+        rule v2's report only): an error outcome made no transcript, so its
+        row and every total read ``-`` — never 0; a role-unresolved
+        encounter's transcription supplies the word totals and the suspect
+        total (a measured 0), while the note-level totals stay ``-``. A
+        schema-1 report keeps runs 1-5's zeros."""
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        error = EncounterOutcome("syn-001", "error", "OSError")
+        legacy = render_report([error], OPTION_A, info).splitlines()
+        assert any(line.startswith("| syn-001 | error (OSError) | 0 | - | - |") for line in legacy)
+        assert any(
+            line.startswith("| TOTAL | 0 measured | - | 0 | - | 0 | 0 | 0 | - | - | 0 |")
+            for line in legacy
+        )
+        rule = _rule_v2()
+        errored = render_report([error], rule, info, set_name="scripts")
+        assert "A cell or total nothing measured reads `-`; a measured zero reads 0." in errored
+        table = [line for line in errored.splitlines() if line.startswith("| syn-001")]
+        assert table == ["| syn-001 | error (OSError) | " + " | ".join(["-"] * 25)
+                         + " | FAIL: harness_error |"]
+        (total,) = [line for line in errored.splitlines() if line.startswith("| TOTAL")]
+        assert total == "| TOTAL | 0 measured | " + " | ".join(["-"] * 25) + " | FAIL |"
+        unresolved = EncounterOutcome(
+            "syn-001",
+            "role_unresolved",
+            segment_count=2,
+            words=validation.WordErrors(4, 4, 0),
+            suspect_segments=0,
+        )
+        report = render_report([unresolved], rule, info, set_name="scripts")
+        (row,) = [line for line in report.splitlines() if line.startswith("| syn-001")]
+        assert row.startswith("| syn-001 | role_unresolved | 2 | 4 | 0.000 | - |")
+        (total,) = [line for line in report.splitlines() if line.startswith("| TOTAL")]
+        assert total == (
+            "| TOTAL | 0 measured | - | 4 | 0.000 | "
+            + " | ".join(["-"] * 18)
+            + " | 0 | - | - | - | FAIL |"
+        )
+
+    def test_a_schema_2_report_names_both_verdicts_and_the_set_layer(self) -> None:
+        """Validation-run6 D8, D14, D15, D17 (Task 4.3): the heading carries
+        rule v2's verdict for the named set beside rule v1's; the verdict
+        lines name the failing encounters, the set-level breaches and the
+        gate and reported sets; the residue section lists each class against
+        its ceiling with its members, the adjusted totals beside the raw,
+        "Surfaced / expected", the ``clinician_line_omitted`` load and the
+        reference-boundary record — ids and integers only."""
+        rule = _rule_v2()
+        outcomes = _residue_outcomes()
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        report = render_report(outcomes, rule, info, set_name="scripts")
+        lines = report.splitlines()
+        assert lines[0] == (
+            "## Validation run - rule `rule-v2-test` - set `scripts` - rule v2 PASS, rule v1 FAIL"
+        )
+        assert lines[2] == (
+            "- Rule v2 verdict, set `scripts` (a gate set): PASS. Failing encounters: none; "
+            "set-level: none; set-level errors: 0. The gate is a rule v2 pass on every gate "
+            "set (`heldout-3`, `scripts`); the other sets are reported in full (`heldout`)."
+        )
+        assert lines[3] == (
+            "- Rule v1 verdict (the same outcomes on the raw counts, no residue class): FAIL. "
+            "Failing encounters: syn-001 (material_wrong); syn-002 (material_wrong)."
+        )
+        assert "Rule v2 (schema 2; decision 0.7 of 2026-10-22, amended 2026-10-24" in report
+        # The per-encounter Rule cell reads rule v2 (both excused), the raw
+        # tables are unchanged (two material wrong facts).
+        assert "| syn-001 | 0 | present | yes | wrong | no | - | no | no | R1 |" in lines
+        assert "| syn-002 | 1 | absent | yes | wrongly_present | no | - | no | no | R3 |" in lines
+        rows = [line for line in lines if line.startswith("| syn-00")]
+        assert all(row.endswith("| PASS |") for row in rows[:2])
+        tail = lines[lines.index("### Residue classes (rule v2, set `scripts`, a gate set)"):]
+        assert tail == [
+            "### Residue classes (rule v2, set `scripts`, a gate set)",
+            "",
+            "| Class | Count | Unit | Ceiling | Within |",
+            "|---|---|---|---|---|",
+            "| R1 recogniser | 1 | facts | 1 | yes |",
+            "| R2 tone only | 0 | facts | 1 | yes |",
+            "| R3 unbroken next patient | 1 | encounters | 1 | yes |",
+            "",
+            "- R1: syn-001/f0",
+            "- R2: none",
+            "- R3: syn-002",
+            "- After the classes (the counts rule v2 reads): material wrong 0 (raw 2), silent "
+            "omissions 0 (raw 0), uncertainty missed 0 (raw 0).",
+            "- Surfaced / expected: 0 / 0 (required in this set).",
+            "- clinician_line_omitted per measured encounter: total 5, median 2.5, maximum 3.",
+            "- Reference boundary on the script's own words, every next-patient script the "
+            "run read, measured or role unresolved (id: reference boundary, tail start): "
+            "syn-002: none, 4. Mismatches (a reference boundary that is neither none nor "
+            "the tail start; never R3, a finding): none.",
+        ]
+
+    @pytest.mark.parametrize("status", ["error", "role_unresolved"])
+    def test_a_residue_section_with_nothing_measured_reads_dash(self, status: str) -> None:
+        """Peer round 46 PR-LOW-001 (PR-LOW-016's convention): with no
+        measured encounter — every outcome an error, or every one role
+        unresolved — each class count, its Within flag, the adjusted and raw
+        totals, "Surfaced / expected" and the load read ``-``, never a
+        measured 0; a measured zero stays 0 (the schema-2 report test)."""
+        outcome = (
+            EncounterOutcome("syn-001", "error", "OSError")
+            if status == "error"
+            else EncounterOutcome(
+                "syn-001",
+                "role_unresolved",
+                segment_count=1,
+                words=validation.WordErrors(1, 1, 0),
+                reference=_axis_reading(None, 4),
+            )
+        )
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        lines = render_report([outcome], _rule_v2(), info, set_name="scripts").splitlines()
+        tail = lines[lines.index("| Class | Count | Unit | Ceiling | Within |") + 2 :]
+        assert tail[:3] == [
+            "| R1 recogniser | - | facts | 1 | - |",
+            "| R2 tone only | - | facts | 1 | - |",
+            "| R3 unbroken next patient | - | encounters | 1 | - |",
+        ]
+        assert tail[4:7] == [f"- R{n}: - (no encounter measured)" for n in (1, 2, 3)]
+        assert tail[7] == (
+            "- After the classes (the counts rule v2 reads): material wrong - (raw -), "
+            "silent omissions - (raw -), uncertainty missed - (raw -)."
+        )
+        assert tail[8] == "- Surfaced / expected: - / - (required in this set)."
+        assert tail[9] == (
+            "- clinician_line_omitted per measured encounter: total -, median -, maximum -."
+        )
+        # D14's record still lists a role-unresolved next-patient script.
+        expected = "syn-001: none, 4" if status == "role_unresolved" else "tail start): none"
+        assert expected in tail[10]
+
+    def test_the_reference_boundary_record_covers_every_script_the_run_read(self) -> None:
+        """D14's recorded check: a role-unresolved next-patient encounter keeps
+        its reference reading (taken before the label track), so it is
+        recorded too; a script without the axis is not; a reference boundary
+        that is neither none nor the tail start is named as a mismatch; an
+        error outcome carries none."""
+        unresolved = EncounterOutcome(
+            "syn-003",
+            "role_unresolved",
+            segment_count=1,
+            words=validation.WordErrors(1, 1, 0),
+            reference=_axis_reading(5, 4),
+        )
+        no_axis = _measured_outcome(
+            "syn-004",
+            _fact_outcome(),
+            reference=validation.ReferenceReading(frozenset({0}), boundary=None, tail_start=None),
+        )
+        outcomes = [
+            *_residue_outcomes(),
+            unresolved,
+            no_axis,
+            EncounterOutcome("syn-005", "error", "OSError"),
+        ]
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        report = render_report(outcomes, _rule_v2(), info, set_name="scripts")
+        (record,) = [line for line in report.splitlines() if "Reference boundary" in line]
+        assert "syn-002: none, 4; syn-003: 5, 4. Mismatches" in record
+        assert record.endswith("never R3, a finding): syn-003.")
+        assert "syn-004" not in record and "syn-005" not in record
+
+    def test_a_reported_set_and_a_breach(self) -> None:
+        """D17: the held-out set reports uncertainty (no R2 ceiling); D8: a
+        class over its ceiling fails rule v2 at the set level, named."""
+        rule = _rule_v2()
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        outcomes = _residue_outcomes()
+        report = render_report(outcomes, rule, info, set_name="heldout-3")
+        assert "| R2 tone only | 0 | facts | none (reported) | yes |" in report
+        assert "- Surfaced / expected: 0 / 0 (reported, not required, in this set)." in report
+        breach = [
+            *outcomes,
+            _measured_outcome("syn-003", _fact_outcome(verdict="wrong", residue_r1=True)),
+        ]
+        report = render_report(breach, rule, info, set_name="scripts")
+        assert report.splitlines()[0].endswith("- rule v2 FAIL, rule v1 FAIL")
+        assert "set-level: R1 2 over the ceiling of 1;" in report
+        assert "| R1 recogniser | 2 | facts | 1 | no |" in report
+        assert "- R1: syn-001/f0, syn-003/f0" in report
+        assert not validation.run_passed(rule, breach, set_name="scripts")
+        assert validation.run_passed(rule, outcomes, set_name="scripts")
+
+    @pytest.mark.parametrize("slot", ["words", "metrics", "prose", "reference"])
     def test_an_outcome_holds_only_its_validated_types(self, slot: str) -> None:
         """Round 12 LOW-002 (Constraint 7 at run time): a string where the
         rule and the report read a result is refused at construction."""
