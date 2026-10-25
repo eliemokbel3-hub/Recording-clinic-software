@@ -7,7 +7,7 @@
 - a written decision, BEFORE run 6, on the recogniser-level and tone-level residues (rule v1 kept, or a ratified rule v2);
 - a fresh held-out set by an independent author, written predictions before the build, and run 6 as the run of record.
 
-**Overall Progress:** `83%` (25 of 30 buildable tasks; `[2026-10-24, stage-5]` H1–H4 done — H1 round 50 (suite 8615 collected, 8606 passed, 0 failed, 9 skipped), H2 round 51 (suite 8614 collected, 8605 passed, 0 failed, 9 skipped), H3 round 52 clean, H4 codex rounds 53 (code, 0) and 54 (docs, 1 LOW, fixed); 26 of 38 checkboxes ticked; `[2026-10-24, stage-4]` Tasks 5.1 and 5.2 built and verified (suite 8614 collected, 8605 passed, 0 failed, 9 skipped, `npm run qa` 313 / 313, review round 48, codex peer round 49 applied); `[2026-10-24, stage-3]` Tasks 4.1–4.4 built and verified (suite 8605 passed, review rounds 44–45, codex peer round 46 applied, simplify round 47 clean); `[2026-10-24, stage-2]` Task 3.1 built and verified (suite 8504 passed, review round 41, codex peer round 42 converged); `[2026-10-24, stage-1]` Tasks 1.1–1.4 built and verified (suite 8425 passed, review round 38, codex peer round 39 converged); `[2026-10-24, peer round 25]` the convention, stated: the 8 `[decision]` tasks — all taken — are outside the count; 38 checkboxes in all, 22 ticked)
+**Overall Progress:** `90%` (27 of 30 buildable tasks; `[2026-10-25]` P.4 done — the `heldout-3` diagnosis, the blind rule ended; `[2026-10-25]` P.1 done — run 6, the run of record, does not meet the gate; `[2026-10-24, stage-5]` H1–H4 done — H1 round 50 (suite 8615 collected, 8606 passed, 0 failed, 9 skipped), H2 round 51 (suite 8614 collected, 8605 passed, 0 failed, 9 skipped), H3 round 52 clean, H4 codex rounds 53 (code, 0) and 54 (docs, 1 LOW, fixed); 26 of 38 checkboxes ticked; `[2026-10-24, stage-4]` Tasks 5.1 and 5.2 built and verified (suite 8614 collected, 8605 passed, 0 failed, 9 skipped, `npm run qa` 313 / 313, review round 48, codex peer round 49 applied); `[2026-10-24, stage-3]` Tasks 4.1–4.4 built and verified (suite 8605 passed, review rounds 44–45, codex peer round 46 applied, simplify round 47 clean); `[2026-10-24, stage-2]` Task 3.1 built and verified (suite 8504 passed, review round 41, codex peer round 42 converged); `[2026-10-24, stage-1]` Tasks 1.1–1.4 built and verified (suite 8425 passed, review round 38, codex peer round 39 converged); `[2026-10-24, peer round 25]` the convention, stated: the 8 `[decision]` tasks — all taken — are outside the count; 38 checkboxes in all, 22 ticked)
 
 ## Lifecycle State
 - Active
@@ -917,6 +917,13 @@ See the Planning Extraction Summary (the canonical list).
   - Blind rule: held in every stage-5 leg. In the peer logs (r53, r54), `heldout-3` appears only inside plan or document text.
   - Committed locally with the rx3 message above; not pushed.
   - **Run state:** Phases 1, 3, 4 and 5 and H1–H4 are done. **Next (practitioner):** H5 (0.3.4 built of record after P.1) and P.1–P.4. P.1 is run 6 from the H4 commit, on four sets; the gate is read on the 50 and `heldout-3`.
+- `[2026-10-25]` **P.1 done — run 6, the run of record, does NOT meet the gate** (record on P.1): the 50 pass rule v2; `heldout-3` fails it on `h3-03`'s unsupported clinical line and on R3 (2 encounters, ceiling 1), with 0 silent omissions; `heldout` and `heldout-2` fail as predictions v2 said. One finding on the prediction record (`heldout-2`'s rule v1 line, 19 failing, not 21). P.5 stays (a); the next cycle is a 0.3.5 plan. Uncommitted. **Next:** P.4 (the `heldout-3` diagnosis — the blind rule ends with it), the practitioner's word on committing P.1 and P.4, then H5 and P.2 (whether 0.3.4 is built of record and installed), P.3, and the 0.3.5 plan with Fable.
+- `[2026-10-25]` **P.4 done: the `heldout-3` diagnosis** (record on P.4). The blind rule has ended; the cases and divergence entries are written (boundary 9, corrections 2, unsure 7). Every failure is classed:
+  - R1 `h3-03` (whose recogniser number is also the one unsupported line — the rule has no R1 exemption there);
+  - R3 `h3-02` and `-17` (9 of 10 boundaries missed by the frozen lists; two reached the note through a cued next-patient line);
+  - R2 5 facts and 1 bare-modal fact (both reported).
+
+  The new code's maximum of 10 comes from segmentation: D1 judges per segment, so a split line draws one warning per piece. The gate was not met; P.5 stays (a). Uncommitted, with P.1. **Next (practitioner's word):** commit P.1 and P.4; H5 and P.2 (0.3.4 built of record and installed, or not); P.3's register rows (`h2-`, `h3-`); the review guide's 0.3.4 lines; the 0.3.5 plan with Fable; the custody deletions.
 
 ## Review History
 - 2026-10-22 `/review-plan` (Opus 5.5): Plan-subagent design critique + Explore subagent + coverage, practicality, risk and simplicity lenses, every finding checked against `0be35d7` / `4ff5f26`. Plan-scoped; no code reviewed. Step 3.5 gate: missed-speech warning Include in plan; chooser mark Include in plan; ui-refresh at its merge; larger model Excluded.
@@ -2669,7 +2676,7 @@ Round status: Closed (0 pending)
   - **Record (2026-10-24, after the author session):**
     - **The reviews over the runner's real code, before the author ran:** review-loop round 32, `/security-review` round 33, codex peer rounds 34–36 (`gpt-6-astra` high, read-only; 34 and 35 found 5 MED + 1 LOW and 3 MED, every one verified and applied; 36 converged with no findings). The full suite after round 35's fixes, with `validation/heldout-3/` holding only the brief: 8348 passed, 9 skipped; ruff and mypy clean.
     - **The author session:** `--restricted --safe-mode --strict-mcp-config`, Opus 5.5, in `C:\heldout3-author` holding only `SPEC.md`; exit 0. Its log was never opened: a script printed only its tool names and path fields — Read 1 (`SPEC.md`), Grep 1 (its own folder), Write 24 (23 scripts and `AUTHOR-NOTES.md`), no Bash, no other tool; every path inside `C:\heldout3-author`. The log is kept as `validation/heldout-3/author-session.jsonl` with the user name replaced by `sed` (0 occurrences left, counted, not read).
-    - **The set:** 23 scripts, `h3-01` to `h3-23`, and `AUTHOR-NOTES.md` (unread until P.4), copied in unread. The tail script (`.cursor/loops/validation-run6-heldout3-tails.py`; ids and integers only) found 17 scripts with the axis `end_and_new_patient`: 9 with a tail and 8 negatives with a None row. They were copied into `REFERENCE_TAIL_STARTS`.
+    - **The set:** 23 scripts, `h3-01` to `h3-23`, and `AUTHOR-NOTES.md` (unread until P.4), copied in unread. The tail script (`.cursor/loops/validation-run6-heldout3-tails.py`; ids and integers only) found 17 scripts with the axis `end_and_new_patient`: 9 with a tail and 8 negatives with a None row. They were copied into `REFERENCE_TAIL_STARTS`. `[2026-10-25, P.4]` Miscounted: the table holds 10 tails and 7 None rows (unchanged since this commit).
     - **The lints, through the runner only** (`scripts/lint-held-out-set.py validation/heldout-3`; first run, the set unedited): collected 8403, ran 8403, passed 8394, failed 0, errored 0, skipped 9 (the nine link tests that skip on this machine, the same as every bare run), exit 0. No lint failure, so nothing went back to the author. No `h3-` script text was read by the agent: the shell history, the author log's path check and the runner's fixed lines are the evidence.
     - `validation/README.md` names the set; `scripts/README.md` names the runner. The practitioner may delete `C:\heldout3-author` (the scripts are in the repository).
 
@@ -2752,13 +2759,22 @@ Nothing to build. Tasks 2.1 and 2.2 are removed (their text survives in D2 and t
 - [ ] 🟥 **H5** 0.3.4 built of record after P.1 on the H4 commit: the `Release` workflow, `gh attestation verify`, the `docs/release/pilot-builds.md` row, CI green. If P.1 forces a code change, H1–H4 and P.1 run again before H5.
 
 ### Phase P — Practitioner (normal terminal, developer build, installed app closed; C1, C8, C10)
-- [ ] 🟥 **P.1 Run 6, the run of record**
+- [x] 🟩 **P.1 Run 6, the run of record**
   - `[2026-10-24]` **Amended by D15–D18:** FOUR sets built and run (`validation/heldout-3` added); the gate is read on the 50 (against predictions v1/v2) and `heldout-3` (against D18's priors and falsifiers); `heldout` and `heldout-2` are reported in full against predictions v2. Anything outside the predictions or the priors is a finding, never a rule edit; a falsifier on `heldout-3` is a FAIL of the gate.
   - From a clean, committed checkout at the H4 commit: check the voice baseline; build `validation/scripts`, `validation/heldout`, `validation/heldout-2` and (`[2026-10-24]`) `validation/heldout-3` into empty folders outside the repository; run each with `.venv\Scripts\python.exe scripts\run-validation.py <set> --config validation\config --rule validation\rules\rule-v2.json --set <name>` (the set name selects its row; `[2026-10-24]` `--set` is required under schema 2).
   - Record in `validation-harness.md` "Runs of record" and `plan-pilot.md` P.3: commit, manifest hash, voices, rule and cue blobs, the amendments in force (`[2026-10-24]` D7/D13, D8/D14, D11, D15, D17 by date), per-set v1 and v2 verdict lines with the gate sets named, the residue counts by class, "Surfaced / expected" per set, the new code's count, the attribution policy (enrolment, D11) and both attribution-seconds totals, `heldout-3`'s set commit, its pre-registration hash and its isolation log's name, and each D18 falsifier's outcome.
   - Read against predictions v1 and v2 (the seen sets) and D18's bands and falsifiers (`heldout-3`); anything outside them is a finding, never a rule edit; a falsifier on `heldout-3` is a FAIL of the gate (`[2026-10-24]`).
   - Delete the folders; check `%TEMP%` for `scribe-speaker-eval-*`.
   - `[2026-10-24]` It is also Phase 4's live-user smoke (the harness under rule v2 and `--set`, over the four sets): the practitioner carried it here in chat during stage-3 of the same run. Phase 4 was committed without a separate smoke.
+  - **Record (2026-10-24 → 2026-10-25; the practitioner, normal terminal, developer build, installed app closed): run 6 is the run of record and the gate is NOT met.** Checkout at `3249af0` (clean, committed, pushed; CI run 40148433250 green): H4's `5f1e3e5` plus `AGENTS.md`, one plan pointer line and `ci.yml` only, so `desktop/src` and `validation/` are H4's. Rule v2 `validation/rules/rule-v2.json` blob `0f333d8937ffa26f7819d0a76cb20db268fbcbf4`; rule v1 `option-a-proposed.json` blob `ec6c38d4…` and the cue file `c7f7b53d…` unchanged; models manifest `10a83493…9930a`; Whisper `medium`, VAD `silero`, prose off; attribution `enrolment` (D11); amendments in force: D5 (2026-10-22), D7 and D13 (2026-10-22, 2026-10-24), D8 and D14 (2026-10-22, 2026-10-24), D11 (2026-10-23), D15 and D17 (2026-10-24). The voice check was not in the pasted output. Four sets, each built into an empty folder outside the repository: 0 build errors, 0 set-level errors. Ids and counts only:
+    - **The 50 (gate set): rule v2 PASS; rule v1 FAIL** (45 / 5: `syn-22` silent, `-28` wrong, `-35` uncertainty, `-38` and `-46` wrong). WER 0.013 over 2785; 162 facts — 124 correct, 3 wrong, 34 omitted, 1 silent (30 by run 1's predicate, 1 by 0.3.3's), 32 warned; uncertainty missed 1; 0 unsupported clinical lines (14 other unsupported words); attribution seconds 12.0 / 7.4. R1 `syn-22`/f2, `syn-28`/f1; R2 `syn-35`/f2; R3 `syn-38`, `syn-46` (2 encounters); after the classes wrong 0, silent 0, uncertainty missed 0. Surfaced / expected 9 / 10 (required). `clinician_line_omitted` total 46, median 1, maximum 4. Exactly predictions v1 and v2.
+    - **`heldout-3` (blind gate set; set commit `8996a75`, pre-registration `3b699628…` (Task 0.16), isolation log `validation/heldout-3/author-session.jsonl`): rule v2 FAIL; rule v1 FAIL** (14 / 9: `h3-02`, `-03`, `-10`, `-12`, `-14`, `-17`, `-19`, `-20`, `-21`). v2 fails on `h3-03` (an unsupported clinical line, which no class excuses) and on R3, 2 encounters (`h3-02`, `h3-17`) against its ceiling of 1. WER 0.013 over 3033; 116 facts — 60 correct, 3 wrong (`h3-02`/f4 and `h3-17`/f5 `wrongly_present`, R3; `h3-03`/f0 `wrong`, R1, so under a review mark), 53 omitted, 0 silent (21 by run 1's predicate, 14 by 0.3.3's), 52 warned; uncertainty missed 6; 1 unsupported clinical line (`h3-03`; 8 other unsupported words); Surfaced (acoustic only) 1; attribution seconds 4.7 / 1.9. R1 `h3-03`/f0; R2 (reported) `h3-10`/f2, `-12`/f0, `-14`/f1, `-20`/f0, `-21`/f2; after the classes wrong 0, silent 0, uncertainty missed 1 (`h3-19`/f1). Surfaced / expected 2 / 8 (25%, reported, D17). `clinician_line_omitted` total 96, median 4, maximum 10 (`h3-05`, `h3-21`). `possible_next_patient` on `h3-01` only.
+    - **D18 read on `heldout-3`:** gate falsifiers — R3 above 1 encounter FIRED (2); silent after R1 0, a material fact `wrong` without a review mark 0, R1 1 fact (at its ceiling), `wrongly_present` outside R3 0 — quiet. Not pre-registered: the unsupported clinical line on `h3-03` (rule v2 fails it whatever the class). Bands — new-code median 4 (inside 1–5), maximum 10 (OUTSIDE ≤ 9: a finding); surfaced-doubt rate 25% (inside 15–40%); reference-boundary mismatches 1 script (`h3-01`: boundary 10, tail 11; inside 0–2); R2 5 facts (reported). The prediction: v1 FAIL, as predicted; v2 PASS, not met. This is not D18's "ONLY unmarked confident errors" branch, and R1 stayed within its ceiling, so the larger-model plan is not triggered by this run.
+    - **`heldout` (reported): rule v2 FAIL** (`hld-14`, `-21` wrong; R2 4 over 1); **rule v1 FAIL** (17 / 5: `hld-07`, `-14`, `-19`, `-20`, `-21`). WER 0.004 over 1659; 76 facts — 67 correct, 4 wrong, 5 omitted, 0 silent (5 / 1), 5 warned; uncertainty missed 4; 0 unsupported clinical lines (4 other); seconds 0.7 / 0.0. R1 `hld-07`/f0; R2 `hld-19`/f2, `-20`/f2, `-21`/f1, `-21`/f2; R3 `hld-14`; after the classes wrong 2, silent 0, uncertainty missed 0. Surfaced 2 / 6. New code total 24, median 1, maximum 4. Reference-boundary mismatch `hld-10` (5, 4), known since Task 0.15. Exactly predictions v2.
+    - **`heldout-2` (reported, the out-of-scope control): rule v2 FAIL on 15 encounters** (`h2-01`, `-03`, `-04`, `-07`, `-08`, `-09`, `-11`, `-13`, `-14`, `-17`, `-18`, `-19`, `-20`, `-21`, `-22`; R2 9 over 1); **rule v1 FAIL** (3 / 19: all but `h2-02`, `-06`, `-16`). WER 0.011 over 3273; 233 facts — 92 correct, 2 wrong, 139 omitted, 25 silent (96 / 65), 111 warned; uncertainty missed 12; 0 unsupported clinical lines (5 other); seconds 4.8 / 2.2. R1 none; R2 `h2-03`/f1, `-05`/f0, `-08`/f7, `-10`/f1, `-12`/f2, `-13`/f2, `-15`/f0, `-18`/f1, `-21`/f4; R3 `h2-05`; after the classes wrong 0, silent 25, uncertainty missed 3. Surfaced 1 / 13. New code total 104, median 5, maximum 9. No reference-boundary mismatch. The v2 lines are exactly predictions v2.
+    - **A finding about the prediction record, not the run:** predictions v2 carried `heldout-2`'s rule v1 line over from v1 unchanged (21 of 22 failing); the run fails 19. `h2-02`, `-06` and `-16` pass with 0 silent facts: rule v1 reads the same outcomes as rule v2 on the raw counts, so D13's flagged-line credit reaches rule v1's verdict too, and Task 0.15 re-walked only the v2 line under D13. Recorded here, never a rule edit.
+    - **Consequence:** the gate is not met — a recorded finding (the Follow-Up note: "a `heldout-3` failure is a finding, never a tuning target"). `plan-pilot.md` P.5 stays (a): shadow mode stays on, and the next cycle is a new plan (0.3.5, Plan Mode with Fable), drafted after P.4 has classed `heldout-3`'s failures. H5 is not conditioned on a pass (0.3.3 was built of record and installed after the failing run 5); whether 0.3.4 is built of record and installed is put to the practitioner after P.4.
+    - Custody: `C:\run6\scripts`, `C:\run6\heldout` and `C:\run6\heldout-2` may be deleted; `C:\run6\heldout-3` is kept until P.4 is committed; then `%TEMP%` is checked for `scribe-speaker-eval-*`.
 - [ ] 🟥 **P.2 Install 0.3.4 and smoke it**
   - Verify (`gh attestation verify`, hashes) and install at a pilot-allowed point; reload the extension; restart Chrome.
   - Mock smoke (desktop-started, no patient, shadow on, no development tick, Discarded): an uncued clinician advice line shows "A line you said is not in the note", Acknowledge all leaves it, the per-code click clears it; a hedge after a comma-cut line shows `[check: unsure]`; the chooser's `[flagged]` / `[next patient?]` marks are readable; the count line reads correctly; the Status tab shows 0.3.4.
@@ -2772,8 +2788,68 @@ Nothing to build. Tasks 2.1 and 2.2 are removed (their text survives in D2 and t
   - `[2026-10-24, stage-4 Task 5.1 sweep; LOW, headless Include in plan]` Reconcile `docs/pilot/exit-gate.md`'s "Validation passed" line (rule v1 as amended) and `docs/pilot/README.md` step 3 (`--rule …option-a-proposed.json`) with D15's gate (rule v2, `--set`, the 50 and `heldout-3`, `heldout` and `heldout-2` reported) — the exit-gate wording is the practitioner's.
   - Done when: `test_pilot_docs.py` green and committed.
 
-- [ ] 🟥 **P.4 The `heldout-3` diagnosis, after run 6 (D16)**
+- [x] 🟩 **P.4 The `heldout-3` diagnosis, after run 6 (D16)**
   - The one task that reads `heldout-3`: its `HeldOutCase` entries, the three divergence dicts' entries and `cases_written=True`; the role-derived `REFERENCE_TAIL_STARTS` rows compared with the cases' boundaries (`[2026-10-24, peer round 25]`: a case boundary at the clinician's welcome precedes the role tail by one; differences recorded as ids and integers, never required equal); every failure classed as Task 0.12 classed `heldout-2`'s (ids and counts only); its register rows (P.3). Done when: committed on the practitioner's word; the plan's Handoff Note says whether the gate was met and what P.5 is asked.
+  - **Record (2026-10-25; composer, after run 6; ids and counts only).** The blind rule ends here. The set was re-transcribed from run 6's built audio into `C:\run6-p4\heldout-3` with the scratch `run6-012-transcribe.py`. Every number below equals run 6's `heldout-3` line on P.1: new code 96 / median 4 / maximum 10; surfaced 2 / 8; the same R1, R2 and R3 ids.
+    - **What was written** (uncommitted):
+      - `HELDOUT_3_CASES`: 23 cases. The set row is `cases_written=True`, `tails_by_role=True`, `routed_material=True`.
+      - Divergence entries:
+
+        | Axis | Count | Ids | Reason |
+        |---|---|---|---|
+        | Boundary | 9 | `h3-02`, `-09`, `-10`, `-11`, `-12`, `-13`, `-17`, `-18`, `-20` | The product finds no boundary. |
+        | Corrections | 2 | `h3-15`, `-19` | The opener is not a frozen marker. |
+        | Unsure | 7 | `h3-04`, `-10`, `-12`, `-14`, `-19`, `-20`, `-21` | Four hedges outside the frozen list, two doubts on their own line, one self-question. |
+
+      - The count pins are now heldout 7 / 6 / 9 (boundary), 2 / 4 / 2 (corrections) and 3 / 10 / 7 (unsure).
+      - The lint's blind-set pin is now `[]`: no set is blind.
+      - `validation/README.md`'s `heldout-3` bullet is in the past tense.
+      - Suite: `ruff` and `mypy` clean. Run through the blind runner: 8788 passed, 9 skipped, and 1 failed. That failure was the old blind-set pin, now rewritten. `test_lint_held_out_set.py` was then run on its own: 1 failed, 65 passed. That failure was an ini-option case that ran alongside the transcription job, and it passed on its own (8 / 8), so it was contention.
+    - **Tails against the cases' boundaries:**
+      - All 10 axis scripts with a next patient have a case boundary exactly one before the role-derived tail: the welcome line. The pairs, as (boundary, tail): `h3-01` 10 / 11, `-02` 9 / 10, `-09` 5 / 6, `-10` 12 / 13, `-11` 10 / 11, `-12` 10 / 11, `-13` 9 / 10, `-17` 7 / 8, `-18` 8 / 9, `-20` 7 / 8.
+      - The 7 negatives (`h3-03` to `-08`, `-23`) have a None row and no boundary.
+      - The product found a boundary only on `h3-01`, at 10, equal to its case boundary.
+      - Why the other nine were missed, by the frozen lists:
+        - the closing is not listed: `h3-02`, `-12`, `-18`;
+        - the greeting is not listed: `h3-09`, and `-20` (a bare time-of-day greeting);
+        - neither is listed: `h3-10`, `-11`, `-13`, `-17`.
+      - **Record correction:** Task 0.17's line "9 with a tail and 8 negatives" is a miscount. `REFERENCE_TAIL_STARTS` has held 10 and 7 since `8996a75`.
+    - **Every failure, by class.** Rule v1 fails 9 encounters; rule v2 fails the set on two counts.
+      - **R1, 1 fact:** `h3-03`/f0 is `wrong` under a `number_source` mark (the recogniser's wrong number). The same word is the set's one unsupported clinical line. `rule_failures` fails any encounter with an unsupported clinical line under either rule, with no ceiling and no R1 exemption (`validation.py:2282`), so a recogniser error that R1 clears as a fact still fails the encounter as an unsupported line. **Finding (rule).**
+      - **R3, 2 encounters:** `h3-02`/f4 and `h3-17`/f5. The reference pipeline also judges both `wrongly_present`.
+        - Of the nine boundary misses, only these two reached the note, because the next patient's line holds a section cue.
+        - In the other seven, the next patient's content stayed unrouted and is correctly absent. So R3's count depends on what the next patient says, not on the miss.
+        - **Finding (vocabulary):** 9 of 10 boundaries missed against frozen lists. The closings and greetings were varied by the brief, as they are in real speech.
+      - **R2, 5 facts (reported, not gated, D17):** `h3-10`/f2, `-12`/f0, `-14`/f1, `-20`/f0, `-21`/f2.
+      - **Unsurfaced outside R2, 1 fact (reported, not gated):** `h3-19`/f1, a bare-modal hedge ("may"), which is in `_REFERENCE_ONLY_HEDGES`. A fail by design (D5; D17's rejected item), like `heldout-2`'s bare-modal fact.
+      - **Surfaced 2 / 8:**
+        - `h3-07`/f0 by the hedge credit;
+        - `h3-04`/f0 by a recogniser `low_confidence_source` mark only ("Surfaced (acoustic only) 1"). Its hedge is outside the list, and it is one of the unsure divergences, so it was surfaced by chance, not by design.
+      - **Silent omissions:** 0 under rule v2 (14 by 0.3.3's predicate, 21 by run 1's). D1's code with D13's credit cleared every one, and no D18 silent-fact falsifier fired.
+    - **The new code's load (D18 band: maximum ≤ 9; observed 10 on `h3-05` and `-21`)** comes from segmentation.
+      - The 96 warnings fall on 64 distinct script lines.
+      - The reference pipeline (one segment per script line) draws the code 0–1 times per script, 5 in all, each on a whole line.
+      - The other 91 sit on pieces of lines the recogniser split:
+
+        | What the reference does with the whole line | Warnings |
+        |---|---|
+        | Already warns it with `high_risk_omission` | 65 |
+        | Partly covered (or empty) | 17 |
+        | Warns it with the new code | 6 |
+        | Marks it `number_source` | 3 |
+
+      - Worst case: `h3-05`'s line 4 was split into 8 segments, and 6 of them drew the code.
+      - **Finding (predicate):** D1 excludes a line that already draws `high_risk_omission`, but it judges per segment. Once the recogniser splits the line, every piece without the flaggable word draws the new code. So one clinician line can raise up to one warning per piece. This is the 0.3.5 candidate for the load.
+    - **D18 read, restated:**
+      - Falsifiers: R3 above 1 encounter fired (2); every other falsifier was quiet.
+      - Bands: new-code median inside (4); maximum outside (10, segmentation as above); surfaced rate inside (25%); reference-boundary mismatches inside (1, `h3-01`, the welcome offset).
+      - **Not pre-registered:** the unsupported-line rule's interaction with R1.
+    - **What P.5 is asked:** nothing new. The gate was not met, so P.5 stays (a): shadow mode on. The 0.3.5 plan (Plan Mode, with Fable) starts from the four findings above:
+      1. the unsupported-line metric's missing R1 exemption (a rule decision, made before any run);
+      2. the boundary vocabulary (a dated phrase-list decision with a repeated run, C3);
+      3. the new code counted per segment;
+      4. the bare-modal and unlisted-hedge doubts (reported).
+    - **Custody:** after this task is committed, `C:\run6\heldout-3` and `C:\run6-p4` may be deleted, `%TEMP%` checked for `scribe-speaker-eval-*`, and `.cursor/loops/held-out-lint/` deleted (SEC-003).
 
 ## Retained Follow-Up Items
 None yet.

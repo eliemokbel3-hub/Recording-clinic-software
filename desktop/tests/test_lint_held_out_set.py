@@ -437,8 +437,10 @@ class TestBlindRunGuard:
         assert not lint_runner_active(manager(SimpleNamespace(RUNNER_GUARD=checked)))
         assert lint_runner_active(manager(SimpleNamespace(RUNNER_GUARD=checked), checked))
 
-    def test_the_blind_set_is_heldout_3_alone(self) -> None:
-        assert [s.name for s in HELD_OUT_SETS if not s.cases_written] == ["heldout-3"]
+    def test_no_set_is_blind_since_heldout_3_s_cases(self) -> None:
+        # Validation-run6 plan Task P.4 (2026-10-25): heldout-3's cases were
+        # written after run 6, so no set is blind; a new blind set is a pin change.
+        assert [s.name for s in HELD_OUT_SETS if not s.cases_written] == []
 
 
 class TestRunnerChecks:

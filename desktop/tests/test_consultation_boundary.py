@@ -130,8 +130,18 @@ _PREDICTED_BOUNDARY_DIVERGENCES_BY_SET: Final[
         "h2-14": (8, None),  # neither is listed; its "hello" opens no sentence
         "h2-22": (10, None),  # an unlisted closing; a bare time-of-day greeting
     },
-    # Task 0.17: the blind set; its entries are written after run 6 (P.4).
-    "heldout-3": {},
+    # Task P.4 (2026-10-25), read off the product after run 6.
+    "heldout-3": {
+        "h3-02": (9, None),  # its closing is not a frozen closing
+        "h3-09": (5, None),  # its greeting is not in the frozen greeting list
+        "h3-10": (12, None),  # neither its closing nor its greeting is listed
+        "h3-11": (10, None),  # neither its closing nor its greeting is listed
+        "h3-12": (10, None),  # its closing is not a frozen closing
+        "h3-13": (9, None),  # neither its closing nor its greeting is listed
+        "h3-17": (7, None),  # neither is listed; the greeting is by name
+        "h3-18": (8, None),  # its closing is not a frozen closing
+        "h3-20": (7, None),  # a bare time-of-day greeting
+    },
 }
 _PREDICTED_BOUNDARY_DIVERGENCES: Final = by_case(_PREDICTED_BOUNDARY_DIVERGENCES_BY_SET)
 
@@ -378,7 +388,7 @@ class TestHeldOutBoundaries:
         counts = {
             name: len(cases) for name, cases in _PREDICTED_BOUNDARY_DIVERGENCES_BY_SET.items()
         }
-        assert counts == {"heldout": 7, "heldout-2": 6, "heldout-3": 0}
+        assert counts == {"heldout": 7, "heldout-2": 6, "heldout-3": 9}
 
     @pytest.mark.parametrize("case", HELD_OUT_CASES, ids=_case_id)
     def test_a_boundary_is_always_a_spoken_segment(
