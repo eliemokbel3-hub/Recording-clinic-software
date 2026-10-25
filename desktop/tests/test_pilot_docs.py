@@ -110,7 +110,9 @@ REGISTER_CELL_PATTERNS = {
     # id); a kept recording measured in the smoke is the "smoke" stage, and a
     # real consultation's encounter is "—".
     "Stage": r"validation|smoke|shadow|reviewed|everyday|other",
-    "Encounter": r"(?:syn|hld)-[0-9]{2,}|—",
+    # The synthetic ids of the 50 scripts and the three held-out sets
+    # (validation run 6's register update, plan-validation-run6.md P.3).
+    "Encounter": r"(?:syn|hld|h2|h3)-[0-9]{2,}|—",
     "Severity": r"high|medium|low",
     "Category": (
         r"wrong-side|wrong-dose|negation-flipped|patient-speculation|cross-patient"
@@ -280,6 +282,8 @@ class TestFindingsRegister:
         }
         assert all(re.fullmatch(REGISTER_CELL_PATTERNS[k], v) for k, v in good.items())
         assert re.fullmatch(REGISTER_CELL_PATTERNS["Stage"], "smoke")
+        for synthetic in ("syn-01", "hld-22", "h2-05", "h3-17"):
+            assert re.fullmatch(REGISTER_CELL_PATTERNS["Encounter"], synthetic)
         for column, bad in (
             ("Encounter", "Jane Citizen"),
             ("Category", "left knee said as right"),
@@ -288,6 +292,9 @@ class TestFindingsRegister:
             ("Closed", "2026-11-02"),
             ("Stage", "role-play"),
             ("Encounter", "rp-01"),
+            ("Encounter", "h4-01"),
+            ("Encounter", "h3-1"),
+            ("Encounter", "k-01"),
         ):
             assert not re.fullmatch(REGISTER_CELL_PATTERNS[column], bad), column
         assert _ID_SHAPED.findall("session 0123456789abcdef0123456789abcdef")

@@ -102,7 +102,12 @@ result is recorded there as a dated RUN line.
    delete it after the run (it is rebuilt from the repository).
    Record the totals and pass or fail; enter every
    failure in the findings register. A fail stops the pilot here until its
-   findings are resolved or controlled and the run is repeated.
+   findings are resolved or controlled and the run is repeated. Since
+   validation run 6 (0.3.4) the gate is read under rule v2
+   (`validationulesule-v2.json`, each set named with `--set`) on the 50
+   scripts and the blind `heldout-3`, with `heldout` and `heldout-2` run and
+   reported in full (validation-run6 plan D15;
+   `docs/testing/validation-harness.md`).
    *Amended 2026-10-09, after run 1 failed:* the shadow consultations of
    step 4 may start while run 1's findings are controlled by shadow mode (a
    shadow note never reaches Cliniko); step 5 and the exit gate still wait for
@@ -158,10 +163,9 @@ result is recorded there as a dated RUN line.
   holds no clinical content: no name, nothing said or written in a note, no
   Cliniko id and no session id. Describe what the app did in terms of the app
   (its category and the part of the app), never the patient.
-- **Synthetic encounter ids** (`syn-01` …, and the held-out set's `hld-01` …) may appear in the register; they
-  identify invented content only. From validation run 6 (0.3.4) two more held-out
-  sets add `h2-01` … (`heldout-2`) and `h3-01` … (`heldout-3`), accepted in the
-  register once its Encounter check names them (that run's register update). A real consultation's encounter is `—`, and
+- **Synthetic encounter ids** (`syn-01` …, and the held-out sets' `hld-01` …
+  (`heldout`), `h2-01` … (`heldout-2`) and `h3-01` … (`heldout-3`)) may appear in
+  the register; they identify invented content only. A real consultation's encounter is `—`, and
   a smoke measurement's `k-01` … name stays in your pilot log.
 - **Real consultations are never fed to the validation harness** (pilot plan
   Constraint 8). Since 0.3.0 a real consultation's recording may be kept with

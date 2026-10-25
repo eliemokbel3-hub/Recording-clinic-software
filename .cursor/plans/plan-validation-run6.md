@@ -7,15 +7,15 @@
 - a written decision, BEFORE run 6, on the recogniser-level and tone-level residues (rule v1 kept, or a ratified rule v2);
 - a fresh held-out set by an independent author, written predictions before the build, and run 6 as the run of record.
 
-**Overall Progress:** `90%` (27 of 30 buildable tasks; `[2026-10-25]` P.4 done — the `heldout-3` diagnosis, the blind rule ended; `[2026-10-25]` P.1 done — run 6, the run of record, does not meet the gate; `[2026-10-24, stage-5]` H1–H4 done — H1 round 50 (suite 8615 collected, 8606 passed, 0 failed, 9 skipped), H2 round 51 (suite 8614 collected, 8605 passed, 0 failed, 9 skipped), H3 round 52 clean, H4 codex rounds 53 (code, 0) and 54 (docs, 1 LOW, fixed); 26 of 38 checkboxes ticked; `[2026-10-24, stage-4]` Tasks 5.1 and 5.2 built and verified (suite 8614 collected, 8605 passed, 0 failed, 9 skipped, `npm run qa` 313 / 313, review round 48, codex peer round 49 applied); `[2026-10-24, stage-3]` Tasks 4.1–4.4 built and verified (suite 8605 passed, review rounds 44–45, codex peer round 46 applied, simplify round 47 clean); `[2026-10-24, stage-2]` Task 3.1 built and verified (suite 8504 passed, review round 41, codex peer round 42 converged); `[2026-10-24, stage-1]` Tasks 1.1–1.4 built and verified (suite 8425 passed, review round 38, codex peer round 39 converged); `[2026-10-24, peer round 25]` the convention, stated: the 8 `[decision]` tasks — all taken — are outside the count; 38 checkboxes in all, 22 ticked)
+**Overall Progress:** `100%` (28 of 30 buildable tasks done, 2 declined; `[2026-10-25]` P.3 done — the register's rows F-102–F-140 and the Encounter pattern; H5 and P.2 declined by the practitioner ("i'll wait for .3.5"): 0.3.4 is not built of record and not installed; `[2026-10-25]` P.4 done — the `heldout-3` diagnosis, the blind rule ended; `[2026-10-25]` P.1 done — run 6, the run of record, does not meet the gate; `[2026-10-24, stage-5]` H1–H4 done — H1 round 50 (suite 8615 collected, 8606 passed, 0 failed, 9 skipped), H2 round 51 (suite 8614 collected, 8605 passed, 0 failed, 9 skipped), H3 round 52 clean, H4 codex rounds 53 (code, 0) and 54 (docs, 1 LOW, fixed); 26 of 38 checkboxes ticked; `[2026-10-24, stage-4]` Tasks 5.1 and 5.2 built and verified (suite 8614 collected, 8605 passed, 0 failed, 9 skipped, `npm run qa` 313 / 313, review round 48, codex peer round 49 applied); `[2026-10-24, stage-3]` Tasks 4.1–4.4 built and verified (suite 8605 passed, review rounds 44–45, codex peer round 46 applied, simplify round 47 clean); `[2026-10-24, stage-2]` Task 3.1 built and verified (suite 8504 passed, review round 41, codex peer round 42 converged); `[2026-10-24, stage-1]` Tasks 1.1–1.4 built and verified (suite 8425 passed, review round 38, codex peer round 39 converged); `[2026-10-24, peer round 25]` the convention, stated: the 8 `[decision]` tasks — all taken — are outside the count; 38 checkboxes in all, 22 ticked)
 
 ## Lifecycle State
-- Active
+- Completed — Follow-ups Retained
 
 ## Completion Status
-- Completion timestamp: —
-- Main implementation complete: No
-- Ready for archive: No
+- Completion timestamp: 2026-10-25
+- Main implementation complete: Yes (built, run 6 recorded; the gate NOT met; H5 and P.2 declined)
+- Ready for archive: No (retained: the exit-gate wording, the review guide's 0.3.4 lines, the owed live smoke of Phases 1 and 3 — all to the 0.3.5 plan)
 
 ## Plan Lineage
 - **Parent plans:**
@@ -924,6 +924,7 @@ See the Planning Extraction Summary (the canonical list).
   - R2 5 facts and 1 bare-modal fact (both reported).
 
   The new code's maximum of 10 comes from segmentation: D1 judges per segment, so a split line draws one warning per piece. The gate was not met; P.5 stays (a). Uncommitted, with P.1. **Next (practitioner's word):** commit P.1 and P.4; H5 and P.2 (0.3.4 built of record and installed, or not); P.3's register rows (`h2-`, `h3-`); the review guide's 0.3.4 lines; the 0.3.5 plan with Fable; the custody deletions.
+- `[2026-10-25]` P.1 and P.4 committed and pushed (`4a95954`; CI green); the custody deletions done. **P.3 done** (record on P.3: F-102–F-140, five rows re-checked, the Encounter pattern). **H5 and P.2 declined** (the practitioner: "i'll wait for .3.5"): 0.3.4 is not built of record or installed; 0.3.3 stays installed. **The plan is Completed — Follow-ups Retained.** Carried to the 0.3.5 plan (Plan Mode, with Fable): the build of record and install smoke, which also owes Phases 1 and 3's live smoke (P.2's mock-smoke lines); the review guide's 0.3.4 lines, still awaiting approval; `docs/pilot/exit-gate.md`'s rule-v1 wording (the practitioner's); P.4's classes as the 0.3.5 inputs (R3 unlisted closings and greetings, the per-segment warning load, R2 hedge idioms, the unsupported-number line).
 
 ## Review History
 - 2026-10-22 `/review-plan` (Opus 5.5): Plan-subagent design critique + Explore subagent + coverage, practicality, risk and simplicity lenses, every finding checked against `0be35d7` / `4ff5f26`. Plan-scoped; no code reviewed. Step 3.5 gate: missed-speech warning Include in plan; chooser mark Include in plan; ui-refresh at its merge; larger model Excluded.
@@ -2756,7 +2757,8 @@ Nothing to build. Tasks 2.1 and 2.2 are removed (their text survives in D2 and t
   - **`[2026-10-24]` Round 52 (composer-run subagent, portable checklist): 0 findings, Closed.** Four candidates were challenged and dropped there.
 - [x] 🟩 **H4** Final cross-family `/peer-review` (codex `gpt-6-astra` medium), documents included (`docs/lessons.md`: a docs-only phase still draws peer findings).
   - **`[2026-10-24]` Pass stage-5.p1:** round 53, the code lens, 0 findings over 24 claims; round 54, the documents slice (all thirteen documents), 1 LOW, PR-LOW-001 (`validation-harness.md:180`, line eligibility vs a fact's suspect-word credit). It was verified and fixed in stage-5 rx3 with no sibling. Cap verdict: converge. Docs only, so no suite is owed.
-- [ ] 🟥 **H5** 0.3.4 built of record after P.1 on the H4 commit: the `Release` workflow, `gh attestation verify`, the `docs/release/pilot-builds.md` row, CI green. If P.1 forces a code change, H1–H4 and P.1 run again before H5.
+- [x] ⬜ **H5 — NOT DONE: declined by the practitioner 2026-10-25** 0.3.4 built of record after P.1 on the H4 commit: the `Release` workflow, `gh attestation verify`, the `docs/release/pilot-builds.md` row, CI green. If P.1 forces a code change, H1–H4 and P.1 run again before H5.
+  - `[2026-10-25]` **Declined (the practitioner, in chat: "i'll wait for .3.5").** 0.3.4 is not built of record and not installed; the installed clinic app stays 0.3.3. Run 6 did not meet the gate (P.1), and shadow mode stays on (`plan-pilot.md` P.5 (a)), so nothing clinical waits on 0.3.4. Its changes (H4 commit `5f1e3e5`) ship first in the 0.3.5 build of record, which repeats H5 and P.2 there. `docs/release/pilot-builds.md` records that 0.3.4 has no build of record.
 
 ### Phase P — Practitioner (normal terminal, developer build, installed app closed; C1, C8, C10)
 - [x] 🟩 **P.1 Run 6, the run of record**
@@ -2775,18 +2777,29 @@ Nothing to build. Tasks 2.1 and 2.2 are removed (their text survives in D2 and t
     - **A finding about the prediction record, not the run:** predictions v2 carried `heldout-2`'s rule v1 line over from v1 unchanged (21 of 22 failing); the run fails 19. `h2-02`, `-06` and `-16` pass with 0 silent facts: rule v1 reads the same outcomes as rule v2 on the raw counts, so D13's flagged-line credit reaches rule v1's verdict too, and Task 0.15 re-walked only the v2 line under D13. Recorded here, never a rule edit.
     - **Consequence:** the gate is not met — a recorded finding (the Follow-Up note: "a `heldout-3` failure is a finding, never a tuning target"). `plan-pilot.md` P.5 stays (a): shadow mode stays on, and the next cycle is a new plan (0.3.5, Plan Mode with Fable), drafted after P.4 has classed `heldout-3`'s failures. H5 is not conditioned on a pass (0.3.3 was built of record and installed after the failing run 5); whether 0.3.4 is built of record and installed is put to the practitioner after P.4.
     - Custody: `C:\run6\scripts`, `C:\run6\heldout` and `C:\run6\heldout-2` may be deleted; `C:\run6\heldout-3` is kept until P.4 is committed; then `%TEMP%` is checked for `scribe-speaker-eval-*`.
-- [ ] 🟥 **P.2 Install 0.3.4 and smoke it**
+- [x] ⬜ **P.2 — NOT DONE: declined by the practitioner 2026-10-25** Install 0.3.4 and smoke it
+  - `[2026-10-25]` **Declined with H5** ("i'll wait for .3.5"). The mock smoke below — also Phases 1 and 3's live-user smoke — is owed by the 0.3.5 plan's own install smoke, which must cover these lines as well as its own: Phases 1 and 3 have had no live smoke on any build.
   - Verify (`gh attestation verify`, hashes) and install at a pilot-allowed point; reload the extension; restart Chrome.
   - Mock smoke (desktop-started, no patient, shadow on, no development tick, Discarded): an uncued clinician advice line shows "A line you said is not in the note", Acknowledge all leaves it, the per-code click clears it; a hedge after a comma-cut line shows `[check: unsure]`; the chooser's `[flagged]` / `[next patient?]` marks are readable; the count line reads correctly; the Status tab shows 0.3.4.
   - `[2026-10-24]` This mock smoke is also Phase 1's live-user smoke: the practitioner carried it here in chat during stage-1 of run `validation-run6-20261024-125936-4d21`, rather than smoking Phase 1 on the developer build. Phase 1 was committed without a live smoke of its own.
   - `[2026-10-24]` It is also Phase 3's live-user smoke (its `[check: unsure]` line above): the practitioner carried it here in chat during stage-2 of the same run. Phase 3 was committed without a live smoke of its own.
   - Done when: the result is on this task and AGENTS.md says 0.3.4 is installed.
-- [ ] 🟥 **P.3 The register and the P.5 question**
+- [x] 🟩 **P.3 The register and the P.5 question**
   - `[2026-10-24]` **Amended:** rows for `heldout` and `heldout-2` from run 6 by class — an unrouted patient statement silently absent (control: the chooser lists every unrouted line; the clinician's review), hedge idioms outside every list, the confident recogniser errors, the closing gap — and `heldout-3`'s after P.4; the Encounter cell pattern gains `h2-` and `h3-` with both-ways cases.
   - Move rows to `resolved` ("0.3.4 (commit <H4 short hash>)") or keep them `controlled` (control text ≤ 200 characters) by the run's result; new rows from `heldout-2` as `h2-NN` and (`[2026-10-24]`) from `heldout-3` as `h3-NN` after P.4 — the Encounter cell pattern in `test_pilot_docs.py:113` becomes `(?:syn|hld|h2|h3)-` with both-ways cases (:266-292), and the register's prose (:20, :33) and `docs/pilot/README.md:161` name the third and fourth id forms.
   - Put the P.5 question (shadow off?) to the practitioner as a dated decision on `plan-pilot.md`.
   - `[2026-10-24, stage-4 Task 5.1 sweep; LOW, headless Include in plan]` Reconcile `docs/pilot/exit-gate.md`'s "Validation passed" line (rule v1 as amended) and `docs/pilot/README.md` step 3 (`--rule …option-a-proposed.json`) with D15's gate (rule v2, `--set`, the 50 and `heldout-3`, `heldout` and `heldout-2` reported) — the exit-gate wording is the practitioner's.
   - Done when: `test_pilot_docs.py` green and committed.
+  - **Record (2026-10-25; composer): the register updated after run 6 and P.4; ids and counts only.**
+    - 39 new rows, F-102–F-140, all `controlled` by shadow mode (0.3.4 has no build of record, so none is `resolved`), found and closed 2026-10:
+      - `heldout`: F-102 (`hld-07`, the misheard word under a review mark, R1).
+      - `heldout-2`: F-103–F-116 (14 encounters, a patient line no cue routes, silently absent); F-117–F-125 (9, a hedge outside every list, R2); F-126–F-128 (3, a listed hedge split from its fact, or a bare modal); F-129 (`h2-05`, a next patient met with an unlisted closing, R3).
+      - `heldout-3`: F-130 (`h3-03`, the misheard number that is also the unsupported line); F-131, F-132 (`h3-02`, `-17`, an unbroken next patient, R3); F-133–F-137 (5, R2); F-138 (`h3-19`, a bare modal); F-139, F-140 (`h3-05`, `-21`, medium workflow: ten left-out-line warnings in one note).
+    - Five older rows re-checked by run 6, still `controlled`: F-089, F-090, F-093 and F-099 (run 6 does not fail these encounters with the voice enrolled); F-094 (`hld-19`: the left-out line is warned since `5f1e3e5`, not installed).
+    - The Encounter pattern is `(?:syn|hld|h2|h3)-[0-9]{2,}|—`, with both-ways cases (`h4-01`, `h3-1`, `k-01` refused); the register's prose and `docs/pilot/README.md` name the four id forms; README step 3 names rule v2 and D15's gate.
+    - The P.5 question: (a) stands, dated on `plan-pilot.md` P.5 2026-10-25 (not a new decision).
+    - **Not done here:** `docs/pilot/exit-gate.md`'s "Validation passed" line still names rule v1 — the wording is the practitioner's; carried to the 0.3.5 plan.
+    - `test_pilot_docs.py`: 10 passed.
 
 - [x] 🟩 **P.4 The `heldout-3` diagnosis, after run 6 (D16)**
   - The one task that reads `heldout-3`: its `HeldOutCase` entries, the three divergence dicts' entries and `cases_written=True`; the role-derived `REFERENCE_TAIL_STARTS` rows compared with the cases' boundaries (`[2026-10-24, peer round 25]`: a case boundary at the clinician's welcome precedes the role tail by one; differences recorded as ids and integers, never required equal); every failure classed as Task 0.12 classed `heldout-2`'s (ids and counts only); its register rows (P.3). Done when: committed on the practitioner's word; the plan's Handoff Note says whether the gate was met and what P.5 is asked.

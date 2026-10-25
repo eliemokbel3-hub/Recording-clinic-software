@@ -65,6 +65,11 @@ install without that check.
 
 ## Rolling back below 0.3.4
 
+0.3.4 has no build of record: after validation run 6 did not meet its gate,
+the practitioner chose on 2026-10-25 to wait for 0.3.5 (validation-run6 plan
+H5 and P.2), so 0.3.3 stays installed. Its changes ship first in 0.3.5, and
+this section applies from that build on.
+
 From 0.3.4 (the validation-run6 build) one thing can be new: **a saved note
 can carry a new kind of review warning**, "A line you said is not in the
 note" — one per whole line you said that the note left out. 0.3.3 (and 0.3.2)
