@@ -1272,8 +1272,9 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       own scripts and label tracks, were to be added to it under decision
       3.6 — retired before any was recorded.)
     - RUN. `scripts/run-validation.py <set-folder> --config <folder> --rule
-      <file>` (and, with a schema-2 rule since validation-run6 plan D17,
-      `--set <name>`, a name the rule holds) applies and asserts the offline
+      <file>` (and, with a schema-2 rule since validation-run6 plan D17 or a
+      schema-3 rule since validation-run7 plan D4, `--set <name>`, a name the
+      rule holds) applies and asserts the offline
       environment, reads the rule
       file, the explicit config folder (never the app's own) and the models,
       and for each encounter reads its WAV, label track and script, then

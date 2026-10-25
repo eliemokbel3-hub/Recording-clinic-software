@@ -1229,7 +1229,7 @@ class TestRunValidationMain:
         refusal, not ignored."""
         assert validation.main(_argv(tmp_path, "--set", "scripts")) == 2
         out = capsys.readouterr().out
-        assert "[refused] --set is taken only with a schema-2 rule" in out
+        assert "[refused] --set is taken only with a schema-2 or schema-3 rule" in out
         assert "Whisper" not in out
 
     @pytest.mark.parametrize("given", [None, "Margaret"])
@@ -1254,6 +1254,26 @@ class TestRunValidationMain:
         _rule_v2_file(tmp_path)
         assert validation.main(argv) == 2  # refused later, at the models
         assert "[refused] no Whisper model is installed in" in capsys.readouterr().out
+
+    @pytest.mark.parametrize(("given", "goes_on"), [(None, False), ("heldout-4", True)])
+    def test_the_repository_rule_v3_needs_one_of_its_five_sets(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], given: str | None, goes_on: bool
+    ) -> None:
+        """Validation-run7 D4 through ``main``: ``rule-v3.json`` (schema 3)
+        takes ``--set`` as a schema-2 rule does — refused without it, naming
+        its five sets, and going on (to the models) with ``heldout-4``."""
+        argv = _argv(tmp_path) if given is None else _argv(tmp_path, "--set", given)
+        argv[argv.index("--rule") + 1] = str(REPO / "validation" / "rules" / "rule-v3.json")
+        assert validation.main(argv) == 2
+        out = capsys.readouterr().out
+        if goes_on:
+            assert "[refused] no Whisper model is installed in" in out
+        else:
+            assert out.strip().endswith(
+                "[refused] a schema-3 rule needs --set naming one of its sets: heldout, "
+                "heldout-2, heldout-3, heldout-4, scripts"
+            )
+            assert "Whisper" not in out
 
     def test_an_interrupted_run_prints_no_traceback(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -1720,6 +1740,47 @@ def _residue_outcomes() -> list[EncounterOutcome]:
     ]
 
 
+def _repository_rule_v3() -> PassRule:
+    """``validation/rules/rule-v3.json`` (validation-run7 D4)."""
+    return validation.load_pass_rule(REPO / "validation" / "rules" / "rule-v3.json")
+
+
+def _rule_v3(*, exempt: bool) -> PassRule:
+    """A schema-3 rule of one gate set whose ceilings are NOT rule v2's
+    (R1 1 where rule v2's ``scripts`` row holds 2)."""
+    return PassRule.model_validate(
+        {
+            "schema_version": 3,
+            "rule_name": "rule-v3-test",
+            "unsupported_line_r1_exemption": exempt,
+            "sets": {
+                "scripts": {
+                    "gate": True,
+                    "max_r1_facts": 1,
+                    "max_r2_facts": 1,
+                    "max_r3_encounters": 1,
+                }
+            },
+        }
+    )
+
+
+def _excused_outcomes() -> list[EncounterOutcome]:
+    """``syn-001``: one R1 fact (material, wrong) and one unsupported
+    clinical line among three, the second (ordinal 1, segment 3), which the
+    R1 exemption excuses; ``syn-002``: one correct fact."""
+    return [
+        _measured_outcome(
+            "syn-001",
+            _fact_outcome(verdict="wrong", residue_r1=True),
+            transcript_lines=3,
+            unsupported_clinical_lines=1,
+            unsupported_lines_excused_by_r1=((1, 3),),
+        ),
+        _measured_outcome("syn-002", _fact_outcome()),
+    ]
+
+
 class TestReport:
     def test_errors_and_set_level_errors_fail_the_run(self) -> None:
         outcomes = [EncounterOutcome("syn-001", "error", "OSError")]
@@ -2059,6 +2120,157 @@ class TestReport:
         assert "- R1: syn-001/f0, syn-003/f0" in report
         assert not validation.run_passed(rule, breach, set_name="scripts")
         assert validation.run_passed(rule, outcomes, set_name="scripts")
+
+    def test_a_schema_3_report_prints_three_verdicts_on_the_same_outcomes(self) -> None:
+        """Validation-run7 D4 (Task 0.2): ``syn-001`` holds one R1 fact and
+        one unsupported clinical line the R1 exemption excuses (its second
+        note line, segment 3). Rule v3 PASSES; without the exemption — rule
+        v2's verdict on a seen set — and under rule v1 it FAILS; the residue
+        section names the excused line by id, line and segment."""
+        rule = _repository_rule_v3()
+        outcomes = _excused_outcomes()
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        report = render_report(outcomes, rule, info, set_name="scripts")
+        lines = report.splitlines()
+        assert lines[0] == (
+            "## Validation run - rule `rule-v3` - set `scripts` - rule v3 PASS, rule v3 "
+            "without the R1 exemption FAIL, rule v1 FAIL"
+        )
+        assert lines[2:5] == [
+            "- Rule v3 verdict, set `scripts` (a gate set): PASS. Failing encounters: none; "
+            "set-level: none; set-level errors: 0. The gate is a rule v3 pass on every gate "
+            "set (`heldout-4`, `scripts`); the other sets are reported in full (`heldout`, "
+            "`heldout-2`, `heldout-3`).",
+            "- Rule v3 without the R1 exemption verdict (the same outcomes, every unsupported "
+            "clinical line failing; = rule v2's verdict on this set): FAIL. Failing "
+            "encounters: syn-001 (unsupported_clinical_line); set-level: none; set-level "
+            "errors: 0.",
+            "- Rule v1 verdict (the same outcomes on the raw counts, no residue class): FAIL. "
+            "Failing encounters: syn-001 (unsupported_clinical_line, material_wrong).",
+        ]
+        assert "Rule v3 (schema 3; validation-run7 D4, decided 2026-10-25)" in report
+        assert "the R1 exemption (applied under this rule)" in report
+        assert "Rule v2 (schema 2;" not in report
+        # The raw table is unchanged: syn-001's row still counts 1
+        # unsupported line, and its Rule cell reads rule v3 (a pass).
+        # The encounter table's row (the Facts table's rows open with the id
+        # too, then the fact index).
+        (row,) = [line for line in lines if line.startswith("| syn-001 | measured |")]
+        assert row.startswith("| syn-001 | measured | 1 | 1 | 0.000 | 0 | 1 | 0 | 3 |")
+        assert row.endswith("| PASS |")
+        tail = lines[lines.index("### Residue classes (rule v3, set `scripts`, a gate set)"):]
+        assert tail[11:13] == [
+            "- After the classes (the counts rule v3 reads): material wrong 0 (raw 1), silent "
+            "omissions 0 (raw 0), uncertainty missed 0 (raw 0).",
+            "- Unsupported clinical lines the R1 exemption excuses (applied under this rule): "
+            "1 (raw 1): syn-001/line 2 (segment 3).",
+        ]
+        # Rule v2's own file gives the without-exemption verdict on the same
+        # outcomes (the identity the second line states).
+        rule_v2 = validation.load_pass_rule(REPO / "validation" / "rules" / "rule-v2.json")
+        assert validation.run_passed(rule_v2, outcomes, set_name="scripts") is False
+        assert validation.run_passed(rule, outcomes, set_name="scripts") is True
+
+    @pytest.mark.parametrize(
+        ("set_name", "wording"),
+        [
+            ("scripts", "= rule v2's verdict on this set"),
+            ("heldout", "= rule v2's verdict on this set"),
+            ("heldout-2", "= rule v2's verdict on this set"),
+            ("heldout-3", "= rule v2's verdict on this set"),
+            ("heldout-4", "rule v2 has no row for this set"),
+        ],
+    )
+    def test_the_without_exemption_line_says_whether_it_is_rule_v2s(
+        self, set_name: str, wording: str
+    ) -> None:
+        """D4 (peer round 2 PR-MED-007): on the four sets rule v2 holds the
+        line IS rule v2's verdict; ``heldout-4`` has no rule-v2 row."""
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        report = render_report(_excused_outcomes(), _repository_rule_v3(), info, set_name=set_name)
+        (line,) = [
+            line for line in report.splitlines() if line.startswith("- Rule v3 without the R1")
+        ]
+        assert f"every unsupported clinical line failing; {wording}): FAIL." in line
+        role = "a gate set" if set_name in ("scripts", "heldout-4") else "a reported set"
+        assert f"- Rule v3 verdict, set `{set_name}` ({role}):" in report
+
+    @pytest.mark.parametrize(
+        ("difference", "counterpart"),
+        [
+            ("none", "same"),
+            ("top-level only", "differs"),
+            ("row only", "differs"),
+        ],
+    )
+    def test_a_schema_3_rule_that_differs_from_rule_v2_says_so(
+        self, difference: str, counterpart: str
+    ) -> None:
+        """Peer round 7 PR-LOW-001: a rule whose rows are rule v2's but
+        whose top-level threshold is not (``max_material_wrong`` 1), and one
+        whose ``scripts`` row is not (R1 1 for 2), both read "not rule v2's
+        verdict", naming both possible causes; rule v3 itself reads "=
+        rule v2's verdict"."""
+        rule = {
+            "none": _repository_rule_v3(),
+            "top-level only": _repository_rule_v3().model_copy(update={"max_material_wrong": 1}),
+            "row only": _rule_v3(exempt=True),
+        }[difference]
+        assert validation.rule_v2_counterpart(rule, "scripts") == counterpart
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        report = render_report(_excused_outcomes(), rule, info, set_name="scripts")
+        wording = (
+            "= rule v2's verdict on this set"
+            if counterpart == "same"
+            else "not rule v2's verdict: this rule's top-level thresholds or this set's row "
+            "differ from rule v2's"
+        )
+        assert f"every unsupported clinical line failing; {wording}): FAIL." in report
+        assert "this set's row differs from rule v2's" not in report
+
+    def test_a_schema_3_rule_with_the_exemption_off_reports_it_not_applied(self) -> None:
+        """The field false: rule v3's verdict IS the verdict without it, and
+        the excused lines are still listed, marked not applied."""
+        rule = _rule_v3(exempt=False)
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        lines = render_report(_excused_outcomes(), rule, info, set_name="scripts").splitlines()
+        assert lines[0].endswith(
+            "- rule v3 FAIL, rule v3 without the R1 exemption FAIL, rule v1 FAIL"
+        )
+        assert (
+            "- Unsupported clinical lines the R1 exemption excuses (not applied under this "
+            "rule): 1 (raw 1): syn-001/line 2 (segment 3)."
+        ) in lines
+
+    @pytest.mark.parametrize("status", ["error", "role_unresolved"])
+    def test_the_excused_line_with_nothing_measured_reads_dash(self, status: str) -> None:
+        outcome = (
+            EncounterOutcome("syn-001", "error", "OSError")
+            if status == "error"
+            else EncounterOutcome(
+                "syn-001", "role_unresolved", segment_count=1, words=validation.WordErrors(1, 1, 0)
+            )
+        )
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        report = render_report([outcome], _repository_rule_v3(), info, set_name="scripts")
+        assert (
+            "- Unsupported clinical lines the R1 exemption excuses (applied under this rule): "
+            "- (raw -): - (no encounter measured)."
+        ) in report.splitlines()
+
+    def test_a_schema_3_line_with_none_excused_reads_none(self) -> None:
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        report = render_report(
+            _residue_outcomes(), _repository_rule_v3(), info, set_name="scripts"
+        )
+        assert (
+            "- Unsupported clinical lines the R1 exemption excuses (applied under this rule): "
+            "0 (raw 0): none."
+        ) in report.splitlines()
+        # A schema-2 report prints no such line.
+        assert "R1 exemption" not in render_report(
+            _residue_outcomes(), _rule_v2(), info, set_name="scripts"
+        )
 
     @pytest.mark.parametrize("slot", ["words", "metrics", "prose", "reference"])
     def test_an_outcome_holds_only_its_validated_types(self, slot: str) -> None:

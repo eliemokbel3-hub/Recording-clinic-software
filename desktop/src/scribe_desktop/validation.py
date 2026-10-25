@@ -194,9 +194,10 @@ from scribe_desktop.ui.note_review import ProposalDecision, build_resolutions, p
 # ---------------------------------------------------------------------------
 
 SCRIPT_SCHEMA_VERSION: Final = 1
-# The newest pass-rule schema (rule v2's set layer, validation-run6 plan D8);
-# a schema-1 file still reads unchanged.
-RULE_SCHEMA_VERSION: Final = 2
+# The newest pass-rule schema (rule v3's R1 exemption for an unsupported
+# clinical line, validation-run7 plan D4, on rule v2's set layer,
+# validation-run6 plan D8); a schema-1 or schema-2 file still reads unchanged.
+RULE_SCHEMA_VERSION: Final = 3
 # Ids are the only names a report prints: lower-case, digits and hyphens.
 ENCOUNTER_ID_PATTERN: Final = r"^[a-z0-9][a-z0-9-]{0,63}$"
 ROLE_PATTERN: Final = r"^[a-z][a-z_]{0,31}$"
@@ -946,7 +947,14 @@ class EncounterMetrics:
     plan D7): the note's ``hedged_source`` warnings whose segment holds no
     spoken hedge within the hedge scope (``note.segment_hedged``,
     re-derived; validation-run6 plan D5) — expected 0 from the shipped
-    checker; reported, never failing, and never credited."""
+    checker; reported, never failing, and never credited.
+    ``unsupported_lines_excused_by_r1`` (validation-run7 plan D4): the
+    unsupported clinical lines rule v3's R1 exemption excuses, each as
+    ``(line ordinal, segment index)`` — the ordinal 0-based among the
+    transcript note lines in note order (``transcript_lines`` of them), the
+    segment index the line's own; sorted, one entry per line, never more than
+    ``unsupported_clinical_lines``. The excused count is its length, never
+    stored apart; the raw count is unchanged (rules v1 and v2 read it)."""
 
     words: WordErrors
     spelling_normalised_words: int
@@ -960,6 +968,7 @@ class EncounterMetrics:
     expected_warnings_absent: tuple[str, ...]
     facts: tuple[FactOutcome, ...]
     hedge_marks_unhedged: int = 0
+    unsupported_lines_excused_by_r1: tuple[tuple[int, int], ...] = ()
 
     def __post_init__(self) -> None:
         for name in (
@@ -972,6 +981,21 @@ class EncounterMetrics:
             "hedge_marks_unhedged",
         ):
             _require_count(getattr(self, name), name)
+        excused = self.unsupported_lines_excused_by_r1
+        if not isinstance(excused, tuple) or not all(
+            isinstance(entry, tuple) and len(entry) == 2 for entry in excused
+        ):
+            raise ValueError("unsupported_lines_excused_by_r1 must hold (line, segment) pairs")
+        for ordinal, segment_index in excused:
+            _require_count(ordinal, "unsupported_lines_excused_by_r1 line")
+            _require_count(segment_index, "unsupported_lines_excused_by_r1 segment")
+            if ordinal >= self.transcript_lines:
+                raise ValueError("unsupported_lines_excused_by_r1 names a line the note lacks")
+        ordinals = [ordinal for ordinal, _segment in excused]
+        if ordinals != sorted(set(ordinals)):
+            raise ValueError("unsupported_lines_excused_by_r1 must be sorted, one per line")
+        if len(excused) > self.unsupported_clinical_lines:
+            raise ValueError("unsupported_lines_excused_by_r1 exceeds the unsupported lines")
         for code, count in self.checker_tally:
             _require_member(code, NOTE_WARNING_SEVERITY, "checker_tally code")
             _require_count(count, "checker_tally count")
@@ -1061,6 +1085,18 @@ class EncounterMetrics:
         """An unbroken next patient — ONE event per encounter however many
         of its facts are R3 (validation-run6 plan D14)."""
         return any(fact.residue_r3 for fact in self.facts)
+
+    @property
+    def unsupported_lines_excused(self) -> int:
+        """How many unsupported clinical lines rule v3's R1 exemption
+        excuses (validation-run7 plan D4) — the identities' count."""
+        return len(self.unsupported_lines_excused_by_r1)
+
+    @property
+    def unsupported_clinical_lines_v3(self) -> int:
+        """The unsupported clinical lines left once the R1 exemption is
+        applied — read only by a schema-3 rule that exempts (D4)."""
+        return self.unsupported_clinical_lines - self.unsupported_lines_excused
 
 
 class _WordInfo(NamedTuple):
@@ -1682,6 +1718,34 @@ def _marked_words(note: GeneratedNote, codes: frozenset[str]) -> set[tuple[int, 
     return marked
 
 
+def _excused_by_r1(
+    alignment: _Alignment, j: int, r1_ranges: Sequence[tuple[int, int]], info: _WordInfo
+) -> bool:
+    """Validation-run7 plan D4's predicate for one flagged structured-claim
+    hypothesis token ``j`` (``info`` its flags): (i) it is inserted on NO
+    optimal alignment; (ii) every MISMATCHING diagonal edge into it on an
+    optimal alignment (``possibly_unsupported``'s reading) comes from a
+    reference token inside a statement ``[first, last]`` of a material R1
+    fact — the fact's own misrendering on every optimal alignment that flags
+    it (each such alignment flags it through exactly one edge); (iii) the
+    word itself lies under a review mark. Fixed by the plan's commit before
+    any held-out alignment was re-read (C15): never widened after a run."""
+    if not info.review_marked:
+        return False
+    reference, hypothesis = alignment.reference, alignment.hypothesis
+    for i in range(alignment.n + 1):
+        if alignment.insertion(i, j):
+            return False
+        if (
+            i < alignment.n
+            and reference[i] != hypothesis[j]
+            and alignment.diagonal(i, j)
+            and not any(first <= i <= last for first, last in r1_ranges)
+        ):
+            return False
+    return True
+
+
 @dataclass(frozen=True)
 class ReferenceReading:
     """What the run makes of the SCRIPT's own words, for the residue classes
@@ -1798,6 +1862,12 @@ def encounter_metrics(
       transcript (Check 6's warning absent) nor on the script's own words.
       The one alignment (``_Alignment``) carries R1, never
       ``align_transcripts``.
+    - The R1 EXEMPTION (validation-run7 plan D4, read only by a schema-3
+      rule): once every fact's R1 is known, an unsupported clinical line is
+      excused when every structured-claim word flagged in it is a material
+      R1 fact's own misrendering under a review mark, never an inserted word
+      (``_excused_by_r1``); ``unsupported_lines_excused_by_r1`` names the
+      excused lines, ``unsupported_clinical_lines`` stays the raw count.
     """
     canonical_reference = _reference(script)
     hypothesis = _canonical_hypothesis(document)
@@ -1902,16 +1972,24 @@ def encounter_metrics(
             by_word.setdefault(position, set()).add(j)
     unsupported_lines = 0
     other_words: set[int] = set()
-    for line in lines:
+    # Validation-run7 plan D4: each unsupported line's ordinal, segment and
+    # flagged structured-claim tokens, for the R1 exemption's second pass.
+    flagged_by_line: list[tuple[int, int, set[int]]] = []
+    for ordinal, line in enumerate(lines):
         flagged = {j for position in line for j in by_word.get(position, ()) if unsupported[j]}
-        if any(is_structured_claim_word(hypothesis.tokens[j]) for j in flagged):
+        structured = {j for j in flagged if is_structured_claim_word(hypothesis.tokens[j])}
+        if structured:
             unsupported_lines += 1
-        other_words.update(
-            j for j in flagged if not is_structured_claim_word(hypothesis.tokens[j])
-        )
+            # One coordinate span, so one segment (``SourceCoords`` refuses
+            # an empty span).
+            flagged_by_line.append((ordinal, min(line)[0], structured))
+        other_words.update(flagged - structured)
 
     next_patient_axis = NEXT_PATIENT_AXIS in script.axes
     facts: list[FactOutcome] = []
+    # D4: the reference row range of every statement of every material R1
+    # fact — where an excused word's misrendering must lie.
+    r1_ranges: list[tuple[int, int]] = []
     for index, fact in enumerate(script.facts):
         # Found on the line's CONTENT tokens exactly as the loader finds it,
         # then carried to canonical rows (PR-MED-023) — a span that cuts a
@@ -1924,10 +2002,12 @@ def encounter_metrics(
         # Every end state of every statement of the fact, with its judgement
         # (R1 reads the states themselves: ``all_matched``, ``marked``).
         walked: list[tuple[_FactState, _Judged]] = []
+        statements: list[tuple[int, int]] = []
         for start in _occurrences(line_tokens, fact.tokens):
             first_content = canonical_reference.line_offsets[fact.line] + start
             first = canonical_reference.content_map[first_content][0]
             last = canonical_reference.content_map[first_content + len(fact.tokens) - 1][1]
+            statements.append((first, last))
             for state in _fact_end_states(alignment, first, last, infos):
                 walked.append(
                     (
@@ -2000,6 +2080,19 @@ def encounter_metrics(
             script, fact.line, phrases=REFERENCE_HEDGES
         )
         facts.append(replace(outcome, residue_r1=r1, residue_r2=r2, residue_r3=r3))
+        if r1:  # R1 holds only for a material fact
+            r1_ranges.extend(statements)
+
+    # D4's second pass, once every fact's R1 is known: a line is excused when
+    # EVERY flagged structured-claim word in it is an R1 fact's own
+    # misrendering under a review mark. No R1 fact (``reference`` None among
+    # them) excuses nothing.
+    excused = tuple(
+        (ordinal, segment_index)
+        for ordinal, segment_index, structured in flagged_by_line
+        if r1_ranges
+        and all(_excused_by_r1(alignment, j, r1_ranges, infos[j]) for j in structured)
+    )
 
     tally = Counter(warning.note_warning_code for warning in note.note_warnings)
     expected = set(script.expected_warnings)
@@ -2024,6 +2117,7 @@ def encounter_metrics(
         expected_warnings_absent=tuple(sorted(expected - set(tally))),
         facts=tuple(facts),
         hedge_marks_unhedged=hedge_marks_unhedged,
+        unsupported_lines_excused_by_r1=excused,
     )
 
 
@@ -2086,26 +2180,42 @@ class PassRule(BaseModel):
     top-level fields keep their schema-1 meaning, so rule v1's verdict is
     still computed beside rule v2's (``v1_failures``). A schema-1 rule holds
     no set rows and a schema-2 rule holds at least one; an older harness
-    refuses a schema-2 file by its ``Literal[1]``."""
+    refuses a schema-2 file by its ``Literal[1]``.
+
+    Schema 3 (rule v3, validation-run7 plan D4) is schema 2 plus
+    ``unsupported_line_r1_exemption``, which it REQUIRES and schemas 1 and 2
+    refuse: when true, an unsupported clinical line the R1 exemption
+    excuses (``EncounterMetrics.unsupported_lines_excused_by_r1``) does not
+    fail its encounter. The report prints the verdict without it beside the
+    verdict with it, and rule v1's; a 0.3.4 harness refuses a schema-3 file
+    by its ``Literal[1, 2]``."""
 
     model_config = _RULE_CONFIG
 
-    schema_version: Literal[1, 2]
+    schema_version: Literal[1, 2, 3]
     rule_name: str = Field(pattern=RULE_NAME_PATTERN)
     max_material_wrong: int = Field(default=0, ge=0)
     max_silent_omissions: int = Field(default=0, ge=0)
     require_uncertainty_surfaced: bool = True
     max_word_error_rate: float | None = Field(default=None, ge=0.0)
     sets: dict[str, SetCeilings] | None = None
+    unsupported_line_r1_exemption: bool | None = None
 
     @model_validator(mode="after")
     def _check_sets(self) -> PassRule:
+        # ``extra="forbid"`` cannot tie a declared field to a schema, so the
+        # exemption is checked both ways here (D4).
+        if self.schema_version == 3:
+            if self.unsupported_line_r1_exemption is None:
+                raise ValueError("a schema-3 rule needs unsupported_line_r1_exemption")
+        elif self.unsupported_line_r1_exemption is not None:
+            raise ValueError("only a schema-3 rule takes unsupported_line_r1_exemption")
         if self.schema_version == 1:
             if self.sets is not None:
                 raise ValueError("a schema-1 rule holds no set ceilings")
             return self
         if not self.sets:
-            raise ValueError("a schema-2 rule names at least one set")
+            raise ValueError(f"a schema-{self.schema_version} rule names at least one set")
         for name, row in self.sets.items():
             if not re.fullmatch(RULE_NAME_PATTERN, name):
                 raise ValueError(f"set names must match {RULE_NAME_PATTERN}")
@@ -2123,9 +2233,23 @@ class PassRule(BaseModel):
             return self.require_uncertainty_surfaced
         return row.require_uncertainty_surfaced
 
+    @property
+    def exempts_r1_lines(self) -> bool:
+        """The rule applies D4's R1 exemption (schema 3, the field true)."""
+        return self.unsupported_line_r1_exemption is True
+
+    def without_r1_exemption(self) -> PassRule:
+        """This rule with the R1 exemption off — "rule v3 without the R1
+        exemption", the report's second verdict (D4). A rule that does not
+        exempt is returned as it is."""
+        if not self.exempts_r1_lines:
+            return self
+        return self.model_copy(update={"unsupported_line_r1_exemption": False})
+
     def set_row(self, set_name: str | None) -> SetCeilings:
-        """The named set's row of a schema-2 rule; ``RuleError`` for a
-        schema-1 rule, or a name the rule does not hold (never printed)."""
+        """The named set's row of a schema-2 or schema-3 rule; ``RuleError``
+        for a schema-1 rule, or a name the rule does not hold (never
+        printed)."""
         if self.sets is None:
             raise RuleError("a schema-1 rule has no sets")
         if set_name is None or set_name not in self.sets:
@@ -2133,6 +2257,69 @@ class PassRule(BaseModel):
                 "the set must be one the rule names: " + ", ".join(sorted(self.sets))
             )
         return self.sets[set_name]
+
+
+# Validation-run7 plan D4 (peer round 2 PR-MED-007): rule v2 as ratified —
+# ``validation/rules/rule-v2.json``, pinned equal by ``TestRuleV3`` — read only
+# to say whether a schema-3 report's verdict without the R1 exemption IS rule
+# v2's on its set: the verdicts read the top-level fields and a row's ceilings,
+# never its ``gate`` (the labels alone read that), so it is wherever those
+# equal rule v2's. Never a rule a run is scored against.
+RULE_V2_RATIFIED: Final = PassRule.model_validate(
+    {
+        "schema_version": 2,
+        "rule_name": "rule-v2",
+        "sets": {
+            "scripts": {
+                "gate": True,
+                "max_r1_facts": 2,
+                "max_r2_facts": 2,
+                "max_r3_encounters": 2,
+            },
+            "heldout": {
+                "gate": False,
+                "max_r1_facts": 1,
+                "max_r2_facts": 1,
+                "max_r3_encounters": 1,
+            },
+            "heldout-2": {
+                "gate": False,
+                "max_r1_facts": 1,
+                "max_r2_facts": 1,
+                "max_r3_encounters": 1,
+            },
+            "heldout-3": {
+                "gate": True,
+                "max_r1_facts": 1,
+                "max_r3_encounters": 1,
+                "require_uncertainty_surfaced": False,
+            },
+        },
+    }
+)
+RuleV2Counterpart = Literal["same", "no_row", "differs"]
+
+
+def rule_v2_counterpart(rule: PassRule, set_name: str) -> RuleV2Counterpart:
+    """Whether ``rule`` without its R1 exemption gives rule v2's verdict on
+    ``set_name`` (D4): ``same`` when the top-level fields and the set's row
+    equal ``RULE_V2_RATIFIED``'s but for ``gate``; ``no_row`` when rule v2
+    holds no row for the set (``heldout-4``); ``differs`` otherwise — a
+    top-level threshold or the set's row (the report names both causes)."""
+    ratified = RULE_V2_RATIFIED.sets or {}
+    if set_name not in ratified:
+        return "no_row"
+    # Every top-level field but the four that are no ceiling, so a field a
+    # later schema adds is compared too and fails closed to ``differs``.
+    not_ceilings = {"schema_version", "rule_name", "sets", "unsupported_line_r1_exemption"}
+    if rule.model_dump(exclude=not_ceilings) != RULE_V2_RATIFIED.model_dump(exclude=not_ceilings):
+        return "differs"
+    row = rule.set_row(set_name)
+    if row.model_copy(update={"gate": False}) != ratified[set_name].model_copy(
+        update={"gate": False}
+    ):
+        return "differs"
+    return "same"
 
 
 def load_pass_rule(path: Path) -> PassRule:
@@ -2262,10 +2449,17 @@ class EncounterOutcome:
 
 
 def _encounter_failures(
-    rule: PassRule, outcome: EncounterOutcome, *, residues: bool, require_uncertainty: bool
+    rule: PassRule,
+    outcome: EncounterOutcome,
+    *,
+    residues: bool,
+    require_uncertainty: bool,
+    exempt: bool,
 ) -> tuple[RuleFailure, ...]:
     """The per-encounter test: on the raw counts, or (``residues``) on the
-    residue-adjusted ones (validation-run6 plan D8)."""
+    residue-adjusted ones (validation-run6 plan D8) — and, when ``exempt``
+    too, the unsupported clinical lines less those the R1 exemption excuses
+    (validation-run7 plan D4)."""
     if outcome.status == "error":
         return ("harness_error",)
     if outcome.status == "role_unresolved":
@@ -2278,8 +2472,13 @@ def _encounter_failures(
         if residues
         else (metrics.material_wrong, metrics.silent_omissions, metrics.uncertainty_missed)
     )
+    unsupported = (
+        metrics.unsupported_clinical_lines_v3
+        if residues and exempt
+        else metrics.unsupported_clinical_lines
+    )
     failures: list[RuleFailure] = []
-    if metrics.unsupported_clinical_lines:
+    if unsupported:
         failures.append("unsupported_clinical_line")
     if metrics.checker_failure_count:
         failures.append("checker_failure")
@@ -2301,10 +2500,12 @@ def rule_failures(
     rule: PassRule, outcome: EncounterOutcome, *, set_name: str | None = None
 ) -> tuple[RuleFailure, ...]:
     """Why ``outcome`` fails ``rule`` — empty when it passes. A schema-1
-    rule reads the raw counts (``set_name`` must be None); a schema-2 rule
-    reads the named set's row (``PassRule.set_row``): the residue-adjusted
-    counts, each class clearing only its own failure predicates, and the
-    set's uncertainty requirement (D8, D17). The set's class ceilings are
+    rule reads the raw counts (``set_name`` must be None); a schema-2 or
+    schema-3 rule reads the named set's row (``PassRule.set_row``): the
+    residue-adjusted counts, each class clearing only its own failure
+    predicates, and the set's uncertainty requirement (D8, D17) — and a
+    schema-3 rule that exempts, the unsupported lines less the R1-excused
+    ones (validation-run7 plan D4). The set's class ceilings are
     ``class_breaches``'s, never an encounter's."""
     if rule.schema_version == 1:
         if set_name is not None:
@@ -2312,16 +2513,25 @@ def rule_failures(
         return v1_failures(rule, outcome)
     row = rule.set_row(set_name)
     return _encounter_failures(
-        rule, outcome, residues=True, require_uncertainty=rule.uncertainty_required(row)
+        rule,
+        outcome,
+        residues=True,
+        require_uncertainty=rule.uncertainty_required(row),
+        exempt=rule.exempts_r1_lines,
     )
 
 
 def v1_failures(rule: PassRule, outcome: EncounterOutcome) -> tuple[RuleFailure, ...]:
     """The per-encounter test on the RAW counts with the rule's top-level
-    fields — rule v1's verdict, printed beside rule v2's (D8: the v1
-    verdict stays visible); for a schema-1 rule, ``rule_failures`` itself."""
+    fields — rule v1's verdict, printed beside rule v2's or v3's (D8: the v1
+    verdict stays visible; never the R1 exemption, D4); for a schema-1
+    rule, ``rule_failures`` itself."""
     return _encounter_failures(
-        rule, outcome, residues=False, require_uncertainty=rule.require_uncertainty_surfaced
+        rule,
+        outcome,
+        residues=False,
+        require_uncertainty=rule.require_uncertainty_surfaced,
+        exempt=False,
     )
 
 
@@ -2780,8 +2990,9 @@ def run_passed(
     set_name: str | None = None,
 ) -> bool:
     """The run passes when at least one encounter ran, no set-level error
-    occurred and every encounter passes ``rule`` — and, under a schema-2
-    rule, every residue class is within the named set's ceiling (D8)."""
+    occurred and every encounter passes ``rule`` — and, under a schema-2 or
+    schema-3 rule, every residue class is within the named set's ceiling
+    (D8)."""
     if not outcomes or errors:
         return False
     if any(rule_failures(rule, o, set_name=set_name) for o in outcomes):
@@ -2858,32 +3069,64 @@ def _verdict_lines(
 ) -> list[str]:
     """A schema-2 run's two verdict lines (validation-run6 plan D8, D15):
     rule v2's for the named set — the gate sets named beside the reported
-    ones — and rule v1's on the same outcomes."""
+    ones — and rule v1's on the same outcomes. A schema-3 run's three
+    (validation-run7 plan D4): rule v3's, rule v3's without the R1 exemption
+    (saying whether that is rule v2's verdict on the set), and rule v1's."""
     sets = rule.sets or {}
     gate = sorted(name for name, row in sets.items() if row.gate)
     reported = sorted(name for name, row in sets.items() if not row.gate)
     role = "a gate set" if rule.set_row(set_name).gate else "a reported set"
-    breaches = class_breaches(rule, outcomes, set_name)
-    v2 = run_passed(rule, outcomes, errors=errors, set_name=set_name)
-    set_level = "; ".join(
-        f"{count.residue_class} {count.total} over the ceiling of {count.ceiling}"
-        for count in breaches
-    )
+    label = f"v{rule.schema_version}"
+
+    def set_level(scored: PassRule) -> str:
+        breaches = class_breaches(scored, outcomes, set_name)
+        return "; ".join(
+            f"{count.residue_class} {count.total} over the ceiling of {count.ceiling}"
+            for count in breaches
+        )
+
+    def failing(scored: PassRule) -> str:
+        return _failing_encounters(
+            outcomes, lambda o: rule_failures(scored, o, set_name=set_name)
+        )
+
+    passed = run_passed(rule, outcomes, errors=errors, set_name=set_name)
     v1 = run_passed_v1(rule, outcomes, errors=errors)
-    return [
-        f"- Rule v2 verdict, set `{set_name}` ({role}): {_verdict(v2)}. Failing encounters: "
-        + _failing_encounters(outcomes, lambda o: rule_failures(rule, o, set_name=set_name))
-        + f"; set-level: {set_level or 'none'}; set-level errors: {errors}. The gate is a "
-        "rule v2 pass on every gate set ("
+    lines = [
+        f"- Rule {label} verdict, set `{set_name}` ({role}): {_verdict(passed)}. Failing "
+        f"encounters: {failing(rule)}; set-level: {set_level(rule) or 'none'}; set-level "
+        f"errors: {errors}. The gate is a rule {label} pass on every gate set ("
         + ", ".join(f"`{name}`" for name in gate)
         + "); the other sets are reported in full ("
         + (", ".join(f"`{name}`" for name in reported) or "none")
         + ").",
+    ]
+    if rule.schema_version == 3:
+        plain = rule.without_r1_exemption()
+        counterpart = {
+            "same": "= rule v2's verdict on this set",
+            "no_row": "rule v2 has no row for this set",
+            # Either cause (peer round 7 PR-LOW-001): a top-level threshold
+            # or this set's row.
+            "differs": (
+                "not rule v2's verdict: this rule's top-level thresholds or this set's row "
+                "differ from rule v2's"
+            ),
+        }[rule_v2_counterpart(rule, set_name)]
+        lines.append(
+            "- Rule v3 without the R1 exemption verdict (the same outcomes, every unsupported "
+            f"clinical line failing; {counterpart}): "
+            f"{_verdict(run_passed(plain, outcomes, errors=errors, set_name=set_name))}. "
+            f"Failing encounters: {failing(plain)}; set-level: {set_level(plain) or 'none'}; "
+            f"set-level errors: {errors}."
+        )
+    lines.append(
         f"- Rule v1 verdict (the same outcomes on the raw counts, no residue class): "
         f"{_verdict(v1)}. Failing encounters: "
         + _failing_encounters(outcomes, lambda o: v1_failures(rule, o))
-        + ".",
-    ]
+        + "."
+    )
+    return lines
 
 
 def render_report(
@@ -2898,15 +3141,24 @@ def render_report(
     (numbers, flags, closed vocabularies, synthetic ids), the rule and the
     run information — no transcript, note or script text. A schema-2 rule
     needs ``set_name`` (its row picks the ceilings) and adds the two verdict
-    lines and the residue-class section (validation-run6 plan D8, D15, D17)."""
+    lines and the residue-class section (validation-run6 plan D8, D15, D17);
+    a schema-3 rule likewise, with three verdict lines and the R1-excused
+    lines in that section (validation-run7 plan D4)."""
     verdict = _verdict(run_passed(rule, outcomes, errors=errors, set_name=set_name))
     if set_name is None:
         heading = [f"## Validation run - rule `{rule.rule_name}` - {verdict}"]
     else:
         v1 = _verdict(run_passed_v1(rule, outcomes, errors=errors))
+        verdicts = f"rule v{rule.schema_version} {verdict}"
+        if rule.schema_version == 3:
+            # Validation-run7 plan D4: the cycle's one loosening, visible.
+            plain = run_passed(
+                rule.without_r1_exemption(), outcomes, errors=errors, set_name=set_name
+            )
+            verdicts += f", rule v3 without the R1 exemption {_verdict(plain)}"
         heading = [
             f"## Validation run - rule `{rule.rule_name}` - set `{set_name}` - "
-            f"rule v2 {verdict}, rule v1 {v1}",
+            f"{verdicts}, rule v1 {v1}",
             "",
             *_verdict_lines(outcomes, rule, set_name, errors=errors),
         ]
@@ -2918,7 +3170,22 @@ def render_report(
         "the next-patient boundary, metric amendments 2026-10-22 and 2026-10-24 "
         "(validation-run6 D7, D13; 0.3.3's reading: Silent (0.3.3 predicate))."
     )
-    if set_name is not None:
+    if set_name is not None and rule.schema_version == 3:
+        amendments += (
+            " Rule v3 (schema 3; validation-run7 D4, decided 2026-10-25) keeps rule v2's "
+            "residue classes (decision 0.7 of 2026-10-22, amended "
+            "2026-10-24 by validation-run6 D14, D15 and D17: R1 recogniser and R2 tone only "
+            "counted in facts, R3 unbroken next patient counted in encounters, each excusing "
+            "only its own failures within the set's literal ceilings) and adds one loosening, "
+            "the R1 exemption ("
+            + ("applied" if rule.exempts_r1_lines else "not applied")
+            + " under this rule): an unsupported clinical line is excused when every "
+            "structured-claim word flagged in it is a material R1 fact's own misrendering "
+            "under a review mark, never an inserted word. The verdict without the exemption "
+            "is printed beside it; the raw counts in the tables and the rule v1 verdict are "
+            "unchanged. A cell or total nothing measured reads `-`; a measured zero reads 0."
+        )
+    elif set_name is not None:
         amendments += (
             " Rule v2 (schema 2; decision 0.7 of 2026-10-22, amended 2026-10-24 by "
             "validation-run6 D14, D15 and D17): the residue classes R1 recogniser and R2 "
@@ -3144,8 +3411,11 @@ def _residue_section(
     """A schema-2 run's set layer (validation-run6 plan D8, D14, D17): each
     class against the set's ceiling with its members, the residue-adjusted
     totals beside the raw ones, "Surfaced / expected", the new omission
-    code's load and D14's reference-boundary record — ids and integers."""
+    code's load and D14's reference-boundary record — ids and integers. A
+    schema-3 run's adds the unsupported lines the R1 exemption excuses, as
+    ``<id>/line <n> (segment <i>)`` (validation-run7 plan D4)."""
     row = rule.set_row(set_name)
+    label = f"rule v{rule.schema_version}"
     measured = [o.metrics for o in outcomes if o.metrics is not None]
     # PR-LOW-016's convention here too (peer round 46 PR-LOW-001): with no
     # measured encounter every count below reads ``-``, never a measured 0.
@@ -3156,7 +3426,7 @@ def _residue_section(
 
     lines = [
         "",
-        f"### Residue classes (rule v2, set `{set_name}`, "
+        f"### Residue classes ({label}, set `{set_name}`, "
         + ("a gate set" if row.gate else "a reported set")
         + ")",
         "",
@@ -3184,12 +3454,28 @@ def _residue_section(
     silent = total(sum(m.silent_omissions for m in measured))
     missed = total(sum(m.uncertainty_missed for m in measured))
     lines.append(
-        "- After the classes (the counts rule v2 reads): material wrong "
+        f"- After the classes (the counts {label} reads): material wrong "
         f"{total(sum(m.material_wrong_v2 for m in measured))} (raw {wrong}), silent "
         f"omissions {total(sum(m.silent_omissions_v2 for m in measured))} (raw {silent}), "
         f"uncertainty missed {total(sum(m.uncertainty_missed_v2 for m in measured))} "
         f"(raw {missed})."
     )
+    if rule.schema_version == 3:
+        excused = [
+            f"{outcome.encounter_id}/line {ordinal + 1} (segment {segment_index})"
+            for outcome in outcomes
+            if outcome.metrics is not None
+            for ordinal, segment_index in outcome.metrics.unsupported_lines_excused_by_r1
+        ]
+        empty = "none" if any_measured else "- (no encounter measured)"
+        lines.append(
+            "- Unsupported clinical lines the R1 exemption excuses ("
+            + ("applied" if rule.exempts_r1_lines else "not applied")
+            + f" under this rule): {total(sum(m.unsupported_lines_excused for m in measured))} "
+            f"(raw {total(sum(m.unsupported_clinical_lines for m in measured))}): "
+            + (", ".join(excused) or empty)
+            + "."
+        )
     required = rule.uncertainty_required(row)
     lines.append(
         f"- Surfaced / expected: {total(sum(m.uncertainty_surfaced for m in measured))} / "
@@ -3338,8 +3624,8 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "the set this folder was built from, one the rule names (scripts, heldout, "
-            "heldout-2, heldout-3): required with a schema-2 rule, whose row for it holds "
-            "the ceilings; not taken with a schema-1 rule"
+            "heldout-2, heldout-3, heldout-4): required with a schema-2 or schema-3 rule, "
+            "whose row for it holds the ceilings; not taken with a schema-1 rule"
         ),
     )
     parser.add_argument(
@@ -3389,8 +3675,8 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
     (``install_layout.channel``, read at call time — the tests' seam), a
     missing set or config folder, the app's own config folder, an unusable
     rule, a ``--set`` that does not fit the rule (given with a schema-1 rule;
-    missing, or not one of its sets, with a schema-2 rule — validation-run6
-    plan D17), an unusable config, a config carrying the app's learned
+    missing, or not one of its sets, with a schema-2 or schema-3 rule —
+    validation-run6 plan D17), an unusable config, a config carrying the app's learned
     content, a template
     profile that cannot be bound, then the models (by name, before any is
     constructed; under ``enrolment`` attribution the speaker model too), an
@@ -3437,11 +3723,14 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
     # name the rule does not hold is never printed.
     set_name: str | None = args.set_name
     if rule.sets is None and set_name is not None:
-        print("[refused] --set is taken only with a schema-2 rule (a schema-1 rule has no sets)")
+        print(
+            "[refused] --set is taken only with a schema-2 or schema-3 rule (a schema-1 rule "
+            "has no sets)"
+        )
         return 2
     if rule.sets is not None and set_name not in rule.sets:
         print(
-            "[refused] a schema-2 rule needs --set naming one of its sets: "
+            f"[refused] a schema-{rule.schema_version} rule needs --set naming one of its sets: "
             + ", ".join(sorted(rule.sets))
         )
         return 2
@@ -3669,6 +3958,7 @@ __all__ = [
     "REVIEW_MARK_CODES",
     "ROLE_TIE_SECONDS",
     "RULE_SCHEMA_VERSION",
+    "RULE_V2_RATIFIED",
     "SCRIPT_SCHEMA_VERSION",
     "UNNAMED_ENCOUNTER",
     "Attribution",
@@ -3688,6 +3978,7 @@ __all__ = [
     "ResidueClass",
     "ResidueTableError",
     "RuleError",
+    "RuleV2Counterpart",
     "RunInfo",
     "ScriptError",
     "ScriptLine",
@@ -3726,6 +4017,7 @@ __all__ = [
     "reference_tail_start",
     "render_report",
     "rule_failures",
+    "rule_v2_counterpart",
     "run_encounters",
     "run_passed",
     "run_passed_v1",

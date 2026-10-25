@@ -83,8 +83,13 @@ set up and build it, and make releases; the installed app needs none of them.
   enrols the practitioner; `--attribution clustering` is runs 1–5's reading)
   runs every encounter through the shipped pipeline in a temporary
   encrypted store torn down key-first and prints a text-free report, pass or
-  fail against the rule. Developer build only, from a normal terminal; see
-  `docs/testing/validation-harness.md`.
+  fail against the rule. A rule of sets — rule v2 (`validation/rules/rule-v2.json`)
+  or, since the validation-run7 plan's D4, rule v3 (`validation/rules/rule-v3.json`,
+  whose report prints its verdict beside the verdict without its R1 exemption
+  and rule v1's) — also needs `--set <name>`, the set the folder was built from
+  (one the rule names: `scripts`, `heldout`, `heldout-2`, `heldout-3`, and
+  under rule v3 `heldout-4`). Developer
+  build only, from a normal terminal; see `docs/testing/validation-harness.md`.
 - `replay-kept-recordings.py <past_sessions folder> [--only <session id> ...]
   [--enrolment <wav>] [--model <name>]` (development-recordings plan Phase 4) —
   thin launcher for `scribe_desktop.replay_kept`: replays every recording kept
