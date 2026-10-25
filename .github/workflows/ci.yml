@@ -61,9 +61,12 @@ jobs:
       - name: Mypy
         working-directory: desktop
         run: python -m mypy
-      - name: Pytest
-        working-directory: desktop
-        run: python -m pytest -q
+      # While a blind held-out set is in the tree the conftest refuses a plain
+      # pytest (validation-run6 plan C12). The runner keeps pytest's output in
+      # a log on the runner and prints only node ids and counts, so no
+      # held-out text reaches this public log; the log is not uploaded.
+      - name: Pytest (through the blind held-out runner)
+        run: python scripts/lint-held-out-set.py validation/heldout-3
     # Windows-only marks (DPAPI, SAPI, launcher tests) run for real on this
     # matrix — windows-latest keeps sys.platform == "win32" legs exercised.
 
