@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h4-02",
+  "appointment_type": "follow_up",
+  "axes": ["end_and_new_patient", "numbers", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "How's the knee been since last time?"},
+    {"role": "patient", "text": "Since last time it's moving a bit better, I managed the stairs at my sister's without the rail."},
+    {"role": "clinician", "text": "Brilliant. Keep doing the step-ups off the bottom stair, ten on each leg, twice a day."},
+    {"role": "clinician", "text": "Bring your trainers next time and we'll try some hopping."},
+    {"role": "patient", "text": "Will do. Cheers."},
+    {"role": "clinician", "text": "Lovely, see you next week then. Mind how you go."},
+    {"role": "clinician", "text": "Mr Lindqvist? Hi, I'm Tom, come on through. How are you doing?"},
+    {"role": "next_patient", "text": "Not great to be honest, my right shoulder's been locked up since Saturday and I can't get my arm above my head."},
+    {"role": "clinician", "text": "Okay, let's get your coat off and start from the beginning."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["it's", "moving", "a", "bit", "better"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["ten", "on", "each", "leg", "twice", "a", "day"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["we'll", "try", "some", "hopping"], "line": 3, "material": true},
+    {"kind": "absent", "tokens": ["right", "shoulder's", "been", "locked", "up", "since", "saturday"], "line": 7, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h4-08",
+  "appointment_type": "initial",
+  "axes": ["laterality", "uncertain", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Hello, have a seat. What's happened to the wrist?"},
+    {"role": "patient", "text": "I slipped on the ice and landed on it, I'm coming in with pain on the thumb side of my right wrist."},
+    {"role": "clinician", "text": "When did it happen?"},
+    {"role": "patient", "text": "Last Thursday. There's tingling in my fingertips as well, at least I think it's tingling, it's hard to describe."},
+    {"role": "partner", "text": "Hello, sorry I'm late, I couldn't find anywhere to park. I'm Dev, I brought her in."},
+    {"role": "clinician", "text": "No problem, come in and pull up a chair. We were just getting started."},
+    {"role": "partner", "text": "I told her to see a GP after she heard a crack when she landed."},
+    {"role": "clinician", "text": "That's helpful, thank you. I'm going to press on a few spots, tell me if anything's sharp."},
+    {"role": "patient", "text": "Ow, that one."},
+    {"role": "clinician", "text": "You're tender in the hollow at the base of the thumb, which is where the scaphoid bone sits."},
+    {"role": "clinician", "text": "I'd like you seen at the fracture clinic today, so I'll ring them now and keep it in this splint until then."},
+    {"role": "partner", "text": "I can drive her straight there."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["thumb", "side", "of", "my", "right", "wrist"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["tingling", "in", "my", "fingertips"], "line": 3, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["heard", "a", "crack", "when", "she", "landed"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["tender", "in", "the", "hollow", "at", "the", "base", "of", "the", "thumb"], "line": 9, "material": true},
+    {"kind": "present", "tokens": ["seen", "at", "the", "fracture", "clinic", "today"], "line": 10, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "partner": 1}}
+}

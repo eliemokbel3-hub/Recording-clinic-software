@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h4-03",
+  "appointment_type": "acute",
+  "axes": ["laterality", "numbers", "contradictory"],
+  "lines": [
+    {"role": "clinician", "text": "So you went over on it at netball on Tuesday?"},
+    {"role": "patient", "text": "Yeah, I'm coming in with a swollen left ankle, it ballooned straight away."},
+    {"role": "clinician", "text": "Can you put weight on it?"},
+    {"role": "patient", "text": "I hobbled off the court, but it's easier today."},
+    {"role": "clinician", "text": "Let me have a look. There's bruising down the outside of the foot and it's tender over the front ligament, the bone itself is fine."},
+    {"role": "clinician", "text": "Your GP note says ibuprofen 400 milligrams three times a day."},
+    {"role": "clinician", "text": "Sorry, two times a day, I misread the scribble."},
+    {"role": "clinician", "text": "Keep it raised on a cushion when you're sat down, and ice it for ten minutes a few times a day, no netball for a fortnight."},
+    {"role": "patient", "text": "A fortnight? We've got the county finals."},
+    {"role": "clinician", "text": "I know, sorry. Come back Friday and we'll see where it's at."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["swollen", "left", "ankle"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["the", "bone", "itself", "is", "fine"], "line": 4, "material": true},
+    {"kind": "dose", "tokens": ["ibuprofen", "400", "milligrams"], "line": 5, "material": true},
+    {"kind": "dose", "tokens": ["two", "times", "a", "day"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["no", "netball", "for", "a", "fortnight"], "line": 7, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

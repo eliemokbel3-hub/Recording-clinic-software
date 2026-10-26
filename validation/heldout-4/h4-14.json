@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h4-14",
+  "appointment_type": "initial",
+  "axes": ["negation", "laterality", "uncertain"],
+  "lines": [
+    {"role": "clinician", "text": "Hello, I'm Aisha, one of the physios. What are you coming in with today?"},
+    {"role": "patient", "text": "I'm coming in with headaches that start at the base of my skull, they've been going on for three months now."},
+    {"role": "clinician", "text": "Any numbness or pins and needles in your face or arms?"},
+    {"role": "patient", "text": "I haven't had any numbness, I'm certain of that."},
+    {"role": "patient", "text": "There's tingling in my left little finger now and again, though I'm not convinced it's real."},
+    {"role": "clinician", "text": "Any dizziness, double vision or trouble swallowing?"},
+    {"role": "patient", "text": "None of that, I made sure to write down everything before I came."},
+    {"role": "clinician", "text": "Let me have a look at your neck. Tuck your chin in and nod for me."},
+    {"role": "clinician", "text": "Pressing here at the top of the neck on the left brings on your headache, and the muscles are tight across both shoulders."},
+    {"role": "clinician", "text": "My best guess is that the headaches are coming from the top joints of the neck, but I could be wrong, so we'll keep an open mind."},
+    {"role": "patient", "text": "That makes sense, I'm sitting at a desk all day."},
+    {"role": "clinician", "text": "If you get a sudden severe headache unlike any before, or weakness in an arm, go straight to A and E."},
+    {"role": "patient", "text": "Okay. Should I keep working from home?"},
+    {"role": "clinician", "text": "Yes, but get the screen up on a pile of books so you're looking straight ahead."},
+    {"role": "patient", "text": "I can do that."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["headaches", "that", "start", "at", "the", "base", "of", "my", "skull"], "line": 1, "material": true},
+    {"kind": "negation", "tokens": ["haven't", "had", "any", "numbness"], "line": 3, "material": true},
+    {"kind": "laterality", "tokens": ["tingling", "in", "my", "left", "little", "finger"], "line": 4, "material": true, "expect_uncertain": true},
+    {"kind": "laterality", "tokens": ["top", "of", "the", "neck", "on", "the", "left"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["coming", "from", "the", "top", "joints", "of", "the", "neck"], "line": 9, "material": true},
+    {"kind": "present", "tokens": ["sudden", "severe", "headache", "unlike", "any", "before"], "line": 11, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h4-20",
+  "appointment_type": "initial",
+  "axes": ["negation", "end_and_new_patient", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "Hi Niamh, you're thirty weeks along, is that right? What are you coming in with?"},
+    {"role": "patient", "text": "I'm coming in with pain at the front of my pelvis when I turn over in bed."},
+    {"role": "clinician", "text": "Any pain going to the toilet or any leaking?"},
+    {"role": "patient", "text": "Going to the toilet is fine, no problems there at all."},
+    {"role": "clinician", "text": "Keep your knees together when you roll over in bed, like they're glued, and get in the car bottom first."},
+    {"role": "clinician", "text": "I'll fit you with a support belt today and we'll review in two weeks."},
+    {"role": "patient", "text": "That would be great, thank you."},
+    {"role": "clinician", "text": "Grand so. Mind yourself now, Niamh."},
+    {"role": "clinician", "text": "Mr Doherty? How're you keeping? In you come."},
+    {"role": "next_patient", "text": "Ah, not too bad, only for this back of mine, I'm after putting it out lifting the lawnmower into the van."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["pain", "at", "the", "front", "of", "my", "pelvis"], "line": 1, "material": true},
+    {"kind": "negation", "tokens": ["going", "to", "the", "toilet", "is", "fine"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["keep", "your", "knees", "together", "when", "you", "roll", "over"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["fit", "you", "with", "a", "support", "belt"], "line": 5, "material": true},
+    {"kind": "absent", "tokens": ["putting", "it", "out", "lifting", "the", "lawnmower"], "line": 9, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h4-07",
+  "appointment_type": "discharge",
+  "axes": ["end_and_new_patient", "small_talk", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "Right, so this is our last session. How's the Achilles holding up?"},
+    {"role": "patient", "text": "Since last time I've been doing the calf raises on the stair and I ran five kilometres on Sunday with no pain."},
+    {"role": "clinician", "text": "That's what I like to hear. Keep the heel drops going three times a week for another two months, slow on the way down, then you can taper off."},
+    {"role": "clinician", "text": "If it flares up again, drop your mileage by half for a week before you do anything else."},
+    {"role": "patient", "text": "Brilliant, thanks for all your help."},
+    {"role": "clinician", "text": "Nae bother at all. Cheerio, and good luck with the half marathon."},
+    {"role": "clinician", "text": "Hiya, is it Ewan? Come away in. Did you get parked alright?"},
+    {"role": "next_patient", "text": "Eventually, it's chaos out there with the roadworks."},
+    {"role": "clinician", "text": "Aye, it's been like that all month. So what's bringing you in?"},
+    {"role": "next_patient", "text": "My knee keeps giving way when I come down stairs, it's been going on since the summer."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["ran", "five", "kilometres", "on", "sunday", "with", "no", "pain"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["three", "times", "a", "week", "for", "another", "two", "months"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["drop", "your", "mileage", "by", "half"], "line": 3, "material": true},
+    {"kind": "absent", "tokens": ["chaos", "out", "there", "with", "the", "roadworks"], "line": 7, "material": false},
+    {"kind": "absent", "tokens": ["knee", "keeps", "giving", "way"], "line": 9, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

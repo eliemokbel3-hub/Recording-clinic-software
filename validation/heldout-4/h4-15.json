@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h4-15",
+  "appointment_type": "follow_up",
+  "axes": ["negation", "uncertain", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "Hi Bernard, how's the leg been since last time?"},
+    {"role": "patient", "text": "The leg's been calmer, work's been manic, no tingling though."},
+    {"role": "clinician", "text": "That's good news. And the pain in the calf?"},
+    {"role": "patient", "text": "Since last time the calf pain only comes on after an hour of driving, though don't hold me to the hour."},
+    {"role": "clinician", "text": "Let me have a look at the leg raise again."},
+    {"role": "clinician", "text": "That's up to seventy degrees now, it was forty when I first saw you."},
+    {"role": "clinician", "text": "On long drives, pull over every forty five minutes and walk around the car for a couple of minutes."},
+    {"role": "clinician", "text": "If the leg pain spreads to both legs, or you notice any change in your waterworks, ring 999 straight away."},
+    {"role": "patient", "text": "Will do. Same time in two weeks?"},
+    {"role": "clinician", "text": "Yes, that works."}
+  ],
+  "facts": [
+    {"kind": "negation", "tokens": ["no", "tingling"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["calf", "pain", "only", "comes", "on", "after", "an", "hour", "of", "driving"], "line": 3, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["up", "to", "seventy", "degrees"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["pull", "over", "every", "forty", "five", "minutes"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["ring", "999", "straight", "away"], "line": 7, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

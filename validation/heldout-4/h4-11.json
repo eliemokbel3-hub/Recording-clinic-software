@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h4-11",
+  "appointment_type": "chronic",
+  "axes": ["numbers", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Morning Dennis. Has the knee settled at all from last time?"},
+    {"role": "patient", "text": "Not really, from last time it's still swelling up after I walk the dog."},
+    {"role": "clinician", "text": "Right. The letter from your GP says naproxen 500 milligrams twice a day, and you're taking that with food?"},
+    {"role": "patient", "text": "With my breakfast and tea, yeah."},
+    {"role": "clinician", "text": "It's probably some wear in the joint flaring up rather than anything new, but I can't be certain without an X-ray."},
+    {"role": "clinician", "text": "Shorter walks, twenty minutes at a time, and cycle on the static bike at the gym instead of the long loop."},
+    {"role": "patient", "text": "Okay, I'll give it a go."},
+    {"role": "clinician", "text": "Lovely, that's all for today. Next!"},
+    {"role": "next_patient", "text": "Hiya, that's me. It's my hip, it's been aching at night for about six weeks."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["still", "swelling", "up", "after", "i", "walk", "the", "dog"], "line": 1, "material": true},
+    {"kind": "dose", "tokens": ["naproxen", "500", "milligrams", "twice", "a", "day"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["some", "wear", "in", "the", "joint"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["twenty", "minutes", "at", "a", "time"], "line": 5, "material": true},
+    {"kind": "absent", "tokens": ["aching", "at", "night", "for", "about", "six", "weeks"], "line": 8, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

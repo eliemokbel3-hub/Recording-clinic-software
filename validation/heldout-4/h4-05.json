@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h4-05",
+  "appointment_type": "post_operative",
+  "axes": ["laterality", "contradictory", "numbers", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Hi Carys, six weeks since the operation now, isn't it? How's the shoulder been since last time?"},
+    {"role": "patient", "text": "Since last time it's sore at night, and there's tingling in my right hand."},
+    {"role": "patient", "text": "Um, sorry, no, there's tingling in my left hand, the side they operated on."},
+    {"role": "clinician", "text": "Okay, that's worth knowing. Is it there all the time or just at night?"},
+    {"role": "patient", "text": "Mostly first thing."},
+    {"role": "clinician", "text": "Lift the arm out in front for me. You're getting to about ninety degrees now, which is right where I'd expect at six weeks."},
+    {"role": "clinician", "text": "Keep the sling off during the day, but still no reaching up to high shelves until the surgeon says so."},
+    {"role": "clinician", "text": "I'll let the surgeon's team know about the hand. That's us for today, thank you Carys."},
+    {"role": "patient", "text": "Thanks, see you soon."},
+    {"role": "clinician", "text": "Mrs Okonjo? Good morning, do please come in and take a seat."},
+    {"role": "next_patient", "text": "Good morning. My GP sent me about my lower back, it's been seizing up every time I stand from the sofa."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["it's", "sore", "at", "night"], "line": 1, "material": true},
+    {"kind": "laterality", "tokens": ["tingling", "in", "my", "left", "hand"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["about", "ninety", "degrees"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["no", "reaching", "up", "to", "high", "shelves"], "line": 6, "material": true},
+    {"kind": "absent", "tokens": ["seizing", "up", "every", "time", "i", "stand", "from", "the", "sofa"], "line": 10, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

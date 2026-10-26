@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h4-06",
+  "appointment_type": "follow_up",
+  "axes": ["end_and_new_patient", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "How did you get on with the hip since last time?"},
+    {"role": "patient", "text": "From last time the ache in my groin has eased off a lot."},
+    {"role": "clinician", "text": "Great. You can bump the bridges up to three sets of twelve, and add the leg lifts lying on your side that we tried today."},
+    {"role": "clinician", "text": "Swimming's fine, but leave breaststroke kick out for now."},
+    {"role": "patient", "text": "Okay, thanks. Bye for now."},
+    {"role": "clinician", "text": "Bye, take care."},
+    {"role": "patient", "text": "Oh, one more thing, I forgot to mention I had previous surgery on that hip when I was twenty."},
+    {"role": "clinician", "text": "Ah, that's useful. Do you know what they did?"},
+    {"role": "patient", "text": "They tidied up some cartilage."},
+    {"role": "clinician", "text": "Okay, I'll add that in. Thanks for coming back."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["the", "ache", "in", "my", "groin", "has", "eased", "off"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["three", "sets", "of", "twelve"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["leave", "breaststroke", "kick", "out"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["previous", "surgery", "on", "that", "hip"], "line": 6, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

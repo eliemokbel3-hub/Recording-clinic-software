@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h4-18",
+  "appointment_type": "chronic",
+  "axes": ["uncertain", "numbers", "rate"],
+  "lines": [
+    {"role": "clinician", "text": "Hi Hamid, I've had a read of the pain clinic letter. How have things been from last time?"},
+    {"role": "patient", "text": "From last time the flare ups are down to once a week, if memory serves."},
+    {"role": "clinician", "text": "Okay. The letter has you on amitriptyline 10 milligrams at night, and codeine 30 milligrams up to four times a day when it flares."},
+    {"role": "patient", "text": "That's right, though I've barely touched the codeine."},
+    {"role": "clinician", "text": "Good. I'd guess the flares are linked to the long shifts, but that's just a hunch."},
+    {"role": "clinician", "text": "On shift, change position every half hour, even if it's just standing up to stretch your back."},
+    {"role": "patient", "text": "I'll try."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["flare", "ups", "are", "down", "to", "once", "a", "week"], "line": 1, "material": true, "expect_uncertain": true},
+    {"kind": "dose", "tokens": ["amitriptyline", "10", "milligrams", "at", "night"], "line": 2, "material": true},
+    {"kind": "dose", "tokens": ["codeine", "30", "milligrams", "up", "to", "four", "times", "a", "day"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["linked", "to", "the", "long", "shifts"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["change", "position", "every", "half", "hour"], "line": 5, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}, "rate": 3}
+}
