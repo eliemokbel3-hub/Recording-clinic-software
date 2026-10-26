@@ -45,6 +45,7 @@ from fixtures.heldout_transcripts import (
     HELD_OUT_CASES,
     HELD_OUT_SETS,
     HeldOutCase,
+    HeldOutSet,
     Turn,
     build_document,
     by_case,
@@ -149,6 +150,8 @@ _PREDICTED_BOUNDARY_DIVERGENCES_BY_SET: Final[
         "h3-17": (7, None),  # neither is listed; the greeting is by name
         "h3-20": (7, None),  # a bare time-of-day greeting
     },
+    # Validation-run7 Task 0.5: blind until run 7 (C12); its entries are its P.4's.
+    "heldout-4": {},
 }
 _PREDICTED_BOUNDARY_DIVERGENCES: Final = by_case(_PREDICTED_BOUNDARY_DIVERGENCES_BY_SET)
 
@@ -433,7 +436,7 @@ class TestHeldOutBoundaries:
             name: len(cases) for name, cases in _PREDICTED_BOUNDARY_DIVERGENCES_BY_SET.items()
         }
         # 7 / 6 / 9 until validation-run7 Task 0.4 (c) (2026-10-26).
-        assert counts == {"heldout": 4, "heldout-2": 4, "heldout-3": 6}
+        assert counts == {"heldout": 4, "heldout-2": 4, "heldout-3": 6, "heldout-4": 0}
 
     def test_the_widened_lists_changed_these_predictions_and_no_expectation(
         self, validation_config: NoteConfig, monkeypatch: pytest.MonkeyPatch
@@ -519,6 +522,13 @@ def _rule_4_problem(
     return None
 
 
+def _seen_held_out_sets() -> list[HeldOutSet]:
+    """The held-out sets rule 4 reads: those whose cases are written. A
+    blind set (``heldout-4`` until its P.4, validation-run7 Task 0.5) is not
+    seen and has no case to give b (C12)."""
+    return [held_out for held_out in HELD_OUT_SETS if held_out.cases_written]
+
+
 def _seen_items() -> list[tuple[str, TranscriptDocument, int | None]]:
     """Every seen item as (id, reference document, b): the reference
     document of every script of the four seen sets — b is
@@ -532,7 +542,7 @@ def _seen_items() -> list[tuple[str, TranscriptDocument, int | None]]:
         items.append(
             (script.encounter_id, reference_document(script), reference_tail_start(script))
         )
-    for held_out in HELD_OUT_SETS:
+    for held_out in _seen_held_out_sets():
         for path in held_out.script_paths():
             script = load_script(path)
             case = cases[script.encounter_id]
@@ -577,6 +587,8 @@ class TestVocabularyRule4:
         without the axis and every axis negative stays None) and 35
         positives. The widening changed nine held-out boundaries (the dated
         record) and none of the 50's; 16 positives still diverge."""
+        seen_sets = [held_out.name for held_out in _seen_held_out_sets()]
+        assert seen_sets == ["heldout", "heldout-2", "heldout-3"]
         items = _seen_items()
         today = {
             item_id: next_patient_boundary(document, validation_config)

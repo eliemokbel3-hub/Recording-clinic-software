@@ -110,9 +110,10 @@ REGISTER_CELL_PATTERNS = {
     # id); a kept recording measured in the smoke is the "smoke" stage, and a
     # real consultation's encounter is "—".
     "Stage": r"validation|smoke|shadow|reviewed|everyday|other",
-    # The synthetic ids of the 50 scripts and the three held-out sets
-    # (validation run 6's register update, plan-validation-run6.md P.3).
-    "Encounter": r"(?:syn|hld|h2|h3)-[0-9]{2,}|—",
+    # The synthetic ids of the 50 scripts and the four held-out sets
+    # (validation run 6's register update, plan-validation-run6.md P.3;
+    # ``h4-`` since plan-validation-run7.md Task 0.5).
+    "Encounter": r"(?:syn|hld|h2|h3|h4)-[0-9]{2,}|—",
     "Severity": r"high|medium|low",
     "Category": (
         r"wrong-side|wrong-dose|negation-flipped|patient-speculation|cross-patient"
@@ -198,6 +199,16 @@ class TestPilotDocuments:
             text = path.read_text(encoding="utf-8")
             assert _ID_SHAPED.findall(text) == [], path.name
 
+    def test_no_lone_carriage_return_in_any_pilot_document(self) -> None:
+        """Validation-run7 Task 0.5 review round 12: a Windows path written
+        through a non-raw string left two raw carriage returns in the README
+        (``\\r`` of ``\\rules``). Read as bytes, since text mode turns a lone
+        one into a newline; a CRLF line end (a Windows checkout) passes."""
+        lone = re.compile(rb"\r(?!\n)")
+        for path in sorted(PILOT.glob("*.md")):
+            assert lone.search(path.read_bytes()) is None, path.name
+        assert lone.search(b"validation\rules") and not lone.search(b"one\r\ntwo\n")
+
     def test_no_column_invites_clinical_content(self) -> None:
         for path in (TEMPLATE, REGISTER):
             for table in _tables(path):
@@ -282,7 +293,7 @@ class TestFindingsRegister:
         }
         assert all(re.fullmatch(REGISTER_CELL_PATTERNS[k], v) for k, v in good.items())
         assert re.fullmatch(REGISTER_CELL_PATTERNS["Stage"], "smoke")
-        for synthetic in ("syn-01", "hld-22", "h2-05", "h3-17"):
+        for synthetic in ("syn-01", "hld-22", "h2-05", "h3-17", "h4-01"):
             assert re.fullmatch(REGISTER_CELL_PATTERNS["Encounter"], synthetic)
         for column, bad in (
             ("Encounter", "Jane Citizen"),
@@ -292,7 +303,7 @@ class TestFindingsRegister:
             ("Closed", "2026-11-02"),
             ("Stage", "role-play"),
             ("Encounter", "rp-01"),
-            ("Encounter", "h4-01"),
+            ("Encounter", "h5-01"),
             ("Encounter", "h3-1"),
             ("Encounter", "k-01"),
         ):

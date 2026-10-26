@@ -64,9 +64,18 @@ jobs:
       # While a blind held-out set is in the tree the conftest refuses a plain
       # pytest (validation-run6 plan C12). The runner keeps pytest's output in
       # a log on the runner and prints only node ids and counts, so no
-      # held-out text reaches this public log; the log is not uploaded.
+      # held-out text reaches this public log; the log is not uploaded. The
+      # blind set is validation/heldout-4 (validation-run7 plan Task 0.5). The
+      # argument only names the log (the child lints every set in the
+      # fixture's table), and the runner refuses a missing folder: until
+      # heldout-4's scripts land (Task 0.8) its folder is absent — git keeps no
+      # empty folder — so the log is named after heldout-3 instead.
       - name: Pytest (through the blind held-out runner)
-        run: python scripts/lint-held-out-set.py validation/heldout-3
+        shell: pwsh
+        run: |
+          $folder = "validation/heldout-4"
+          if (-not (Test-Path -LiteralPath $folder -PathType Container)) { $folder = "validation/heldout-3" }
+          python scripts/lint-held-out-set.py $folder
     # Windows-only marks (DPAPI, SAPI, launcher tests) run for real on this
     # matrix — windows-latest keeps sys.platform == "win32" legs exercised.
 

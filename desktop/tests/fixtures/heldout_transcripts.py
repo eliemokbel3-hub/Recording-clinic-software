@@ -64,7 +64,13 @@ the blind set, was in the table with ``cases_written=False`` until after run
 ``routed_material`` — every material fact on a non-clinician line sits in a
 routed clause. ``script_count`` and ``facts_per_script`` are its brief's
 bounds. While a set with ``cases_written=False`` has a script in the tree,
-the suite runs only through ``scripts/lint-held-out-set.py``; none does now.
+the suite runs only through ``scripts/lint-held-out-set.py``.
+
+Validation-run7 plan Task 0.5 (D6, C12): ``validation/heldout-4`` with
+``h4-``, the next blind set, is in the table with ``cases_written=False``
+(``HELDOUT_4_CASES`` is empty) before its folder exists; it is
+``tails_by_role`` and ``routed_material`` with ``heldout-3``'s bounds (its
+brief is ``heldout-3``'s). Its cases are written in Task P.4, after run 7.
 """
 
 from __future__ import annotations
@@ -762,6 +768,10 @@ HELDOUT_3_CASES: Final[tuple[HeldOutCase, ...]] = (
     ),
 )
 
+# Validation-run7 plan Task 0.5 (D6, C12): the blind fourth set has no case
+# until its Task P.4, after run 7 — its scripts are read by no leg before then.
+HELDOUT_4_CASES: Final[tuple[HeldOutCase, ...]] = ()
+
 
 @dataclass(frozen=True)
 class HeldOutSet:
@@ -807,6 +817,18 @@ HELD_OUT_SETS: Final[tuple[HeldOutSet, ...]] = (
         "heldout-3",
         "h3-",
         HELDOUT_3_CASES,
+        tails_by_role=True,
+        routed_material=True,
+        script_count=(20, 25),
+        facts_per_script=(3, 6),
+    ),
+    # Validation-run7 Task 0.5 (D6): blind until run 7 (C12), its brief
+    # heldout-3's; in the table before its folder exists (Task 0.8).
+    HeldOutSet(
+        "heldout-4",
+        "h4-",
+        HELDOUT_4_CASES,
+        cases_written=False,
         tails_by_role=True,
         routed_material=True,
         script_count=(20, 25),

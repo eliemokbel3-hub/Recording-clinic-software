@@ -85,7 +85,7 @@ CODES: Final[frozenset[str]] = frozenset(
         "render-mismatch",
     }
 )
-_STEM = r"(?:syn|hld|h2|h3)-\d{2}"
+_STEM = r"(?:syn|hld|h2|h3|h4)-\d{2}"
 _SET_NAME = r"(?:heldout(?:-\d{1,2})?|scripts)"
 SET_NAME_RE: Final = re.compile(_SET_NAME)
 PROBLEM_RE: Final = re.compile(

@@ -20,9 +20,10 @@ only.
 
 Validation-run6 plan Task 0.11: the held-out lints run per set over the
 fixture's table (``HELD_OUT_SETS``: ``validation/heldout``,
-``validation/heldout-2`` and, since Task 0.17, ``validation/heldout-3``); a
-set with no scripts yet passes them vacuously, and a set whose cases are not
-yet written gets the script lints only.
+``validation/heldout-2``, since Task 0.17 ``validation/heldout-3`` and, since
+validation-run7 Task 0.5, ``validation/heldout-4``); a set with no scripts yet
+— its folder absent or empty — passes them vacuously, and a set whose cases
+are not yet written gets the script lints only.
 
 Task 0.17 (D16): every lint that reads a held-out script reports through
 content-free problem codes, ``<id>:<code>[:<int>]`` — the id a script stem
@@ -132,7 +133,7 @@ PROBLEM_CODES: Final[frozenset[str]] = frozenset(
         "render-mismatch",
     }
 )
-_STEM = r"(?:syn|hld|h2|h3)-\d{2}"
+_STEM = r"(?:syn|hld|h2|h3|h4)-\d{2}"
 _SET_NAME = r"(?:heldout(?:-\d{1,2})?|scripts)"
 STEM_RE: Final = re.compile(_STEM)
 PROBLEM_RE: Final = re.compile(
@@ -634,7 +635,8 @@ class TestHeldOutScripts:
 
     def test_the_sets_have_distinct_folders_and_prefixes(self) -> None:
         names = [held_out.name for held_out in HELD_OUT_SETS]
-        assert names == ["heldout", "heldout-2", "heldout-3"]
+        assert names == ["heldout", "heldout-2", "heldout-3", "heldout-4"]
+        assert SCRIPT_CASE_PREFIXES == ("hld-", "h2-", "h3-", "h4-")
         assert len(set(SCRIPT_CASE_PREFIXES)) == len(SCRIPT_CASE_PREFIXES)
         for prefix in (*SCRIPT_CASE_PREFIXES, EDGE_CASE_PREFIX):
             others = [p for p in (*SCRIPT_CASE_PREFIXES, EDGE_CASE_PREFIX) if p != prefix]
@@ -643,6 +645,30 @@ class TestHeldOutScripts:
         for held_out in HELD_OUT_SETS:
             assert STEM_RE.fullmatch(f"{held_out.prefix}01"), held_out.name
             assert PROBLEM_RE.fullmatch(f"{held_out.name}:bad-id:0"), held_out.name
+
+    def test_two_sets_take_their_tails_by_role_and_one_is_blind(self) -> None:
+        """Validation-run7 plan Task 0.5 (D6): ``heldout-3`` and
+        ``heldout-4`` are the two ``tails_by_role`` sets, both
+        ``routed_material`` with the same brief's bounds; ``heldout-4`` is the
+        one set whose cases are not written, and holds no case; the R3 table
+        reads the run-of-record set and all four held-out sets."""
+        role_sets = [held_out for held_out in HELD_OUT_SETS if held_out.tails_by_role]
+        assert [held_out.name for held_out in role_sets] == ["heldout-3", "heldout-4"]
+        routed = [held_out.name for held_out in HELD_OUT_SETS if held_out.routed_material]
+        assert routed == ["heldout-3", "heldout-4"]
+        for held_out in role_sets:
+            assert held_out.script_count == (20, 25), held_out.name
+            assert held_out.facts_per_script == (3, 6), held_out.name
+        blind = [held_out.name for held_out in HELD_OUT_SETS if not held_out.cases_written]
+        assert blind == ["heldout-4"]
+        assert held_out_set("heldout-4").all_cases() == ()
+        assert [held_out.name for held_out in _table_sets()] == [
+            "scripts",
+            "heldout",
+            "heldout-2",
+            "heldout-3",
+            "heldout-4",
+        ]
 
     @pytest.mark.parametrize("held_out", HELD_OUT_SETS, ids=_set_name)
     def test_no_held_out_fact_borders_a_repeat_of_its_own_edge_word(
@@ -698,7 +724,8 @@ class TestHeldOutScripts:
     ) -> None:
         """At least ``MIN_HELDOUT`` scripts once a set has any (or its cases
         are written — Task 0.10 authors a set before its cases); Task 0.17
-        (D16): ``heldout-3``'s 20–25 scripts and 3–6 facts per script, read
+        (D16): ``heldout-3``'s 20–25 scripts and 3–6 facts per script (and
+        ``heldout-4``'s, validation-run7 Task 0.5), read
         from the scripts' metadata only. The absent and empty states pass."""
         problems = _codes(held_out, {"facts-out-of-bounds"}) + [
             entry for entry in _set_problems(held_out) if _code(entry) == "size-out-of-bounds"
@@ -1225,9 +1252,13 @@ class TestProblemCodesAreContentFree:
             assert PROBLEM_RE.fullmatch(entry) and _SENTINEL not in entry
 
     def test_the_blind_set_lints_fire(self, tmp_path: Path) -> None:
-        """Round 32 MED-001: the lints that only ``heldout-3`` carries each
-        fire on a synthetic negative (the blind set is never inspected, so a
-        lint that wrongly passed there would go unseen)."""
+        """Round 32 MED-001: the lints a blind set's row turns on — the fact
+        and size bounds, the role tails, and with them the next-patient axis
+        rule every held-out set carries — each fire on a synthetic negative,
+        over a stand-in row with ``heldout-4``'s flags (a blind set is never
+        inspected, so a lint that wrongly passed there would go unseen;
+        ``test_two_sets_take_their_tails_by_role_and_one_is_blind`` pins
+        that the real rows carry those flags)."""
         two_facts = _sentinel_script("h3-11")
         two_facts["facts"] = two_facts["facts"][:2]
         seven_facts = _sentinel_script("h3-12")
@@ -1270,6 +1301,7 @@ class TestProblemCodesAreContentFree:
             "h3-01:load-error:12345",
             f"{_SENTINEL}:load-error",
             "h3-001:load-error",
+            "h5-01:load-error",
             "edge-01:load-error",
             "h3-01:load-error ",
         ):

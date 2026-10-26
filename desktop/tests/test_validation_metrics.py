@@ -1621,7 +1621,8 @@ class TestHedgeCreditAmendment:
 
     @pytest.mark.parametrize(
         "path",
-        # Named sets only (the blind ``heldout-3`` is never read, C12).
+        # Named sets only (written when ``heldout-3`` was blind, C12; the
+        # blind set is ``heldout-4`` since validation-run7 Task 0.5).
         [
             path
             for name in ("heldout", "heldout-2")

@@ -76,10 +76,22 @@ class TestGrammar:
 
     @pytest.mark.parametrize(
         "entry",
-        ["h3-01:fact-unrouted", "h3-01:fact-unrouted:9999", "heldout-3:size-out-of-bounds:30"],
+        [
+            "h3-01:fact-unrouted",
+            "h3-01:fact-unrouted:9999",
+            "heldout-3:size-out-of-bounds:30",
+            "h4-01:fact-unrouted",
+            "heldout-4:size-out-of-bounds:19",
+        ],
     )
     def test_a_grammar_entry_is_valid(self, entry: str) -> None:
         assert plugin.valid_problems([entry]) == [entry]
+
+    def test_no_fifth_set_id_is_in_the_grammar(self) -> None:
+        # Validation-run7 Task 0.5: h4- joined the grammar; h5- is not in it.
+        assert plugin.valid_problems(["h5-01:fact-unrouted"]) is None
+        assert plugin.safe_node_id("tests/t.py::test_a[h5-01]", 3) == "tests/t.py::test_a[#3]"
+        assert plugin.safe_node_id("tests/t.py::test_a[h4-01]", 3) == "tests/t.py::test_a[h4-01]"
 
     @pytest.mark.parametrize(
         "value",
@@ -437,10 +449,12 @@ class TestBlindRunGuard:
         assert not lint_runner_active(manager(SimpleNamespace(RUNNER_GUARD=checked)))
         assert lint_runner_active(manager(SimpleNamespace(RUNNER_GUARD=checked), checked))
 
-    def test_no_set_is_blind_since_heldout_3_s_cases(self) -> None:
+    def test_heldout_4_is_the_one_blind_set(self) -> None:
         # Validation-run6 plan Task P.4 (2026-10-25): heldout-3's cases were
-        # written after run 6, so no set is blind; a new blind set is a pin change.
-        assert [s.name for s in HELD_OUT_SETS if not s.cases_written] == []
+        # written after run 6 (no set was blind until validation-run7 Task
+        # 0.5 put heldout-4 in the table, its cases unwritten until its P.4);
+        # another blind set is a pin change.
+        assert [s.name for s in HELD_OUT_SETS if not s.cases_written] == ["heldout-4"]
 
 
 class TestRunnerChecks:
