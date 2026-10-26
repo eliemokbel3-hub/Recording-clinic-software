@@ -357,8 +357,31 @@ class TestNewConsultationRule:
         assert NEW_CONSULTATION_WINDOWS == 3
         assert CLOSING_PHRASES is consultation_phrases.CLOSING_PHRASES
         assert GREETING_PHRASES is consultation_phrases.GREETING_PHRASES
-        assert len(CLOSING_PHRASES) == 14
-        assert len(GREETING_PHRASES) == 12
+        # 14 / 12 until validation-run7 Task 0.4 (c)'s dated widening (2026-10-26).
+        assert len(CLOSING_PHRASES) == 30
+        assert len(GREETING_PHRASES) == 26
+
+    @pytest.mark.parametrize(
+        "parts, warns",
+        [
+            # An accepted pair of Task 0.4 (c), one window apart.
+            ([("Thank you, see ya.", 1.0), ("How's it going?", 5.0)], True),
+            ([("Catch you later.", 1.0), ("What can I do for you today?", 5.0)], True),
+            # Disclosed (the threat model's HANDS-FREE AND WARNINGS): three
+            # greetings hold the closing "see you", so a greeting that holds
+            # it, then another greeting, warns live — the warning never acts.
+            ([("Nice to see you, come on in.", 1.0)], True),
+            ([("Good to see you.", 1.0), ("How are you doing?", 5.0)], True),
+            # ...and the same greeting alone, or after the other, does not.
+            ([("Nice to see you.", 1.0)], False),
+            ([("Come on in.", 1.0), ("Nice to see you.", 5.0)], False),
+        ],
+    )
+    def test_the_widened_lists_warn_live(
+        self, parts: list[tuple[str, float]], warns: bool
+    ) -> None:
+        watcher = NewConsultationWatcher()
+        assert any(watcher.feed(_window(part)) for part in parts) is warns
 
     def test_a_goodbye_then_a_greeting_warns_once(self) -> None:
         watcher = NewConsultationWatcher()
@@ -404,9 +427,16 @@ class TestNewConsultationRule:
         assert not any(watcher.feed(_window(part)) for part in parts)
 
     def test_a_suspect_closing_or_greeting_does_not_warn(self) -> None:
-        """Invented-text guard D6 (Task 2.4)."""
+        """Invented-text guard D6 (Task 2.4). The suspect word is one EVERY
+        listed closing inside the line needs: since validation-run7 Task 0.4
+        (c) (2026-10-26) "see you" is a closing of its own, so a suspect
+        "week" leaves it whole and the line still warns (pinned below)."""
         closing = NewConsultationWatcher()
         assert not closing.feed(
+            (_suspect_say("see you next week", 1.0, (1,)), _say("good morning", 9.0))
+        )
+        shorter = NewConsultationWatcher()
+        assert shorter.feed(
             (_suspect_say("see you next week", 1.0, (3,)), _say("good morning", 9.0))
         )
         greeting = NewConsultationWatcher()

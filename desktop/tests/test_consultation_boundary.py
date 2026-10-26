@@ -13,9 +13,13 @@ What is pinned here:
   and a closing in the window (the same-segment pairing — dated on D2 and
   Task 1.1);
 - the held-out transcript fixtures (Task 0.9), read as Task 0.9 says: every
-  case equals its expectation EXCEPT Task 0.10's seven predicted boundary
-  divergences, each asserted to DIVERGE — the frozen-list result and the
-  case's expected value both named here (C3: no expectation is edited);
+  case equals its expectation EXCEPT the recorded boundary divergences, each
+  asserted to DIVERGE — the lists' result and the case's expected value both
+  named here (C3: no expectation is edited); since validation-run7 Task 0.4
+  (c) (2026-10-26) the cases the widened lists changed are a dated record
+  asserted both ways, and D2 rule 4 (no cut on a seen negative, none earlier
+  than a positive's expected boundary, no lost match) is a test over every
+  seen script under both lists;
 - D3: the request cut keeps absolute indices and the whole document's
   digest, the proposals ignore a trigger or region keyword after the
   boundary, Check 3 still reads the whole transcript, and the request cut,
@@ -39,17 +43,22 @@ import pytest
 
 from fixtures.heldout_transcripts import (
     HELD_OUT_CASES,
+    HELD_OUT_SETS,
     HeldOutCase,
     Turn,
     build_document,
     by_case,
+    held_out_set,
     misfiled,
 )
-from scribe_desktop import note_fill
+from scribe_desktop import consultation_phrases, note_fill
 from scribe_desktop.consultation_phrases import (
     BOUNDARY_SEGMENTS,
+    CLOSING_PHRASES,
+    GREETING_PHRASES,
     consultation_boundary,
     phrase_events,
+    phrase_tokens,
     word_tokens,
 )
 from scribe_desktop.note import (
@@ -88,6 +97,7 @@ from scribe_desktop.note_fill import (
 )
 from scribe_desktop.speaker_eval import CLINICIAN_LABEL
 from scribe_desktop.transcription import TranscriptDocument
+from scribe_desktop.validation import load_script, reference_document, reference_tail_start
 from scribe_desktop.voice_commands import NewConsultationWatcher
 
 REPO: Final = Path(__file__).resolve().parents[2]
@@ -108,42 +118,60 @@ _TAIL: Final = Turn(_N, "My hip is sore again.")
 # held-out set -> case id -> (the case's expected boundary, the frozen-list
 # result). Each is asserted BOTH ways below, so a later vocabulary decision
 # shows here. Keyed per set since validation-run6 Task 0.11; ``heldout-2``'s
-# entries were written in its Task 0.12 (2026-10-24).
+# entries were written in its Task 0.12 (2026-10-24). Since validation-run7
+# Task 0.4 (c) (2026-10-26) the result is under the widened lists: the cases
+# the widening fixed left for ``_BOUNDARY_PREDICTIONS_BEFORE_RUN7_0_4``, and
+# an entry it changed keeps its earlier value there.
 _PREDICTED_BOUNDARY_DIVERGENCES_BY_SET: Final[
     dict[str, dict[str, tuple[int | None, int | None]]]
 ] = {
     "heldout": {
         "hld-09": (5, None),  # its greeting is not in the frozen greeting list
         "hld-10": (4, 5),  # the next patient's greeting is unlisted; a listed one follows
-        "hld-11": (4, None),  # a bare time-of-day greeting (excluded by D2's vocabulary rule)
         "hld-12": (5, None),  # a bare time-of-day greeting
         "hld-14": (5, None),  # a greeting phrase D2's vocabulary rule excludes
-        "edge-greeting-third-segment": (5, None),  # its closing is not a frozen closing
-        "edge-second-sentence-greeting": (3, None),  # its closing is not a frozen closing
     },
     # Task 0.12 (2026-10-24), read off the product before run 6.
     "heldout-2": {
         "h2-01": (13, None),  # its greeting is not in the frozen greeting list
-        "h2-05": (12, None),  # its closing is not a frozen closing
-        "h2-07": (10, None),  # neither its closing nor its greeting is listed
-        "h2-09": (9, None),  # its closing is not a frozen closing
-        "h2-14": (8, None),  # neither is listed; its "hello" opens no sentence
-        "h2-22": (10, None),  # an unlisted closing; a bare time-of-day greeting
+        "h2-07": (10, None),  # its closing holds "see you" (listed 2026-10-26); its greeting not
+        # Re-valued by Task 0.4 (c): its closing holds "see you"; 8's "hello"
+        # opens no sentence, so the cut is the one-word "Hello!" of 9 — later.
+        "h2-14": (8, 9),
+        "h2-22": (10, None),  # closing holds "see you" (2026-10-26); bare time-of-day greeting
     },
     # Task P.4 (2026-10-25), read off the product after run 6.
     "heldout-3": {
-        "h3-02": (9, None),  # its closing is not a frozen closing
         "h3-09": (5, None),  # its greeting is not in the frozen greeting list
-        "h3-10": (12, None),  # neither its closing nor its greeting is listed
+        "h3-10": (12, None),  # its closing holds "see you" (2026-10-26); its greeting not
         "h3-11": (10, None),  # neither its closing nor its greeting is listed
-        "h3-12": (10, None),  # its closing is not a frozen closing
-        "h3-13": (9, None),  # neither its closing nor its greeting is listed
+        "h3-13": (9, None),  # its closing holds "see you" (2026-10-26); its greeting not
         "h3-17": (7, None),  # neither is listed; the greeting is by name
-        "h3-18": (8, None),  # its closing is not a frozen closing
         "h3-20": (7, None),  # a bare time-of-day greeting
     },
 }
 _PREDICTED_BOUNDARY_DIVERGENCES: Final = by_case(_PREDICTED_BOUNDARY_DIVERGENCES_BY_SET)
+
+# Validation-run7 plan Task 0.4 (c) (2026-10-26), the dated record: case id
+# -> (its expected boundary, the result under the 2026-09-28 lists), for each
+# held-out case the widened lists changed — eight now match their expected
+# boundary, and ``h2-14`` still diverges, later (D2 rule 4 admits it). History
+# only: no expectation was edited (C2, C3).
+_BOUNDARY_PREDICTIONS_BEFORE_RUN7_0_4: Final[dict[str, tuple[int | None, int | None]]] = {
+    "hld-11": (4, None),
+    "edge-greeting-third-segment": (5, None),
+    "edge-second-sentence-greeting": (3, None),
+    "h2-05": (12, None),
+    "h2-09": (9, None),
+    "h2-14": (8, None),
+    "h3-02": (9, None),
+    "h3-12": (10, None),
+    "h3-18": (8, None),
+}
+# How many phrases each list held on 2026-09-28: the widening APPENDED, so the
+# lists' heads are the old lists (``test_vocabulary.py`` pins both halves).
+_CLOSINGS_BEFORE_RUN7_0_4: Final = 14
+_GREETINGS_BEFORE_RUN7_0_4: Final = 12
 
 
 @pytest.fixture(scope="module")
@@ -155,6 +183,22 @@ def validation_config() -> NoteConfig:
 
 def _boundary(turns: tuple[Turn, ...], config: NoteConfig) -> int | None:
     return next_patient_boundary(build_document(turns), config)
+
+
+def _use_the_2026_09_28_lists(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The boundary and the live watcher read the lists as the leaf module's
+    token tuples; these become the lists' 2026-09-28 heads until
+    ``monkeypatch.undo()``."""
+    monkeypatch.setattr(
+        consultation_phrases,
+        "_CLOSINGS",
+        tuple(tuple(phrase_tokens(p)) for p in CLOSING_PHRASES[:_CLOSINGS_BEFORE_RUN7_0_4]),
+    )
+    monkeypatch.setattr(
+        consultation_phrases,
+        "_GREETINGS",
+        tuple(tuple(phrase_tokens(p)) for p in GREETING_PHRASES[:_GREETINGS_BEFORE_RUN7_0_4]),
+    )
 
 
 def _suspect(document: TranscriptDocument, *indices: int) -> TranscriptDocument:
@@ -383,12 +427,62 @@ class TestHeldOutBoundaries:
         else:
             assert got == case.boundary
 
-    def test_the_divergences_are_exactly_task_0_10s_seven(self) -> None:
+    def test_the_divergence_counts_are_pinned_per_set(self) -> None:
         assert misfiled(_PREDICTED_BOUNDARY_DIVERGENCES_BY_SET) == []
         counts = {
             name: len(cases) for name, cases in _PREDICTED_BOUNDARY_DIVERGENCES_BY_SET.items()
         }
-        assert counts == {"heldout": 7, "heldout-2": 6, "heldout-3": 9}
+        # 7 / 6 / 9 until validation-run7 Task 0.4 (c) (2026-10-26).
+        assert counts == {"heldout": 4, "heldout-2": 4, "heldout-3": 6}
+
+    def test_the_widened_lists_changed_these_predictions_and_no_expectation(
+        self, validation_config: NoteConfig, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Validation-run7 plan Task 0.4 (c), both ways (the 0.3.4 Task 0.9
+        precedent): the dated record is EXACTLY the held-out cases whose
+        boundary under the 2026-09-28 lists differs from today's, each with
+        its 2026-09-28 result; under those lists every one diverged, and
+        today each matches its expected boundary or is today's recorded
+        divergence. The case's expectation is unchanged (C2, C3)."""
+        today = {
+            case.case_id: next_patient_boundary(case.document(), validation_config)
+            for case in HELD_OUT_CASES
+        }
+        _use_the_2026_09_28_lists(monkeypatch)
+        before = {
+            case.case_id: next_patient_boundary(case.document(), validation_config)
+            for case in HELD_OUT_CASES
+        }
+        monkeypatch.undo()
+        cases = {case.case_id: case for case in HELD_OUT_CASES}
+        changed = {
+            case_id: (cases[case_id].boundary, before[case_id])
+            for case_id in cases
+            if before[case_id] != today[case_id]
+        }
+        assert changed == _BOUNDARY_PREDICTIONS_BEFORE_RUN7_0_4
+        assert len(changed) == 9
+        resolved = []
+        # Read off the RECORD, so each expectation is checked against the
+        # fixture rather than against a value copied from it above.
+        for case_id, (expected, result_2026_09_28) in _BOUNDARY_PREDICTIONS_BEFORE_RUN7_0_4.items():
+            assert cases[case_id].boundary == expected, case_id
+            assert before[case_id] == result_2026_09_28 != expected, case_id  # it diverged then
+            got = today[case_id]
+            if case_id in _PREDICTED_BOUNDARY_DIVERGENCES:
+                assert _PREDICTED_BOUNDARY_DIVERGENCES[case_id] == (expected, got), case_id
+            else:
+                assert got == expected, case_id
+                resolved.append(case_id)
+        assert len(resolved) == 8
+        assert set(changed) - set(resolved) == {"h2-14"}
+        # The undo restored today's lists: the boundary reads them again.
+        assert consultation_phrases._CLOSINGS == tuple(
+            tuple(phrase_tokens(p)) for p in CLOSING_PHRASES
+        )
+        assert consultation_phrases._GREETINGS == tuple(
+            tuple(phrase_tokens(p)) for p in GREETING_PHRASES
+        )
 
     @pytest.mark.parametrize("case", HELD_OUT_CASES, ids=_case_id)
     def test_a_boundary_is_always_a_spoken_segment(
@@ -399,6 +493,207 @@ class TestHeldOutBoundaries:
         if got is not None:
             words = document.transcript_segments[got].transcript_words
             assert any(word.word_text.strip() for word in words)
+
+
+# --- validation-run7 D2 rule 4: the synthetic false-cut filter ----------------------
+
+_RUN_OF_RECORD_SCRIPTS: Final = REPO / "validation" / "scripts"
+
+
+def _rule_4_problem(
+    before: int | None, after: int | None, expected: int | None
+) -> str | None:
+    """Validation-run7 plan D2 rule 4 on one seen script or case: its
+    boundary under the 2026-09-28 lists (``before``) and under today's
+    (``after``) against its expected boundary b (``expected``; None for an
+    axis negative or a script without the axis). A cut on a negative, a cut
+    EARLIER than b and a lost match (later, or None) each reject; a positive
+    that diverged before and still diverges, later than b or None, is
+    admitted. None when the item passes."""
+    if expected is None:
+        return None if after is None else "false-cut"
+    if after is not None and after < expected:
+        return "earlier"
+    if before == expected and after != expected:
+        return "lost-match"
+    return None
+
+
+def _seen_items() -> list[tuple[str, TranscriptDocument, int | None]]:
+    """Every seen item as (id, reference document, b): the reference
+    document of every script of the four seen sets — b is
+    ``reference_tail_start`` for the 50 and the case's ``boundary`` for the
+    three held-out sets, never a role tail (peer round 4 PR-MED-011) — then
+    the held-out sets' explicit-turn edge cases (b their ``boundary``)."""
+    cases = {case.case_id: case for case in HELD_OUT_CASES}
+    items: list[tuple[str, TranscriptDocument, int | None]] = []
+    for path in sorted(_RUN_OF_RECORD_SCRIPTS.glob("*.json")):
+        script = load_script(path)
+        items.append(
+            (script.encounter_id, reference_document(script), reference_tail_start(script))
+        )
+    for held_out in HELD_OUT_SETS:
+        for path in held_out.script_paths():
+            script = load_script(path)
+            case = cases[script.encounter_id]
+            items.append((script.encounter_id, reference_document(script), case.boundary))
+        for case in held_out.edge_cases:
+            items.append((case.case_id, case.document(), case.boundary))
+    return items
+
+
+class TestVocabularyRule4:
+    """Validation-run7 plan D2 rule 4 as a test (Task 0.4 (c)): no phrase of
+    the widening cuts a seen negative, cuts a seen positive earlier than its
+    expected boundary, or loses a positive's match."""
+
+    @pytest.mark.parametrize(
+        ("before", "after", "expected", "problem"),
+        [
+            (None, None, None, None),  # a negative stays uncut
+            (None, 3, None, "false-cut"),
+            (3, 3, None, "false-cut"),
+            (9, 9, 9, None),  # a match kept
+            (None, 9, 9, None),  # a divergence fixed
+            (None, None, 9, None),  # still diverging, uncut: admitted
+            (None, 10, 9, None),  # still diverging, later: admitted (h2-14's shape)
+            (10, 11, 9, None),
+            (None, 8, 9, "earlier"),
+            (9, 8, 9, "earlier"),
+            (9, 10, 9, "lost-match"),
+            (9, None, 9, "lost-match"),
+        ],
+    )
+    def test_the_rule_both_ways(
+        self, before: int | None, after: int | None, expected: int | None, problem: str | None
+    ) -> None:
+        assert _rule_4_problem(before, after, expected) == problem
+
+    def test_no_seen_script_breaks_rule_4(
+        self, validation_config: NoteConfig, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Over the 127 seen items recorded on Task 0.4 (b): the 50, every
+        held-out script and the edge cases — 92 negatives (every script
+        without the axis and every axis negative stays None) and 35
+        positives. The widening changed nine held-out boundaries (the dated
+        record) and none of the 50's; 16 positives still diverge."""
+        items = _seen_items()
+        today = {
+            item_id: next_patient_boundary(document, validation_config)
+            for item_id, document, _expected in items
+        }
+        _use_the_2026_09_28_lists(monkeypatch)
+        before = {
+            item_id: next_patient_boundary(document, validation_config)
+            for item_id, document, _expected in items
+        }
+        monkeypatch.undo()
+        expected = {item_id: b for item_id, _document, b in items}
+        problems = {
+            item_id: problem
+            for item_id in expected
+            if (problem := _rule_4_problem(before[item_id], today[item_id], expected[item_id]))
+        }
+        assert problems == {}
+        assert len(items) == len(expected) == 127
+        negatives = [item_id for item_id, b in expected.items() if b is None]
+        assert (len(negatives), len(expected) - len(negatives)) == (92, 35)
+        changed = {item_id for item_id in expected if before[item_id] != today[item_id]}
+        assert changed == set(_BOUNDARY_PREDICTIONS_BEFORE_RUN7_0_4)
+        still_divergent = {
+            item_id
+            for item_id, b in expected.items()
+            if b is not None and today[item_id] != b
+        }
+        assert still_divergent == {"syn-38", "syn-46", *_PREDICTED_BOUNDARY_DIVERGENCES}
+        assert len(still_divergent) == 16
+
+    @pytest.mark.parametrize(
+        ("turns", "before", "after"),
+        [
+            # A greeting alone, mid-visit (someone joins the room): it holds
+            # the closing "see you" before "come on in", so the same-segment
+            # pairing cuts at the NEXT segment — no goodbye was said.
+            ((_CONTENT, Turn(_C, "Oh, nice to see you, come on in."), _TAIL), None, 2),
+            # ...and as the window's closing for a later greeting.
+            (
+                (
+                    _CONTENT,
+                    Turn(_C, "It's nice to see you walking without the crutch."),
+                    Turn(_C, "How are you doing with the exercises?"),
+                    _TAIL,
+                ),
+                None,
+                2,
+            ),
+            # A real next patient greeted that way: the same-segment pairing
+            # wins over the window's closing, so the cut is one segment LATER
+            # and the greeting line stays in the note (toward inclusion).
+            (
+                (
+                    _CONTENT,
+                    _CLOSING,
+                    Turn(_N, "Nice to see you, come on in, what can I do for you today?"),
+                    _TAIL,
+                ),
+                2,
+                3,
+            ),
+        ],
+    )
+    def test_the_greetings_that_hold_see_you_are_disclosed(
+        self,
+        turns: tuple[Turn, ...],
+        before: int | None,
+        after: int | None,
+        validation_config: NoteConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Rule 4 found none of these on a seen script; they are properties of
+        the accepted lists, named in the threat model's NEXT PATIENT residues
+        (b) and (c), pinned here under both lists."""
+        assert _boundary(turns, validation_config) == after
+        _use_the_2026_09_28_lists(monkeypatch)
+        assert _boundary(turns, validation_config) == before
+
+    def test_a_typographic_apostrophe_can_move_the_cut_either_way(
+        self, validation_config: NoteConfig
+    ) -> None:
+        """The threat model's NEXT PATIENT residue (a): a missed apostrophe
+        greeting can flip the same-segment pairing to the window pairing —
+        one segment EARLIER — or leave a later greeting to pair — any number
+        of segments LATER."""
+        plain = (_CONTENT, Turn(_C, "Thank you."), Turn(_C, "Nice to see you, what's new?"), _TAIL)
+        typographic = (*plain[:2], Turn(_C, "Nice to see you, what’s new?"), _TAIL)
+        assert _boundary(plain, validation_config) == 3
+        assert _boundary(typographic, validation_config) == 2
+        later = (
+            _CONTENT,
+            Turn(_C, "Thank you."),
+            Turn(_C, "What's new?"),
+            Turn(_P, "Not much."),
+            Turn(_C, "Come on in."),
+            _TAIL,
+        )
+        assert _boundary(later, validation_config) == 2
+        assert _boundary(
+            (*later[:2], Turn(_C, "What’s new?"), *later[3:]), validation_config
+        ) == 4
+
+    def test_a_cut_at_h3_02s_boundary_is_not_earlier_than_b(
+        self, validation_config: NoteConfig
+    ) -> None:
+        """Peer round 4 PR-MED-011: b for a held-out set is the case's
+        boundary, never the role tail. ``h3-02``'s cut at its boundary 9,
+        one before its role tail 10, is accepted; read against the tail it
+        would be "earlier"."""
+        script = load_script(held_out_set("heldout-3").folder / "h3-02.json")
+        (case,) = (c for c in HELD_OUT_CASES if c.case_id == "h3-02")
+        assert (case.boundary, reference_tail_start(script)) == (9, 10)
+        got = next_patient_boundary(reference_document(script), validation_config)
+        assert got == 9
+        assert _rule_4_problem(None, got, case.boundary) is None
+        assert _rule_4_problem(None, got, reference_tail_start(script)) == "earlier"
 
 
 # --- D3: the request cut, the proposals, Check 3 ------------------------------------

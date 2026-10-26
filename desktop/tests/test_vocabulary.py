@@ -3,7 +3,8 @@
 Every list the plan freezes is pinned EXACTLY here, in one file, so a change
 to any of them — a new dated decision with a repeated validation run — is a
 change to this file too: the consultation phrases (moved unchanged from
-``voice_commands`` into the leaf module ``consultation_phrases``, D1), the
+``voice_commands`` into the leaf module ``consultation_phrases``, D1; widened
+once, by validation-run7 Task 0.4 (c) on 2026-10-26), the
 boundary's look-back (D1), the self-correction markers (D4) and the spoken
 hedges (D7). Near misses of the existing words are pinned at phrase level
 here and through the live watcher in ``test_hands_free.py``."""
@@ -44,41 +45,184 @@ def _occurrences(text: str, phrases: tuple[str, ...]) -> int:
     return count
 
 
+# The lists the safeguards plan shipped on 2026-09-28, moved unchanged from
+# ``voice_commands`` (decision 0.2 (a)) — frozen history, and each list's head.
+_CLOSINGS_2026_09_28: tuple[str, ...] = (
+    "see you next week",
+    "see you next time",
+    "see you soon",
+    "see you then",
+    "take care",
+    "all the best",
+    "goodbye",
+    "bye",
+    "thanks for coming in",
+    "thank you for coming in",
+    "have a good day",
+    "have a nice day",
+    "have a great day",
+    "have a good weekend",
+)
+_GREETINGS_2026_09_28: tuple[str, ...] = (
+    "hello",
+    "hi there",
+    "good morning",
+    "good afternoon",
+    "good evening",
+    "nice to meet you",
+    "come on in",
+    "take a seat",
+    "have a seat",
+    "what brings you in",
+    "what brings you here",
+    "how have you been",
+)
+# Validation-run7 plan Task 0.4 (c) (2026-10-26, D2): the accepted widening,
+# in proposal order, appended to each list.
+_CLOSINGS_ADDED_RUN7_0_4: tuple[str, ...] = (
+    "bye bye",
+    "thank you",
+    "is there anything else",
+    "any other questions",
+    "come back and see me",
+    "i'll see you next week",
+    "see you",
+    "see you later",
+    "nice talking to you",
+    "bye for now",
+    "see ya",
+    "see ya later",
+    "catch you later",
+    "ta ta",
+    "cheers mate",
+    "look after yourself",
+)
+_GREETINGS_ADDED_RUN7_0_4: tuple[str, ...] = (
+    "hi how are you",
+    "what can i do for you",
+    "what can i do for you today",
+    "what brings you in today",
+    "what's new",
+    "how can i help",
+    "how can i help you today",
+    "how are you doing",
+    "how's it going",
+    "nice to see you",
+    "good to see you",
+    "nice to see you again",
+    "pleased to meet you",
+    "g'day mate",
+)
+# Each added phrase, a line holding it and a neighbouring line holding no
+# phrase of either list (Task 0.4 (c), the 0.3.4 Task 0.9 shape).
+_ADDED_PHRASE_CASES: list[tuple[str, str, str]] = [
+    ("bye bye", "Okay, bye bye.", "Buy a brace and wear it."),
+    ("thank you", "Thank you, that helps.", "Thanks, that helps."),
+    ("is there anything else", "Is there anything else today?", "Is there any swelling?"),
+    ("any other questions", "Any other questions for me?", "Any other pain at night?"),
+    ("come back and see me", "Come back and see me in a month.", "Come back to lying down."),
+    (
+        "i'll see you next week",
+        "Great, I'll see you next week.",
+        "I'll send you the exercises next week.",
+    ),
+    ("see you", "Okay, see you.", "I can see your knee is swollen."),
+    ("see you later", "See you later, then.", "We'll see, later on."),
+    ("nice talking to you", "It was nice talking to you.", "Talking to you helps."),
+    ("bye for now", "Bye for now.", "Stand by for now."),
+    ("see ya", "See ya, mate.", "Say yeah if it hurts."),
+    ("see ya later", "See ya later.", "See the GP later."),
+    ("catch you later", "Catch you later.", "Catch your breath."),
+    ("ta ta", "Ta ta, take it easy.", "Ta, that helps."),
+    ("cheers mate", "Cheers mate, all good.", "Cheers, the brace fits."),
+    ("look after yourself", "Look after yourself.", "Look after your knee."),
+    ("hi how are you", "Hi, how are you?", "How are you sleeping?"),
+    ("what can i do for you", "So, what can I do for you?", "What can I do for the pain?"),
+    ("what can i do for you today", "What can I do for you today?", "What can I do today?"),
+    ("what brings you in today", "What brings you in today?", "What brings the pain on today?"),
+    ("what's new", "Hi, what's new?", "What's the new brace like?"),
+    ("how can i help", "How can I help?", "How can I hold it?"),
+    ("how can i help you today", "How can I help you today?", "How can you help me today?"),
+    ("how are you doing", "How are you doing?", "How are you holding up?"),
+    ("how's it going", "How's it going?", "How's it feeling?"),
+    ("nice to see you", "Nice to see you.", "Nice to sit down."),
+    ("good to see you", "Good to see you.", "Good to sit down."),
+    ("nice to see you again", "Nice to see you again.", "Nice to stand again."),
+    ("pleased to meet you", "Pleased to meet you.", "Pleased to hear it."),
+    ("g'day mate", "G'day mate, come through.", "G'day."),
+]
+
+
 class TestConsultationPhrases:
     def test_the_lists_are_pinned_exactly(self) -> None:
-        """Moved unchanged from ``voice_commands`` (decision 0.2 (a))."""
-        assert CLOSING_PHRASES == (
-            "see you next week",
-            "see you next time",
-            "see you soon",
-            "see you then",
-            "take care",
-            "all the best",
-            "goodbye",
-            "bye",
-            "thanks for coming in",
-            "thank you for coming in",
-            "have a good day",
-            "have a nice day",
-            "have a great day",
-            "have a good weekend",
-        )
-        assert GREETING_PHRASES == (
-            "hello",
-            "hi there",
-            "good morning",
-            "good afternoon",
-            "good evening",
-            "nice to meet you",
-            "come on in",
-            "take a seat",
-            "have a seat",
-            "what brings you in",
-            "what brings you here",
-            "how have you been",
-        )
-        assert len(CLOSING_PHRASES) == 14
-        assert len(GREETING_PHRASES) == 12
+        """The 2026-09-28 lists (decision 0.2 (a)), then validation-run7
+        Task 0.4 (c)'s dated widening (2026-10-26) — 14 + 16 closings and
+        12 + 14 greetings."""
+        assert CLOSING_PHRASES == _CLOSINGS_2026_09_28 + _CLOSINGS_ADDED_RUN7_0_4
+        assert GREETING_PHRASES == _GREETINGS_2026_09_28 + _GREETINGS_ADDED_RUN7_0_4
+        assert (len(_CLOSINGS_2026_09_28), len(_CLOSINGS_ADDED_RUN7_0_4)) == (14, 16)
+        assert (len(_GREETINGS_2026_09_28), len(_GREETINGS_ADDED_RUN7_0_4)) == (12, 14)
+        assert len(CLOSING_PHRASES) == 30
+        assert len(GREETING_PHRASES) == 26
+
+    def test_no_added_phrase_is_one_word(self) -> None:
+        """D2 rule 2: the live watcher reads every greeting wherever it sits
+        (``positional=False``), so a new one-word phrase of either kind would
+        warn anywhere; the 2026-09-28 one-word phrases are untouched."""
+        added = (*_CLOSINGS_ADDED_RUN7_0_4, *_GREETINGS_ADDED_RUN7_0_4)
+        assert [phrase for phrase in added if len(phrase_tokens(phrase)) < 2] == []
+        one_word = [p for p in (*CLOSING_PHRASES, *GREETING_PHRASES) if len(p.split()) == 1]
+        assert one_word == ["goodbye", "bye", "hello"]
+
+    def test_no_added_phrase_is_a_hedge_or_a_correction_marker(self) -> None:
+        """D2 rule 3 (D3: the hedge lists and the markers are frozen). Rule 3
+        rejected by equality and counted containment (Task 0.4 (b)): none was
+        found, and none is held here — no added phrase holds a hedge,
+        reference hedge or marker as whole tokens in a row."""
+        added = {*_CLOSINGS_ADDED_RUN7_0_4, *_GREETINGS_ADDED_RUN7_0_4}
+        guarded = (*HEDGE_PHRASES, *REFERENCE_HEDGES, *CORRECTION_MARKERS)
+        assert added & set(guarded) == set()
+        assert {phrase for phrase in added if _occurrences(phrase, guarded)} == set()
+
+    def test_the_phrases_held_inside_another_are_recorded(self) -> None:
+        """A phrase inside a longer one (whole tokens, in a row) is an event
+        of its own kind at its own position. Recorded exactly, so a later
+        list change shows here: within each kind, and ACROSS kinds — three
+        greetings hold the closing "see you", so "Nice to see you, come on
+        in" reads, live, as a closing then a greeting (the threat model's
+        HANDS-FREE AND WARNINGS paragraph discloses it)."""
+
+        def inside(longer: str, shorter: str) -> bool:
+            return longer != shorter and _occurrences(longer, (shorter,)) > 0
+
+        def pairs(outer: tuple[str, ...], inner: tuple[str, ...]) -> set[tuple[str, str]]:
+            return {(o, i) for o in outer for i in inner if inside(o, i)}
+
+        assert pairs(CLOSING_PHRASES, CLOSING_PHRASES) == {
+            ("see you next week", "see you"),
+            ("see you next time", "see you"),
+            ("see you soon", "see you"),
+            ("see you then", "see you"),
+            ("thank you for coming in", "thank you"),
+            ("bye bye", "bye"),
+            ("i'll see you next week", "see you next week"),
+            ("i'll see you next week", "see you"),
+            ("see you later", "see you"),
+            ("bye for now", "bye"),
+            ("see ya later", "see ya"),
+        }
+        assert pairs(GREETING_PHRASES, GREETING_PHRASES) == {
+            ("what can i do for you today", "what can i do for you"),
+            ("what brings you in today", "what brings you in"),
+            ("how can i help you today", "how can i help"),
+            ("nice to see you again", "nice to see you"),
+        }
+        assert pairs(GREETING_PHRASES, CLOSING_PHRASES) == {
+            ("nice to see you", "see you"),
+            ("good to see you", "see you"),
+            ("nice to see you again", "see you"),
+        }
+        assert pairs(CLOSING_PHRASES, GREETING_PHRASES) == set()
 
     def test_the_boundary_look_back_is_pinned_apart_from_the_window_budget(self) -> None:
         assert BOUNDARY_SEGMENTS == 3
@@ -148,7 +292,9 @@ class TestConsultationPhrases:
             ("Good morning", 1, 0),
             ("Hi there, come on in", 2, 0),
             ("How have you been?", 1, 0),
-            ("Thank you for coming in, bye", 0, 2),
+            # 3 since validation-run7 Task 0.4 (c) (2026-10-26): "thank you"
+            # is a closing of its own inside "thank you for coming in".
+            ("Thank you for coming in, bye", 0, 3),
         ],
     )
     def test_the_near_misses_twins_do_match(
@@ -156,6 +302,48 @@ class TestConsultationPhrases:
     ) -> None:
         assert _occurrences(text, GREETING_PHRASES) == greetings
         assert _occurrences(text, CLOSING_PHRASES) == closings
+
+    @pytest.mark.parametrize(("phrase", "holding", "near_miss"), _ADDED_PHRASE_CASES)
+    def test_each_task_0_4_phrase_against_its_near_miss(
+        self, phrase: str, holding: str, near_miss: str
+    ) -> None:
+        """Validation-run7 plan Task 0.4 (c), the 0.3.4 Task 0.9 shape: every
+        added phrase is found once in a line holding it, and a neighbouring
+        line matches no phrase of either list (whole tokens, in a row)."""
+        assert _occurrences(holding, (phrase,)) == 1
+        assert _occurrences(near_miss, CLOSING_PHRASES) == 0
+        assert _occurrences(near_miss, GREETING_PHRASES) == 0
+
+    def test_every_added_phrase_has_its_near_miss_case(self) -> None:
+        assert [case[0] for case in _ADDED_PHRASE_CASES] == [
+            *_CLOSINGS_ADDED_RUN7_0_4,
+            *_GREETINGS_ADDED_RUN7_0_4,
+        ]
+
+    @pytest.mark.parametrize(
+        ("text", "typographic", "plain"),
+        [
+            # "see you next week" and "see you" still match inside it.
+            ("I’ll see you next week", 2, 3),
+            ("What’s new?", 0, 1),
+            ("How’s it going?", 0, 1),
+            ("G’day mate", 0, 1),
+        ],
+    )
+    def test_a_typographic_apostrophe_matches_no_apostrophe_phrase(
+        self, text: str, typographic: int, plain: int
+    ) -> None:
+        """A named residue (the threat model's NEXT PATIENT, residue (a)):
+        the phrase tokens fold no apostrophe, so "what’s" is not "what's".
+        The four apostrophe phrases are three greetings and a closing that
+        holds two closings with no apostrophe in them, so the miss is in
+        effect a greeting's — it can move the cut one segment earlier, any
+        number of segments later, or remove it (``test_consultation_boundary.py``
+        pins both directions).
+        The plain apostrophe matches."""
+        everything = (*CLOSING_PHRASES, *GREETING_PHRASES)
+        assert _occurrences(text, everything) == typographic
+        assert _occurrences(text.replace("’", "'"), everything) == plain
 
 
 class TestCorrectionMarkers:

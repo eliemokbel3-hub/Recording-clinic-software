@@ -12,8 +12,9 @@ number lines added 2026-10-12 for version 0.3.2, awaiting the practitioner's app
 next-patient, removing-lines, self-correction and "unsure" lines added 2026-10-13 for
 version 0.3.3, approved by the practitioner on 2026-10-22; the left-out-line, wider-doubt and
 shorter next-patient-mark lines added 2026-10-24 for version 0.3.4, awaiting the
-practitioner's approval). For the practitioner, before saving a note and before finalising
-it in Cliniko.
+practitioner's approval; the longer goodbye-and-greeting list lines added 2026-10-26 for
+version 0.3.5, awaiting the practitioner's approval). For the practitioner, before saving
+a note and before finalising it in Cliniko.
 
 **Why this matters.** Ahpra's guidance on AI in healthcare ("Meeting your professional
 obligations when using AI in healthcare") makes you responsible for checking the accuracy
@@ -120,8 +121,18 @@ where each line came from: the transcript, something you typed, or your own pre-
    goodbye and greeting were part of this consultation — add it back with **Add line to
    section**. If they are another patient's, use **Cancel review and regenerate**, then
    remove them on the Transcript tab. This warning, too, is cleared only by its own
-   Acknowledge. The app recognises only a few common goodbyes and greetings, so a next
-   patient greeted in other words is not caught: check the end of every transcript.
+   Acknowledge. The app recognises only a set list of common goodbyes and greetings, so a
+   next patient greeted in other words is not caught: check the end of every transcript.
+   From version 0.3.5 the list is longer and includes everyday words you may also say
+   during a visit, such as "thank you", "see you" and "how are you doing", so a goodbye
+   and then a greeting within one consultation may stop the note early more often. A
+   single greeting can now do it too: if someone joins you partway through and you say
+   "Oh, nice to see you, come on in", the note may stop there. Add those lines back as
+   above. The warning shown while you record that a new consultation may have started
+   uses the same list, so it can appear more often too — for example after "Nice to see
+   you, come on in" at the start of a visit. It changes nothing by itself, and it
+   appears only once per recording: if it has already appeared, it will not appear
+   again for a later new patient in the same recording.
 6. **Blocking warnings must be fixed** before you can save — for example a symptom the
    transcript negates, or a dose in clear conflict with it. **Review warnings must be
    read and acknowledged** — for example most other dose differences, a left/right

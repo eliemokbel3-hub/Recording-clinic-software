@@ -621,7 +621,9 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     reads live in `consultation_phrases.py` (re-exported by
     `voice_commands`), unchanged, and the note's next-patient boundary reads
     the same lists over the final transcript (flow 10); neither changes what
-    this flow holds. Finish seals capture as before and the TAIL DRAIN
+    this flow holds. The lists were widened once, by the dated vocabulary
+    commit of 2026-10-26 (validation-run7 plan D2, Task 0.4 (c): 30 closings
+    and 26 greetings) — more phrases matched, nothing more held or written. Finish seals capture as before and the TAIL DRAIN
     (the last open span and any queued windows) runs on the processing
     `TaskThread` inside the transcriber callable (`ui/models._live_transcript`
     via `claim_live_transcriber`), never on the GUI thread, and writes

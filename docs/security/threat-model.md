@@ -540,10 +540,19 @@ note inherit exactly that posture.
    punctuation or the segment's end follows it; a closing BEFORE a greeting in
    ONE segment cuts at the next spoken segment, or nowhere when none follows;
    the FIRST such pair wins. The phrase lists are the live new-consultation
-   warning's (14 closings, 12 greetings; HANDS-FREE AND WARNINGS below), moved
-   unchanged into one dated commit and pinned exactly (decision 0.2 (a)), and
-   a word the transcription guard marked suspect supplies no phrase (surface
-   5). Where the boundary is found: the provider's request holds only the
+   warning's (HANDS-FREE AND WARNINGS below): 30 closings and 26 greetings
+   since the dated vocabulary commit of 2026-10-26, shipping in 0.3.5 — the
+   2026-09-28 lists of 14 and 12, moved unchanged into one dated commit in
+   0.3.3 (decision 0.2 (a)), then widened by 16 closings and 14 greetings
+   (validation-run7 plan D2, Task 0.4 (c): proposed by an isolated session
+   that saw no failing script, each attributed — from memory, unchecked — to
+   a named published source family, and kept by
+   mechanical rules written before it ran — no new one-word phrase, no hedge
+   or correction marker, no cue greeting, no false cut on a seen synthetic
+   script or on the kept recordings measured; the record of every phrase
+   class accepted and rejected, with each rule's counts, is on that task) —
+   pinned exactly, and a word the transcription guard marked suspect
+   supplies no phrase (surface 5). Where the boundary is found: the provider's request holds only the
    segments before it (indices stay absolute; the transcript digest stays the
    whole document's), so every provider stops there; autofill and pre-fill
    ignore triggers and keywords after it; and Check 6 `possible_next_patient`
@@ -560,18 +569,43 @@ note inherit exactly that posture.
    back by hand; Check 4's second code stops at the boundary. The
    boundary NEVER deletes anything: only the clinician's confirmed trim does
    (THE TRIM, below). NAMED RESIDUES (next patient): (a) it is a phrase
-   heuristic over two short lists — a next patient greeted, or a consultation
+   heuristic over two lists — a next patient greeted, or a consultation
    closed, in other words gives no boundary, and the lines reach the draft as
-   before 0.3.3 (validation run 4's `syn-38` and `syn-46` are two; the
-   practitioner's own phrases are a later dated amendment); (b) a FALSE
-   boundary — a goodbye then a greeting inside one consultation, such as a
-   phone call or someone arriving at the door — withholds real content behind
-   a review warning only its own Acknowledge clears: the withheld lines are
-   marked in the chooser and their flagged words still raise Check 4, but an
-   uncued line with no flagged word is named by nothing but Check 6's row (a
-   one-click undo is deferred); (c) when the recogniser puts the end of one
-   consultation and the start of the next in ONE segment, the cut falls at the
-   next segment, so that segment's next-patient words stay in the note; (d)
+   before 0.3.3 (validation run 4's `syn-38` and `syn-46` are two, still
+   unlisted after the 2026-10-26 widening; over the reference documents of
+   every seen synthetic script and the held-out edge cases, 16 next-patient
+   cases still miss their expected boundary, 24 before the widening; the
+   practitioner's own phrases are a later dated amendment); the phrase tokens
+   fold no typographic apostrophe, so a transcript writing "What’s new"
+   misses the four apostrophe phrases — in effect three greetings, since the
+   closing among them, "i'll see you next week", holds two closings with no
+   apostrophe in them — and a missed greeting can move the cut one segment
+   EARLIER (a later greeting in its segment lost, a closing before it no
+   longer pairs there and the window pairs at that segment instead), any
+   number of segments later, or remove it (both directions pinned in
+   `tests/test_consultation_boundary.py`); (b) a FALSE boundary — a
+   goodbye then a greeting inside one consultation, such as a phone call or
+   someone arriving at the door — withholds real content behind a review
+   warning only its own Acknowledge clears: the withheld lines are marked in
+   the chooser and their flagged words still raise Check 4, but an uncued line
+   with no flagged word is named by nothing but Check 6's row (a one-click
+   undo is deferred); since the 2026-10-26 widening the lists hold phrases
+   also said mid-visit ("thank you", "see you", "is there anything else", "how
+   are you doing", "what's new"), and three greetings ("nice to see you",
+   "good to see you", "nice to see you again") hold the closing "see you", so
+   ONE greeting line can now make the pair with no goodbye said: someone
+   joining the room mid-visit greeted "Oh, nice to see you, come on in" cuts
+   the note at the next segment, and "It's nice to see you walking" can be
+   the closing for a later "How are you doing with the exercises?" (both
+   pinned) — still only after clinical content; no seen synthetic negative
+   was cut, nor either of the two kept recordings measured (each assumed one
+   patient, the practitioner's decision 2026-10-26): weak evidence; (c) when
+   the recogniser puts the end of one consultation and the start of the next
+   in ONE segment, the cut falls at the next segment, so that segment's
+   next-patient words stay in the note — and since the widening a next
+   patient greeted "Nice to see you, come on in" after a goodbye is cut one
+   segment LATER than before (the greeting's own "see you" pairs in its
+   segment first), so the greeting line stays in the note (pinned); (d)
    the look-back counts recognised segments, not seconds or lines; (e) a real
    greeting or closing the guard wrongly marked suspect gives no boundary
    (toward inclusion); (f) Check 6's coordinates mark the first WITHHELD
@@ -2933,9 +2967,28 @@ The panel shows only warning codes it knows, as text. Since 0.3.3 (the
 validation-pass plan, D1, C7) the SAME lists also decide where a note stops
 (Phase 3A surface 2, NEXT PATIENT): they moved unchanged in one dated commit,
 and a change to them now changes what a note withholds, so it is a new dated
-decision with a repeated validation run (C3). The live warning's behaviour
-is unchanged: live, a greeting counts wherever it sits in a window, while
+decision with a repeated validation run (C3). The live warning's rule is
+unchanged: live, a greeting counts wherever it sits in a window, while
 the note's boundary applies the one-word position rule and counts segments.
+Its VOCABULARY changed once, by the dated commit of 2026-10-26 (validation-run7
+plan D2, Task 0.4 (c); shipping in 0.3.5; that plan's C7: the warning changes
+only by that commit): 14 closings and 12 greetings became 30 and 26, so the
+warning now fires on more goodbye-then-greeting pairs. It still never acts.
+No new phrase is one word (rule 2), because live a one-word greeting would
+count anywhere. Three new greetings ("nice to see you", "good to see you",
+"nice to see you again") hold the new closing "see you", so such a greeting
+followed by another greeting, in the same window or the next three — "Nice
+to see you, come on in" — raises the warning at the START of a
+consultation, where the note's boundary, needing clinical content first,
+cuts nothing (pinned in `tests/test_hands_free.py`; mid-visit the same line
+can cut the note — Phase 3A surface 2, NEXT PATIENT residue (b)). The
+warning is raised ONCE per recording and stays raised until the next Start,
+so an early false warning uses it up: a real next patient later in the same
+recording is then not warned. Its effect on real speech is estimated only: a
+replay of the two kept recordings measured, fed one segment per window — a
+SURROGATE of the live feed, whose windows the replay cannot rebuild — raised
+it on 0 of 2 under the old lists and 0 of 2 under the new; its live
+magnitude is unmeasured.
 RESIDUE: (1) the hotkey is a GLOBAL input: anyone at this Windows session's
 keyboard can press it from any window, and any program of this user can
 send the app's window a `WM_HOTKEY`; either does exactly what the Pause and
@@ -2954,7 +3007,10 @@ does not pause (the hotkey and the buttons remain). A phrase begun within
 about a second of a Resume is ignored (the cutoff's one-chunk margin), and
 Whisper's word times are estimates. (3) The warning is a phrase heuristic: it misses
 consultations that end or begin in other words and can fire on a goodbye
-then a greeting within one consultation — a cue, never a control; the pause
+then a greeting within one consultation (more often since the 2026-10-26
+widening, the greeting that holds "see you" included), and once it has
+fired, falsely or not, it says nothing more until the next Start — a cue,
+never a control; the pause
 rule's patient-change reasons and the practitioner's Finish are the
 controls. The same lists' offline use, the note's next-patient boundary,
 has its own named residues there (Phase 3A surface 2).

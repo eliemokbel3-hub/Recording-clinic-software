@@ -2395,13 +2395,15 @@ class TestResidueR3:
 # The reference reading's scripts (D8, D14): ``next_patient_boundary`` on the
 # script's own words. "On examination" is a shipped cue (the head-case
 # guard's earlier content); the closing and the greeting are frozen phrases.
+# The patient's reply is "Thanks." — since validation-run7 Task 0.4 (c)
+# (2026-10-26) "thank you" is a closing, which would sit in the window.
 _CUED = ("clinician", "On examination the left knee is tender.")
 _BOUNDARY_CASES = {
     "closing two lines before the greeting": (
         (
             _CUED,
             ("clinician", "See you next week."),
-            ("patient", "Thank you."),
+            ("patient", "Thanks."),
             ("clinician", "Good morning, take a seat."),
             ("patient", "My wrist hurts."),
         ),
@@ -2427,7 +2429,7 @@ _BOUNDARY_CASES = {
         (
             _CUED,
             ("clinician", "See you next week."),
-            ("patient", "Thank you."),
+            ("patient", "Thanks."),
             ("clinician", "Fine."),
             ("patient", "Okay."),
             ("clinician", "Good morning, take a seat."),
