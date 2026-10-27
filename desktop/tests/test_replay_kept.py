@@ -517,6 +517,48 @@ class TestNoteDrift:
         assert drift.clinician_lines_omitted == 1
         assert drift.reviews >= 1
 
+    @pytest.mark.parametrize(
+        ("first_piece", "count"), [("Please keep walking,", 1), ("Please keep walking", 2)]
+    )
+    def test_one_split_line_counts_once(
+        self, tmp_path: Path, first_piece: str, count: int
+    ) -> None:
+        """Validation-run7 plan Task 1.4: the same uncued line, split by the
+        recogniser after its comma, is ONE joined run of the confirmed
+        clinician's — counted once (0.3.4 counted each piece, 2); a bare cut
+        keeps two pieces, two lines (the named residue)."""
+        segments = (
+            TranscriptSegment(
+                start_seconds=1.0,
+                end_seconds=2.0,
+                speaker="speaker_1",
+                transcript_words=_words(first_piece),
+            ),
+            TranscriptSegment(
+                start_seconds=2.2,
+                end_seconds=3.0,
+                speaker="speaker_1",
+                transcript_words=_words("every morning."),
+            ),
+            TranscriptSegment(
+                start_seconds=3.5,
+                end_seconds=5.0,
+                speaker="speaker_2",
+                transcript_words=_words(PATIENT_KEPT),
+            ),
+        )
+        document = TranscriptDocument(
+            session_id="a" * 32,
+            created_at=NOW,
+            model_name="small",
+            sample_rate=SAMPLE_RATE,
+            transcript_segments=segments,
+        )
+        drift = replay_kept.note_drift(
+            document, self._config(tmp_path), None, clinician_speaker="speaker_1", now=NOW
+        )
+        assert drift.clinician_lines_omitted == count
+
     def test_the_detected_prefill_is_passed_to_the_draft(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

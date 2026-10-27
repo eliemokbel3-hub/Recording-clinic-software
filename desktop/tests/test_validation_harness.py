@@ -1720,6 +1720,15 @@ def _axis_reading(boundary: int | None, tail_start: int | None) -> validation.Re
     )
 
 
+def _run_only_line(segments: str, facts: str) -> str:
+    """The residue section's run-only credit line (validation-run7 D1)."""
+    return (
+        f"- Segments credited by the run only: {segments}; material facts credited by the "
+        f"run only: {facts} (the flagged-line credit per joined run against 0.3.4's, metric "
+        "amendment 2026-10-26, validation-run7 D1; reported, read by no rule)."
+    )
+
+
 def _residue_outcomes() -> list[EncounterOutcome]:
     """``syn-001``: one R1 fact (a material wrong one); ``syn-002``: a
     correct fact and one R3 fact on a next-patient script whose reference
@@ -1860,6 +1869,12 @@ class TestReport:
         assert (
             "metric amendments 2026-10-22 and 2026-10-24 (validation-run6 D7, D13; 0.3.3's "
             "reading: Silent (0.3.3 predicate))"
+        ) in report
+        # Validation-run7 D1 (Task 1.3): the flagged line is a joined run.
+        assert (
+            "that flagged line is the whole joined run of the pieces the recogniser split it "
+            "into (a same-speaker piece ending mid-sentence joined to the next), metric "
+            "amendment 2026-10-26 (validation-run7 D1)."
         ) in report
         # PR-LOW-016 is rule v2's report only (Task 4.3): not cited here.
         assert "a measured zero reads 0" not in report
@@ -2024,6 +2039,7 @@ class TestReport:
             "omissions 0 (raw 0), uncertainty missed 0 (raw 0).",
             "- Surfaced / expected: 0 / 0 (required in this set).",
             "- clinician_line_omitted per measured encounter: total 5, median 2.5, maximum 3.",
+            _run_only_line("0", "0"),
             "- Reference boundary on the script's own words, every next-patient script the "
             "run read, measured or role unresolved (id: reference boundary, tail start): "
             "syn-002: none, 4. Mismatches (a reference boundary that is neither none nor "
@@ -2065,9 +2081,39 @@ class TestReport:
         assert tail[9] == (
             "- clinician_line_omitted per measured encounter: total -, median -, maximum -."
         )
+        assert tail[10] == _run_only_line("-", "-")
         # D14's record still lists a role-unresolved next-patient script.
         expected = "syn-001: none, 4" if status == "role_unresolved" else "tail start): none"
-        assert expected in tail[10]
+        assert expected in tail[11]
+
+    def test_the_run_only_credit_is_summed_over_the_measured_encounters(self) -> None:
+        """Validation-run7 D1 (Task 1.3): the residue section's one line sums
+        each measured encounter's two report-only counts (an error outcome
+        supplies none); no rule reads them, so the verdicts are unchanged."""
+        outcomes = [
+            _measured_outcome(
+                "syn-001",
+                _fact_outcome(),
+                segments_credited_by_run_only=2,
+                facts_credited_by_run_only=1,
+            ),
+            _measured_outcome("syn-002", _fact_outcome(), segments_credited_by_run_only=3),
+            EncounterOutcome("syn-003", "error", "OSError"),
+        ]
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        report = render_report(outcomes, _rule_v2(), info, set_name="heldout")
+        assert _run_only_line("5", "1") in report.splitlines()
+        plain = [
+            _measured_outcome("syn-001", _fact_outcome()),
+            _measured_outcome("syn-002", _fact_outcome()),
+            EncounterOutcome("syn-003", "error", "OSError"),
+        ]
+        assert validation.run_passed(_rule_v2(), outcomes, errors=0, set_name="heldout") == (
+            validation.run_passed(_rule_v2(), plain, errors=0, set_name="heldout")
+        )
+        assert [validation.rule_failures(_rule_v2(), o, set_name="heldout") for o in outcomes] == [
+            validation.rule_failures(_rule_v2(), o, set_name="heldout") for o in plain
+        ]
 
     def test_the_reference_boundary_record_covers_every_script_the_run_read(self) -> None:
         """D14's recorded check: a role-unresolved next-patient encounter keeps

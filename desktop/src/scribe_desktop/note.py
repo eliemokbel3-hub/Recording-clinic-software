@@ -64,7 +64,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence, Set
 from datetime import UTC, datetime
 from importlib import resources
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, Protocol, Self, final
@@ -82,6 +82,7 @@ from scribe_desktop.transcription import (
     TranscriptWord,
     is_name_like_token,
     is_number_token,
+    segment_has_text,
     words_hold_suspect,
 )
 
@@ -355,8 +356,10 @@ NOTE_WARNING_SEVERITY: Final[Mapping[str, NoteWarningSeverity]] = {
     # Check 4's second code (validation-run6 plan D1, decision 0.3 (b)): ONE
     # per wholly uncovered line of the confirmed clinician that holds a
     # content word and draws no ``high_risk_omission``, before any next-patient
-    # boundary. Review, never error, for the same reason; only its own
-    # Acknowledge clears it (``ui.models.SEPARATELY_ACKNOWLEDGED_CODES``).
+    # boundary — since validation-run7 plan D1 one per JOINED RUN of the
+    # pieces the recogniser split that line into (``joined_run``). Review,
+    # never error, for the same reason; only its own Acknowledge clears it
+    # (``ui.models.SEPARATELY_ACKNOWLEDGED_CODES``).
     "clinician_line_omitted": "review",
     # Check 5 — prose fidelity (note-learning-and-styles plan Task 4.2, D6):
     # a section whose language-model prose failed the fidelity gate is shown
@@ -1772,6 +1775,117 @@ def ends_mid_sentence(words: Sequence[TranscriptWord]) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# Check 4's coverage rule and its unit (validation-run7 plan D1): ONE
+# implementation each, read by the checker (``note_check``), the chooser
+# (``ui.models.flagged_segments``) and the validation harness (C5).
+# ---------------------------------------------------------------------------
+
+
+def _words_for_coords(
+    document: TranscriptDocument, coords: SourceCoords
+) -> tuple[TranscriptWord, ...] | None:
+    """The words ``coords`` address in the immutable transcript, or None.
+
+    Segment coordinates address positions in ``transcript_segments`` — the
+    exact enumeration ``_assemble_note_request`` performed, so a span
+    verified here agrees with one verified against the ``NoteRequest``. Only
+    an interval ``0 <= first <= last < len(words)`` in a segment that exists
+    resolves; a negative index, a reversed interval or one past the end is
+    None. A span's coordinates are validated so at construction, but a
+    warning's are not (``validation`` resolves a ``hedged_source`` mark's),
+    and a raw slice would read a negative index from the end or return an
+    empty tuple for a reversed one (review rounds 15 and 16 PR-LOW-001).
+    """
+    if not 0 <= coords.segment_index < len(document.transcript_segments):
+        return None
+    words = document.transcript_segments[coords.segment_index].transcript_words
+    if not 0 <= coords.first_word_index <= coords.last_word_index < len(words):
+        return None
+    return words[coords.first_word_index : coords.last_word_index + 1]
+
+
+def _resolved_coords(assertion: NoteAssertion) -> SourceCoords:
+    coords = assertion.note_span.source_coords
+    if coords is None:  # pragma: no cover - NoteSpan validates this away
+        raise AssertionError("unreachable: a transcript span always carries source_coords")
+    return coords
+
+
+def covered_words(note: GeneratedNote, document: TranscriptDocument) -> frozenset[tuple[int, int]]:
+    """The ``(segment, word)`` positions some ``transcript`` assertion's
+    resolvable coordinates carry — Check 4's ONE coverage rule, read by both
+    of its codes, by the chooser's joined runs and by the validation harness
+    (moved here from ``note_check`` by validation-run7 plan D1, C5)."""
+    covered: set[tuple[int, int]] = set()
+    for section in note.note_sections:
+        for assertion in section.note_assertions:
+            if assertion.provenance != "transcript":
+                # Coverage is coordinate CARRIAGE: a typed ``clinician`` line
+                # (schema v2) that mentions the same number covers nothing.
+                continue
+            coords = _resolved_coords(assertion)
+            if _words_for_coords(document, coords) is None:
+                continue
+            for word_index in range(coords.first_word_index, coords.last_word_index + 1):
+                covered.add((coords.segment_index, word_index))
+    return frozenset(covered)
+
+
+def wholly_uncovered(
+    document: TranscriptDocument, segment_index: int, covered: Set[tuple[int, int]]
+) -> bool:
+    """True when no word of segment ``segment_index`` is in ``covered``
+    (``covered_words``) — the note quotes none of that line."""
+    words = document.transcript_segments[segment_index].transcript_words
+    return not any((segment_index, word_index) in covered for word_index in range(len(words)))
+
+
+def joined_run(
+    document: TranscriptDocument, i: int, *, covered: Set[tuple[int, int]], end: int
+) -> range:
+    """THE unit of Check 4's second code (validation-run7 plan D1, V1): the
+    maximal run of adjacent segments CONTAINING ``i``, within ``[0, end)``
+    (the caller's cut — the next-patient boundary, or the segment count),
+    where each adjacent pair ``k``, ``k + 1`` joins when ALL hold: the same
+    ``speaker`` label; segment ``k`` ends mid-sentence (``ends_mid_sentence``
+    — a trailing comma, semicolon, colon or en or em dash: the recogniser cut
+    one sentence there); segment ``k + 1`` has text (``segment_has_text``);
+    and both are wholly uncovered (``wholly_uncovered`` over ``covered``,
+    ``covered_words``). A length-1 run is a line the recogniser did not split.
+
+    What breaks a run, the named residues: a bare cut (no trailing mark), a
+    full stop, a speaker change, a textless segment (it never joins, forward
+    or backward — the ``segment_hedged`` precedent), a partly or wholly
+    quoted piece, and the cut (a run that spans it is truncated, never
+    dropped). The speaker is not judged here — the callers do that. Raises
+    ``ValueError`` unless ``0 <= i < end <= len(transcript_segments)``.
+    Returns indices; no text leaves it."""
+    segments = document.transcript_segments
+    if not 0 <= i < end <= len(segments):
+        raise ValueError("joined_run needs 0 <= i < end <= the segment count")
+
+    def joins(k: int) -> bool:
+        if k + 1 >= end:
+            return False
+        earlier, later = segments[k], segments[k + 1]
+        return (
+            earlier.speaker == later.speaker
+            and ends_mid_sentence(earlier.transcript_words)
+            and segment_has_text(later)
+            and wholly_uncovered(document, k, covered)
+            and wholly_uncovered(document, k + 1, covered)
+        )
+
+    start = i
+    while start > 0 and joins(start - 1):
+        start -= 1
+    stop = i + 1
+    while joins(stop - 1):
+        stop += 1
+    return range(start, stop)
+
+
 def any_cue_matches(
     cues: Mapping[NoteSectionKey, tuple[tuple[str, ...], ...]],
     fallback_cues: Mapping[NoteSectionKey, tuple[tuple[str, ...], ...]],
@@ -3153,12 +3267,14 @@ __all__ = [
     "check_mark",
     "compose_draft",
     "content_tokens",
+    "covered_words",
     "digest_bytes",
     "ends_mid_sentence",
     "finalise_note",
     "first_matching_section",
     "is_interrogative",
     "is_prefilled",
+    "joined_run",
     "layered_section",
     "line_marks",
     "line_marks_by_assertion",
@@ -3182,5 +3298,6 @@ __all__ = [
     "transcript_digest",
     "usable_rendering",
     "whole_utterance_assertion",
+    "wholly_uncovered",
     "words_hold_hedge",
 ]

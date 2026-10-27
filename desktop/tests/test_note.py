@@ -24,6 +24,7 @@ import pytest
 from pydantic import ValidationError
 
 from fixtures.heldout_transcripts import HELD_OUT_CASES, HeldOutCase, by_case, misfiled
+from fixtures.joined_runs import CLINICIAN, PATIENT, SPLIT_CASES, quoted_note, split_document
 from scribe_desktop import note as note_module
 from scribe_desktop.logging_setup import PayloadTripwireFilter, dropped_record_count
 from scribe_desktop.note import (
@@ -65,10 +66,12 @@ from scribe_desktop.note import (
     admissible_sections,
     any_cue_matches,
     content_tokens,
+    covered_words,
     digest_bytes,
     ends_mid_sentence,
     first_matching_section,
     is_interrogative,
+    joined_run,
     layered_section,
     manual_assertion_id,
     normalise_token,
@@ -82,6 +85,7 @@ from scribe_desktop.note import (
     spoken_by_confirmed_clinician,
     text_digest,
     whole_utterance_assertion,
+    wholly_uncovered,
 )
 from scribe_desktop.note_check import reconstruction_warnings
 from scribe_desktop.note_config import (
@@ -2642,6 +2646,139 @@ class TestEndsMidSentence:
         assert ends_mid_sentence((*_words("sore,"), blank))
         assert not ends_mid_sentence((blank,))
         assert not ends_mid_sentence(())
+
+
+class TestJoinedRun:
+    """Validation-run7 plan D1 (Task 1.1): ``joined_run`` — THE unit of
+    Check 4's second code — and ``covered_words``, moved here from
+    ``note_check``. Every join condition and every named residue that breaks
+    a run is pinned both ways."""
+
+    _NONE: frozenset[tuple[int, int]] = frozenset()
+
+    def _runs(
+        self,
+        *turns: tuple[str, str],
+        covered: frozenset[tuple[int, int]] = frozenset(),
+        end: int | None = None,
+    ) -> list[range]:
+        document = split_document(*turns)
+        stop = len(turns) if end is None else end
+        return [joined_run(document, i, covered=covered, end=stop) for i in range(stop)]
+
+    def test_a_comma_split_line_is_one_maximal_run_from_any_of_its_pieces(self) -> None:
+        """A run containing ``i`` mid-way extends both ways to its ends."""
+        (case,) = [c for c in SPLIT_CASES if c.name == "comma-split"]
+        document = case.document()
+        runs = [joined_run(document, i, covered=self._NONE, end=5) for i in range(5)]
+        assert runs == [range(0, 1), range(1, 4), range(1, 4), range(1, 4), range(4, 5)]
+
+    @pytest.mark.parametrize("mark", [",", ";", ":", " –", " —"])
+    def test_a_piece_ending_mid_sentence_joins_the_next(self, mark: str) -> None:
+        assert self._runs((f"keep walking{mark}", CLINICIAN), ("every morning.", CLINICIAN)) == [
+            range(0, 2),
+            range(0, 2),
+        ]
+
+    @pytest.mark.parametrize("cut", [".", "", "?", "!", " -"])
+    def test_a_full_stop_a_bare_cut_or_a_hyphen_does_not_join(self, cut: str) -> None:
+        """A bare cut (no trailing mark) is the named residue D1 keeps."""
+        assert self._runs((f"keep walking{cut}", CLINICIAN), ("every morning.", CLINICIAN)) == [
+            range(0, 1),
+            range(1, 2),
+        ]
+
+    def test_a_speaker_change_breaks_a_run_whoever_speaks(self) -> None:
+        assert self._runs(
+            ("keep walking,", CLINICIAN), ("every morning,", PATIENT), ("and rest.", PATIENT)
+        ) == [range(0, 1), range(1, 3), range(1, 3)]
+
+    def test_a_textless_segment_never_joins_forward_or_backward(self) -> None:
+        assert self._runs(
+            ("keep walking,", CLINICIAN),
+            ("", CLINICIAN),
+            ("every morning,", CLINICIAN),
+            ("and rest.", CLINICIAN),
+        ) == [range(0, 1), range(1, 2), range(2, 4), range(2, 4)]
+
+    @pytest.mark.parametrize(("covered", "expected"), [
+        # A covered word on the first piece, then on the second: either piece
+        # partly quoted breaks the join on its side.
+        (frozenset({(0, 1)}), [range(0, 1), range(1, 3), range(1, 3)]),
+        (frozenset({(1, 0)}), [range(0, 1), range(1, 2), range(2, 3)]),
+        (frozenset({(2, 0), (2, 1)}), [range(0, 2), range(0, 2), range(2, 3)]),
+    ])
+    def test_a_quoted_piece_breaks_a_run(
+        self, covered: frozenset[tuple[int, int]], expected: list[range]
+    ) -> None:
+        assert self._runs(
+            ("keep walking,", CLINICIAN),
+            ("every morning,", CLINICIAN),
+            ("and rest.", CLINICIAN),
+            covered=covered,
+        ) == expected
+
+    def test_the_cut_truncates_a_run_and_never_drops_it(self) -> None:
+        turns = (
+            ("keep walking,", CLINICIAN),
+            ("every morning,", CLINICIAN),
+            ("and rest.", CLINICIAN),
+        )
+        assert self._runs(*turns) == [range(0, 3)] * 3
+        assert self._runs(*turns, end=2) == [range(0, 2)] * 2
+        assert self._runs(*turns, end=1) == [range(0, 1)]
+
+    @pytest.mark.parametrize(("i", "end"), [(-1, 2), (2, 2), (0, 0), (0, 4), (3, 4)])
+    def test_out_of_range_is_refused(self, i: int, end: int) -> None:
+        document = split_document(("keep walking,", CLINICIAN), ("every morning.", CLINICIAN))
+        with pytest.raises(ValueError, match="joined_run needs"):
+            joined_run(document, i, covered=self._NONE, end=end)
+
+    def test_covered_words_is_coordinate_carriage(self) -> None:
+        """Moved verbatim from ``note_check._covered_words``: a transcript
+        assertion's resolvable coordinates, nothing else."""
+        document = split_document(("keep walking,", CLINICIAN), ("every morning.", CLINICIAN))
+        note = quoted_note(document, ((0, 1, 1), (1, 0, 1)))
+        assert covered_words(note, document) == frozenset({(0, 1), (1, 0), (1, 1)})
+        assert not wholly_uncovered(document, 0, covered_words(note, document))
+        assert wholly_uncovered(document, 0, frozenset({(1, 0)}))
+        assert covered_words(quoted_note(document, ()), document) == frozenset()
+
+    @pytest.mark.parametrize(
+        ("coords", "resolved"),
+        [
+            (SourceCoords(1, 0, 1), 2),
+            (SourceCoords(0, 1, 1), 1),
+            (SourceCoords(-1, 0, 1), None),
+            (SourceCoords(-3, 0, 0), None),
+            (SourceCoords(2, 0, 0), None),
+            (SourceCoords(0, -1, 1), None),
+            (SourceCoords(0, 0, 2), None),
+            # Round 16 PR-LOW-001: a negative LAST index (a raw slice reads
+            # "keep" from the end) and a reversed interval (a raw slice is
+            # empty, not None).
+            (SourceCoords(0, 0, -1), None),
+            (SourceCoords(1, 0, -2), None),
+            (SourceCoords(1, 1, 0), None),
+            (SourceCoords(0, 1, 0), None),
+            (SourceCoords(0, 0, 0), 1),
+            (SourceCoords(1, 1, 1), 1),
+        ],
+    )
+    def test_the_coordinate_resolver_never_indexes_from_the_end(
+        self, coords: SourceCoords, resolved: int | None
+    ) -> None:
+        """Review rounds 15 and 16 PR-LOW-001: a warning's coordinates are not
+        validated (a span's are), so only ``0 <= first <= last < len(words)``
+        in a segment that exists resolves; a negative segment or word index —
+        which a raw slice reads from the end, or past it raises — a reversed
+        interval and one past the end resolve to None. Every valid interval
+        is unchanged."""
+        from scribe_desktop.note import _words_for_coords
+
+        document = split_document(("keep walking,", CLINICIAN), ("every morning.", CLINICIAN))
+        words = _words_for_coords(document, coords)
+        assert (None if words is None else len(words)) == resolved
 
 
 def _hedged_segments(*texts: tuple[str, str]) -> list[int]:

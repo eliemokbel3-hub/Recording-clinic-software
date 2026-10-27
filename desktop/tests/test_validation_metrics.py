@@ -32,6 +32,7 @@ from typing import Any
 import pytest
 
 from fixtures.heldout_transcripts import held_out_set
+from fixtures.joined_runs import SPLIT_CASES, SplitCase, credited_v034, every_small_tail
 from scribe_desktop import validation
 from scribe_desktop.note import (
     ConfirmationDecision,
@@ -72,7 +73,12 @@ from scribe_desktop.transcription import (
     TranscriptSegment,
     TranscriptWord,
 )
-from scribe_desktop.ui.models import OMISSION_CODES
+from scribe_desktop.ui.models import (
+    OMISSION_CODES,
+    flagged_runs,
+    flagged_segments,
+    next_patient_segment,
+)
 from scribe_desktop.validation import (
     REFERENCE_HEDGES,
     EncounterMetrics,
@@ -88,6 +94,8 @@ from scribe_desktop.validation import (
     class_breaches,
     class_counts,
     confirm_all,
+    credited_segments,
+    credited_segments_v034,
     encounter_metrics,
     is_structured_claim_word,
     reference_reading,
@@ -1110,7 +1118,10 @@ class TestFlaggedLineCredit:
     that (1) an omission warning of either code anchors, (2) the confirmed
     clinician spoke, (3) no note line touches and (4) lies before Check 6's
     boundary — each condition pinned both ways here. 0.3.3's predicate is
-    kept for the "Silent (0.3.3 predicate)" column; no rule reads it."""
+    kept for the "Silent (0.3.3 predicate)" column; no rule reads it. (Re-read
+    for validation-run7 plan D1: no line here ends mid-sentence, so each is a
+    one-piece joined run and every outcome stands; the joined runs are
+    ``TestJoinedRunCredit``'s.)"""
 
     _LINE = "rest the knee tonight"
 
@@ -1278,6 +1289,342 @@ class TestFlaggedLineCredit:
         # and a cell holds at most 2**10 — D7's repeated-token bound is the
         # state's shape, pinned here, rather than one measured walk.
         assert set(typing.get_type_hints(validation._FactState).values()) == {bool}
+
+
+def _suspect(document: TranscriptDocument, *indices: int) -> TranscriptDocument:
+    """``document`` with every word of the ``indices`` segments marked
+    ``suspect`` (the guard marks a whole segment)."""
+    return document.model_copy(
+        update={
+            "transcript_segments": tuple(
+                segment.model_copy(
+                    update={
+                        "transcript_words": tuple(
+                            word.model_copy(update={"suspect": True})
+                            for word in segment.transcript_words
+                        )
+                    }
+                )
+                if index in indices
+                else segment
+                for index, segment in enumerate(document.transcript_segments)
+            )
+        }
+    )
+
+
+class TestJoinedRunCredit:
+    """Metric amendment 2026-10-26 (validation-run7 plan D1, Task 1.3): the
+    flagged-line credit is the whole joined run of a qualifying anchor
+    (``credited_segments`` — the chooser's own ``flagged_runs``, C5), and
+    what only the run credits is counted against 0.3.4's credit re-derived
+    from the document (``credited_segments_v034``) — report-only, on an
+    encounter with a ``reference`` reading."""
+
+    _LINE = "rest the knee ice it tonight"
+
+    def _script(self, *lines: tuple[str, str], line: int = 0) -> EncounterScript:
+        return _script(*lines, facts=[_fact("present", "ice it tonight", line)])
+
+    @pytest.mark.parametrize(("mark", "credited"), [(",", True), ("", False), (".", False)])
+    def test_a_fact_on_a_later_piece_of_the_run_is_credited(
+        self, mark: str, credited: bool
+    ) -> None:
+        """Segment 0 = [rest, the, knee] and segment 1 = [ice, it, tonight],
+        both the clinician's, nothing in the note, ONE
+        ``clinician_line_omitted`` on segment 0 (the run's first piece). With
+        segment 0 ending in a comma the two are one run, so the fact on
+        segment 1 is warned; a bare cut or a full stop keeps segment 1 out of
+        the run — silent, as under 0.3.4's reading of the same warnings."""
+        document = _doc((SPEAKER_1, f"rest the knee{mark}"), (SPEAKER_1, "ice it tonight."))
+        note = _note(document, warnings=[_warning("clinician_line_omitted", 0, 0, 2)])
+        fact = _only_fact(
+            encounter_metrics(document, note, self._script(("clinician", self._LINE)))
+        )
+        assert (fact.verdict, fact.warned, fact.silent_omission) == (
+            "omitted",
+            credited,
+            not credited,
+        )
+        assert fact.silent_omission_v033
+
+    def test_a_patients_piece_is_never_credited(self) -> None:
+        """A speaker change breaks the run: the patient's piece after the
+        clinician's comma-cut line is not credited."""
+        document = _doc((SPEAKER_1, "rest the knee,"), (SPEAKER_2, "ice it tonight."))
+        note = _note(document, warnings=[_warning("clinician_line_omitted", 0, 0, 2)])
+        script = self._script(("clinician", "rest the knee"), ("patient", "ice it tonight"), line=1)
+        fact = _only_fact(encounter_metrics(document, note, script))
+        assert (fact.warned, fact.silent_omission) == (False, True)
+
+    @pytest.mark.parametrize(("boundary", "credited"), [(1, False), (2, True)])
+    def test_a_piece_at_or_past_the_boundary_is_never_credited(
+        self, boundary: int, credited: bool
+    ) -> None:
+        """Check 6's warning on segment 1 cuts the run there (truncated,
+        never extended past the cut); on segment 2 the run is whole."""
+        document = _doc(
+            (SPEAKER_1, "rest the knee,"),
+            (SPEAKER_1, "ice it tonight,"),
+            (SPEAKER_1, "good morning come on in"),
+        )
+        note = _note(
+            document,
+            warnings=[
+                _warning("clinician_line_omitted", 0, 0, 2),
+                _warning("possible_next_patient", boundary, 0, 2 if boundary == 1 else 4),
+            ],
+        )
+        script = self._script(("clinician", self._LINE), ("clinician", "good morning come on in"))
+        fact = _only_fact(encounter_metrics(document, note, script))
+        assert (fact.warned, fact.silent_omission) == (credited, not credited)
+
+    @pytest.mark.parametrize("case", SPLIT_CASES, ids=lambda case: case.name)
+    def test_the_credit_is_the_choosers_rule_and_the_chain_holds(self, case: SplitCase) -> None:
+        """Over the fixture matrix, each note made by the real checker: the
+        credit IS ``flagged_runs`` and so within the ``[flagged]`` lines; the
+        re-derived 0.3.4 credit equals the 0.3.4 oracle's
+        (``fixtures.joined_runs.credited_v034`` — the oracle Task 1.2's C4
+        pin reads); and ``credited_0.3.5 ⊇ credited_0.3.4 ⊇`` the qualifying
+        ``high_risk_omission`` anchors, per encounter."""
+        note, document = case.note(), case.document()
+        credited = credited_segments(note, document)
+        assert credited == flagged_runs(note, document)
+        assert credited <= flagged_segments(note, document)
+        rederived = credited_segments_v034(note, document)
+        assert rederived == credited_v034(note, document)
+        segments = document.transcript_segments
+        cut = next_patient_segment(note.note_warnings)
+        quoted = {segment for segment, _word in _covered(note)}
+        high_risk = {
+            coords.segment_index
+            for w in note.note_warnings
+            if w.note_warning_code == "high_risk_omission"
+            and (coords := w.source_coords) is not None
+            and (cut is None or coords.segment_index < cut)
+            and segments[coords.segment_index].speaker == note.clinician_speaker
+            and coords.segment_index not in quoted
+        }
+        assert credited >= rederived >= high_risk, case.name
+
+    def test_one_0_3_4_predicate_and_the_chain_over_every_small_tail(self) -> None:
+        """Review round 14 LOW-001: over every three-piece tail
+        (``fixtures.joined_runs.every_small_tail``, notes from the real
+        checker), the harness's re-derivation equals the fixture's 0.3.4
+        oracle (two writings of one predicate, held together here), and
+        ``credited_0.3.4 ⊆ credited_0.3.5 ⊆ [flagged]`` — the chain D1 states
+        per encounter, asserted in the tests rather than raised by the
+        harness (a hand-built note in a unit test need not satisfy it)."""
+        failures = []
+        for name, document, note in every_small_tail():
+            credited = credited_segments(note, document)
+            rederived = credited_segments_v034(note, document)
+            if rederived != credited_v034(note, document) or not (
+                rederived <= credited <= flagged_segments(note, document)
+            ):
+                failures.append(name)
+        assert failures == []
+        # The space reaches what only the run credits (a filler piece).
+        assert any(
+            credited_segments(note, document) - credited_segments_v034(note, document)
+            for _name, document, note in every_small_tail()
+        )
+
+    def test_the_run_only_counts_are_reported_on_a_measured_encounter(self) -> None:
+        """Segment 1 is a filler (``um,``) between two comma-cut pieces: the
+        run 0-2 credits it, 0.3.4's per-segment predicate never did (no
+        content word) — one segment credited by the run only. The fact on
+        segment 2 was credited either way: no fact counts. Without a
+        ``reference`` reading both counts are 0."""
+        document = _doc(
+            (SPEAKER_1, "rest the knee,"), (SPEAKER_1, "um,"), (SPEAKER_1, "ice it tonight.")
+        )
+        note = _note(document, warnings=[_warning("clinician_line_omitted", 0, 0, 2)])
+        script = self._script(("clinician", self._LINE))
+        assert credited_segments(note, document) == frozenset({0, 1, 2})
+        assert credited_segments_v034(note, document) == frozenset({0, 2})
+        metrics = encounter_metrics(document, note, script, reference=_RIGHT_ON_REFERENCE)
+        assert (metrics.segments_credited_by_run_only, metrics.facts_credited_by_run_only) == (
+            1,
+            0,
+        )
+        assert _only_fact(metrics).warned
+        bare = encounter_metrics(document, note, script)
+        assert (bare.segments_credited_by_run_only, bare.facts_credited_by_run_only) == (0, 0)
+
+    @pytest.mark.parametrize("anchor", [-1, -5, 2, 7])
+    def test_an_anchor_outside_the_transcript_is_never_credited(self, anchor: int) -> None:
+        """Review round 15 PR-LOW-001, the harness side: an omission anchor
+        outside the transcript (a stored note's coordinates are not
+        validated) credits no run and raises nothing — ``credited_segments``
+        is ``flagged_runs`` — while the 0.3.4 re-derivation, which reads the
+        transcript and only tests membership, still equals its oracle, and
+        the encounter is measured."""
+        document = _doc((SPEAKER_1, "rest the knee,"), (SPEAKER_1, "ice it tonight."))
+        note = _note(document, warnings=[_warning("high_risk_omission", anchor, 0, 0)])
+        assert credited_segments(note, document) == frozenset()
+        assert credited_segments_v034(note, document) == credited_v034(note, document)
+        metrics = encounter_metrics(
+            document, note, self._script(("clinician", self._LINE)), reference=_RIGHT_ON_REFERENCE
+        )
+        assert (metrics.segments_credited_by_run_only, metrics.facts_credited_by_run_only) == (
+            0,
+            0,
+        )
+
+    def test_one_piece_lines_credit_nothing_by_the_run_only(self) -> None:
+        document = _doc((SPEAKER_1, "rest the knee ice it tonight."))
+        note = _note(document, warnings=[_warning("clinician_line_omitted", 0, 0, 5)])
+        metrics = encounter_metrics(
+            document, note, self._script(("clinician", self._LINE)), reference=_RIGHT_ON_REFERENCE
+        )
+        assert (metrics.segments_credited_by_run_only, metrics.facts_credited_by_run_only) == (
+            0,
+            0,
+        )
+
+    def test_peer_round_3s_counterexample_counts_no_fact(self) -> None:
+        """Peer round 3 PR-MED-009: the material fact [pain, left] over
+        segment 0 = [pain,] (suspect) and segment 1 = [right.], the
+        clinician's, nothing in the note. Check 4 flags "right" (segment 1);
+        the run 0-1 adds segment 0 — credited by the run only — but its word
+        is suspect, so it credits nothing, and the substitution left->right
+        on segment 1 was already warned under 0.3.4: 0 facts, not 1."""
+        document = _suspect(_doc((SPEAKER_1, "pain,"), (SPEAKER_1, "right.")), 0)
+        note = _checked(document)
+        assert [(w.note_warning_code, w.source_coords) for w in note.note_warnings] == [
+            ("high_risk_omission", SourceCoords(1, 0, 0))
+        ]
+        script = _script(("clinician", "pain left"), facts=[_fact("present", "pain left", 0)])
+        metrics = encounter_metrics(document, note, script, reference=_RIGHT_ON_REFERENCE)
+        fact = _only_fact(metrics)
+        assert (fact.verdict, fact.warned, fact.silent_omission) == ("omitted", True, False)
+        assert (metrics.segments_credited_by_run_only, metrics.facts_credited_by_run_only) == (
+            1,
+            0,
+        )
+
+    def test_a_fact_only_on_a_run_only_piece_is_never_credited(self) -> None:
+        """The case the plan's Task 1.3 named "a fact reached only through a
+        run-only piece, 1" — measured 0, by construction: a run-only piece
+        holds no non-suspect content word (one that did is 0.3.4-credited on
+        its own), and only content words become transcript tokens, so every
+        token a fact can align to on such a piece is suspect, and ``warned``
+        never counts a suspect word. Segment 1 = [ice, it, tonight], all
+        suspect, joined to segment 0's comma: the fact on it stays silent
+        under both credits."""
+        document = _suspect(
+            _doc((SPEAKER_1, "rest the knee,"), (SPEAKER_1, "ice it tonight.")), 1
+        )
+        note = _note(document, warnings=[_warning("clinician_line_omitted", 0, 0, 2)])
+        metrics = encounter_metrics(
+            document, note, self._script(("clinician", self._LINE)), reference=_RIGHT_ON_REFERENCE
+        )
+        fact = _only_fact(metrics)
+        assert (fact.verdict, fact.warned, fact.silent_omission) == ("omitted", False, True)
+        assert (metrics.segments_credited_by_run_only, metrics.facts_credited_by_run_only) == (
+            1,
+            0,
+        )
+
+    def test_a_fact_with_two_co_optimal_alignments_is_read_conservatively(self) -> None:
+        """ref [ice], hyp [heat,] (segment 0, suspect) and [cold.] (segment
+        1), the clinician's, one ``clinician_line_omitted`` on segment 0: two
+        optimal alignments of cost 2 — A (ice->heat, insert cold): the
+        suspect "heat" credits nothing, a silent omission; B (insert heat,
+        ice->cold): "cold" is credited. Silent under both credits on A — the
+        conservative reading — so no fact flips; segment 0 is credited by the
+        run only."""
+        document = _suspect(_doc((SPEAKER_1, "heat,"), (SPEAKER_1, "cold.")), 0)
+        note = _note(document, warnings=[_warning("clinician_line_omitted", 0, 0, 0)])
+        script = _script(("clinician", "ice"), facts=[_fact("present", "ice", 0)])
+        metrics = encounter_metrics(document, note, script, reference=_RIGHT_ON_REFERENCE)
+        fact = _only_fact(metrics)
+        assert (fact.verdict, fact.ambiguous, fact.silent_omission) == ("omitted", True, True)
+        assert (metrics.segments_credited_by_run_only, metrics.facts_credited_by_run_only) == (
+            1,
+            0,
+        )
+
+    @pytest.mark.parametrize(
+        "name", ["segments_credited_by_run_only", "facts_credited_by_run_only"]
+    )
+    @pytest.mark.parametrize("value", [-1, True, 1.5, "1"])
+    def test_the_run_only_counts_are_validated_counts(self, name: str, value: Any) -> None:
+        fact = FactOutcome(
+            fact_index=0,
+            kind="present",
+            material=True,
+            verdict="omitted",
+            warned=True,
+            uncertainty_surfaced=None,
+            not_transcribed=False,
+            ambiguous=False,
+        )
+        values: dict[str, Any] = {
+            "words": WordErrors(1, 1, 0),
+            "spelling_normalised_words": 0,
+            "transcript_lines": 0,
+            "config_lines": 0,
+            "unsupported_clinical_lines": 0,
+            "other_unsupported_words": 0,
+            "checker_tally": (),
+            "checker_failures": (),
+            "checker_failure_count": 0,
+            "expected_warnings_absent": (),
+            "facts": (fact,),
+        }
+        with pytest.raises(ValueError, match=f"{name} must be a non-negative count"):
+            EncounterMetrics(**values, **{name: value})
+        defaults = EncounterMetrics(**values)
+        assert (defaults.segments_credited_by_run_only, defaults.facts_credited_by_run_only) == (
+            0,
+            0,
+        )
+        assert getattr(EncounterMetrics(**values, **{name: 1}), name) == 1
+
+    def test_the_fact_count_never_exceeds_the_material_facts(self) -> None:
+        values: dict[str, Any] = {
+            "words": WordErrors(1, 1, 0),
+            "spelling_normalised_words": 0,
+            "transcript_lines": 0,
+            "config_lines": 0,
+            "unsupported_clinical_lines": 0,
+            "other_unsupported_words": 0,
+            "checker_tally": (),
+            "checker_failures": (),
+            "checker_failure_count": 0,
+            "expected_warnings_absent": (),
+        }
+        facts = tuple(
+            FactOutcome(
+                fact_index=index,
+                kind="present",
+                material=material,
+                verdict="omitted",
+                warned=True,
+                uncertainty_surfaced=None,
+                not_transcribed=False,
+                ambiguous=False,
+            )
+            for index, material in enumerate((True, False))
+        )
+        assert EncounterMetrics(**values, facts=facts, facts_credited_by_run_only=1)
+        with pytest.raises(ValueError, match="exceeds the material facts"):
+            EncounterMetrics(**values, facts=facts, facts_credited_by_run_only=2)
+        # Segments are not facts: no such bound.
+        assert EncounterMetrics(**values, facts=(), segments_credited_by_run_only=7)
+
+
+def _covered(note: GeneratedNote) -> set[tuple[int, int]]:
+    """Every ``(segment, word)`` a transcript line of ``note`` quotes."""
+    return {
+        (coords.segment_index, word)
+        for section in note.note_sections
+        for assertion in section.note_assertions
+        if (coords := assertion.note_span.source_coords) is not None
+        for word in range(coords.first_word_index, coords.last_word_index + 1)
+    }
 
 
 class TestDeletedByTranscription:
@@ -1480,6 +1827,46 @@ class TestHedgeCreditAmendment:
         fact = _only_fact(metrics)
         assert (fact.verdict, fact.uncertainty_surfaced) == ("correct", False)
         assert metrics.hedge_marks_unhedged == 1
+
+    @pytest.mark.parametrize(
+        ("coords", "surfaced"),
+        [
+            (SourceCoords(0, 0, 5), True),  # the checker's own interval
+            (SourceCoords(0, 0, -1), False),  # a negative last index
+            (SourceCoords(0, 3, 1), False),  # a reversed interval
+            (SourceCoords(0, 0, 9), False),  # past the segment's end
+            (SourceCoords(-2, 0, 5), False),  # a negative segment
+        ],
+    )
+    def test_a_mark_whose_coordinates_do_not_resolve_credits_nothing(
+        self, coords: SourceCoords, surfaced: bool
+    ) -> None:
+        """Review rounds 15 and 16 PR-LOW-001: a warning's coordinates are not
+        validated, so a stored ``hedged_source`` mark could hold any interval.
+        Only one that resolves (``note._words_for_coords``: ``0 <= first <=
+        last < len(words)`` in a segment that exists) marks words; any other
+        marks no position, raises nothing and is counted as a mark on
+        unhedged words. Both ways: the same note with the checker's own
+        interval surfaces the fact."""
+        script = _script(
+            ("patient", "i think my left knee hurts"),
+            ("clinician", _CLINICIAN_CLOSE),
+            facts=[_fact("laterality", "left knee", 0, uncertain=True)],
+        )
+        document = _doc(
+            (SPEAKER_2, "i think my left knee hurts"), (SPEAKER_1, _CLINICIAN_CLOSE)
+        )
+        mark = NoteWarning(
+            note_warning_code="hedged_source",
+            severity="review",
+            section_key="presenting_complaint",
+            assertion_id="a0",
+            source_coords=coords,
+        )
+        metrics = encounter_metrics(document, _note(document, 0, warnings=[mark]), script)
+        fact = _only_fact(metrics)
+        assert (fact.verdict, fact.uncertainty_surfaced) == ("correct", surfaced)
+        assert metrics.hedge_marks_unhedged == (0 if surfaced else 1)
 
     def test_a_hedged_fact_with_no_mark_is_not_surfaced(self) -> None:
         """No mark: the clinician's own hedged line (Check 1 marks only

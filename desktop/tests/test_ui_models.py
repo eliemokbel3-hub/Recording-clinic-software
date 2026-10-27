@@ -13,6 +13,16 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from fixtures.joined_runs import (
+    CLINICIAN,
+    SPLIT_CASES,
+    SplitCase,
+    clinician_line_anchors_v034,
+    every_small_tail,
+    flagged_v034,
+    quoted_note,
+    split_document,
+)
 from scribe_desktop import install_layout
 from scribe_desktop.note import (
     CANONICAL_SECTION_KEYS,
@@ -1908,7 +1918,10 @@ class TestReviewEditModels:
         assert segments == {0, 1, 3, 4}
         assert rows_marked == checked
 
-    def test_flagged_segments_reads_only_the_omission_warnings(self) -> None:
+    def test_the_omission_anchors_are_read_only_from_the_omission_warnings(self) -> None:
+        """Every anchor of either Check 4 code — what 0.3.4's
+        ``flagged_segments(warnings)`` returned, and where 0.3.5's starts
+        (validation-run7 plan D1)."""
         from scribe_desktop.note import NoteWarning, SourceCoords
 
         warnings = (
@@ -1940,9 +1953,128 @@ class TestReviewEditModels:
                 source_coords=SourceCoords(9, 0, 1),
             ),
         )
-        assert models.flagged_segments(warnings) == frozenset({4, 6, 8})
-        assert models.flagged_segments(()) == frozenset()
+        assert models.omission_anchors(warnings) == frozenset({4, 6, 8})
+        assert models.omission_anchors(()) == frozenset()
         assert models.OMISSION_CODES == frozenset({"high_risk_omission", "clinician_line_omitted"})
+
+    @pytest.mark.parametrize("case", SPLIT_CASES, ids=lambda case: case.name)
+    def test_every_piece_of_a_flagged_joined_run_is_marked(self, case: SplitCase) -> None:
+        """Validation-run7 plan D1 (Task 1.2): the ``[flagged]`` lines over
+        the fixture matrix, as each cell's data says."""
+        assert models.flagged_segments(case.note(), case.document()) == case.flagged
+
+    @pytest.mark.parametrize("case", SPLIT_CASES, ids=lambda case: case.name)
+    def test_no_line_0_3_4_flagged_loses_its_mark(self, case: SplitCase) -> None:
+        """C4 (load-bearing), both rules on the same note: every line 0.3.4's
+        chooser marked — the oracle's (``fixtures.joined_runs.flagged_v034``)
+        — is still marked; the count line counts the same rows wherever
+        0.3.4 and 0.3.5 agree, and never fewer."""
+        note, document = case.note(), case.document()
+        before = flagged_v034(note, document)
+        after = models.flagged_segments(note, document)
+        assert before <= after
+        # Only the suspect-first-piece cell adds a line (its first piece
+        # anchors the run; 0.3.4 anchored the second): D1 marks a run whole.
+        assert (after - before) == (frozenset({0}) if case.name == "suspect-first-piece" else set())
+
+    def test_no_line_0_3_4_flagged_loses_its_mark_over_every_small_tail(self) -> None:
+        """C4 holds by construction (review round 14 LOW-001), pinned here
+        over every three-piece tail (``fixtures.joined_runs.every_small_tail``,
+        1,728 notes from the real checker). The argument: a
+        ``high_risk_omission`` anchor is unchanged and ``omission_anchors``
+        keeps every one; a segment 0.3.4 anchored per segment (clinician,
+        wholly uncovered, a non-suspect content word, before the boundary)
+        lies in a joined run whose pieces are all wholly uncovered and the
+        same speaker's — so that run either holds a ``high_risk_omission``
+        piece, whose anchor ``flagged_runs`` expands, or draws ONE
+        ``clinician_line_omitted`` on its first piece, which it expands; the
+        checker's runs and the chooser's are the same maximal runs, and Check
+        6's warning is the checker's boundary. So no 0.3.4 mark is lost, and
+        the run's code never draws more warnings than 0.3.4's per-segment one."""
+        failures = [
+            name
+            for name, document, note in every_small_tail()
+            if not flagged_v034(note, document) <= models.flagged_segments(note, document)
+            or sum(w.note_warning_code == "clinician_line_omitted" for w in note.note_warnings)
+            > len(clinician_line_anchors_v034(note, document))
+        ]
+        assert failures == []
+        # The space reaches what the claim is about: a boundary, and a run
+        # wider than its anchors.
+        assert any(
+            models.next_patient_segment(note.note_warnings) is not None
+            for _name, _document, note in every_small_tail()
+        )
+        assert any(
+            models.flagged_runs(note, document) - models.omission_anchors(note.note_warnings)
+            for _name, document, note in every_small_tail()
+        )
+
+    def test_the_flagged_runs_are_the_anchors_runs_before_the_cut(self) -> None:
+        """``flagged_runs`` — THE rule the harness's credit reads (C5) —
+        expands only clinician-spoken, wholly uncovered anchors before the
+        cut; a patient's anchor, a partly covered one and one at or past the
+        cut stay out of it (peer round 1 PR-MED-001: they keep their own
+        marks through ``omission_anchors``)."""
+        expected = {
+            "comma-split": {1, 2, 3},
+            "high-risk-piece": {0, 1, 2},
+            "suspect-first-piece": {0, 1},
+            "boundary-truncates": {2, 3},
+            "tail-anchors": {2},
+            "patient-split": set(),
+            "no-confirmed-clinician": set(),
+        }
+        for case in SPLIT_CASES:
+            if case.name in expected:
+                got = models.flagged_runs(case.note(), case.document())
+                assert got == expected[case.name], case.name
+        (tail,) = [case for case in SPLIT_CASES if case.name == "tail-anchors"]
+        note = tail.note()
+        assert models.next_patient_segment(note.note_warnings) == 3
+        # The clinician's high_risk_omission anchors AT (3) and PAST (4) the
+        # cut: marked, never expanded.
+        assert models.omission_anchors(note.note_warnings) == frozenset({2, 3, 4})
+        assert models.flagged_segments(note, tail.document()) == frozenset({2, 3, 4})
+
+    @pytest.mark.parametrize("anchor", [-1, -5, 2, 7])
+    def test_an_anchor_outside_the_transcript_keeps_its_own_mark_and_adds_no_run(
+        self, anchor: int
+    ) -> None:
+        """Review round 15 PR-LOW-001: a warning's coordinates are not
+        validated, so a stored note could anchor a negative index or one past
+        the segment count. Such an anchor adds no run and raises nothing (a
+        negative one would otherwise index from the end and reach
+        ``joined_run``'s ``ValueError``, or an ``IndexError``); the chooser
+        returns it as its own mark, as 0.3.4 did. Both ways: the same note
+        anchored INSIDE, on segment 1, expands the comma-joined run 0-1."""
+        from scribe_desktop.note import NoteWarning, SourceCoords
+
+        document = split_document(("keep walking,", CLINICIAN), ("every morning.", CLINICIAN))
+
+        def anchored(index: int) -> Any:
+            warning = NoteWarning(
+                note_warning_code="high_risk_omission",
+                severity="review",
+                source_coords=SourceCoords(index, 0, 0),
+            )
+            return quoted_note(document, (), warnings=(warning,))
+
+        outside = anchored(anchor)
+        assert models.flagged_runs(outside, document) == frozenset()
+        assert models.flagged_segments(outside, document) == frozenset({anchor})
+        inside = anchored(1)
+        assert models.flagged_runs(inside, document) == frozenset({0, 1})
+        assert models.flagged_segments(inside, document) == frozenset({0, 1})
+
+    def test_the_count_line_counts_left_out_lines_with_every_piece(self) -> None:
+        """The count line's text is unchanged: it counts the flagged ROWS,
+        every piece of a split line among them, as 0.3.4 did."""
+        (case,) = [c for c in SPLIT_CASES if c.name == "comma-split"]
+        flagged = models.flagged_segments(case.note(), case.document())
+        assert models.flagged_count_line(flagged, flagged).startswith(
+            "3 flagged lines are not in the note"
+        )
 
     def test_the_count_line_counts_and_names_the_lines_the_chooser_cannot_offer(
         self,

@@ -318,7 +318,10 @@ def note_drift(
     ``possible_next_patient``, counted among the reviews) — and section
     coverage against ``saved``. Since the validation-run6 plan (Task 1.4) the
     review count's ``clinician_line_omitted`` warnings are also counted on
-    their own, by code name."""
+    their own, by code name — from 0.3.5 one per joined run (validation-run7
+    plan D1, ``note.joined_run``), so a line the recogniser split counts
+    once and a replay's count may fall against a 0.3.4 replay of the same
+    recording."""
     draft = compose_draft(
         document,
         config,

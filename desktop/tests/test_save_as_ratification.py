@@ -340,6 +340,9 @@ class TestFinaliseAndCheck:
         counts = {a.proposal_id: a.confirmation.confirmation_count for a in assertions}  # type: ignore[union-attr]
         learned = _by_rule(draft.note_proposals)[LEARNED_ID].proposal_id
         assert counts[learned] == 3 and all(v is None for k, v in counts.items() if k != learned)
+        # Re-walked for validation-run7 plan D1 (one per joined run): segment
+        # 1 ends with no mark (a bare cut), so segments 1 and 2 are two runs —
+        # still two warnings.
         assert _codes(note.note_warnings) == [
             "high_risk_omission",
             "high_risk_omission",

@@ -101,10 +101,12 @@ from scribe_desktop.note import (
     ProposalResolution,
     compose_draft,
     content_tokens,
+    covered_words,
     finalise_note,
     segment_hedged,
     spoken_by_confirmed_clinician,
     strip_token_punctuation,
+    wholly_uncovered,
 )
 
 # Package-private by name, shared deliberately (the note.py convention):
@@ -180,10 +182,10 @@ from scribe_desktop.transcription import (
     words_hold_suspect,
 )
 from scribe_desktop.ui.models import (
-    OMISSION_CODES,
     ProseStage,
     build_prose_stage,
     extractive_provider_from_config,
+    flagged_runs,
     language_model_available,
     next_patient_segment,
 )
@@ -968,7 +970,15 @@ class EncounterMetrics:
     transcript note lines in note order (``transcript_lines`` of them), the
     segment index the line's own; sorted, one entry per line, never more than
     ``unsupported_clinical_lines``. The excused count is its length, never
-    stored apart; the raw count is unchanged (rules v1 and v2 read it)."""
+    stored apart; the raw count is unchanged (rules v1 and v2 read it).
+    ``segments_credited_by_run_only`` and ``facts_credited_by_run_only``
+    (validation-run7 plan D1, metric amendment 2026-10-26): the segments the
+    flagged-line credit reaches only through a joined run (``credited_segments``
+    less 0.3.4's re-derived ``credited_segments_v034``), and the material facts
+    silently omitted under 0.3.4's credit that the run's credit warns — a
+    second walk over word flags credited by 0.3.4's set, no walk flag; both 0
+    when the encounter has no ``reference`` reading (a unit test, or the
+    reference run itself). Reported in the residue section, read by no rule."""
 
     words: WordErrors
     spelling_normalised_words: int
@@ -983,6 +993,8 @@ class EncounterMetrics:
     facts: tuple[FactOutcome, ...]
     hedge_marks_unhedged: int = 0
     unsupported_lines_excused_by_r1: tuple[tuple[int, int], ...] = ()
+    segments_credited_by_run_only: int = 0
+    facts_credited_by_run_only: int = 0
 
     def __post_init__(self) -> None:
         for name in (
@@ -993,6 +1005,8 @@ class EncounterMetrics:
             "other_unsupported_words",
             "checker_failure_count",
             "hedge_marks_unhedged",
+            "segments_credited_by_run_only",
+            "facts_credited_by_run_only",
         ):
             _require_count(getattr(self, name), name)
         excused = self.unsupported_lines_excused_by_r1
@@ -1021,6 +1035,8 @@ class EncounterMetrics:
             raise ValueError("words must be a WordErrors")
         if not all(isinstance(fact, FactOutcome) for fact in self.facts):
             raise ValueError("facts must be FactOutcome results")
+        if self.facts_credited_by_run_only > sum(1 for fact in self.facts if fact.material):
+            raise ValueError("facts_credited_by_run_only exceeds the material facts")
 
     @property
     def material_wrong(self) -> int:
@@ -1787,6 +1803,57 @@ class ReferenceReading:
                 _require_count(getattr(self, name), name)
 
 
+def credited_segments(note: GeneratedNote, document: TranscriptDocument) -> frozenset[int]:
+    """The flagged-line credit (validation-run6 plan D13, amending D7; per
+    joined run since validation-run7 plan D1, metric amendment 2026-10-26):
+    the whole joined run of every omission anchor of either code that the
+    confirmed clinician spoke, that no note line touches and that lies before
+    Check 6's boundary — the chooser's own rule (``ui.models.flagged_runs``,
+    C5), so a SUBSET of the ``[flagged]`` lines by construction. Read from
+    the note and its transcript alone; the clinician's remedy, adding the
+    line, restores a fact on any piece of it."""
+    return flagged_runs(note, document)
+
+
+def credited_segments_v034(note: GeneratedNote, document: TranscriptDocument) -> frozenset[int]:
+    """0.3.4's flagged-line credit, RE-DERIVED from the transcript and the
+    note's coverage (validation-run7 plan D1) — never read from the note's
+    ``clinician_line_omitted`` warnings, which anchor one piece per joined
+    run from 0.3.5. The segments before Check 6's boundary that the confirmed
+    clinician spoke and the note leaves wholly uncovered, and that either
+    carry a ``high_risk_omission`` anchor or hold a non-suspect content token
+    (0.3.4's per-segment ``clinician_line_omitted`` predicate, which drew
+    nothing on a ``high_risk_omission`` segment — that one qualifies on its
+    own). For a note the shipped checker made, ``credited_segments`` holds
+    every one of these (a 0.3.4-credited segment lies in a run that is
+    credited), and these hold every qualifying ``high_risk_omission`` anchor;
+    the residue section reports what only the run credits."""
+    segments = document.transcript_segments
+    cut = next_patient_segment(note.note_warnings)
+    end = len(segments) if cut is None else min(cut, len(segments))
+    covered = covered_words(note, document)
+    high_risk = {
+        coords.segment_index
+        for warning in note.note_warnings
+        if warning.note_warning_code == "high_risk_omission"
+        and (coords := warning.source_coords) is not None
+    }
+    return frozenset(
+        index
+        for index in range(end)
+        if spoken_by_confirmed_clinician(segments[index].speaker, note.clinician_speaker)
+        and wholly_uncovered(document, index, covered)
+        and (
+            index in high_risk
+            or any(
+                content_tokens(word.word_text)
+                for word in segments[index].transcript_words
+                if not word.suspect
+            )
+        )
+    )
+
+
 def encounter_metrics(
     document: TranscriptDocument,
     note: GeneratedNote,
@@ -1833,10 +1900,16 @@ def encounter_metrics(
       omission warning of either
       code anchors, that the confirmed clinician spoke, that no note line
       touches and that lies before the next-patient boundary (Check 6's
-      warning): the clinician sees that whole line marked, and adding it
-      restores the fact. Run 1's predicate with its clinician-only scope is
+      warning) — since the metric amendment of 2026-10-26 (validation-run7
+      plan D1) on any piece of that anchor's joined run
+      (``credited_segments``): the clinician sees every piece marked, and
+      adding the line restores the fact. Run 1's predicate with its clinician-only scope is
       kept beside it for the report's ``silent (run-1 predicate)`` column,
       and 0.3.3's for ``Silent (0.3.3 predicate)``; no rule reads either.
+      What only the run credits is counted against 0.3.4's credit,
+      re-derived (``credited_segments_v034``), on an encounter with a
+      ``reference`` reading: ``segments_credited_by_run_only`` and
+      ``facts_credited_by_run_only`` (a second walk; reported only).
       ``uncertainty_surfaced`` (for ``expect_uncertain`` facts): a
       ``low_confidence_source`` warning sits on one of the fact's aligned
       words, or (the metric amendment of 2026-10-13, validation-pass plan
@@ -1897,26 +1970,24 @@ def encounter_metrics(
         for warning in note.note_warnings
         if warning.note_warning_code == "high_risk_omission" and warning.source_coords is not None
     }
-    # Validation-run6 plan D13 (amending D7): the flagged-line credit — a
-    # SUBSET of the chooser's ``[flagged]`` lines, read from the note alone:
-    # anchored by either omission code, spoken by the confirmed clinician,
+    # Validation-run6 plan D13 (amending D7), per joined run since
+    # validation-run7 plan D1: the flagged-line credit — a SUBSET of the
+    # chooser's ``[flagged]`` lines by construction (the chooser's own rule),
+    # read from the note and its transcript alone: the whole joined run of an
+    # anchor of either omission code, spoken by the confirmed clinician,
     # wholly uncovered, and before Check 6's boundary (where the clinician's
     # remedy, adding the line, restores the fact).
     boundary = next_patient_segment(note.note_warnings)
-    covered_segments = {segment_index for segment_index, _word in covered}
-    credited_segments = {
-        coords.segment_index
-        for warning in note.note_warnings
-        if warning.note_warning_code in OMISSION_CODES
-        and (coords := warning.source_coords) is not None
-        and coords.segment_index < len(segments)
-        # Check 4's own speaker test (C5): no confirmed clinician, no credit.
-        and spoken_by_confirmed_clinician(
-            segments[coords.segment_index].speaker, note.clinician_speaker
-        )
-        and coords.segment_index not in covered_segments
-        and (boundary is None or coords.segment_index < boundary)
-    }
+    credited = credited_segments(note, document)
+    # D1's report-only counts, against 0.3.4's credit re-derived from the
+    # document; a second walk only when the two credits differ.
+    run_only_segments: frozenset[int] = frozenset()
+    credited_v034: frozenset[int] | None = None
+    if reference is not None:
+        rederived = credited_segments_v034(note, document)
+        run_only_segments = credited - rederived
+        if rederived != credited:
+            credited_v034 = rederived
     low_confidence = _marked_words(note, frozenset({"low_confidence_source"}))
     review_marked = _marked_words(note, REVIEW_MARK_CODES)
     # Metric amendment 2026-10-13 (D7): a hedge mark credits only the words
@@ -1940,8 +2011,9 @@ def encounter_metrics(
         else:
             hedge_marks_unhedged += 1
 
-    def word_info(position: tuple[int, int]) -> _WordInfo:
-        """One transcript word's flags, read from its RAW text."""
+    def word_info(position: tuple[int, int], credit: frozenset[int]) -> _WordInfo:
+        """One transcript word's flags, read from its RAW text; ``credit``
+        is the flagged-line credit's segments (D13, per run since D1)."""
         segment_index, word_index = position
         word = segments[segment_index].transcript_words[word_index]
         word_text = word.word_text
@@ -1962,7 +2034,7 @@ def encounter_metrics(
             covered_all=position in covered,
             # D13's credit skips a suspect word too: the harness's ``warned``
             # never counts one (invented-text guard D6).
-            warned=warned_v033 or (segment_index in credited_segments and not word.suspect),
+            warned=warned_v033 or (segment_index in credit and not word.suspect),
             # Run 1's predicate AND its clinician-only scope (D3).
             warned_v1=flaggable
             and clinician
@@ -1975,9 +2047,20 @@ def encounter_metrics(
 
     # PR-MED-020: any/all over every word a canonical token consumed.
     infos = [
-        _merged([word_info(position) for position in consumed])
+        _merged([word_info(position, credited) for position in consumed])
         for consumed in hypothesis.consumed
     ]
+    # D1: the same flags with 0.3.4's credit — ``warned`` is the only flag
+    # the credit reaches — for the second walk, which no rule reads.
+    infos_v034 = (
+        None
+        if credited_v034 is None
+        else [
+            _merged([word_info(position, credited_v034) for position in consumed])
+            for consumed in hypothesis.consumed
+        ]
+    )
+    run_only_facts = 0
 
     unsupported = alignment.possibly_unsupported()
     by_word: dict[tuple[int, int], set[int]] = {}
@@ -2067,6 +2150,24 @@ def encounter_metrics(
                 j.verdict == "omitted" and not j.warned_v033 for j in judged
             ),
         )
+        # Validation-run7 plan D1 (peer round 3 PR-MED-009): a material fact
+        # the run's credit warns that 0.3.4's credit left silent — the same
+        # conservative reading as ``silent_omission`` (any alternative of any
+        # statement omitted unwarned), on a second walk of every statement.
+        if (
+            infos_v034 is not None
+            and outcome.material
+            and not outcome.silent_omission
+            and any(
+                judgement.verdict == "omitted" and not judgement.warned
+                for first, last in statements
+                for state in _fact_end_states(alignment, first, last, infos_v034)
+                for judgement in (
+                    _judge(state, fact.kind, fact.expect_uncertain, script_hedged=script_hedged),
+                )
+            )
+        ):
+            run_only_facts += 1
         # D8's residue classes (as amended by D14). Each reads the walk or
         # the reference reading, never an encounter id.
         r1 = r3 = False
@@ -2132,6 +2233,8 @@ def encounter_metrics(
         facts=tuple(facts),
         hedge_marks_unhedged=hedge_marks_unhedged,
         unsupported_lines_excused_by_r1=excused,
+        segments_credited_by_run_only=len(run_only_segments),
+        facts_credited_by_run_only=run_only_facts,
     )
 
 
@@ -3182,7 +3285,10 @@ def render_report(
         "(validation-run6 D5); a silent omission's `warned` also holds on a wholly "
         "uncovered line of the confirmed clinician that an omission warning flags before "
         "the next-patient boundary, metric amendments 2026-10-22 and 2026-10-24 "
-        "(validation-run6 D7, D13; 0.3.3's reading: Silent (0.3.3 predicate))."
+        "(validation-run6 D7, D13; 0.3.3's reading: Silent (0.3.3 predicate)); that flagged "
+        "line is the whole joined run of the pieces the recogniser split it into (a "
+        "same-speaker piece ending mid-sentence joined to the next), metric amendment "
+        "2026-10-26 (validation-run7 D1)."
     )
     if set_name is not None and rule.schema_version == 3:
         amendments += (
@@ -3425,7 +3531,8 @@ def _residue_section(
     """A schema-2 run's set layer (validation-run6 plan D8, D14, D17): each
     class against the set's ceiling with its members, the residue-adjusted
     totals beside the raw ones, "Surfaced / expected", the new omission
-    code's load and D14's reference-boundary record — ids and integers. A
+    code's load, what only the joined run credits (validation-run7 plan D1)
+    and D14's reference-boundary record — ids and integers. A
     schema-3 run's adds the unsupported lines the R1 exemption excuses, as
     ``<id>/line <n> (segment <i>)`` (validation-run7 plan D4)."""
     row = rule.set_row(set_name)
@@ -3501,6 +3608,13 @@ def _residue_section(
     lines.append(
         f"- clinician_line_omitted per measured encounter: total {total(sum(loads))}, median "
         f"{_median(loads)}, maximum {max(loads) if loads else '-'}."
+    )
+    lines.append(
+        "- Segments credited by the run only: "
+        f"{total(sum(m.segments_credited_by_run_only for m in measured))}; material facts "
+        f"credited by the run only: {total(sum(m.facts_credited_by_run_only for m in measured))} "
+        "(the flagged-line credit per joined run against 0.3.4's, metric amendment 2026-10-26, "
+        "validation-run7 D1; reported, read by no rule)."
     )
     records = [
         (outcome.encounter_id, outcome.reference)
@@ -4009,6 +4123,8 @@ __all__ = [
     "class_counts",
     "clinician_speaker",
     "confirm_all",
+    "credited_segments",
+    "credited_segments_v034",
     "document_from_turns",
     "enrolled_clinician",
     "enrolment_wav_name",

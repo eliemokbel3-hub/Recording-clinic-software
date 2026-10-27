@@ -20,11 +20,20 @@ import pytest
 
 from fixtures.heldout_transcripts import (
     HELD_OUT_CASES,
+    HELD_OUT_SETS,
+    REPO,
     HeldOutCase,
     by_case,
     held_out_set,
     misfiled,
     script_path,
+)
+from fixtures.joined_runs import (
+    CONFIG,
+    SPLIT_CASES,
+    SplitCase,
+    checked_note,
+    clinician_line_anchors_v034,
 )
 from scribe_desktop import note_check as note_check_module
 from scribe_desktop.note import (
@@ -76,6 +85,7 @@ from scribe_desktop.note_config import (
     next_patient_boundary,
 )
 from scribe_desktop.note_fill import autofill_proposals, prefill_proposals
+from scribe_desktop.speaker_eval import CLINICIAN_LABEL
 from scribe_desktop.speech import SAMPLE_RATE
 from scribe_desktop.transcription import (
     SPEAKER_1,
@@ -85,7 +95,12 @@ from scribe_desktop.transcription import (
     TranscriptWord,
 )
 from scribe_desktop.ui.models import extractive_provider_from_config, flagged_segments
-from scribe_desktop.validation import confirm_all, first_detected_prefill, load_script
+from scribe_desktop.validation import (
+    confirm_all,
+    first_detected_prefill,
+    load_script,
+    reference_document,
+)
 
 SESSION_ID = "c" * 32
 _NOW = datetime(2026, 8, 11, 10, 0, tzinfo=UTC)
@@ -1904,7 +1919,10 @@ _ADVICE = "Please keep walking every morning."
 class TestCheck4ClinicianLineOmission:
     """Validation-run6 plan D1 (decision 0.3 (b), Task 1.1): Check 4's second
     code, one per wholly uncovered line of the confirmed clinician that holds
-    a content word and draws no ``high_risk_omission``, before the boundary."""
+    a content word and draws no ``high_risk_omission``, before the boundary.
+    Since validation-run7 plan D1 one per JOINED RUN (``TestJoinedRunUnit``);
+    every case here is a line the recogniser did not split — a one-piece run,
+    0.3.4's case unchanged (re-read for run semantics, Task 1.1)."""
 
     def test_a_wholly_uncovered_clinician_line_fires_once_over_the_whole_line(self) -> None:
         document = _document(("My knee is sore.", SPEAKER_1), (_ADVICE, SPEAKER_2))
@@ -2081,7 +2099,7 @@ class TestCheck4ClinicianLineOmission:
             for a in section.note_assertions
             if a.note_span.source_coords is not None
         }
-        flagged = flagged_segments(note.note_warnings)
+        flagged = flagged_segments(note, document)
         facts = [
             fact
             for fact in load_script(script_path(case_id)).facts
@@ -2090,6 +2108,92 @@ class TestCheck4ClinicianLineOmission:
         assert facts, case_id
         for fact in facts:
             assert fact.line in carried | flagged, (case_id, fact.line)
+
+
+def _seen_reference_scripts() -> list[Path]:
+    """The 50 and every held-out set whose cases are written — never a blind
+    set's scripts (validation-run7 plan C12: ``script_paths`` is not called
+    for a set whose cases are not written)."""
+    paths = sorted((REPO / "validation" / "scripts").glob("*.json"))
+    for held_out in HELD_OUT_SETS:
+        if held_out.cases_written:
+            paths.extend(held_out.script_paths())
+    return paths
+
+
+class TestJoinedRunUnit:
+    """Validation-run7 plan D1 (Task 1.1): Check 4's second code is drawn
+    once per JOINED RUN (``note.joined_run``), anchored on the run's first
+    piece, whole — over the fixture matrix (``fixtures.joined_runs``), each
+    cell's anchors under 0.3.5 and under 0.3.4's per-segment oracle written
+    as data."""
+
+    @pytest.mark.parametrize("case", SPLIT_CASES, ids=lambda case: case.name)
+    def test_one_warning_per_joined_run_on_its_first_piece(self, case: SplitCase) -> None:
+        document = case.document()
+        warnings = clinician_line_omissions(case.note(), document, CONFIG)
+        assert [(w.note_warning_code, w.severity) for w in warnings] == [
+            ("clinician_line_omitted", "review")
+        ] * len(case.lines)
+        segments = document.transcript_segments
+        assert [w.source_coords for w in warnings] == [
+            SourceCoords(index, 0, len(segments[index].transcript_words) - 1)
+            for index in case.lines
+        ]
+        assert all(w.section_key is None and w.assertion_id is None for w in warnings)
+        assert next_patient_boundary(document, CONFIG) == case.boundary
+
+    @pytest.mark.parametrize("case", SPLIT_CASES, ids=lambda case: case.name)
+    def test_the_0_3_4_oracle_drew_one_per_piece(self, case: SplitCase) -> None:
+        assert clinician_line_anchors_v034(case.note(), case.document()) == case.lines_v034
+
+    def test_a_three_piece_line_draws_once_where_0_3_4_drew_three(self) -> None:
+        (case,) = [c for c in SPLIT_CASES if c.name == "comma-split"]
+        document = case.document()
+        warnings = clinician_line_omissions(case.note(), document, CONFIG)
+        assert [w.source_coords for w in warnings] == [SourceCoords(1, 0, 2)]
+        assert len(clinician_line_anchors_v034(case.note(), document)) == 3
+
+    def test_a_run_with_a_high_risk_piece_draws_nothing_new(self) -> None:
+        """One remedy, add the line: the first code's anchor stands for the
+        whole run (the chooser marks every piece from it, Task 1.2)."""
+        (case,) = [c for c in SPLIT_CASES if c.name == "high-risk-piece"]
+        document = case.document()
+        note = case.note()
+        assert [w.source_coords for w in omission_warnings(note, document)] == [
+            SourceCoords(1, 0, 0)
+        ]
+        assert clinician_line_omissions(note, document, CONFIG) == ()
+
+    def test_a_run_spanning_the_cut_is_truncated_never_dropped(self) -> None:
+        """The closing piece (3) joins the advice piece (2); the greeting
+        piece (4) is the cut. One warning for 2-3; nothing past the cut."""
+        (case,) = [c for c in SPLIT_CASES if c.name == "boundary-truncates"]
+        document = case.document()
+        assert next_patient_boundary(document, CONFIG) == 4
+        warnings = clinician_line_omissions(case.note(), document, CONFIG)
+        assert [w.source_coords for w in warnings] == [SourceCoords(2, 0, 2)]
+
+    def test_the_reference_documents_are_unchanged(self) -> None:
+        """One segment per whole script line, no line ending mid-sentence:
+        on every seen script's own words the per-run code draws exactly the
+        per-segment oracle's anchors (Task 0.3's text-mode reading, pinned).
+        Nothing is quoted, so every clinician line is uncovered."""
+        paths = _seen_reference_scripts()
+        assert sum(1 for path in paths if path.stem.startswith("syn-")) == 50
+        assert {path.parent.name for path in paths} == {
+            "scripts",
+            *(held_out.name for held_out in HELD_OUT_SETS if held_out.cases_written),
+        }
+        for path in paths:
+            document = reference_document(load_script(path))
+            note = checked_note(document, (), clinician=CLINICIAN_LABEL)
+            got = tuple(
+                warning.source_coords.segment_index
+                for warning in clinician_line_omissions(note, document, CONFIG)
+                if warning.source_coords is not None
+            )
+            assert got == clinician_line_anchors_v034(note, document), path.stem
 
 
 # ---------------------------------------------------------------------------

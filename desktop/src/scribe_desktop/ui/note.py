@@ -58,6 +58,10 @@ require is unchanged. The validation-run6 plan's D1 adds Check 4's second
 code, ``clinician_line_omitted`` — a whole line the confirmed clinician said
 that is in no section and holds none of those words — flagged, filtered,
 counted and acknowledged exactly the same way (``models.OMISSION_CODES``).
+Since the validation-run7 plan's D1 that code is drawn once per joined run
+(the pieces the recogniser split one line into, ``note.joined_run``), and
+every piece of the run is still marked, filtered and offered
+(``models.flagged_segments``).
 
 Check marks (invented-text guard D5). A quoted line holding a number or a
 word the transcription guard marked ``suspect`` carries ``[check: number]`` /
@@ -1265,10 +1269,13 @@ class NoteScreen(QWidget):
         return present
 
     def _flagged_segments(self) -> frozenset[int]:
-        """The transcript lines the current note's Check 4 flags (D4) —
-        none before finalisation."""
-        note = self._note
-        return models.flagged_segments(note.note_warnings) if note is not None else frozenset()
+        """The transcript lines the current note's Check 4 flags (D4), every
+        piece of a joined run included (validation-run7 plan D1) — none
+        before finalisation or without a transcript."""
+        note, document = self._note, self._document
+        if note is None or document is None:
+            return frozenset()
+        return models.flagged_segments(note, document)
 
     def eligible_utterances(self) -> tuple[models.UtteranceChoice, ...]:
         """The utterances the chooser offers: not already in the working

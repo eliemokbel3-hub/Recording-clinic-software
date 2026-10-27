@@ -145,14 +145,17 @@ What each check claims — and, recorded with equal care, what it does NOT:
   check honestly emits nothing.
   Its second code, ``clinician_line_omissions`` (validation-run6 plan D1,
   decision 0.3 (b)), reaches the uncued sentence on the CLINICIAN's side only:
-  one ``clinician_line_omitted`` review warning per segment the confirmed
-  clinician spoke that no assertion's coordinates touch at all, that holds a
-  non-suspect content word (``note.content_tokens``; a one-word "okay" counts,
-  as decided), that draws no ``high_risk_omission`` already, and that lies
-  before the next-patient boundary — its coordinates spanning the whole
-  segment. A partly quoted line is the clinician's own choice and draws
-  nothing new; patient lines draw nothing new (an other-voice predicate was
-  rejected, D1). It warns, never routes.
+  one ``clinician_line_omitted`` review warning per joined run (since
+  validation-run7 plan D1, ``note.joined_run``: the pieces the recogniser
+  split one line into, a same-speaker piece ending mid-sentence joined to the
+  next; a bare cut is a named residue) that the confirmed clinician spoke,
+  that no assertion's coordinates touch at all, that holds a non-suspect
+  content word (``note.content_tokens``; a one-word "okay" counts, as
+  decided), no piece of which draws a ``high_risk_omission`` already, and
+  that lies before the next-patient boundary — its coordinates spanning the
+  run's first piece, whole. A partly quoted line is the clinician's own
+  choice and draws nothing new; patient lines draw nothing new (an
+  other-voice predicate was rejected, D1). It warns, never routes.
 - **Check 5, ``fidelity_warnings``** (note-learning-and-styles plan Task
   4.2, D6) — the fidelity GATE over the local language model's prose for one
   section, run by the prose stage AFTER finalisation (it is NOT part of
@@ -250,13 +253,23 @@ from scribe_desktop.note import (
     NoteWarning,
     SourceCoords,
     content_tokens,
+    covered_words,
     is_interrogative,
+    joined_run,
     normalise_token,
     quoted_line_marks,
     reconstruct_span_text,
     spoken_by_confirmed_clinician,
     transcript_digest,
+    wholly_uncovered,
 )
+
+# Validation-run7 plan D1: the coordinate resolver and Check 4's coverage rule
+# moved to ``note`` (the leaf the chooser and the harness also import); the
+# two private names stay importable from here, re-exported explicitly, for
+# this module's call sites and ``validation``'s.
+from scribe_desktop.note import _resolved_coords as _resolved_coords
+from scribe_desktop.note import _words_for_coords as _words_for_coords
 from scribe_desktop.note_config import (
     # Package-private by name, shared deliberately (the note.py convention):
     # ONE definition of what ends a clause. The config authoring guard and
@@ -452,23 +465,6 @@ _ADMINISTRATION_WITNESS: Final[frozenset[str]] = frozenset(
 )
 
 
-def _words_for_coords(
-    document: TranscriptDocument, coords: SourceCoords
-) -> tuple[TranscriptWord, ...] | None:
-    """The words ``coords`` address in the immutable transcript, or None.
-
-    Segment coordinates address positions in ``transcript_segments`` — the
-    exact enumeration ``_assemble_note_request`` performed, so a span
-    verified here agrees with one verified against the ``NoteRequest``.
-    """
-    if coords.segment_index >= len(document.transcript_segments):
-        return None
-    words = document.transcript_segments[coords.segment_index].transcript_words
-    if coords.last_word_index >= len(words):
-        return None
-    return words[coords.first_word_index : coords.last_word_index + 1]
-
-
 def _laterality_sides(
     tokens: _Clause, index: int
 ) -> tuple[tuple[int, ...], int] | None:
@@ -495,13 +491,6 @@ def _laterality_sides(
     if position < len(tokens) and tokens[position].token in _ANATOMY_LEXICON:
         return tuple(positions), position
     return None
-
-
-def _resolved_coords(assertion: NoteAssertion) -> SourceCoords:
-    coords = assertion.note_span.source_coords
-    if coords is None:  # pragma: no cover - NoteSpan validates this away
-        raise AssertionError("unreachable: a transcript span always carries source_coords")
-    return coords
 
 
 # The spoken hedges (validation-pass plan D7, frozen in its Task 0.8 — C3;
@@ -1634,25 +1623,6 @@ def _omission_flag_token(text: str, *, first_in_segment: bool, clinician: bool) 
     return clinician and is_name_like_token(text, first_in_segment=first_in_segment)
 
 
-def _covered_words(note: GeneratedNote, document: TranscriptDocument) -> set[tuple[int, int]]:
-    """The ``(segment, word)`` positions some ``transcript`` assertion's
-    resolvable coordinates carry — Check 4's ONE coverage rule, read by both
-    of its codes."""
-    covered: set[tuple[int, int]] = set()
-    for section in note.note_sections:
-        for assertion in section.note_assertions:
-            if assertion.provenance != "transcript":
-                # Coverage is coordinate CARRIAGE: a typed ``clinician`` line
-                # (schema v2) that mentions the same number covers nothing.
-                continue
-            coords = _resolved_coords(assertion)
-            if _words_for_coords(document, coords) is None:
-                continue
-            for word_index in range(coords.first_word_index, coords.last_word_index + 1):
-                covered.add((coords.segment_index, word_index))
-    return covered
-
-
 def omission_warnings(
     note: GeneratedNote, document: TranscriptDocument
 ) -> tuple[NoteWarning, ...]:
@@ -1668,7 +1638,7 @@ def omission_warnings(
     """
     if note.clinician_speaker is None:
         return ()
-    covered = _covered_words(note, document)
+    covered = covered_words(note, document)
     warnings: list[NoteWarning] = []
     for segment_index, segment in enumerate(document.transcript_segments):
         clinician = segment.speaker == note.clinician_speaker
@@ -1698,20 +1668,28 @@ def omission_warnings(
 def clinician_line_omissions(
     note: GeneratedNote, document: TranscriptDocument, config: NoteConfig
 ) -> tuple[NoteWarning, ...]:
-    """One ``clinician_line_omitted`` review warning per segment (validation-
-    run6 plan D1, decision 0.3 (b)) when ALL hold: a clinician is confirmed;
-    the confirmed clinician spoke the segment; no word of it is carried by
-    any assertion's coordinates (``_covered_words``, Check 4's own rule); one
-    of its non-suspect words holds a content token (``note.content_tokens`` —
-    disfluencies alone draw nothing, "okay" does); it draws no
+    """One ``clinician_line_omitted`` review warning per JOINED RUN
+    (validation-run6 plan D1, decision 0.3 (b); per joined run since
+    validation-run7 plan D1 — ``note.joined_run``: the pieces the recogniser
+    split one line into, joined where a same-speaker piece ends mid-sentence)
+    when ALL hold: a clinician is confirmed; the confirmed clinician spoke
+    the run; no word of it is carried by any assertion's coordinates
+    (``note.covered_words``, Check 4's own rule); one of its non-suspect
+    words holds a content token (``note.content_tokens`` — disfluencies
+    alone draw nothing, "okay" does); no piece of it draws a
     ``high_risk_omission`` (``omission_warnings``, so the two codes never
-    double-warn a line); and it lies before the next-patient boundary
-    (``note_config.next_patient_boundary``, the one accessor). Coordinates:
-    the whole segment. ``high_risk_omission`` itself is unchanged, the tail
-    included. Codes and coordinates only, never text."""
+    double-warn a line — one remedy, add the line); and it lies before the
+    next-patient boundary (``note_config.next_patient_boundary``, the one
+    accessor, which also truncates a run that spans it). The runs partition
+    the segments before the boundary. Coordinates: the run's FIRST piece,
+    whole (one segment — ``SourceCoords`` holds one, and a new field would be
+    refused by 0.3.3); the chooser marks every piece (``ui.models.
+    flagged_segments``). A one-piece run is 0.3.4's per-segment case
+    unchanged. ``high_risk_omission`` itself is unchanged, the tail included.
+    Codes and coordinates only, never text."""
     if note.clinician_speaker is None:
         return ()
-    covered = _covered_words(note, document)
+    covered = covered_words(note, document)
     already = {
         coords.segment_index
         for warning in omission_warnings(note, document)
@@ -1721,20 +1699,29 @@ def clinician_line_omissions(
     boundary = next_patient_boundary(document, config)
     end = len(segments) if boundary is None else boundary
     warnings: list[NoteWarning] = []
-    for segment_index, segment in enumerate(segments[:end]):
-        words = segment.transcript_words
+    segment_index = 0
+    while segment_index < end:
+        run = joined_run(document, segment_index, covered=covered, end=end)
+        segment_index = run.stop
         if (
-            not spoken_by_confirmed_clinician(segment.speaker, note.clinician_speaker)
-            or segment_index in already
-            or any((segment_index, word_index) in covered for word_index in range(len(words)))
-            or not any(content_tokens(word.word_text) for word in words if not word.suspect)
+            # One speaker label across a run (a join requires it).
+            not spoken_by_confirmed_clinician(segments[run.start].speaker, note.clinician_speaker)
+            or any(piece in already for piece in run)
+            or not all(wholly_uncovered(document, piece, covered) for piece in run)
+            or not any(
+                content_tokens(word.word_text)
+                for piece in run
+                for word in segments[piece].transcript_words
+                if not word.suspect
+            )
         ):
             continue
+        words = segments[run.start].transcript_words
         warnings.append(
             NoteWarning(
                 note_warning_code="clinician_line_omitted",
                 severity="review",
-                source_coords=SourceCoords(segment_index, 0, len(words) - 1),
+                source_coords=SourceCoords(run.start, 0, len(words) - 1),
             )
         )
     return tuple(warnings)

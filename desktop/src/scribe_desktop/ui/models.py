@@ -91,7 +91,9 @@ from scribe_desktop.note import (
     bound_rendering,
     check_mark,
     compose_draft,
+    covered_words,
     is_prefilled,
+    joined_run,
     line_marks_by_assertion,
     note_input_digest,
     provenance_label,
@@ -99,6 +101,7 @@ from scribe_desktop.note import (
     reconstruct_span_text,
     render_note,
     spoken_by_confirmed_clinician,
+    wholly_uncovered,
 )
 from scribe_desktop.note_config import (
     # ``_no_control_chars`` is package-private by name, shared deliberately
@@ -2690,7 +2693,9 @@ def _lead_words(text: str, *, max_chars: int = 60) -> str:
 
 # Note-routing-omissions plan D4: the mark on a chooser entry or a line-editor
 # row whose transcript line carries a Check 4 omission (``high_risk_omission``,
-# and since the validation-run6 plan's D1 ``clinician_line_omitted``).
+# and since the validation-run6 plan's D1 ``clinician_line_omitted``, counted
+# per joined run since the validation-run7 plan's D1 — every piece of the run
+# is marked, ``flagged_segments``).
 # At the FRONT of the label (2026-10-11 live smoke, round 11 SMOKE-MED-001):
 # the closed chooser cuts a long label's END and its open list elides the
 # MIDDLE, so a suffix was never readable. A chooser entry keeps its transcript
@@ -2711,16 +2716,59 @@ NEXT_PATIENT_LINE_MARK = "[next patient?] "
 OMISSION_CODES: Final[frozenset[str]] = frozenset({"high_risk_omission", "clinician_line_omitted"})
 
 
-def flagged_segments(warnings: Sequence[NoteWarning]) -> frozenset[int]:
-    """The transcript segments Check 4 flags in ``warnings``: one warning of
-    either ``OMISSION_CODES`` code per segment (the two never share one),
-    located by its coordinates."""
+def omission_anchors(warnings: Sequence[NoteWarning]) -> frozenset[int]:
+    """The segments a Check 4 warning of either ``OMISSION_CODES`` code
+    anchors in ``warnings``, located by its coordinates (the two codes never
+    share one)."""
     return frozenset(
         coords.segment_index
         for warning in warnings
         if warning.note_warning_code in OMISSION_CODES
         and (coords := warning.source_coords) is not None
     )
+
+
+def flagged_runs(note: GeneratedNote, document: TranscriptDocument) -> frozenset[int]:
+    """The whole joined runs (``note.joined_run``, validation-run7 plan D1)
+    of the omission anchors that lie before the next-patient cut
+    (``next_patient_segment`` — the note's own Check 6 warning), that the
+    confirmed clinician spoke (``spoken_by_confirmed_clinician``) and that the
+    note leaves wholly uncovered (``note.covered_words``): the left-out lines
+    the clinician restores by adding them. ONE rule for the chooser
+    (``flagged_segments``) and the validation harness's flagged-line credit
+    (``validation.credited_segments``), so the credit is a subset of the
+    ``[flagged]`` lines by construction (C5). A warning's coordinates are
+    not validated (a stored note could carry any index), so an anchor outside
+    ``[0, end)`` — negative, at or past the cut, past the segment count — adds
+    no run and raises nothing; ``flagged_segments`` keeps it as its own mark,
+    as 0.3.4 did (review round 15 PR-LOW-001)."""
+    segments = document.transcript_segments
+    cut = next_patient_segment(note.note_warnings)
+    end = len(segments) if cut is None else min(cut, len(segments))
+    covered = covered_words(note, document)
+    runs: set[int] = set()
+    for anchor in omission_anchors(note.note_warnings):
+        if (
+            0 <= anchor < end
+            and spoken_by_confirmed_clinician(segments[anchor].speaker, note.clinician_speaker)
+            and wholly_uncovered(document, anchor, covered)
+        ):
+            runs.update(joined_run(document, anchor, covered=covered, end=end))
+    return frozenset(runs)
+
+
+def flagged_segments(note: GeneratedNote, document: TranscriptDocument) -> frozenset[int]:
+    """The transcript lines the chooser and the line editor mark
+    ``FLAGGED_LINE_MARK``: EVERY omission anchor of either code
+    (``omission_anchors`` — the tail included: ``high_risk_omission`` is
+    raised over the whole transcript, so an anchor at or past the cut keeps
+    its own mark) and, since validation-run7 plan D1, the whole joined run of
+    every anchor ``flagged_runs`` expands — so a line the recogniser split
+    draws ONE ``clinician_line_omitted`` and still has every piece marked,
+    and no line 0.3.4 marked loses its mark (C4). A patient's
+    ``high_risk_omission``, a partly covered anchor or an anchor at or past
+    the cut marks its own segment only, as before."""
+    return omission_anchors(note.note_warnings) | flagged_runs(note, document)
 
 
 def next_patient_segment(warnings: Sequence[NoteWarning]) -> int | None:
@@ -4875,6 +4923,7 @@ __all__ = [
     "editable_lines",
     "eligible_utterances",
     "flagged_count_line",
+    "flagged_runs",
     "flagged_segments",
     "format_live_segments",
     "format_note_body",
@@ -4890,6 +4939,7 @@ __all__ = [
     "models_ready",
     "next_patient_segment",
     "next_patient_transcript_line",
+    "omission_anchors",
     "prefilled_lines",
     "remove_tail_done_line",
     "remove_tail_failed_line",

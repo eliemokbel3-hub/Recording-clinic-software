@@ -5541,8 +5541,15 @@ class TestNoteScreenEdits:
         assert offered == expected
         # Validation-run6 plan D1: the clinician's two unquoted lines (3, 5)
         # are flagged by Check 4's second code; the patient's (4) is not.
-        flagged = models.flagged_segments(screen.current_note().note_warnings)
+        # (Validation-run7 plan D1: neither ends mid-sentence, so each is its
+        # own joined run.)
+        flagged = models.flagged_segments(screen.current_note(), document)
         assert flagged == {3, 5}
+        # The screen's own reading, and none without a transcript (the guard).
+        assert screen._flagged_segments() == flagged
+        screen._document = None
+        assert screen._flagged_segments() == frozenset()
+        screen._document = document
         for position, index in enumerate(expected):
             segment = document.transcript_segments[index]
             label = screen.utterance_combo.itemText(position)
@@ -5880,7 +5887,7 @@ class TestNoteScreenEdits:
         assert screen.remove_line(patient_line.assertion_id) is True
         self._remove_the_plan_line(screen)
         flagged = [0, 3, 5, _PLAN_INDEX]
-        assert models.flagged_segments(screen.current_note().note_warnings) == set(flagged)
+        assert models.flagged_segments(screen.current_note(), screen._document) == set(flagged)
         everything = self._chooser_items(screen)
         assert len(everything) > len(flagged)
         screen.flagged_only_checkbox.setChecked(True)
