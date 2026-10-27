@@ -4,6 +4,8 @@ How the practitioner uses the recordings kept for development — a consultation
 
 Code: `desktop/src/scribe_desktop/replay_kept.py`, launcher `scripts/replay-kept-recordings.py`, tests `desktop/tests/test_replay_kept.py` (and the memory-only key mode in `test_speaker_eval.py`). The agent never reads a kept recording, its transcript or its note — exported or not (the plan's C1): it reads only the numbers the practitioner pastes.
 
+A plan's one-off measurement over the same folder (validation-run7 plan Tasks 0.3a and 0.4a: `.cursor/loops/run7-measure-kept.py`, git-ignored, outside the app's package and the test suite) follows the replay's rules below — practitioner-run from a normal terminal with both builds closed, a measuring run's refusals in the replay's order first (its `--list` mode, which decrypts nothing, skips the crash-report and instance checks), the repository's `validation/config` by default, session ordinals and integers only on the console, and only aggregates written into the plan; see the threat model's "Kept recordings", MEASUREMENT SCRATCH. Since 2026-10-27 (that plan's review round 25) it is retired for measuring: a measuring run refuses straight after the channel check — it measured 0.3.4's per-segment code and the 14 / 12 phrase lists, so a re-measurement on 0.3.5 is a new scratch — while `--list` still runs, and an exception it does not handle ends the run with its type only.
+
 ## Replaying kept recordings
 
 From a normal terminal (never an agent shell — those cannot see the model folder or unwrap this Windows user's keys, `docs/lessons.md`), on the developer build, with the models downloaded by `scripts\setup-models.py` and **Clinic Scribe closed — both builds**. In **Command Prompt**:

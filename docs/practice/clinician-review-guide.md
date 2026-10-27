@@ -12,9 +12,10 @@ number lines added 2026-10-12 for version 0.3.2, awaiting the practitioner's app
 next-patient, removing-lines, self-correction and "unsure" lines added 2026-10-13 for
 version 0.3.3, approved by the practitioner on 2026-10-22; the left-out-line, wider-doubt and
 shorter next-patient-mark lines added 2026-10-24 for version 0.3.4, awaiting the
-practitioner's approval; the longer goodbye-and-greeting list lines added 2026-10-26 for
-version 0.3.5, awaiting the practitioner's approval). For the practitioner, before saving
-a note and before finalising it in Cliniko.
+practitioner's approval; the longer goodbye-and-greeting list lines added 2026-10-26 and
+the split-line line added 2026-10-27 for version 0.3.5, awaiting the practitioner's
+approval — the 0.3.4 and 0.3.5 lines go to the practitioner together). For the
+practitioner, before saving a note and before finalising it in Cliniko.
 
 **Why this matters.** Ahpra's guidance on AI in healthcare ("Meeting your professional
 obligations when using AI in healthcare") makes you responsible for checking the accuracy
@@ -143,7 +144,11 @@ where each line came from: the transcript, something you typed, or your own pre-
    headings' phrases picked up — has its own review warning, "A line you said is not in
    the note", also cleared only by its own Acknowledge. Tick **Show flagged lines only**
    under **Edit the note** to find these lines (each is marked `[flagged]`), and add any
-   that belongs with **Add line to section**. A short reply such as "okay" can raise it
+   that belongs with **Add line to section**. From version 0.3.5, when the speech software
+   split one line of yours into pieces at a comma (or a semicolon, colon or long dash), the
+   warning counts that line once, however many pieces it has, and every piece is still
+   marked `[flagged]`: add back each piece that belongs. A line split with no comma or
+   other mark is still counted once for each piece. A short reply such as "okay" can raise it
    too: acknowledge it once you have looked. A line of yours that the app labelled as the
    other speaker's raises no such warning, and neither does a line whose words are all
    marked as possibly not speech, so still read the transcript through. The

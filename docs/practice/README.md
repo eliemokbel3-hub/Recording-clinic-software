@@ -14,9 +14,10 @@ and on 2026-10-12 for version 0.3.2 (background music off while recording; the m
 transcript lines that may be music or noise and on note lines holding a number, in the
 clinician review guide only — the patient documents are unchanged), on 2026-10-13 for
 version 0.3.3 (a possible next patient, removing lines, self-corrections and the "unsure"
-mark) and on 2026-10-24 for version 0.3.4 (a whole line the practitioner said that the
-note leaves out, wider doubt marks and a shorter next-patient mark) — both in the
-clinician review guide only;
+mark), on 2026-10-24 for version 0.3.4 (a whole line the practitioner said that the
+note leaves out, wider doubt marks and a shorter next-patient mark) and on 2026-10-26 and
+2026-10-27 for version 0.3.5 (more goodbyes and greetings recognised, and a line split
+into pieces counted once) — each in the clinician review guide only;
 where a document and the app disagree, the app's behaviour is what happens, and the
 document must be corrected.
 

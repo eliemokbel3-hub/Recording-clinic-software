@@ -66,8 +66,8 @@ set up and build it, and make releases; the installed app needs none of them.
   is reported by path). Run by the practitioner from a normal terminal; prints a
   Markdown table for Task 2.3, never transcript text.
 - `build-validation-set.py <scripts-dir> <set-folder> [--only <id> ...]` and
-  `run-validation.py <set-folder> --config <folder> --rule <file>` (pilot plan
-  Phase 2) — thin launchers for `scribe_desktop.validation_set` and
+  `run-validation.py <set-folder> --config <folder> --rule <file> [--set <name>]`
+  (pilot plan Phase 2) — thin launchers for `scribe_desktop.validation_set` and
   `scribe_desktop.validation`. The first speaks each synthetic script with the
   installed Windows voices into `<id>.wav` + `<id>.txt` plus a copy of
   `<id>.json`, with an `<id>.built` ownership mark (needs three voices in the
@@ -99,7 +99,9 @@ set up and build it, and make releases; the installed app needs none of them.
   transcript, note or name text — the new transcript against the
   kept one, and a note regenerated under the shipped default config against the
   clinician's saved note. Reads the folder and writes nothing there; holds the
-  app's single-instance lock for its run (close Clinic Scribe first). Developer
+  app's single-instance lock for its run (close Clinic Scribe first). From
+  0.3.5 its "Clinician lines omitted" count is one per joined run of a split
+  line, so it can fall against a 0.3.4 replay. Developer
   build only, from a normal terminal; see `docs/testing/kept-recordings.md`.
 - `measure-transcription-guard.py --set <set-folder> [--candidates <set> ...]
   [--primer shipped|0.3.1] [--allow-small] [--all-rows]` (invented-text-guard

@@ -63,6 +63,39 @@ the repository's visibility may have changed. If no attestation can be made, the
 check above can never pass, and the build of record needs a decision — never an
 install without that check.
 
+## Rolling back below 0.3.5
+
+0.3.5 (the validation-run7 build) has no build of record yet: its build of
+record is planned after validation run 7 (validation-run7 plan H5). It is the first build
+to carry 0.3.4's changes, so going back from it to 0.3.3 is a rollback below
+0.3.4 too: **"Rolling back below 0.3.4" (below) applies from this build on**,
+and below 0.3.3 the rules after it as well.
+
+0.3.5 itself adds nothing new on disk. It writes the same review warning 0.3.4
+introduced, "A line you said is not in the note", with the same fields — only
+less often: once per line you said that the recogniser split into pieces,
+each but the last ending mid-sentence, where 0.3.4 wrote one per piece
+(validation-run7 plan D1).
+So an older build reads those notes exactly as "Rolling back below 0.3.4"
+says: 0.3.3 shows each warning as "A review warning from a newer version of the
+app" and keeps its place in the transcript (it reads the code it does not
+know as `unknown_review_warning`, which the validation-run6 plan's Task 1.3
+pins — that pin is the rollback control, so no two-version install is
+smoked). A note the older build generates again is checked by its own rules.
+
+**The closing and greeting lists go back too.** 0.3.5's lists are longer (30
+closings and 26 greetings, from 14 and 12; the dated commit of 2026-10-26,
+validation-run7 plan D2). On 0.3.3 a note generated, or generated again, may
+include lines after a next patient's arrival that 0.3.5 would hold back,
+wherever the goodbye or the greeting is one only 0.3.5's lists know, and where
+both lists find a next patient the older ones may stop the note at a different
+line (the threat model's NEXT PATIENT residues (a) and (c)) — check the end
+of every transcript, as the clinician review guide says — and the live
+warning that a new consultation may have started fires on fewer pairs again.
+A note already saved keeps the warnings it was saved with.
+
+Nothing else changes, so no recording needs finishing first for 0.3.5's sake.
+
 ## Rolling back below 0.3.4
 
 0.3.4 has no build of record: after validation run 6 did not meet its gate,

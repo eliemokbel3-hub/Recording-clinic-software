@@ -23,6 +23,18 @@ beside it — an open item becomes a finding and is resolved or controlled first
       committed checkout, with the practitioner's own cue file in
       `validation\config`; its totals, voices, commit and models-manifest hash
       are recorded under Task P.3.
+
+      *Proposed wording, dated 2026-10-27 (validation-run7 plan D8) — a draft
+      for the practitioner's approval at that plan's Task P.3. It does not
+      replace the line above, and this proposal is not a line to tick; until
+      it is approved, the line above is the one read:* **Validation passed.**
+      The validation run (pilot plan Task P.3) passed under the rule in force
+      for that run of record as `docs/testing/validation-harness.md` "Runs of
+      record" names it (rule v3 from run 7: the 50 and the blind set as the
+      gate, the earlier held-out sets reported), over the synthetic sets, from
+      a clean committed checkout, with the practitioner's own cue file; its
+      totals, voices, commit and models-manifest hash are recorded under Task
+      P.3.
 - [ ] **Clinic 1 smoke records exist** (pilot plan Tasks P.2 and P.4, the
       clinic 1 smoke plan's Phase P): the shipping-gate scoring table and its decision line
       (Phase 3A Task 9.1), the speaker numbers over the frozen measured set

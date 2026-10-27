@@ -511,8 +511,23 @@ note inherit exactly that posture.
    a partly quoted line (the clinician's partial choice; the first code still
    flags words there). Its line is marked `[flagged]` like the first code's,
    both codes are counted on the one count line, and "Acknowledge all review
-   warnings" leaves it too. It never deletes or re-routes a line (C4). NAMED
-   RESIDUES (second code): a one-word acknowledgement the clinician said
+   warnings" leaves it too. It never deletes or re-routes a line (C4).
+   Since 0.3.5 (validation-run7 plan D1) it is judged per JOINED RUN, not per
+   segment: where the recogniser split one line into adjacent pieces of the
+   same speaker, each piece but the last ending mid-sentence (a trailing
+   comma, semicolon, colon or en or em dash) and the next piece holding text,
+   the wholly unquoted pieces draw ONE warning together, anchored on the
+   first piece (`note.joined_run`, the one function the checker, the Line
+   chooser and the validation harness share). A partly quoted piece, a
+   speaker change, a textless segment or the next-patient boundary breaks a
+   run (a run reaching the boundary is cut there, never dropped), and a run
+   any piece of which draws `high_risk_omission` draws none. Every piece of
+   such a run stays `[flagged]` — no line 0.3.4 marked loses its mark, pinned
+   over a fixture matrix with 0.3.4's per-segment rule as the oracle — and
+   the warning's stored coordinates name its first piece, so no field is
+   added and 0.3.3 and 0.3.4 read it as before. The review row's count is
+   therefore of LINES, as its text says; its own one click still clears it.
+   NAMED RESIDUES (second code): a one-word acknowledgement the clinician said
    ("okay", "yeah"; a one-word "right" or "no" is a side or a negation, so
    it draws the first code instead) fires it — no exemption list was added (decision 0.3
    (b): only two enrolled kept recordings existed, fewer than the three the
@@ -523,7 +538,15 @@ note inherit exactly that posture.
    clinician's, so it fires nothing — and an uncued patient line with no
    flagged word stays unwarned, as before; coverage is by quoted
    coordinates, so a line that triggered a confirmed autofill line still
-   fires it (the config line quotes nothing).
+   fires it (the config line quotes nothing); and, since 0.3.5, a split the
+   recogniser left with no trailing mark (a bare cut) is not a join, so each
+   such piece still draws its own warning — on the two enrolled kept
+   recordings measured, bare cuts outnumbered marked ones among the
+   clinician's adjacent pairs of pieces (28 to 6), and the code's load per recording
+   fell only from a median of 3.5 and a maximum of 6 to 3 and 5: the budget's
+   maximum (5) met, its median (2) not, provisional at two recordings
+   (validation-run7 plan Task 0.3a; joining a bare cut, any adjacent pieces,
+   was excluded because it would merge two unrelated lines).
    NEXT PATIENT (0.3.3, validation-pass plan D1–D6 and D9; until 0.3.3 the
    NEXT-PATIENT RESIDUE of 0.3.1): routing tries the practitioner's cues and
    then the shipped cues, so a next patient's words recorded before the
@@ -938,7 +961,10 @@ note inherit exactly that posture.
      warning kept with its coordinates, all grouped as one newer-version row
      that the older build's "Acknowledge all" clears, so the
      separately-acknowledged control is lost after a rollback while no
-     warning is dropped ("Rolling back below 0.3.4").
+     warning is dropped ("Rolling back below 0.3.4"). 0.3.5 writes the same
+     code with the same fields, once per joined run (surface 2) — fewer of
+     them, nothing new on disk — so 0.3.4 reads it as its own and 0.3.3 or
+     0.3.2 as above ("Rolling back below 0.3.5").
 
    NAMED RESIDUES — the guard is a heuristic and the mark a review aid, not a
    filter:
@@ -4024,7 +4050,15 @@ peer round 27 for the rest), and models that cannot be loaded are refused by
 error type (round 26). A refusal names the rule file only as "the rule file"
 (peer round 27); folder paths given on the command line are echoed as typed.
 The rule file (64 KiB), the label track (4 MiB)
-and the script (256 KiB) are read capped. The SET
+and the script (256 KiB) are read capped. A rule of sets (schema 2 since
+validation-run6 plan D17; schema 3, rule v3, since validation-run7 plan D4)
+needs `--set <name>`, one of the sets the rule holds: a missing or unknown
+name is refused before any model loads, naming the rule's sets and never
+echoing what was typed. A schema-3 report prints three verdicts on the same
+outcomes — rule v3, rule v3 without its R1 exemption, and rule v1 — so the
+exemption's one loosening is visible in the printout, and it names each line
+the exemption excuses only as `<id>/line <n> (segment <i>)`: ids and integers,
+never the line. The SET
 BUILDER (`build-validation-set.py`) speaks the repository's invented scripts
 with the installed Windows (SAPI) voices into a temporary folder
 (`scribe-validation-set-*`, removed after each turn), resamples, mixes and
@@ -4424,6 +4458,42 @@ user (residue (i)); an agent shell's MSIX-virtualized HKCU proves nothing
 (residue (l)); and a dump written by anything other than Windows Error
 Reporting (an attached debugger, for example) is outside it.
 
+MEASUREMENT SCRATCH (validation-run7 plan Tasks 0.3a and 0.4a; the class the
+validation-run6 plan's kept-recording measurement began). A plan's one-off
+measurement over the kept recordings — `.cursor/loops/run7-measure-kept.py`
+— is a git-ignored script outside the app's package: never shipped, never in
+the test suite, and practitioner-run only, from a normal terminal with both
+builds closed (the agent never runs it, C1). A MEASURING run, as Tasks 0.3a
+and 0.4a ran it (the record below), reproduces the
+replay tool's refusal chain in its order before any recording is decrypted
+or any model loads (composer-read, 2026-10-27): the developer channel, its
+own argument checks (the candidate file and `--negatives` when given, the
+practitioner's enrolment WAV required and a file), the folder holding an
+entry key, the crash-report exclusion of the running interpreter, and the
+instance exclusion, held for the whole run; it then lists ids with nothing
+decrypted, re-transcribes each kept recording as the replay tool does, and
+composes and checks its note under the config folder it is given — by
+default the repository's `validation/config`; another folder is accepted, so
+not naming the app's own is an operating rule, not a refusal. Its `--list`
+mode checks only the channel and that the path is a folder, then lists the
+kept ordinals and the day each was kept, from the encrypted audio file's
+time on disk — nothing decrypted, no model loaded — without the
+crash-report check or the instance exclusion. It prints session ORDINALS
+(oldest kept first), integers and indices into the candidate phrase list
+(public once committed) — never a session id, a name, a phrase's text or a
+line; the plan records only aggregates (n, median, maximum — its C8), the
+per-ordinal rows staying in the practitioner's console. RETIRED since
+2026-10-27 (that plan's review round 25): a measuring run now refuses as
+retired straight after the channel check, before any argument check, file
+read or model load — the scratch measured 0.3.4's per-segment code and the
+14 / 12 phrase lists, so a re-measurement on 0.3.5 is a new scratch; `--list`
+still runs as described; and any exception the scratch does not handle ends
+the run with its type only, printed after the handler, never a traceback
+or a message. RESIDUE: it is a
+scratch, not a tested tool — its content-free output is checked by reading
+it (that plan's H3), not by a pin; and `--list` reads the folder while
+either build may be running (it stats files and decrypts nothing).
+
 OLDER BUILDS (D14). 0.2.0 opens a kept entry's transcript and notes and
 ignores the audio (listing and reading test only `key.dpapi` and `pending`);
 its Delete now and expiry still destroy the audio (the key under the entry
@@ -4583,4 +4653,8 @@ repeated validation run), a boundary the note acts on without the
 clinician (an automatic trim), a second writer of the shortened transcript,
 an audit fact for the trim, or a rollback below 0.3.3 (residue (20)). For
 0.3.4: a change to Check 4's second code's predicate (an exemption list, an
-other-voice line), a widened hedge scope, or a rollback below 0.3.4.
+other-voice line), a widened hedge scope, or a rollback below 0.3.4. For
+0.3.5: a change to the joined-run unit (joining a bare cut or any adjacent
+pieces), a further change to the closing or greeting phrases (a new dated
+decision, validation-run7 plan D2's rules its precedent), a change to rule
+v3's R1 exemption, or a rollback below 0.3.5.

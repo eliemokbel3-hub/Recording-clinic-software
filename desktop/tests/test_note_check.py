@@ -2185,6 +2185,7 @@ class TestJoinedRunUnit:
             "scripts",
             *(held_out.name for held_out in HELD_OUT_SETS if held_out.cases_written),
         }
+        scripts_anchored = 0
         for path in paths:
             document = reference_document(load_script(path))
             note = checked_note(document, (), clinician=CLINICIAN_LABEL)
@@ -2194,6 +2195,11 @@ class TestJoinedRunUnit:
                 if warning.source_coords is not None
             )
             assert got == clinician_line_anchors_v034(note, document), path.stem
+            scripts_anchored += bool(got)
+        # Reach (review round 23 LOW-001): the comparison is over real
+        # anchors — a role label that stopped matching ``CLINICIAN_LABEL``
+        # would leave both sides empty on every script and pass.
+        assert scripts_anchored > 0
 
 
 # ---------------------------------------------------------------------------

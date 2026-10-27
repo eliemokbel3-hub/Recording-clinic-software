@@ -102,11 +102,16 @@ result is recorded there as a dated RUN line.
    delete it after the run (it is rebuilt from the repository).
    Record the totals and pass or fail; enter every
    failure in the findings register. A fail stops the pilot here until its
-   findings are resolved or controlled and the run is repeated. Since
-   validation run 6 (0.3.4) the gate is read under rule v2
+   findings are resolved or controlled and the run is repeated. Validation
+   run 6 (0.3.4) read the gate under rule v2
    (`validation\rules\rule-v2.json`, each set named with `--set`) on the 50
    scripts and the blind `heldout-3`, with `heldout` and `heldout-2` run and
-   reported in full (validation-run6 plan D15;
+   reported in full (validation-run6 plan D15). From validation run 7
+   (0.3.5) it is read under rule v3 (`validation\rules\rule-v3.json`, each of
+   five sets named with `--set`) on the 50 scripts and the blind `heldout-4`,
+   with `heldout`, `heldout-2` and `heldout-3` run and reported in full; its
+   report prints rule v3's verdict beside the verdict without its R1
+   exemption and rule v1's (validation-run7 plan D4, D5;
    `docs/testing/validation-harness.md`).
    *Amended 2026-10-09, after run 1 failed:* the shadow consultations of
    step 4 may start while run 1's findings are controlled by shadow mode (a

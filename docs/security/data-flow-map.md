@@ -1,4 +1,4 @@
-# Data-Flow Map (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot, kept recordings, invented-text guard, validation pass, validation run 6)
+# Data-Flow Map (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot, kept recordings, invented-text guard, validation pass, validation runs 6 and 7)
 
 Every place data lives or moves in the implemented system. Since Phase 2 the
 desktop app carries **clinical data**: consultation audio, transcripts, and —
@@ -440,7 +440,11 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     warnings in `note.enc` — the stored note's only change; 0.3.3 or 0.3.2
     reads it as a review warning from a newer version, and a build below
     0.3.2 refuses the note (threat model, Phase 3A surface 5, "Rolling
-    back").
+    back"). Since 0.3.5 (validation-run7 plan D1) the second code is raised
+    once per joined run — the pieces of one line the recogniser split, each
+    but the last ending mid-sentence — rather than once per segment, so fewer warnings of
+    the same code, with the same fields, are saved; nothing else in this flow
+    changes.
     Inside the app, the plaintext note and the full transcript coexist in memory
     only for the review window (threat model, Phase 3A §3) and, since the
     privacy-professional-controls plan, while an opened Past-sessions entry is
@@ -1300,7 +1304,10 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       commit from `.git` and hashes `packaging/models-manifest.json`, and
       prints a text-free Markdown report (ids, numbers, flags, closed
       vocabularies) to standard output, which the practitioner may redirect
-      to a file. It reads no voice profile, and writes no audit row, no
+      to a file; under a schema-3 rule (rule v3, validation-run7 plan D4) it
+      also prints the verdict without the R1 exemption and rule v1's, and
+      names each line the exemption excuses by id, line number and segment
+      index only. It reads no voice profile, and writes no audit row, no
       Past-sessions entry and nothing into either data folder. A run stopped
       with Ctrl+C prints no report and no traceback — one fixed line naming
       the temporary folder and the `scribe-speaker-eval-*` prefix for a
@@ -1400,6 +1407,28 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       is ciphertext with no key anywhere, named for deletion by hand; prints a
       numbers-only drift table to standard output; writes nothing in the folder
       and no audit row.
+    - MEASUREMENT SCRATCH (validation-run7 plan Tasks 0.3a and 0.4a; threat
+      model, "Kept recordings", MEASUREMENT SCRATCH). A plan's one-off
+      measurement over the same folder (`.cursor/loops/run7-measure-kept.py`,
+      git-ignored, outside the app's package, practitioner-run from a normal
+      terminal with both builds closed): a measuring run refuses in the
+      replay's order (the crash-report exclusion and the held instance
+      exclusion included) before any recording is decrypted, lists ids with
+      nothing decrypted, re-transcribes each kept recording as the replay does
+      and composes and checks its note in memory under the config folder it
+      is given (by default the repository's `validation/config`); its
+      `--list` mode only stats each entry's encrypted audio file for the day
+      it was kept, with neither exclusion; it prints session
+      ordinals, integers and indices into the candidate phrase list to the
+      console only — no id, name, phrase text or line — and writes nothing in
+      the folder and no audit row. Only aggregates reach the plan (its C8).
+      That is how Tasks 0.3a and 0.4a ran it; since 2026-10-27 (that plan's
+      review round 25) a measuring run refuses as retired straight after the
+      channel check, before any argument check, file read or model load (it
+      measured 0.3.4's per-segment code and the 14 / 12 phrase lists, so a
+      re-measurement on 0.3.5 is a new scratch); `--list` still runs as
+      described, and an exception it does not handle ends the run with its
+      type only.
 
 28. **The transcription-guard measurement (invented-text guard plan Task 1.5,
     D7, C12; BUILT 2026-10-12; developer build only, practitioner-run, zero

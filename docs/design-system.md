@@ -169,7 +169,10 @@ view patterns · tokens · microcopy.
   the tick on and nothing offered flagged it says "No line in the list is flagged -
   untick 'Show flagged lines only' to see every line." (`ui/models.py`
   `FLAGGED_LINE_MARK` / `OMISSION_CODES` / `flagged_count_line` /
-  `FLAGGED_FILTER_EMPTY_LINE`; note-routing-omissions plan D4).
+  `FLAGGED_FILTER_EMPTY_LINE`; note-routing-omissions plan D4). Since 0.3.5 a line the
+  recogniser split into pieces, each but the last ending mid-sentence, draws ONE "A line you said is not
+  in the note", so that review row counts left-out LINES; every piece is still marked
+  `[flagged]` and the count line's text is unchanged (validation-run7 plan D1).
 - **Lines after a possible next patient are marked, not hidden (since 0.3.3).** When
   the note stops at a possible next patient (Check 6, `possible_next_patient`), every
   Line chooser entry from that line on carries `[next patient?]` at the

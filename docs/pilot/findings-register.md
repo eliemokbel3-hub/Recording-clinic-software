@@ -72,9 +72,12 @@ and its own detail stays in Cliniko and in your off-repository pilot log.
 
 - **High** — any R4 kind that survived review (or would have, in a shadow note);
   any `cross-patient`, `privacy` or `custody` finding; each encounter that fails
-  the validation run under the ratified pass rule (decision 3.5, rule v1 in
+  the validation run under the pass rule ratified for that run (decision 3.5,
+  rule v1; rule v2 from run 6 and rule v3 from run 7 — each in
   `docs/testing/validation-harness.md`); and anything that put, or could have
-  put, wrong content into a Cliniko draft.
+  put, wrong content into a Cliniko draft. An unsupported clinical line rule
+  v3's R1 exemption excuses is still entered, as a `controlled` row, whatever
+  the run's verdict (validation-run7 plan D4).
 - **Medium** — a quality or workflow problem that cost real review time or could
   mislead a hurried review, with no wrong content surviving it.
 - **Low** — a nuisance, a wording problem or a cosmetic fault.
