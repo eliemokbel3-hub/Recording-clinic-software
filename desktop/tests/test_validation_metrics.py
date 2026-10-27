@@ -3159,6 +3159,35 @@ class TestRuleV2:
         with pytest.raises(ValueError, match=message):
             PassRule.model_validate({"rule_name": "test-rule", **payload})
 
+    @pytest.mark.parametrize("value", [None, True, False])
+    @pytest.mark.parametrize("schema", [1, 2])
+    def test_below_schema_3_only_a_non_null_exemption_is_refused(
+        self, schema: int, value: bool | None
+    ) -> None:
+        """Validation-run7 D4 (peer round 19 PR-LOW-002): below schema 3 the
+        exemption field is refused only when it holds a value — an explicit
+        ``null`` is the field's default and is accepted, ``true`` and
+        ``false`` are refused; schema 3 refuses ``null`` and a missing field
+        (the malformed-rule rows above)."""
+        payload: dict[str, Any] = {
+            "schema_version": schema,
+            "rule_name": "test-rule",
+            "unsupported_line_r1_exemption": value,
+        }
+        if schema == 2:
+            payload["sets"] = {
+                "a": {"gate": True, "max_r1_facts": 0, "max_r2_facts": 0, "max_r3_encounters": 0}
+            }
+        if value is None:
+            rule = PassRule.model_validate(payload)
+            assert rule.unsupported_line_r1_exemption is None
+            assert rule.exempts_r1_lines is False
+        else:
+            with pytest.raises(
+                ValueError, match="only a schema-3 rule takes unsupported_line_r1_exemption"
+            ):
+                PassRule.model_validate(payload)
+
     def test_the_rule_uncertainty_field_is_the_default_a_set_overrides(self) -> None:
         """D17: a set row's ``require_uncertainty_surfaced`` overrides the
         rule's; absent, the rule's holds. Both ways, on one outcome whose
