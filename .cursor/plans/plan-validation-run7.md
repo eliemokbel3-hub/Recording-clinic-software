@@ -6,7 +6,7 @@
 - a fresh blind set `heldout-4`, predictions v3 and pre-registered bands before the build, run 7 as the run of record;
 - 0.3.4's owed build of record and install smoke, the review guide's 0.3.4 and 0.3.5 lines, the exit gate's wording.
 
-**Overall Progress:** `93%` (25 of 27 buildable tasks done — 0.2, 0.3, 0.3a, 0.4, 0.4a, 0.5, 0.6, 0.7, 0.8, 1.1–1.4, 2.1–2.2, 3.1–3.3, H1–H4 (2026-10-27; review rounds 23–27; committed as `c985857`), P.1 (2026-10-28, run 7 — the gate NOT met; recorded in `edb2724`), H5 (2026-10-28, 0.3.5 built of record on `edb2724`) and P.2 (2026-11-04, 0.3.5 installed and smoked, PASS; the joined-hedge mark not exercised live); P.3 and P.4 remain; the 10 `[decision]` entries — all taken on 2026-10-25 — are outside the count, the 0.3.4 convention)
+**Overall Progress:** `93%` (25 of 27 buildable tasks done — 0.2, 0.3, 0.3a, 0.4, 0.4a, 0.5, 0.6, 0.7, 0.8, 1.1–1.4, 2.1–2.2, 3.1–3.3, H1–H4 (2026-10-27; review rounds 23–27; committed as `c985857`), P.1 (2026-10-28, run 7 — the gate NOT met; recorded in `edb2724`), H5 (2026-10-28, 0.3.5 built of record on `edb2724`) and P.2 (2026-11-04, 0.3.5 installed and smoked, PASS; the joined-hedge mark not exercised live); P.3 🟨 (2026-11-04, done but its `h4-` rows, which P.4 adds — not yet counted) and P.4 remain; the 10 `[decision]` entries — all taken on 2026-10-25 — are outside the count, the 0.3.4 convention)
 
 ## Lifecycle State
 - Active
@@ -324,20 +324,42 @@ See the Planning Extraction Summary (the canonical list): Deferred — the pract
   - this plan: P.2, Overall Progress 93%, Retained Follow-Up Items, this bullet, the next action and the sync line.
 
   No test reads any changed sentence: `desktop/tests/` was searched for `pilot-builds`, `pilot.builds`, `Installed on this computer`, `since 2026-10-22`, `Not yet installed`, `0.3.5` and `Rolling back`, and the only hits were joined-run docstrings that no edit touched. No code, test or version field changed, so no suite is owed.
-- Immediate next action: **P.3, the practitioner's decisions with the composer.**
-  - The findings register (`docs/pilot/findings-register.md`): run 7's rows by class. The `h4-` rows wait for P.4.
-    - Every excused unsupported line (`h3-03`'s) is a `controlled` row.
-    - A row is `resolved` ("0.3.5 (commit …)") only where the run shows the class gone — for example `h3-02` / `h2-05`'s next patient, now broken by the widened lists.
-    - F-139 / F-140's control text "the clinician acknowledges each" is corrected to one click per code.
-    - `test_pilot_docs.py` must be green.
-  - The P.5 dated decision on `plan-pilot.md` (question (2) of the px2 bullet): rec=(a) — P.5 keeps waiting and shadow mode stays on.
+- `[2026-11-04T05:12:41+11:00, stage-7 executor (leg px5)]` **P.3 recorded, done except the `h4-` rows (🟨).** The practitioner answered in chat on 2026-11-04, each time the recommended option:
+  - P.5: "Keep shadow on (Recommended)";
+  - the review guide's 0.3.4 / 0.3.5 lines: "Approve as written (Recommended)";
+  - the exit-gate proposal: "Approve the proposal (Recommended)".
 
-  Then:
-  - P.4 — the `heldout-4` diagnosis. It is the ONE task that reads the set: its cases, divergence entries and role tails, and the two R1 facts classed. The blind rule then ends, and the folders `C:\scribe-run7\heldout-4` and `.cursor/loops/held-out-lint/` are deleted. Until P.4, every suite runs ONLY through the runner (C12).
-  - The practitioner's approvals: the review guide's 0.3.4 and 0.3.5 lines, and the exit-gate proposal (D8's draft).
-  - The next plan (question (3)): rec=the larger-model plan, by the Acceptance's R1-alone rule — Plan Mode, with Fable.
-- Open blockers / open questions: the exit-gate wording (D8's draft) and the review guide's 0.3.4 and 0.3.5 lines await the practitioner's approval (Phase 3 / P.3) — the 0.3.5 goodbye-and-greeting lines landed with this task, marked awaiting approval. Two properties of the accepted list, DISCLOSED and pinned rather than changed (the input is decided; re-filtering is not this task's): (1) three accepted greetings ("nice to see you", "good to see you", "nice to see you again") hold the accepted closing "see you", so such a greeting followed by another greeting raises the live new-consultation warning at the START of a consultation (it never acts, but it fires once per recording, so an early false one leaves a later real next patient unwarned), and mid-visit ONE such greeting line can cut the note with no goodbye said ("Oh, nice to see you, come on in" to someone joining; rounds 9 MED-001/MED-002) — for the practitioner to weigh before the commit and to see at P.2, rec=keep (disclosed in the threat model and the review guide; rule 4 and rule 5 found no instance; dropping the three greetings would be a new dated vocabulary decision with its own rule-4 re-run); (2) the phrase tokens fold no typographic apostrophe, so "What’s new" misses the four apostrophe phrases (in effect three greetings — the cut can move one segment earlier, any number later, or vanish), rec=keep (folding would widen matching; the recogniser's apostrophe form is unmeasured here). For the peer pass: both are in its scope.
-- Last plan sync: 2026-11-04 (stage-7 executor leg px4, P.2 recorded: 0.3.5 installed on this computer 2026-11-04, smoke PASS, the joined-hedge mark not exercised live)
+  The register (seen sets) gains no new row. F-094, F-129 and F-131 are resolved by 0.3.5 `[2026-11-04, px6: F-033 too as first written — kept controlled on the practitioner's word]`; F-130 is re-stated and still controlled; F-139 / F-140 are corrected. Details are on P.3's as-built line.
+
+  Files changed by this leg:
+  - `docs/pilot/findings-register.md`;
+  - `.cursor/plans/plan-pilot.md` (P.5's DECISION 2026-11-04 line and the register line);
+  - `docs/practice/clinician-review-guide.md` (the draft-history line);
+  - `docs/pilot/exit-gate.md` (Clinic 1's "Validation passed");
+  - `CHANGELOG.md` (the 0.3.5 entry);
+  - `AGENTS.md` (the validation-run7 paragraph);
+  - this plan (P.3, Overall Progress note, Open blockers, this bullet, the next action, the sync line).
+
+  **Suite OWED:** `test_pilot_docs.py` reads the register and the pilot documents, so the composer runs the desktop suite through `scripts\lint-held-out-set.py validation\heldout-4` (C12). No code, test, rule file or version field changed. One call is for the composer: F-033 is resolved although its cause is not isolated (rec=keep resolved; P.3's as-built line). `[2026-11-04, px6: DECIDED — "Keep controlled (Recommended)"; F-033 is back to controlled.]`
+- `[2026-11-04T06:05:24+11:00, stage-7 executor (leg px6)]` **F-033 back to `controlled`, on the practitioner's word** (in chat, 2026-11-04: "Keep controlled (Recommended)"). No change addresses its class — doubt carried by tone, or by a hedge in another sentence. The pass in runs 6 and 7 may come from the harness's enrolment attribution amendment, so "resolved" would claim a fix whose cause is not shown.
+  - The register row: Status `controlled`, Closed 2026-10 (its value before px5). Its original control text is kept, plus "(not missed in runs 6 and 7, cause not shown)". That is 198 characters, unquoted and id-free, checked against `test_pilot_docs.py`'s rules.
+  - Corrected wherever px5 called it resolved, each with a dated px6 note:
+    - this plan's px5 bullet and P.3's as-built line;
+    - `plan-pilot.md`'s run-7 register line (its own sub-bullet now);
+    - `AGENTS.md`'s validation-run7 paragraph.
+
+    `CHANGELOG.md` never named it. Run 7 now resolves three rows: F-094, F-129 and F-131.
+  - **Suite OWED** (`test_pilot_docs.py` reads the register): the composer runs it through `scripts\lint-held-out-set.py validation\heldout-4` (C12). No code, test, rule file or version field changed.
+  - The next action is unchanged: P.4.
+- Immediate next action: **P.4, the `heldout-4` diagnosis.** It is the ONE task that reads the set:
+  - its `HeldOutCase` entries (`cases_written=True`), the divergence entries, and the role tails against the case boundaries (ids and integers);
+  - every failure classed as 0.3.4's P.4 classed `heldout-3`'s, above all the two R1 facts (`h4-01/f5`, `h4-07/f0`);
+  - then the `h4-` register rows, which close P.3;
+  - then the blind rule ends: `validation/README.md` goes into the past tense, the temporary presence pin is removed, and the folders `C:\scribe-run7\heldout-4` and `.cursor/loops/held-out-lint/` are deleted.
+
+  Until P.4 is committed, every suite runs ONLY through the runner (C12). Then comes the next plan (question (3)): rec=the larger speech model, by the Acceptance's R1-alone rule — in Plan Mode, with Fable.
+- Open blockers / open questions: `[2026-11-04]` the exit-gate wording (D8's draft) and the review guide's 0.3.4 and 0.3.5 lines were APPROVED by the practitioner on 2026-11-04 (P.3) — no approval is still owed. As first written: the exit-gate wording (D8's draft) and the review guide's 0.3.4 and 0.3.5 lines await the practitioner's approval (Phase 3 / P.3) — the 0.3.5 goodbye-and-greeting lines landed with this task, marked awaiting approval. Two properties of the accepted list, DISCLOSED and pinned rather than changed (the input is decided; re-filtering is not this task's): (1) three accepted greetings ("nice to see you", "good to see you", "nice to see you again") hold the accepted closing "see you", so such a greeting followed by another greeting raises the live new-consultation warning at the START of a consultation (it never acts, but it fires once per recording, so an early false one leaves a later real next patient unwarned), and mid-visit ONE such greeting line can cut the note with no goodbye said ("Oh, nice to see you, come on in" to someone joining; rounds 9 MED-001/MED-002) — for the practitioner to weigh before the commit and to see at P.2, rec=keep (disclosed in the threat model and the review guide; rule 4 and rule 5 found no instance; dropping the three greetings would be a new dated vocabulary decision with its own rule-4 re-run); (2) the phrase tokens fold no typographic apostrophe, so "What’s new" misses the four apostrophe phrases (in effect three greetings — the cut can move one segment earlier, any number later, or vanish), rec=keep (folding would widen matching; the recogniser's apostrophe form is unmeasured here). For the peer pass: both are in its scope.
+- Last plan sync: 2026-11-04 (stage-7 executor leg px5, P.3 recorded but its `h4-` rows: the register re-checked on the seen sets, P.5 (a) decided again, the review guide's 0.3.4 / 0.3.5 lines and the exit-gate wording approved)
 
 ## Review History
 - 2026-10-25 — `/peer-loop` plan-review pass (cap 5): codex `gpt-6-astra` medium, read-only, composer Opus 5.5 (rounds recorded by the composer from the peer's log). Round 1: 4 MED, all build-affecting, all accepted. Round 2: 3 MED (005–007), all build-affecting, all accepted. Round 3: 3 MED (008–010), all build-affecting, all accepted (009 corrects 006's definition). Round 4: 1 MED (011), build-affecting, accepted (corrects 008's source). Round 5: no findings — CONVERGED (11 MED across the pass, all accepted; 0 CRIT / 0 HIGH).
@@ -1095,7 +1117,31 @@ Summary: 0 CRIT / 0 HIGH / 0 MED / 2 LOW; routes: Fix-now ×2, both the composer
       - the chooser's middle-elided labels (known since 0.3.3);
       - during take 3 the window's status bar still showed take 2's new-consultation warning text, although take 3 held no closing or greeting — a leftover status-bar message (Retained Follow-Up Items; the Session tab was not checked).
     - Recorded in `docs/release/pilot-builds.md` (the 0.3.5 row and the rollback lead-ins), `AGENTS.md` (Hosting, Local Run Steps, Current Status) and `CHANGELOG.md` (the 0.3.5 entry: installed 2026-11-04).
-- [ ] 🟥 **P.3 The register, the P.5 question, the approvals** — rows from run 7 by class (`h4-` after P.4; every excused unsupported line a `controlled` row; rows `resolved ("0.3.5 (commit …)")` only where the run shows the class gone; F-139 / F-140's control text corrected — one click, not "each"); the P.5 question (shadow off?) as a dated decision on `plan-pilot.md`; the exit-gate wording and the review guide's 0.3.4 / 0.3.5 lines applied once approved. Done when: `test_pilot_docs.py` green and committed.
+- [ ] 🟨 **P.3 The register, the P.5 question, the approvals** — rows from run 7 by class (`h4-` after P.4; every excused unsupported line a `controlled` row; rows `resolved ("0.3.5 (commit …)")` only where the run shows the class gone; F-139 / F-140's control text corrected — one click, not "each"); the P.5 question (shadow off?) as a dated decision on `plan-pilot.md`; the exit-gate wording and the review guide's 0.3.4 / 0.3.5 lines applied once approved. Done when: `test_pilot_docs.py` green and committed.
+  - `[2026-11-04T05:12:41+11:00, as built — stage-7 executor (leg px5); the practitioner's answers in chat, 2026-11-04, each the recommended option]` **Done except the `h4-` rows, which P.4 adds** (so 🟨, not yet counted). Pending: `test_pilot_docs.py` green (the composer's) and the commit.
+    - **The register, seen sets only** (`docs/pilot/findings-register.md`; from run 7's five reports and predictions v3):
+      - **No new row.** Every rule-v3 failure in the seen sets already has a row. `heldout`: `hld-14` and `-21` (F-091, F-092, F-097, F-098), with R2 over its ceiling (F-095, F-096, F-098). `heldout-2`: its 15 encounters (F-103–F-116, F-126–F-128), with R2 (F-117–F-125). The 50 pass. `heldout-3` passes rule v3.
+      - **Resolved — "0.3.5 (commit c985857)", Closed 2026-11:**
+        - F-129 (`h2-05`) and F-131 (`h3-02`): each next patient is now found by the wider lists (Check 6 measured on both; R3 none and `h3-17` respectively).
+        - F-094 (`hld-19`): the left-out-line warning. Its control text had said "not yet installed"; it is now installed (P.2), and `heldout` has 0 silent facts in runs 6 and 7.
+        - F-033 (`syn-30`): its doubt is not missed in runs 6 or 7. The cause is not isolated — 0.3.4's changes, or the enrolment attribution amendment — and the control text says only "under the 0.3.4 changes". **Rec=keep resolved:** the class is gone on the run, which is the register's rule. The alternative is to keep it controlled until a cause is shown, the composer's call. `[2026-11-04, px6 — superseded by the practitioner's word, "Keep controlled (Recommended)": no change addresses the class (doubt carried by tone, or by a hedge in another sentence), and the pass in runs 6 and 7 may come from the harness's enrolment attribution amendment. So "resolved" would claim a fix whose cause is not shown. F-033 is controlled again, Closed 2026-10, with its original control text plus "(not missed in runs 6 and 7, cause not shown)", 198 characters. Three rows are resolved by 0.3.5: F-094, F-129 and F-131.]`
+      - **Re-stated, still `controlled`:** F-130 (`h3-03`). Its line is now excused under rule v3's R1 exemption; the register's Severity rule (D4) keeps it as a controlled row.
+      - **Corrected:** F-139 / F-140's control text. 0.3.5 draws one warning per joined run, not per piece, and one Acknowledge click clears every warning of that kind (P.2 take 2). They stay `controlled`, Closed 2026-10.
+      - **Unchanged, still controlled:**
+        - the residues of the 50: F-038 `syn-35` R2, F-071 / F-072 `syn-28` R1, F-078 / F-083 `syn-38` / `-46` R3, F-087 `syn-22`;
+        - F-089, F-090, F-093, F-099;
+        - F-132 (`h3-17`, R3) and F-133–F-138.
+      - Every changed cell was checked by hand against `test_pilot_docs.py`'s rules: under 200 characters, no quotation mark, no id shape, and the month only.
+    - **P.5** (`plan-pilot.md`): a dated DECISION 2026-11-04 line — "Keep shadow on (Recommended)", (a) stands for run 7. It gives the reason (rule v3's gate not met, on R1 alone; the Acceptance; Constraint 12) and names the next plan, a larger speech model. A register line follows it.
+    - **The approvals:**
+      - `docs/practice/clinician-review-guide.md`: the draft-history line says the 0.3.4 and 0.3.5 lines were "approved by the practitioner on 2026-11-04", as `2f7ad3d` did for 0.3.3. The trailing "— the 0.3.4 and 0.3.5 lines go to the practitioner together" was dropped with the "awaiting" it qualified. No other wording changed.
+      - `docs/pilot/exit-gate.md`: Clinic 1's "Validation passed" line is now D8's proposal text. A dated italic note says it was approved on 2026-11-04 and replaced the rule-v1 wording; the "Proposed wording … a draft" preface is removed. Clinic 2 has no line of its own (its "Validation and shadow results recorded" reads clinic 1's), so nothing changed there.
+    - **Made current elsewhere:**
+      - `CHANGELOG.md`: the 0.3.5 entry's "await the practitioner's approval" now reads approved 2026-11-04.
+      - `AGENTS.md`: the validation-run7 paragraph (approved; P.3's outcome; NEXT is P.4 and the next plan).
+      - This plan's Open blockers line.
+
+      The other "awaiting" hits are older versions' lines (0.3.0, 0.3.2, `phase-history.md`, earlier dated bullets) and were left alone.
 - [ ] 🟥 **P.4 The `heldout-4` diagnosis** — the ONE task that reads it: its `HeldOutCase` entries (`cases_written=True`), the divergence entries, the role tails against the case boundaries (ids and integers), every failure classed as P.4 of 0.3.4 classed `heldout-3`'s; the blind rule ends; `validation/README.md` in the past tense. Done when: committed on the practitioner's word; the Handoff Note says whether the gate was met and what P.5 is asked; `heldout-4`'s folder deleted; `.cursor/loops/held-out-lint/` deleted.
 
 ## Retained Follow-Up Items

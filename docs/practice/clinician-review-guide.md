@@ -11,10 +11,10 @@ version 0.3.0, awaiting the practitioner's approval; the background-music, marke
 number lines added 2026-10-12 for version 0.3.2, awaiting the practitioner's approval; the
 next-patient, removing-lines, self-correction and "unsure" lines added 2026-10-13 for
 version 0.3.3, approved by the practitioner on 2026-10-22; the left-out-line, wider-doubt and
-shorter next-patient-mark lines added 2026-10-24 for version 0.3.4, awaiting the
-practitioner's approval; the longer goodbye-and-greeting list lines added 2026-10-26 and
-the split-line line added 2026-10-27 for version 0.3.5, awaiting the practitioner's
-approval — the 0.3.4 and 0.3.5 lines go to the practitioner together). For the
+shorter next-patient-mark lines added 2026-10-24 for version 0.3.4, approved by the
+practitioner on 2026-11-04; the longer goodbye-and-greeting list lines added 2026-10-26 and
+the split-line line added 2026-10-27 for version 0.3.5, approved by the practitioner on
+2026-11-04). For the
 practitioner, before saving a note and before finalising it in Cliniko.
 
 **Why this matters.** Ahpra's guidance on AI in healthcare ("Meeting your professional
