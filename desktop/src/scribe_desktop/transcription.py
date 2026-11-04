@@ -993,6 +993,37 @@ def resolve_whisper_model(model_name: str = DEFAULT_WHISPER_MODEL) -> str:
     return model_name
 
 
+# Larger-model plan D8: faster-whisper builds its mel filters from the model
+# folder's ``preprocessor_config.json`` and, when the file is absent, builds
+# 80 — while the CTranslate2 conversions of ``large-v3`` and its turbo and
+# distil variants expect 128, so such a load fails or mis-transcribes. The
+# count is checked after every load, in the provider and in the benchmark
+# worker (``benchmark.run_single``).
+WHISPER_PREPROCESSOR_FILE: Final = "preprocessor_config.json"
+
+
+def check_mel_filters(model: Any, path: Path) -> None:
+    """Raise ``TranscriptionModelError`` naming ``preprocessor_config.json``
+    unless the loaded faster-whisper ``model`` builds as many mel filters
+    (``feature_extractor.mel_filters``, shape ``(n_mels, 201)``) as its
+    CTranslate2 model expects (``model.n_mels``). A count that cannot be
+    read is refused the same way: the load is never trusted unchecked."""
+    try:
+        filters = int(model.feature_extractor.mel_filters.shape[0])
+        expected = int(model.model.n_mels)
+    except (AttributeError, IndexError, TypeError, ValueError) as exc:
+        raise TranscriptionModelError(
+            f"whisper model at {path}: its mel filter count could not be read "
+            f"({type(exc).__name__}); check its {WHISPER_PREPROCESSOR_FILE}"
+        ) from exc
+    if filters != expected:
+        raise TranscriptionModelError(
+            f"whisper model at {path} expects {expected} mel filters but its feature "
+            f"extractor has {filters}: its {WHISPER_PREPROCESSOR_FILE} is missing or "
+            f"wrong - {install_layout.model_remedy()}"
+        )
+
+
 class WhisperSpeechProvider:
     """Local faster-whisper transcription over one contiguous audio span
     (a packed ~30 s transcription window, or a lone VAD segment).
@@ -1050,6 +1081,7 @@ class WhisperSpeechProvider:
             raise TranscriptionModelError(
                 f"failed to load whisper model at {path}: {exc}"
             ) from exc
+        check_mel_filters(self._model, path)
 
     @property
     def model_name(self) -> str:
@@ -2645,6 +2677,7 @@ __all__ = [
     "TRANSCRIBE_WINDOW_MAX_GAP_SECONDS",
     "TRANSCRIBE_WINDOW_SECONDS",
     "UNCERTAINTY_THRESHOLD",
+    "WHISPER_PREPROCESSOR_FILE",
     "RecoveryOutcome",
     "TranscriptDocument",
     "TranscriptSegment",
@@ -2655,6 +2688,7 @@ __all__ = [
     "assemble_transcript",
     "assign_words_to_segments",
     "attribute_speakers",
+    "check_mel_filters",
     "default_whisper_model_dir",
     "enrolled_cluster",
     "extract_segment_pcm",

@@ -29,13 +29,14 @@ import pytest
 from conftest import (
     forbid_network_io,
     on_real_ml_root,
+    real_ml_models_root,
     real_ml_skip_reason,
     start_unlinked,
     use_models_root,
 )
 from scribe_desktop import install_layout
 from scribe_desktop.audio_capture import MockCaptureBackend
-from scribe_desktop.benchmark import OFFLINE_ENV, apply_offline_env
+from scribe_desktop.benchmark import OFFLINE_ENV, apply_offline_env, list_whisper_candidates
 from scribe_desktop.logging_setup import PayloadTripwireFilter, dropped_record_count
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session import (
@@ -67,6 +68,7 @@ from scribe_desktop.transcription import (
     FALLBACK_WHISPER_MODEL,
     SPEAKER_1,
     SPEAKER_2,
+    WHISPER_PREPROCESSOR_FILE,
     TranscriptDocument,
     TranscriptionModelError,
     TranscriptSegment,
@@ -76,6 +78,7 @@ from scribe_desktop.transcription import (
     # clustering — imported package-private on purpose.
     _segment_embedding,
     assign_words_to_segments,
+    check_mel_filters,
     extract_segment_pcm,
     is_name_like_token,
     is_number_token,
@@ -1315,6 +1318,25 @@ class TestModelPolicy:
             WhisperSpeechProvider()
 
 
+def _complete_real_whisper_folders() -> list[object]:
+    """Larger-model Task 0.3: every complete whisper folder under the dev
+    models root (``benchmark.list_whisper_candidates``, the benchmark's own
+    completeness rule), read at collection; with none there, one skipped
+    case naming the folder it looked in, as the other real-ML legs skip."""
+    root = real_ml_models_root()
+    names = list_whisper_candidates(root) if root is not None else []
+    if names:
+        return list(names)
+    return [
+        pytest.param(
+            "none",
+            marks=pytest.mark.skip(
+                reason=real_ml_skip_reason("a complete whisper folder (for its tokenizer)")
+            ),
+        )
+    ]
+
+
 class TestClinicalPrompt:
     def test_prompt_is_nonempty_prose(self) -> None:
         assert CLINICAL_INITIAL_PROMPT.strip()
@@ -1367,6 +1389,32 @@ class TestClinicalPrompt:
         assert len(ids) <= 210, (
             f"CLINICAL_INITIAL_PROMPT measures {len(ids)} tokens - over the "
             "documented 210 headroom bar (hard truncation at 223)"
+        )
+
+    @pytest.mark.parametrize("model_name", _complete_real_whisper_folders())
+    def test_prompt_token_count_in_every_complete_whisper_folder(self, model_name: str) -> None:
+        """Larger-model Task 0.3: the same count as the test above, with the
+        tokenizer of EVERY complete whisper folder under the dev models root
+        (that test reads only the resolved model's) — each candidate's count
+        goes on the plan (run with ``-s``; a number, never the primer). The
+        210 bar binds every folder; the counts are printed, not pinned to
+        the shipped model's 169, since an English-only (``.en``) folder
+        carries its own tokenizer, whose count is not recorded."""
+        tokenizers = pytest.importorskip("tokenizers")
+
+        root = real_ml_models_root()
+        assert root is not None  # the parametrisation found a folder there
+        tokenizer_path = root / "whisper" / model_name / "tokenizer.json"
+        if not tokenizer_path.is_file():
+            pytest.skip(f"whisper/{model_name} has no tokenizer.json (vocabulary layout)")
+        tokenizer = tokenizers.Tokenizer.from_file(str(tokenizer_path))
+        ids = tokenizer.encode(
+            " " + CLINICAL_INITIAL_PROMPT.strip(), add_special_tokens=False
+        ).ids
+        print(f"primer tokens ({model_name}): {len(ids)}")
+        assert len(ids) <= 210, (
+            f"CLINICAL_INITIAL_PROMPT measures {len(ids)} tokens with {model_name}'s "
+            "tokenizer - over the documented 210 headroom bar (hard truncation at 223)"
         )
 
     def test_prompt_carries_no_patient_identifying_content(self) -> None:
@@ -1450,13 +1498,25 @@ class TestClinicalPrompt:
         }
 
 
+def _mel_attributes(model: object, filters: int, n_mels: int) -> None:
+    """Give a ``WhisperModel`` double the two attributes the provider's mel
+    check reads (larger-model D8): ``feature_extractor.mel_filters`` of shape
+    ``(filters, 201)`` and ``model.n_mels``."""
+    import types
+
+    model.feature_extractor = types.SimpleNamespace(  # type: ignore[attr-defined]
+        mel_filters=types.SimpleNamespace(shape=(filters, 201))
+    )
+    model.model = types.SimpleNamespace(n_mels=n_mels)  # type: ignore[attr-defined]
+
+
 class _RecordingWhisperModel:
     """Stands in for faster_whisper.WhisperModel: records transcribe kwargs."""
 
     calls: list[dict[str, object]] = []
 
     def __init__(self, *args: object, **kwargs: object) -> None:
-        pass
+        _mel_attributes(self, 80, 80)  # matching, as a real medium load
 
     def transcribe(self, audio: object, **kwargs: object) -> tuple[list[object], None]:
         type(self).calls.append(dict(kwargs))
@@ -1509,6 +1569,84 @@ class TestProviderPromptWiring:
         assert call["initial_prompt"] == "physiotherapy assessment"
 
 
+class _MelWhisperModel:
+    """Stands in for faster_whisper.WhisperModel with a chosen mel-filter
+    count and ``n_mels`` (larger-model D8); ``transcribe`` is never reached
+    by the refusals."""
+
+    filters = 80
+    n_mels = 80
+    transcribed = 0
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        _mel_attributes(self, type(self).filters, type(self).n_mels)
+
+    def transcribe(self, audio: object, **kwargs: object) -> tuple[list[object], None]:
+        type(self).transcribed += 1
+        return [], None
+
+
+class TestProviderMelFilters:
+    """Larger-model D8: after the load, the provider refuses a model whose
+    feature extractor builds a different number of mel filters than the
+    CTranslate2 model expects, naming ``preprocessor_config.json``."""
+
+    def _provider(
+        self, monkeypatch: pytest.MonkeyPatch, filters: int, n_mels: int
+    ) -> WhisperSpeechProvider:
+        pytest.importorskip("numpy")  # provider's _numpy() is real
+        apply_offline_env()
+        import types
+
+        snapshot = _fake_snapshot("fake-model")
+        fake = types.ModuleType("faster_whisper")
+        fake.WhisperModel = _MelWhisperModel  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "faster_whisper", fake)
+        monkeypatch.setattr(_MelWhisperModel, "filters", filters)
+        monkeypatch.setattr(_MelWhisperModel, "n_mels", n_mels)
+        monkeypatch.setattr(_MelWhisperModel, "transcribed", 0)
+        return WhisperSpeechProvider(model_dir=snapshot)
+
+    def test_the_file_named_is_the_preprocessor_config(self) -> None:
+        assert WHISPER_PREPROCESSOR_FILE == "preprocessor_config.json"
+
+    @pytest.mark.parametrize(("filters", "n_mels"), [(80, 80), (128, 128)])
+    def test_an_equal_count_loads(
+        self, monkeypatch: pytest.MonkeyPatch, filters: int, n_mels: int
+    ) -> None:
+        provider = self._provider(monkeypatch, filters, n_mels)
+        assert provider.model_name == "fake-model"
+        assert provider.transcribe_segment(b"\x00\x00" * 160, 16_000) == []
+        assert _MelWhisperModel.transcribed == 1
+
+    @pytest.mark.parametrize(("filters", "n_mels"), [(80, 128), (128, 80)])
+    def test_an_unequal_count_is_refused_naming_the_file(
+        self, monkeypatch: pytest.MonkeyPatch, filters: int, n_mels: int
+    ) -> None:
+        with pytest.raises(TranscriptionModelError) as exc:
+            self._provider(monkeypatch, filters, n_mels)
+        message = str(exc.value)
+        assert "preprocessor_config.json is missing or wrong" in message
+        assert f"expects {n_mels} mel filters but its feature extractor has {filters}" in message
+        assert "fake-model" in message
+        assert _MelWhisperModel.transcribed == 0
+
+    @pytest.mark.parametrize("shape", [None, ()])
+    def test_a_count_that_cannot_be_read_is_refused(self, shape: tuple[int, ...] | None) -> None:
+        """Neither attribute (``None``), or an empty filter shape: refused,
+        never trusted unchecked."""
+        model = object()
+        if shape is not None:
+            model = _MelWhisperModel()
+            model.feature_extractor.mel_filters.shape = shape  # type: ignore[attr-defined]
+        with pytest.raises(TranscriptionModelError, match="could not be read") as exc:
+            check_mel_filters(model, Path("whisper") / "x")
+        assert "preprocessor_config.json" in str(exc.value)
+
+    def test_a_matching_count_returns_none(self) -> None:
+        assert check_mel_filters(_MelWhisperModel(), Path("whisper") / "x") is None
+
+
 class _DecodingWhisperModel:
     """Stands in for faster_whisper.WhisperModel: yields the test's Segments
     with their numbers (one per decode — an oversized window spans several),
@@ -1517,7 +1655,7 @@ class _DecodingWhisperModel:
     segments: list[object] = []
 
     def __init__(self, *args: object, **kwargs: object) -> None:
-        pass
+        _mel_attributes(self, 80, 80)  # matching, as a real medium load
 
     def transcribe(self, audio: object, **kwargs: object) -> tuple[list[object], None]:
         return list(type(self).segments), None
