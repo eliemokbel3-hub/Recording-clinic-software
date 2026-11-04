@@ -3308,7 +3308,7 @@ class TestBoundedCarry:
         counts = {
             name: len(cases) for name, cases in _PREDICTED_CORRECTION_DIVERGENCES_BY_SET.items()
         }
-        assert counts == {"heldout": 2, "heldout-2": 4, "heldout-3": 2, "heldout-4": 0}
+        assert counts == {"heldout": 2, "heldout-2": 4, "heldout-3": 2, "heldout-4": 1}
 
 
 _VALIDATION_CONFIG_DIR = Path(__file__).resolve().parents[2] / "validation" / "config"
@@ -3336,10 +3336,12 @@ _PREDICTED_CORRECTION_DIVERGENCES_BY_SET: dict[
         "h3-15": ((3,), ()),  # its opener is not a frozen marker
         "h3-19": ((3,), ()),  # its opener is not a frozen marker
     },
-    # Validation-run7 Task 0.5: blind until run 7 (C12); its entries are its P.4's.
-    "heldout-4": {},
+    # Validation-run7 Task P.4 (2026-11-04), read off the product after run 7.
+    "heldout-4": {
+        "h4-12": ((), (2,)),  # a marker opening new information is carried (D4's residue)
+    },
 }
-_PREDICTED_CORRECTION_DIVERGENCES = by_case(_PREDICTED_CORRECTION_DIVERGENCES_BY_SET)
+_PREDICTED_CORRECTION_DIVERGENCES =by_case(_PREDICTED_CORRECTION_DIVERGENCES_BY_SET)
 
 
 def _held_out_corrections(case: HeldOutCase) -> tuple[int, ...]:

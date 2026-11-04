@@ -33,7 +33,7 @@ and its own detail stays in Cliniko and in your off-repository pilot log.
   clinic 1 smoke), `shadow`, `reviewed`, `everyday` or `other`.
 - **Encounter** — a synthetic id (`syn-NN`; or, from the four held-out sets,
   `hld-NN` (`heldout`), `h2-NN` (`heldout-2`), `h3-NN` (`heldout-3`) or `h4-NN`
-  (`heldout-4`, the blind set of validation run 7 — its rows are entered after
+  (`heldout-4`, the blind set of validation run 7 — its rows were entered after
   that run)), or `—`.
 - **Severity** — `high`, `medium` or `low` (below).
 - **Category** — one of:
@@ -234,3 +234,10 @@ Cliniko.
 | F-138 | 2026-10 | — | validation | h3-19 | high | uncertainty | checker | controlled | Shadow mode on for every recording; a bare modal verb of doubt is not marked; the clinician writes their own Cliniko note | 2026-10 |
 | F-139 | 2026-10 | — | validation | h3-05 | medium | workflow | checker | controlled | Shadow mode on for every recording; since 0.3.5 a split line draws one left-out-line warning per joined run, not per piece; one Acknowledge click clears every warning of that kind | 2026-10 |
 | F-140 | 2026-10 | — | validation | h3-21 | medium | workflow | checker | controlled | Shadow mode on for every recording; since 0.3.5 a split line draws one left-out-line warning per joined run, not per piece; one Acknowledge click clears every warning of that kind | 2026-10 |
+| F-141 | 2026-10 | — | validation | h4-01 | high | quality | transcription | controlled | Shadow mode on for every recording; a misheard word, marked for review; the clinician checks each marked word and writes their own Cliniko note; a larger speech model is the next plan | 2026-11 |
+| F-142 | 2026-10 | — | validation | h4-07 | high | quality | transcription | controlled | Shadow mode on for every recording; a misheard word, marked for review; the clinician checks each marked word and writes their own Cliniko note; a larger speech model is the next plan | 2026-11 |
+| F-143 | 2026-10 | — | validation | h4-01 | high | uncertainty | checker | controlled | Shadow mode on for every recording; a hedge not on the frozen list, or outside the fact's sentence, is not marked; the clinician writes their own Cliniko note | 2026-11 |
+| F-144 | 2026-10 | — | validation | h4-04 | high | uncertainty | checker | controlled | Shadow mode on for every recording; a hedge not on the frozen list, or outside the fact's sentence, is not marked; the clinician writes their own Cliniko note | 2026-11 |
+| F-145 | 2026-10 | — | validation | h4-14 | high | uncertainty | checker | controlled | Shadow mode on for every recording; a hedge not on the frozen list, or outside the fact's sentence, is not marked; the clinician writes their own Cliniko note | 2026-11 |
+| F-146 | 2026-10 | — | validation | h4-15 | high | uncertainty | checker | controlled | Shadow mode on for every recording; a hedge not on the frozen list, or outside the fact's sentence, is not marked; the clinician writes their own Cliniko note | 2026-11 |
+| F-147 | 2026-10 | — | validation | h4-22 | high | uncertainty | checker | controlled | Shadow mode on for every recording; a bare modal verb of doubt is not marked; the clinician writes their own Cliniko note | 2026-11 |

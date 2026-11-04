@@ -150,8 +150,15 @@ _PREDICTED_BOUNDARY_DIVERGENCES_BY_SET: Final[
         "h3-17": (7, None),  # neither is listed; the greeting is by name
         "h3-20": (7, None),  # a bare time-of-day greeting
     },
-    # Validation-run7 Task 0.5: blind until run 7 (C12); its entries are its P.4's.
-    "heldout-4": {},
+    # Validation-run7 Task P.4 (2026-11-04), read off the product after run 7.
+    "heldout-4": {
+        "h4-07": (6, None),  # neither its closing nor its greeting is listed
+        "h4-11": (8, None),  # neither is listed
+        # Its closing is listed; "hello" opens a sentence but a word follows it,
+        # so the one-word rule does not count it, and the pair is not listed.
+        "h4-16": (8, None),
+        "h4-20": (8, None),  # neither is listed
+    },
 }
 _PREDICTED_BOUNDARY_DIVERGENCES: Final = by_case(_PREDICTED_BOUNDARY_DIVERGENCES_BY_SET)
 
@@ -171,6 +178,16 @@ _BOUNDARY_PREDICTIONS_BEFORE_RUN7_0_4: Final[dict[str, tuple[int | None, int | N
     "h3-12": (10, None),
     "h3-18": (8, None),
 }
+# Validation-run7 plan Task P.4 (2026-11-04), the same reading over
+# ``heldout-4``, which was blind when the widening was accepted (C12): case id
+# -> (its expected boundary, the result under the 2026-09-28 lists), for each
+# case the widened lists changed. Both now match; under the old lists only
+# ``h4-05`` of its seven next patients was found.
+_BOUNDARY_CHANGES_ON_HELDOUT_4: Final[dict[str, tuple[int | None, int | None]]] = {
+    "h4-02": (6, None),
+    "h4-13": (4, None),
+}
+_SETS_SEEN_AT_RUN7_0_4: Final = ("heldout", "heldout-2", "heldout-3")
 # How many phrases each list held on 2026-09-28: the widening APPENDED, so the
 # lists' heads are the old lists (``test_vocabulary.py`` pins both halves).
 _CLOSINGS_BEFORE_RUN7_0_4: Final = 14
@@ -436,7 +453,7 @@ class TestHeldOutBoundaries:
             name: len(cases) for name, cases in _PREDICTED_BOUNDARY_DIVERGENCES_BY_SET.items()
         }
         # 7 / 6 / 9 until validation-run7 Task 0.4 (c) (2026-10-26).
-        assert counts == {"heldout": 4, "heldout-2": 4, "heldout-3": 6, "heldout-4": 0}
+        assert counts == {"heldout": 4, "heldout-2": 4, "heldout-3": 6, "heldout-4": 4}
 
     def test_the_widened_lists_changed_these_predictions_and_no_expectation(
         self, validation_config: NoteConfig, monkeypatch: pytest.MonkeyPatch
@@ -446,7 +463,9 @@ class TestHeldOutBoundaries:
         boundary under the 2026-09-28 lists differs from today's, each with
         its 2026-09-28 result; under those lists every one diverged, and
         today each matches its expected boundary or is today's recorded
-        divergence. The case's expectation is unchanged (C2, C3)."""
+        divergence. The case's expectation is unchanged (C2, C3). The record
+        is over the sets seen at Task 0.4; ``heldout-4``'s changes, read after
+        run 7 (Task P.4), are their own record."""
         today = {
             case.case_id: next_patient_boundary(case.document(), validation_config)
             for case in HELD_OUT_CASES
@@ -462,6 +481,15 @@ class TestHeldOutBoundaries:
             case_id: (cases[case_id].boundary, before[case_id])
             for case_id in cases
             if before[case_id] != today[case_id]
+        }
+        heldout_4 = {case.case_id for case in held_out_set("heldout-4").all_cases()}
+        assert {
+            case_id: entry for case_id, entry in changed.items() if case_id in heldout_4
+        } == _BOUNDARY_CHANGES_ON_HELDOUT_4
+        for case_id, (expected, result_2026_09_28) in _BOUNDARY_CHANGES_ON_HELDOUT_4.items():
+            assert cases[case_id].boundary == expected == today[case_id] != result_2026_09_28
+        changed = {
+            case_id: entry for case_id, entry in changed.items() if case_id not in heldout_4
         }
         assert changed == _BOUNDARY_PREDICTIONS_BEFORE_RUN7_0_4
         assert len(changed) == 9
@@ -522,34 +550,62 @@ def _rule_4_problem(
     return None
 
 
-def _seen_held_out_sets() -> list[HeldOutSet]:
-    """The held-out sets rule 4 reads: those whose cases are written. A
-    blind set (``heldout-4`` until its P.4, validation-run7 Task 0.5) is not
-    seen and has no case to give b (C12)."""
-    return [held_out for held_out in HELD_OUT_SETS if held_out.cases_written]
+def _held_out_items(held_out: HeldOutSet) -> list[tuple[str, TranscriptDocument, int | None]]:
+    """A held-out set's items as (id, reference document, b): every script's
+    reference document with b its case's ``boundary``, never a role tail
+    (peer round 4 PR-MED-011), then the set's explicit-turn edge cases (b
+    their ``boundary``)."""
+    cases = {case.case_id: case for case in held_out.all_cases()}
+    items: list[tuple[str, TranscriptDocument, int | None]] = []
+    for path in held_out.script_paths():
+        script = load_script(path)
+        items.append(
+            (script.encounter_id, reference_document(script), cases[script.encounter_id].boundary)
+        )
+    for case in held_out.edge_cases:
+        items.append((case.case_id, case.document(), case.boundary))
+    return items
 
 
 def _seen_items() -> list[tuple[str, TranscriptDocument, int | None]]:
-    """Every seen item as (id, reference document, b): the reference
-    document of every script of the four seen sets — b is
-    ``reference_tail_start`` for the 50 and the case's ``boundary`` for the
-    three held-out sets, never a role tail (peer round 4 PR-MED-011) — then
-    the held-out sets' explicit-turn edge cases (b their ``boundary``)."""
-    cases = {case.case_id: case for case in HELD_OUT_CASES}
+    """Every item seen at Task 0.4 (b) as (id, reference document, b): the
+    50 (b their ``reference_tail_start``), then the three held-out sets seen
+    then (``_held_out_items``). ``heldout-4`` was blind until its P.4
+    (validation-run7 Task 0.5, C12); rule 4 over it is its own test."""
     items: list[tuple[str, TranscriptDocument, int | None]] = []
     for path in sorted(_RUN_OF_RECORD_SCRIPTS.glob("*.json")):
         script = load_script(path)
         items.append(
             (script.encounter_id, reference_document(script), reference_tail_start(script))
         )
-    for held_out in _seen_held_out_sets():
-        for path in held_out.script_paths():
-            script = load_script(path)
-            case = cases[script.encounter_id]
-            items.append((script.encounter_id, reference_document(script), case.boundary))
-        for case in held_out.edge_cases:
-            items.append((case.case_id, case.document(), case.boundary))
+    for name in _SETS_SEEN_AT_RUN7_0_4:
+        items.extend(_held_out_items(held_out_set(name)))
     return items
+
+
+def _rule_4_walk(
+    items: list[tuple[str, TranscriptDocument, int | None]],
+    validation_config: NoteConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[dict[str, int | None], dict[str, int | None], dict[str, str]]:
+    """Each item's boundary under the 2026-09-28 lists and under today's,
+    and each item's rule-4 problem (none when it passes)."""
+    today = {
+        item_id: next_patient_boundary(document, validation_config)
+        for item_id, document, _expected in items
+    }
+    _use_the_2026_09_28_lists(monkeypatch)
+    before = {
+        item_id: next_patient_boundary(document, validation_config)
+        for item_id, document, _expected in items
+    }
+    monkeypatch.undo()
+    problems = {
+        item_id: problem
+        for item_id, _document, b in items
+        if (problem := _rule_4_problem(before[item_id], today[item_id], b))
+    }
+    return before, today, problems
 
 
 class TestVocabularyRule4:
@@ -587,26 +643,12 @@ class TestVocabularyRule4:
         without the axis and every axis negative stays None) and 35
         positives. The widening changed nine held-out boundaries (the dated
         record) and none of the 50's; 16 positives still diverge."""
-        seen_sets = [held_out.name for held_out in _seen_held_out_sets()]
-        assert seen_sets == ["heldout", "heldout-2", "heldout-3"]
+        written = [held_out.name for held_out in HELD_OUT_SETS if held_out.cases_written]
+        assert written == [*_SETS_SEEN_AT_RUN7_0_4, "heldout-4"]
         items = _seen_items()
-        today = {
-            item_id: next_patient_boundary(document, validation_config)
-            for item_id, document, _expected in items
-        }
-        _use_the_2026_09_28_lists(monkeypatch)
-        before = {
-            item_id: next_patient_boundary(document, validation_config)
-            for item_id, document, _expected in items
-        }
-        monkeypatch.undo()
-        expected = {item_id: b for item_id, _document, b in items}
-        problems = {
-            item_id: problem
-            for item_id in expected
-            if (problem := _rule_4_problem(before[item_id], today[item_id], expected[item_id]))
-        }
+        before, today, problems = _rule_4_walk(items, validation_config, monkeypatch)
         assert problems == {}
+        expected = {item_id: b for item_id, _document, b in items}
         assert len(items) == len(expected) == 127
         negatives = [item_id for item_id, b in expected.items() if b is None]
         assert (len(negatives), len(expected) - len(negatives)) == (92, 35)
@@ -617,8 +659,43 @@ class TestVocabularyRule4:
             for item_id, b in expected.items()
             if b is not None and today[item_id] != b
         }
-        assert still_divergent == {"syn-38", "syn-46", *_PREDICTED_BOUNDARY_DIVERGENCES}
+        seen_divergences = {
+            case_id
+            for name in _SETS_SEEN_AT_RUN7_0_4
+            for case_id in _PREDICTED_BOUNDARY_DIVERGENCES_BY_SET[name]
+        }
+        assert still_divergent == {"syn-38", "syn-46", *seen_divergences}
         assert len(still_divergent) == 16
+
+    def test_rule_4_holds_on_heldout_4_read_after_run_7(
+        self, validation_config: NoteConfig, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Validation-run7 plan Task P.4 (2026-11-04): rule 4 over
+        ``heldout-4``, blind when the widening was accepted (C12) — 22
+        scripts, 15 negatives (7 axis negatives and 8 without the axis) and 7
+        positives. No widened phrase cuts a negative, cuts a positive early or
+        loses a match; the widening found two of its three boundaries
+        (``_BOUNDARY_CHANGES_ON_HELDOUT_4``), and four positives still
+        diverge (no boundary)."""
+        items = _held_out_items(held_out_set("heldout-4"))
+        before, today, problems = _rule_4_walk(items, validation_config, monkeypatch)
+        assert problems == {}
+        expected = {item_id: b for item_id, _document, b in items}
+        assert len(items) == len(expected) == 22
+        negatives = [item_id for item_id, b in expected.items() if b is None]
+        assert (len(negatives), len(expected) - len(negatives)) == (15, 7)
+        assert all(today[item_id] is None for item_id in negatives)
+        changed = {item_id for item_id in expected if before[item_id] != today[item_id]}
+        assert changed == set(_BOUNDARY_CHANGES_ON_HELDOUT_4)
+        found = {item_id for item_id in expected if today[item_id] is not None}
+        assert found == {"h4-02", "h4-05", "h4-13"}
+        assert {item_id for item_id in expected if before[item_id] is not None} == {"h4-05"}
+        still_divergent = {
+            item_id
+            for item_id, b in expected.items()
+            if b is not None and today[item_id] != b
+        }
+        assert still_divergent == set(_PREDICTED_BOUNDARY_DIVERGENCES_BY_SET["heldout-4"])
 
     @pytest.mark.parametrize(
         ("turns", "before", "after"),

@@ -2663,7 +2663,7 @@ class TestCheck1HedgeMark:
     def test_every_predicted_unsure_divergence_is_a_case_of_its_set(self) -> None:
         assert misfiled(_PREDICTED_UNSURE_DIVERGENCES_BY_SET) == []
         counts = {name: len(cases) for name, cases in _PREDICTED_UNSURE_DIVERGENCES_BY_SET.items()}
-        assert counts == {"heldout": 3, "heldout-2": 10, "heldout-3": 7, "heldout-4": 0}
+        assert counts == {"heldout": 3, "heldout-2": 10, "heldout-3": 7, "heldout-4": 6}
         heldout = {c.case_id for c in held_out_set("heldout").all_cases()}
         assert set(_UNSURE_PREDICTIONS_BEFORE_RUN6_0_9) <= heldout
 
@@ -2739,8 +2739,16 @@ _PREDICTED_UNSURE_DIVERGENCES_BY_SET: dict[
         "h3-20": ((1,), ()),  # its hedge is outside the frozen list
         "h3-21": ((8,), ()),  # the doubt is a separate line, its hedge unlisted
     },
-    # Validation-run7 Task 0.5: blind until run 7 (C12); its entries are its P.4's.
-    "heldout-4": {},
+    # Validation-run7 Task P.4 (2026-11-04), read off the product after run 7: no
+    # hedge here is listed; ``h4-08``'s is, and it matches.
+    "heldout-4": {
+        "h4-01": ((6,), ()),  # its hedge is outside the frozen list
+        "h4-04": ((1,), ()),  # the doubt is a separate line, its hedge a bare modal
+        "h4-14": ((4,), ()),  # its hedge is outside the frozen list
+        "h4-15": ((3,), ()),  # its hedge is outside the frozen list (an idiom)
+        "h4-18": ((1,), ()),  # its hedge is outside the frozen list (an idiom)
+        "h4-22": ((4,), ()),  # a bare-modal hedge, outside the frozen list
+    },
 }
 _PREDICTED_UNSURE_DIVERGENCES = by_case(_PREDICTED_UNSURE_DIVERGENCES_BY_SET)
 
