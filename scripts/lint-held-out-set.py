@@ -1,11 +1,12 @@
 """Run the test suite with a blind held-out set in the tree (validation-run6
 plan D16, Task 0.17; Constraint C12).
 
-Whenever a script of a blind set (``validation/heldout-4`` since validation-run7
-plan Task 0.5; ``validation/heldout-3`` until its cases were written after run
-6) is in the tree, the composer runs pytest ONLY through this runner:
+Whenever a script of a blind set (``validation/heldout-5`` since larger-model
+plan Task 0.1 (d); ``validation/heldout-4`` until its cases were written after
+run 7, and ``validation/heldout-3`` until its cases were written after run 6)
+is in the tree, the composer runs pytest ONLY through this runner:
 
-    .venv\\Scripts\\python.exe scripts\\lint-held-out-set.py validation\\heldout-4
+    .venv\\Scripts\\python.exe scripts\\lint-held-out-set.py validation\\heldout-5
 
 The set folder must exist (``refused set-missing`` otherwise).
 

@@ -132,6 +132,9 @@ from scribe_desktop.speech import (
     vad_model_available,
 )
 from scribe_desktop.transcription import (
+    # Package-private by name, shared deliberately (larger-model D8): the
+    # model-name shape the harness and the guard measurement check too.
+    _MODEL_NAME_RE,
     DEFAULT_WHISPER_MODEL,
     TranscriptDocument,
     WhisperSpeechProvider,
@@ -155,8 +158,6 @@ _SESSION_ID_RE: Final = re.compile(SESSION_ID_PATTERN)
 # Printed in place of an ``--only`` value that is not a session id: such a
 # value could be anything (a patient's name included), so it is never echoed.
 UNNAMED_SESSION: Final = "(a value not shaped as a session id)"
-# A model name as the report may print it; anything else is ``(unnamed)``.
-_MODEL_NAME_RE: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 # The best one-to-one label mapping is found exhaustively; a transcript with
 # more distinct speaker labels than this on either side is not mapped (the
 # shipped pipeline emits at most three).

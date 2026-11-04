@@ -112,7 +112,13 @@ result is recorded there as a dated RUN line.
    with `heldout`, `heldout-2` and `heldout-3` run and reported in full; its
    report prints rule v3's verdict beside the verdict without its R1
    exemption and rule v1's (validation-run7 plan D4, D5;
-   `docs/testing/validation-harness.md`).
+   `docs/testing/validation-harness.md`). Validation run 8 (0.3.6, planned in
+   the larger-model plan) is to read it under rule v4
+   (`validation\rules\rule-v4.json`, each of six sets named with `--set`) on
+   the 50 scripts and the blind `heldout-5`, with
+   `heldout`, `heldout-2`, `heldout-3` and `heldout-4` run and reported in
+   full; rule v4 keeps rule v3's predicates and ceilings and changes only
+   which sets are read for the gate (larger-model plan D5, D6).
    *Amended 2026-10-09, after run 1 failed:* the shadow consultations of
    step 4 may start while run 1's findings are controlled by shadow mode (a
    shadow note never reaches Cliniko); step 5 and the exit gate still wait for
@@ -169,8 +175,8 @@ result is recorded there as a dated RUN line.
   Cliniko id and no session id. Describe what the app did in terms of the app
   (its category and the part of the app), never the patient.
 - **Synthetic encounter ids** (`syn-01` …, and the held-out sets' `hld-01` …
-  (`heldout`), `h2-01` … (`heldout-2`), `h3-01` … (`heldout-3`) and `h4-01` …
-  (`heldout-4`)) may appear in
+  (`heldout`), `h2-01` … (`heldout-2`), `h3-01` … (`heldout-3`), `h4-01` …
+  (`heldout-4`) and `h5-01` … (`heldout-5`)) may appear in
   the register; they identify invented content only. A real consultation's encounter is `—`, and
   a smoke measurement's `k-01` … name stays in your pilot log.
 - **Real consultations are never fed to the validation harness** (pilot plan

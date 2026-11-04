@@ -110,10 +110,11 @@ REGISTER_CELL_PATTERNS = {
     # id); a kept recording measured in the smoke is the "smoke" stage, and a
     # real consultation's encounter is "—".
     "Stage": r"validation|smoke|shadow|reviewed|everyday|other",
-    # The synthetic ids of the 50 scripts and the four held-out sets
+    # The synthetic ids of the 50 scripts and the five held-out sets
     # (validation run 6's register update, plan-validation-run6.md P.3;
-    # ``h4-`` since plan-validation-run7.md Task 0.5).
-    "Encounter": r"(?:syn|hld|h2|h3|h4)-[0-9]{2,}|—",
+    # ``h4-`` since plan-validation-run7.md Task 0.5; ``h5-`` since
+    # plan-larger-model.md Task 0.1 (d)).
+    "Encounter": r"(?:syn|hld|h2|h3|h4|h5)-[0-9]{2,}|—",
     "Severity": r"high|medium|low",
     "Category": (
         r"wrong-side|wrong-dose|negation-flipped|patient-speculation|cross-patient"
@@ -293,7 +294,7 @@ class TestFindingsRegister:
         }
         assert all(re.fullmatch(REGISTER_CELL_PATTERNS[k], v) for k, v in good.items())
         assert re.fullmatch(REGISTER_CELL_PATTERNS["Stage"], "smoke")
-        for synthetic in ("syn-01", "hld-22", "h2-05", "h3-17", "h4-01"):
+        for synthetic in ("syn-01", "hld-22", "h2-05", "h3-17", "h4-01", "h5-01"):
             assert re.fullmatch(REGISTER_CELL_PATTERNS["Encounter"], synthetic)
         for column, bad in (
             ("Encounter", "Jane Citizen"),
@@ -303,7 +304,7 @@ class TestFindingsRegister:
             ("Closed", "2026-11-02"),
             ("Stage", "role-play"),
             ("Encounter", "rp-01"),
-            ("Encounter", "h5-01"),
+            ("Encounter", "h6-01"),
             ("Encounter", "h3-1"),
             ("Encounter", "k-01"),
         ):

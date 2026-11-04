@@ -159,6 +159,9 @@ _PREDICTED_BOUNDARY_DIVERGENCES_BY_SET: Final[
         "h4-16": (8, None),
         "h4-20": (8, None),  # neither is listed
     },
+    # Larger-model Task 0.1 (d): blind until run 8 (C12); its entries are
+    # written in its Task P.4.
+    "heldout-5": {},
 }
 _PREDICTED_BOUNDARY_DIVERGENCES: Final = by_case(_PREDICTED_BOUNDARY_DIVERGENCES_BY_SET)
 
@@ -453,7 +456,13 @@ class TestHeldOutBoundaries:
             name: len(cases) for name, cases in _PREDICTED_BOUNDARY_DIVERGENCES_BY_SET.items()
         }
         # 7 / 6 / 9 until validation-run7 Task 0.4 (c) (2026-10-26).
-        assert counts == {"heldout": 4, "heldout-2": 4, "heldout-3": 6, "heldout-4": 4}
+        assert counts == {
+            "heldout": 4,
+            "heldout-2": 4,
+            "heldout-3": 6,
+            "heldout-4": 4,
+            "heldout-5": 0,
+        }
 
     def test_the_widened_lists_changed_these_predictions_and_no_expectation(
         self, validation_config: NoteConfig, monkeypatch: pytest.MonkeyPatch

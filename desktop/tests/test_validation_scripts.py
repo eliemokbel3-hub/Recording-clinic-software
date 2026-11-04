@@ -20,8 +20,9 @@ only.
 
 Validation-run6 plan Task 0.11: the held-out lints run per set over the
 fixture's table (``HELD_OUT_SETS``: ``validation/heldout``,
-``validation/heldout-2``, since Task 0.17 ``validation/heldout-3`` and, since
-validation-run7 Task 0.5, ``validation/heldout-4``); a set with no scripts yet
+``validation/heldout-2``, since Task 0.17 ``validation/heldout-3``, since
+validation-run7 Task 0.5 ``validation/heldout-4`` and, since larger-model Task
+0.1 (d), ``validation/heldout-5``); a set with no scripts yet
 — its folder absent or empty — passes them vacuously, and a set whose cases
 are not yet written gets the script lints only.
 
@@ -133,7 +134,7 @@ PROBLEM_CODES: Final[frozenset[str]] = frozenset(
         "render-mismatch",
     }
 )
-_STEM = r"(?:syn|hld|h2|h3|h4)-\d{2}"
+_STEM = r"(?:syn|hld|h2|h3|h4|h5)-\d{2}"
 _SET_NAME = r"(?:heldout(?:-\d{1,2})?|scripts)"
 STEM_RE: Final = re.compile(_STEM)
 PROBLEM_RE: Final = re.compile(
@@ -635,8 +636,8 @@ class TestHeldOutScripts:
 
     def test_the_sets_have_distinct_folders_and_prefixes(self) -> None:
         names = [held_out.name for held_out in HELD_OUT_SETS]
-        assert names == ["heldout", "heldout-2", "heldout-3", "heldout-4"]
-        assert SCRIPT_CASE_PREFIXES == ("hld-", "h2-", "h3-", "h4-")
+        assert names == ["heldout", "heldout-2", "heldout-3", "heldout-4", "heldout-5"]
+        assert SCRIPT_CASE_PREFIXES == ("hld-", "h2-", "h3-", "h4-", "h5-")
         assert len(set(SCRIPT_CASE_PREFIXES)) == len(SCRIPT_CASE_PREFIXES)
         for prefix in (*SCRIPT_CASE_PREFIXES, EDGE_CASE_PREFIX):
             others = [p for p in (*SCRIPT_CASE_PREFIXES, EDGE_CASE_PREFIX) if p != prefix]
@@ -646,22 +647,24 @@ class TestHeldOutScripts:
             assert STEM_RE.fullmatch(f"{held_out.prefix}01"), held_out.name
             assert PROBLEM_RE.fullmatch(f"{held_out.name}:bad-id:0"), held_out.name
 
-    def test_two_sets_take_their_tails_by_role_and_none_is_blind(self) -> None:
+    def test_three_sets_take_their_tails_by_role_and_heldout_5_is_blind(self) -> None:
         """Validation-run7 plan Task 0.5 (D6): ``heldout-3`` and
-        ``heldout-4`` are the two ``tails_by_role`` sets, both
-        ``routed_material`` with the same brief's bounds; since its Task P.4
-        (2026-11-04) ``heldout-4``'s cases are written, one per script, so no
-        set is blind; the R3 table reads the run-of-record set and all four
-        held-out sets."""
+        ``heldout-4`` take their tails by role, both ``routed_material``
+        with the same brief's bounds; since its Task P.4 (2026-11-04)
+        ``heldout-4``'s cases are written, one per script. Larger-model Task
+        0.1 (d) (D6): ``heldout-5`` is the third, with the same bounds, and
+        the one blind set — no case until its Task P.4. The R3 table reads
+        the run-of-record set and all five held-out sets."""
         role_sets = [held_out for held_out in HELD_OUT_SETS if held_out.tails_by_role]
-        assert [held_out.name for held_out in role_sets] == ["heldout-3", "heldout-4"]
+        assert [held_out.name for held_out in role_sets] == ["heldout-3", "heldout-4", "heldout-5"]
         routed = [held_out.name for held_out in HELD_OUT_SETS if held_out.routed_material]
-        assert routed == ["heldout-3", "heldout-4"]
+        assert routed == ["heldout-3", "heldout-4", "heldout-5"]
         for held_out in role_sets:
             assert held_out.script_count == (20, 25), held_out.name
             assert held_out.facts_per_script == (3, 6), held_out.name
         blind = [held_out.name for held_out in HELD_OUT_SETS if not held_out.cases_written]
-        assert blind == []
+        assert blind == ["heldout-5"]
+        assert held_out_set("heldout-5").all_cases() == ()
         assert len(held_out_set("heldout-4").all_cases()) == 22
         assert [held_out.name for held_out in _table_sets()] == [
             "scripts",
@@ -669,6 +672,7 @@ class TestHeldOutScripts:
             "heldout-2",
             "heldout-3",
             "heldout-4",
+            "heldout-5",
         ]
 
     @pytest.mark.parametrize("held_out", HELD_OUT_SETS, ids=_set_name)
@@ -726,7 +730,8 @@ class TestHeldOutScripts:
         """At least ``MIN_HELDOUT`` scripts once a set has any (or its cases
         are written — Task 0.10 authors a set before its cases); Task 0.17
         (D16): ``heldout-3``'s 20–25 scripts and 3–6 facts per script (and
-        ``heldout-4``'s, validation-run7 Task 0.5), read
+        ``heldout-4``'s, validation-run7 Task 0.5, and ``heldout-5``'s,
+        larger-model Task 0.1 (d)), read
         from the scripts' metadata only. The absent and empty states pass."""
         problems = _codes(held_out, {"facts-out-of-bounds"}) + [
             entry for entry in _set_problems(held_out) if _code(entry) == "size-out-of-bounds"
@@ -1302,7 +1307,7 @@ class TestProblemCodesAreContentFree:
             "h3-01:load-error:12345",
             f"{_SENTINEL}:load-error",
             "h3-001:load-error",
-            "h5-01:load-error",
+            "h6-01:load-error",
             "edge-01:load-error",
             "h3-01:load-error ",
         ):

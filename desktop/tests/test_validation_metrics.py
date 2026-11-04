@@ -2009,7 +2009,7 @@ class TestHedgeCreditAmendment:
     @pytest.mark.parametrize(
         "path",
         # Named sets only (written when ``heldout-3`` was blind, C12; the
-        # blind set is ``heldout-4`` since validation-run7 Task 0.5).
+        # blind set is ``heldout-5`` since larger-model Task 0.1 (d)).
         [
             path
             for name in ("heldout", "heldout-2")

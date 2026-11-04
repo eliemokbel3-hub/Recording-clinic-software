@@ -1213,6 +1213,125 @@ class TestRunValidationMain:
         assert validation.main(_argv(tmp_path, "--allow-small")) == 2
         assert "silero VAD model is not installed" in capsys.readouterr().out
 
+    @pytest.mark.parametrize("named", ["large-v3-turbo", "small", "medium"])
+    def test_a_model_named_by_model_is_used_and_never_a_fallback(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        named: str,
+    ) -> None:
+        """Larger-model D8: ``--model`` names the model checked and loaded —
+        the fallback resolution is not consulted, and no ``--allow-small`` is
+        asked for, ``small`` included — and it is never echoed in a refusal."""
+        checked: list[str] = []
+        built: list[object] = []
+
+        def available(name: str) -> bool:
+            checked.append(name)
+            return True
+
+        def never_resolved() -> str:
+            raise AssertionError("--model given: the fallback resolution is not consulted")
+
+        class ProviderBuiltError(Exception):
+            pass
+
+        def provider(**kwargs: object) -> object:
+            built.append(kwargs.get("model_name"))
+            raise ProviderBuiltError
+
+        monkeypatch.setattr(validation, "resolve_whisper_model", never_resolved)
+        monkeypatch.setattr(validation, "whisper_model_available", available)
+        # Without the VAD, the next refusal after the models check is the VAD's.
+        assert validation.main(_argv(tmp_path, "--model", named)) == 2
+        out = capsys.readouterr().out
+        assert out.strip() == (
+            f"[refused] the silero VAD model is not installed in {install_layout.models_root()}: "
+            f"{install_layout.model_remedy()}"
+        )
+        assert "--allow-small" not in out
+        assert checked == [named]
+        # With the VAD: the provider is built with exactly that name.
+        monkeypatch.setattr(validation, "vad_model_available", lambda: True)
+        monkeypatch.setattr(validation, "SileroVad", _FakeModels.Vad)
+        monkeypatch.setattr(validation, "WhisperSpeechProvider", provider)
+        _set_folder(tmp_path / "set")
+        argv = _argv(tmp_path, "--model", named, "--attribution", "clustering")
+        assert validation.main(argv, repo_root=tmp_path) == 2
+        out = capsys.readouterr().out
+        assert "[refused] the models could not be loaded (ProviderBuiltError)" in out
+        assert built == [named]
+
+    def test_without_model_the_shipped_resolution_is_unchanged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Larger-model D8, the other way: no ``--model`` — the resolution is
+        consulted once, its name checked, and a fallback still needs
+        ``--allow-small``."""
+        resolved: list[str] = []
+        checked: list[str] = []
+
+        def resolve() -> str:
+            resolved.append("called")
+            return "small"
+
+        def available(name: str) -> bool:
+            checked.append(name)
+            return True
+
+        monkeypatch.setattr(validation, "resolve_whisper_model", resolve)
+        monkeypatch.setattr(validation, "whisper_model_available", available)
+        assert validation.main(_argv(tmp_path)) == 2
+        assert "or pass --allow-small to measure with it" in capsys.readouterr().out
+        assert resolved == ["called"] and checked == ["small"]
+
+    @pytest.mark.parametrize(
+        "typed", ["..\\x", "Jane Citizen", "a/b", ".hidden", "x" * 65, "medium\n"]
+    )
+    def test_a_model_value_not_shaped_as_a_name_is_refused_unechoed(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        typed: str,
+    ) -> None:
+        """Larger-model D8: refused before any path is built from it (the
+        set folder here is absent: the ``--model`` refusal comes first), and
+        never echoed."""
+
+        def never_checked(name: str) -> bool:
+            raise AssertionError("a refused name is never looked up")
+
+        monkeypatch.setattr(validation, "whisper_model_available", never_checked)
+        argv = _argv(tmp_path, "--model", typed)
+        argv[0] = str(tmp_path / "absent")
+        assert validation.main(argv) == 2
+        out = capsys.readouterr().out
+        assert out == "[refused] --model: not a Whisper model name\n"
+        assert "Jane" not in out and "hidden" not in out
+
+    def test_a_model_named_by_model_but_not_installed_is_refused_unechoed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr(validation, "whisper_model_available", lambda name: False)
+        assert validation.main(_argv(tmp_path, "--model", "JaneCitizen")) == 2
+        out = capsys.readouterr().out
+        assert out.strip() == (
+            "[refused] the Whisper model named by --model is not installed in "
+            f"{install_layout.models_root()}: {install_layout.model_remedy()}"
+        )
+        assert "Jane" not in out
+
+    def test_the_model_help_names_the_default_and_the_fallback_rule(self) -> None:
+        (action,) = [a for a in validation._parser()._actions if a.dest == "model"]
+        assert action.default is None
+        assert action.help == (
+            "measure with this installed Whisper model, named as its folder in the models "
+            f"folder (default: `{validation.DEFAULT_WHISPER_MODEL}`, or the fallback with "
+            "--allow-small); a model named here is never a fallback, and the report names it"
+        )
+
     def test_a_bad_rule_is_refused(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -1538,6 +1657,29 @@ class TestRunValidationMain:
         assert f"[error] {validation.UNNAMED_ENCOUNTER}: 1 file(s) skipped" in out
         assert "Margaret" not in out
         assert "[run ] syn-001" in out and "- FAIL" in out
+
+    @windows_only
+    @pytest.mark.parametrize("argv_model", [None, "small"])
+    def test_the_run_information_line_names_the_model_and_no_fallback(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        argv_model: str | None,
+    ) -> None:
+        """Larger-model D8: the run-information line names the model as it
+        always has — the resolved one without ``--model``, the named one with
+        it — and a named model carries no FALLBACK tag, ``small`` included."""
+        pytest.importorskip("numpy")
+        _FakeModels.install(monkeypatch)
+        shown = validation.resolve_whisper_model() if argv_model is None else argv_model
+        extra = () if argv_model is None else ("--model", argv_model)
+        argv = _argv(tmp_path, "--attribution", "clustering", *extra)
+        _set_folder(tmp_path / "set")
+        assert validation.main(argv, repo_root=tmp_path) == 0
+        out = capsys.readouterr().out
+        assert f"Whisper model `{shown}`; VAD `silero`;" in out
+        assert "FALLBACK" not in out
 
     @windows_only
     def test_a_full_run_under_rule_v2_names_its_set(

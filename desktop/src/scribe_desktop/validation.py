@@ -59,7 +59,10 @@ What this module enforces, and what it does not:
 - **Offline.** ``main`` applies and asserts the offline kill-switches before
   any model is constructed; the module opens no socket.
 - **Developer build only.** ``main`` refuses a packaged build, refuses a
-  ``small`` fallback unless ``--allow-small``, and reads only the explicit
+  ``small`` fallback unless ``--allow-small`` (a model named by ``--model``,
+  larger-model D8, is measured as named and is never a fallback; its name
+  is shape-checked, never echoed in a refusal, and printed only in the
+  report's run-information line), and reads only the explicit
   ``--config`` folder — the app's own config folders are refused by path,
   and so is a folder carrying the app's learned phrases or rules (a copy
   of the app's own). Learned phrases already merged into a copied
@@ -171,6 +174,9 @@ from scribe_desktop.speech import (
     vad_model_available,
 )
 from scribe_desktop.transcription import (
+    # Package-private by name, shared deliberately (larger-model D8): the
+    # ``--model`` value's shape, the replay tool's own.
+    _MODEL_NAME_RE,
     DEFAULT_WHISPER_MODEL,
     TranscriptDocument,
     TranscriptSegment,
@@ -2434,7 +2440,7 @@ def rule_v2_counterpart(rule: PassRule, set_name: str) -> RuleV2Counterpart:
     """Whether ``rule`` without its R1 exemption gives rule v2's verdict on
     ``set_name`` (D4): ``same`` when the top-level fields and the set's row
     equal ``RULE_V2_RATIFIED``'s but for ``gate``; ``no_row`` when rule v2
-    holds no row for the set (``heldout-4``); ``differs`` otherwise — a
+    holds no row for the set (``heldout-4``, ``heldout-5``); ``differs`` otherwise — a
     top-level threshold or the set's row (the report names both causes)."""
     ratified = RULE_V2_RATIFIED.sets or {}
     if set_name not in ratified:
@@ -3786,7 +3792,20 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--allow-small",
         action="store_true",
-        help="measure with whisper `small` when `medium` is not installed (the report says so)",
+        help=(
+            "measure with whisper `small` when `medium` is not installed (the report says "
+            "so); not needed with --model"
+        ),
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        metavar="NAME",
+        help=(
+            "measure with this installed Whisper model, named as its folder in the models "
+            f"folder (default: `{DEFAULT_WHISPER_MODEL}`, or the fallback with --allow-small); "
+            "a model named here is never a fallback, and the report names it"
+        ),
     )
     parser.add_argument(
         "--prose",
@@ -3825,6 +3844,7 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
     """Exit status 0 only when the run passed; 2 for a refusal before any
     encounter runs; 1 otherwise. Refusals, in order: a packaged build
     (``install_layout.channel``, read at call time — the tests' seam), a
+    ``--model`` value not shaped as a model name (never echoed), a
     missing set or config folder, the app's own config folder, an unusable
     rule, a ``--set`` that does not fit the rule (given with a schema-1 rule;
     missing, or not one of its sets, with a schema-2 or schema-3 rule —
@@ -3843,6 +3863,12 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
         return 2
     apply_offline_env()
     assert_offline_env()
+    # Larger-model D8: a --model value is the practitioner's typing,
+    # shape-checked before it names any path and never echoed in a refusal.
+    model: str | None = args.model
+    if model is not None and not _MODEL_NAME_RE.fullmatch(model):
+        print("[refused] --model: not a Whisper model name")
+        return 2
     set_dir: Path = args.set_dir
     config_dir: Path = args.config
     if not set_dir.is_dir():
@@ -3931,14 +3957,17 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
     if models_failure is not None:
         print(f"[refused] the models folder cannot be located ({models_failure})")
         return 2
-    whisper = resolve_whisper_model()
+    whisper = model or resolve_whisper_model()
     if not whisper_model_available(whisper):
-        print(
-            f"[refused] no Whisper model is installed in {models}: "
-            f"{install_layout.model_remedy()}"
+        absent = (
+            "the Whisper model named by --model is not"
+            if model is not None
+            else "no Whisper model is"
         )
+        print(f"[refused] {absent} installed in {models}: {install_layout.model_remedy()}")
         return 2
-    fallback = whisper != DEFAULT_WHISPER_MODEL
+    # A model named by --model is measured as named, never as a fallback.
+    fallback = model is None and whisper != DEFAULT_WHISPER_MODEL
     if fallback and not args.allow_small:
         print(
             f"[refused] Whisper `{DEFAULT_WHISPER_MODEL}` is not installed in {models} (only "

@@ -1242,6 +1242,32 @@ class TestModelPolicy:
         assert DEFAULT_WHISPER_MODEL == "medium"
         assert FALLBACK_WHISPER_MODEL == "small"
 
+    def test_the_model_name_shape_is_one_object_for_three_tools(self) -> None:
+        """Larger-model D8: the ``--model`` shape lives here once — the
+        replay tool, the harness and the guard measurement read this object,
+        and the replay tool no longer spells its own."""
+        from scribe_desktop import guard_eval, replay_kept, transcription, validation
+
+        shape = transcription._MODEL_NAME_RE
+        assert shape.pattern == r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+        assert replay_kept._MODEL_NAME_RE is shape
+        assert validation._MODEL_NAME_RE is shape
+        assert guard_eval._MODEL_NAME_RE is shape
+        source = Path(replay_kept.__file__).read_text(encoding="utf-8")
+        assert "_MODEL_NAME_RE: Final" not in source
+        for name in (
+            DEFAULT_WHISPER_MODEL,
+            FALLBACK_WHISPER_MODEL,
+            "large-v3",
+            "large-v3-turbo",
+            "distil-large-v3",
+            "distil-small.en",
+            "x" * 64,
+        ):
+            assert shape.fullmatch(name), name
+        for name in ("", ".hidden", "-x", "..\\x", "a/b", "Jane Citizen", "medium\n", "x" * 65):
+            assert not shape.fullmatch(name), name
+
     def test_resolves_default_when_present(self) -> None:
         _fake_snapshot(DEFAULT_WHISPER_MODEL)
         assert resolve_whisper_model() == DEFAULT_WHISPER_MODEL

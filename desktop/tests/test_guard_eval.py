@@ -863,6 +863,103 @@ class TestMain:
         assert guard_eval.main(self._argv(tmp_path), voices=_voices) == 2
         assert "--allow-small" in capsys.readouterr().out
 
+    @pytest.mark.parametrize("named", ["large-v3-turbo", "small"])
+    def test_a_model_named_by_model_is_used_and_never_a_fallback(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        named: str,
+    ) -> None:
+        """Larger-model D8: ``--model`` names the model checked and loaded,
+        the fallback resolution is not consulted and no ``--allow-small`` is
+        asked for — ``small`` included."""
+        self._models_present(monkeypatch)
+        checked: list[str] = []
+        built: list[str] = []
+
+        def available(name: str) -> bool:
+            checked.append(name)
+            return True
+
+        def never_resolved() -> str:
+            raise AssertionError("--model given: the fallback resolution is not consulted")
+
+        def provider(*, model_name: str, initial_prompt: str | None) -> object:
+            built.append(model_name)
+            raise RuntimeError("stop after the build")
+
+        monkeypatch.setattr(guard_eval, "resolve_whisper_model", never_resolved)
+        monkeypatch.setattr(guard_eval, "whisper_model_available", available)
+        monkeypatch.setattr(guard_eval, "SileroVad", _FakeVad)
+        monkeypatch.setattr(guard_eval, "WhisperSpeechProvider", provider)
+        argv = self._argv(tmp_path, "--model", named)
+        assert guard_eval.main(argv, voices=_voices) == 2
+        out = capsys.readouterr().out
+        assert out.strip() == "[refused] the models could not be loaded (RuntimeError)"
+        assert checked == [named] and built == [named]
+
+    def test_without_model_the_resolution_is_consulted(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Larger-model D8, the other way: no ``--model`` — today's
+        behaviour, the resolved model built."""
+        self._models_present(monkeypatch)
+        built: list[str] = []
+
+        def provider(*, model_name: str, initial_prompt: str | None) -> object:
+            built.append(model_name)
+            raise RuntimeError("stop after the build")
+
+        monkeypatch.setattr(guard_eval, "SileroVad", _FakeVad)
+        monkeypatch.setattr(guard_eval, "WhisperSpeechProvider", provider)
+        assert guard_eval.main(self._argv(tmp_path), voices=_voices) == 2
+        assert built == [guard_eval.resolve_whisper_model()]
+
+    @pytest.mark.parametrize("typed", ["..\\x", "Jane Citizen", "a/b", ".hidden", "x" * 65])
+    def test_a_model_value_not_shaped_as_a_name_is_refused_unechoed(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        typed: str,
+    ) -> None:
+        """Refused before the set folder (absent here) and before any model
+        name is looked up; never echoed."""
+
+        def never_checked(name: str) -> bool:
+            raise AssertionError("a refused name is never looked up")
+
+        monkeypatch.setattr(guard_eval, "whisper_model_available", never_checked)
+        argv = ["--set", str(tmp_path / "absent"), "--model", typed]
+        assert guard_eval.main(argv) == 2
+        captured = capsys.readouterr()
+        assert captured.out == "[refused] --model: not a Whisper model name\n"
+        assert "Jane" not in captured.out + captured.err
+
+    def test_a_model_named_by_model_but_not_installed_is_refused_unechoed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        self._models_present(monkeypatch)
+        monkeypatch.setattr(guard_eval, "whisper_model_available", lambda name: False)
+        argv = self._argv(tmp_path, "--model", "JaneCitizen")
+        assert guard_eval.main(argv, voices=_voices) == 2
+        out = capsys.readouterr().out
+        assert out.strip() == (
+            "[refused] the Whisper model named by --model is not installed in "
+            f"{install_layout.models_root()}: {install_layout.model_remedy()}"
+        )
+        assert "Jane" not in out
+
+    def test_the_model_help_names_the_default_and_the_fallback_rule(self) -> None:
+        (action,) = [a for a in guard_eval._parser()._actions if a.dest == "model"]
+        assert action.default is None
+        assert action.help == (
+            "measure with this installed Whisper model, named as its folder in the models "
+            f"folder (default: `{guard_eval.DEFAULT_WHISPER_MODEL}`, or the fallback with "
+            "--allow-small); a model named here is never a fallback, and the report names it"
+        )
+
     def test_a_non_synthetic_set_is_refused_before_any_model(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:

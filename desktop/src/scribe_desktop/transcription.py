@@ -147,6 +147,12 @@ from scribe_desktop.speech import (
 # one spelling lives in ``benchmark`` (H.3 SIMP-001).
 DEFAULT_WHISPER_MODEL = SHIPPED_WHISPER_MODEL
 FALLBACK_WHISPER_MODEL = "small"
+# A Whisper model name as a tool takes it from ``--model`` and a report may
+# print it; anything else is refused unechoed (or printed ``(unnamed)``). One
+# spelling for the replay tool, the harness and the guard measurement
+# (larger-model plan D8; moved here from ``replay_kept``, which imports the
+# harness and so cannot be imported by it).
+_MODEL_NAME_RE: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 # ---------------------------------------------------------------------------
 # Clinical vocabulary priming (Step 13 user decision 2026-07-28).

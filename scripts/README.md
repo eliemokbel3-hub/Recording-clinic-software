@@ -66,7 +66,8 @@ set up and build it, and make releases; the installed app needs none of them.
   is reported by path). Run by the practitioner from a normal terminal; prints a
   Markdown table for Task 2.3, never transcript text.
 - `build-validation-set.py <scripts-dir> <set-folder> [--only <id> ...]` and
-  `run-validation.py <set-folder> --config <folder> --rule <file> [--set <name>]`
+  `run-validation.py <set-folder> --config <folder> --rule <file> [--set <name>]
+  [--model <name>]`
   (pilot plan Phase 2) — thin launchers for `scribe_desktop.validation_set` and
   `scribe_desktop.validation`. The first speaks each synthetic script with the
   installed Windows voices into `<id>.wav` + `<id>.txt` plus a copy of
@@ -87,8 +88,14 @@ set up and build it, and make releases; the installed app needs none of them.
   or, since the validation-run7 plan's D4, rule v3 (`validation/rules/rule-v3.json`,
   whose report prints its verdict beside the verdict without its R1 exemption
   and rule v1's) — also needs `--set <name>`, the set the folder was built from
-  (one the rule names: `scripts`, `heldout`, `heldout-2`, `heldout-3`, and
-  under rule v3 `heldout-4`). Developer
+  (one the rule names: `scripts`, `heldout`, `heldout-2`, `heldout-3`, under
+  rule v3 `heldout-4`, and under rule v4 — `validation/rules/rule-v4.json`,
+  rule v3's predicates with a new set schedule, the larger-model plan's D5 —
+  `heldout-4` and `heldout-5`). `--model <name>` (the larger-model plan's D8;
+  also on `measure-transcription-guard.py`) measures with that installed
+  Whisper model instead of the shipped one: the report names it, it is never
+  a fallback, and a name not shaped as a model folder name is refused without
+  being echoed. Developer
   build only, from a normal terminal; see `docs/testing/validation-harness.md`.
 - `replay-kept-recordings.py <past_sessions folder> [--only <session id> ...]
   [--enrolment <wav>] [--model <name>]` (development-recordings plan Phase 4) —
@@ -104,7 +111,7 @@ set up and build it, and make releases; the installed app needs none of them.
   line, so it can fall against a 0.3.4 replay. Developer
   build only, from a normal terminal; see `docs/testing/kept-recordings.md`.
 - `measure-transcription-guard.py --set <set-folder> [--candidates <set> ...]
-  [--primer shipped|0.3.1] [--allow-small] [--all-rows]` (invented-text-guard
+  [--primer shipped|0.3.1] [--allow-small] [--model <name>] [--all-rows]` (invented-text-guard
   plan Task 1.5) — thin launcher for `scribe_desktop.guard_eval`: runs sound
   that is not speech (digital silence, noise at three levels, a chord bed and a
   sung-vowel bed, each alone and one second after a spoken line), short lines
@@ -136,9 +143,11 @@ set up and build it, and make releases; the installed app needs none of them.
 - `lint-held-out-set.py <set-folder> [--log-dir DIR] [--timeout SECONDS]
   [--verbose]` (validation-run6 plan Task 0.17, C12) — runs the desktop test
   suite while a blind held-out set is in the tree (the blind set is
-  `validation/heldout-4` — in the fixture's table since validation-run7 Task
-  0.5, its scripts from Task 0.8; `validation/heldout-3` until its cases were
-  written after run 6). The set folder must exist (a missing one is refused,
+  `validation/heldout-5` — in the fixture's table since the larger-model
+  plan's Task 0.1 (d), its scripts from that plan's Task 0.11;
+  `validation/heldout-4` until its cases were written after run 7, and
+  `validation/heldout-3` until its cases were written after run 6). The set
+  folder must exist (a missing one is refused,
   `refused set-missing`) and only names the log — the child lints every set
   in the fixture's table. The suite runs
   in a child pytest whose output goes only to a log under
@@ -148,8 +157,8 @@ set up and build it, and make releases; the installed app needs none of them.
   only: test node ids with their outcome, problem codes from a closed
   grammar, the counts, `FAIL <code>` for a run that cannot be trusted, and
   the exit code. While any script of a set whose cases are not written (an
-  `h4-` script) is in the tree, run pytest only this way (the conftest
-  refuses a bare run); with `validation/heldout-4` absent or empty a bare
+  `h5-` script) is in the tree, run pytest only this way (the conftest
+  refuses a bare run); with `validation/heldout-5` absent or empty a bare
   run goes ahead.
 - `probe-cliniko.py` (Cliniko workflow safeguards plan Task 1.3, run at Task
   P.1) — read-only feasibility check of one clinic through the app's own Cliniko

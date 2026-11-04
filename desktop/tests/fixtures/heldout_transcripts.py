@@ -70,7 +70,14 @@ Validation-run7 plan Task 0.5 (D6, C12): ``validation/heldout-4`` with
 ``h4-``, the next blind set, was in the table with ``cases_written=False``
 until after run 7; it is ``tails_by_role`` and ``routed_material`` with
 ``heldout-3``'s bounds (its brief is ``heldout-3``'s). Its cases were written
-in Task P.4 (2026-11-04), so no set is blind now.
+in Task P.4 (2026-11-04).
+
+Larger-model plan Task 0.1 (d) (D6, C12): ``validation/heldout-5`` with
+``h5-``, the blind set, is in the table with ``cases_written=False`` until
+after run 8; it is ``tails_by_role`` and ``routed_material`` with
+``heldout-4``'s bounds (its brief is ``heldout-4``'s). Its folder is absent
+until Task 0.11 authors it; from then the suite runs only through
+``scripts/lint-held-out-set.py``. Its cases are written in Task P.4.
 """
 
 from __future__ import annotations
@@ -934,6 +941,10 @@ HELDOUT_4_CASES: Final[tuple[HeldOutCase, ...]] = (
     ),
 )
 
+# Larger-model plan Task 0.1 (d) (D6, C12): ``heldout-5`` is blind until run
+# 8 — no case is written before its Task P.4.
+HELDOUT_5_CASES: Final[tuple[HeldOutCase, ...]] = ()
+
 
 @dataclass(frozen=True)
 class HeldOutSet:
@@ -991,6 +1002,19 @@ HELD_OUT_SETS: Final[tuple[HeldOutSet, ...]] = (
         "heldout-4",
         "h4-",
         HELDOUT_4_CASES,
+        tails_by_role=True,
+        routed_material=True,
+        script_count=(20, 25),
+        facts_per_script=(3, 6),
+    ),
+    # Larger-model Task 0.1 (d) (D6): the blind set, its brief heldout-4's;
+    # authored in Task 0.11, never read before run 8 (C12); its ``h5-NN``
+    # cases written in Task P.4, after run 8.
+    HeldOutSet(
+        "heldout-5",
+        "h5-",
+        HELDOUT_5_CASES,
+        cases_written=False,
         tails_by_role=True,
         routed_material=True,
         script_count=(20, 25),

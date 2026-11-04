@@ -2663,7 +2663,13 @@ class TestCheck1HedgeMark:
     def test_every_predicted_unsure_divergence_is_a_case_of_its_set(self) -> None:
         assert misfiled(_PREDICTED_UNSURE_DIVERGENCES_BY_SET) == []
         counts = {name: len(cases) for name, cases in _PREDICTED_UNSURE_DIVERGENCES_BY_SET.items()}
-        assert counts == {"heldout": 3, "heldout-2": 10, "heldout-3": 7, "heldout-4": 6}
+        assert counts == {
+            "heldout": 3,
+            "heldout-2": 10,
+            "heldout-3": 7,
+            "heldout-4": 6,
+            "heldout-5": 0,
+        }
         heldout = {c.case_id for c in held_out_set("heldout").all_cases()}
         assert set(_UNSURE_PREDICTIONS_BEFORE_RUN6_0_9) <= heldout
 
@@ -2749,6 +2755,9 @@ _PREDICTED_UNSURE_DIVERGENCES_BY_SET: dict[
         "h4-18": ((1,), ()),  # its hedge is outside the frozen list (an idiom)
         "h4-22": ((4,), ()),  # a bare-modal hedge, outside the frozen list
     },
+    # Larger-model Task 0.1 (d): blind until run 8 (C12); its entries are
+    # written in its Task P.4.
+    "heldout-5": {},
 }
 _PREDICTED_UNSURE_DIVERGENCES = by_case(_PREDICTED_UNSURE_DIVERGENCES_BY_SET)
 
