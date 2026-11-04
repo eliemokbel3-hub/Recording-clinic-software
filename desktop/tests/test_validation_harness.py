@@ -1290,15 +1290,56 @@ class TestRunValidationMain:
             assert "Whisper" not in out
             assert "Margaret" not in out
 
-    def test_the_set_help_names_rule_v3s_sets(self) -> None:
+    @pytest.mark.parametrize(
+        ("given", "goes_on"),
+        [
+            (None, False),
+            ("Margaret", False),
+            ("scripts", True),
+            ("heldout", True),
+            ("heldout-2", True),
+            ("heldout-3", True),
+            ("heldout-4", True),
+            ("heldout-5", True),
+        ],
+    )
+    def test_the_repository_rule_v4_needs_one_of_its_six_sets(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], given: str | None, goes_on: bool
+    ) -> None:
+        """Larger-model D5 through ``main``: ``rule-v4.json`` (schema 3)
+        takes ``--set`` as rule v3 does, ``heldout-5`` the sixth."""
+        argv = _argv(tmp_path) if given is None else _argv(tmp_path, "--set", given)
+        argv[argv.index("--rule") + 1] = str(REPO / "validation" / "rules" / "rule-v4.json")
+        assert validation.main(argv) == 2
+        out = capsys.readouterr().out
+        if goes_on:
+            assert "[refused] no Whisper model is installed in" in out
+        else:
+            assert out.strip().endswith(
+                "[refused] a schema-3 rule needs --set naming one of its sets: heldout, "
+                "heldout-2, heldout-3, heldout-4, heldout-5, scripts"
+            )
+            assert "Whisper" not in out
+            assert "Margaret" not in out
+
+    def test_the_set_help_names_rule_v4s_sets(self) -> None:
         """Validation-run7 review round 18 LOW-001: the ``--set`` help names
-        the sets as a literal, so it is pinned to ``rule-v3.json``'s rows —
-        a renamed or added set fails here, not in a stale help line."""
+        the sets as a literal, so it is pinned to the newest rule's rows —
+        ``rule-v4.json``'s since larger-model D5 — so a renamed or added set
+        fails here, not in a stale help line."""
         (action,) = [a for a in validation._parser()._actions if a.dest == "set_name"]
         assert action.help is not None
         listed = re.search(r"\(([^)]*)\)", action.help)
         assert listed is not None
-        assert listed.group(1).split(", ") == list(_repository_rule_v3().sets or {})
+        assert listed.group(1).split(", ") == [
+            "scripts",
+            "heldout",
+            "heldout-2",
+            "heldout-3",
+            "heldout-4",
+            "heldout-5",
+        ]
+        assert listed.group(1).split(", ") == list(_repository_rule_v4().sets or {})
 
     def test_the_repository_rule_v2_has_no_fifth_set(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1797,6 +1838,11 @@ def _repository_rule_v3() -> PassRule:
     return validation.load_pass_rule(REPO / "validation" / "rules" / "rule-v3.json")
 
 
+def _repository_rule_v4() -> PassRule:
+    """``validation/rules/rule-v4.json`` (larger-model D5)."""
+    return validation.load_pass_rule(REPO / "validation" / "rules" / "rule-v4.json")
+
+
 def _rule_v3(*, exempt: bool) -> PassRule:
     """A schema-3 rule of one gate set whose ceilings are NOT rule v2's
     (R1 1 where rule v2's ``scripts`` row holds 2)."""
@@ -2293,6 +2339,93 @@ class TestReport:
         rule_v2 = validation.load_pass_rule(REPO / "validation" / "rules" / "rule-v2.json")
         assert validation.run_passed(rule_v2, outcomes, set_name="scripts") is False
         assert validation.run_passed(rule, outcomes, set_name="scripts") is True
+
+    # Larger-model D5: the schema-3 amendments paragraph, rule v3's history,
+    # printed verbatim under rule v3 AND rule v4; rule v4 appends one sentence.
+    _RULE_V3_HISTORY = (
+        " Rule v3 (schema 3; validation-run7 D4, decided 2026-10-25) keeps rule v2's "
+        "residue classes (decision 0.7 of 2026-10-22, amended 2026-10-24 by validation-run6 "
+        "D14, D15 and D17: R1 recogniser and R2 tone only counted in facts, R3 unbroken next "
+        "patient counted in encounters, each excusing only its own failures within the set's "
+        "literal ceilings) and adds one loosening, the R1 exemption (applied under this "
+        "rule): an unsupported clinical line is excused when every structured-claim word "
+        "flagged in it is a material R1 fact's own misrendering under a review mark, never an "
+        "inserted word. The verdict without the exemption is printed beside it; the raw "
+        "counts in the tables and the rule v1 verdict are unchanged. A cell or total nothing "
+        "measured reads `-`; a measured zero reads 0."
+    )
+    _RULE_V4_SENTENCE = (
+        " Rule v4 (schema 3; larger-model D5, decided 2026-11-04) keeps rule v3's predicates "
+        "and ceilings and changes the set schedule only: `heldout-4` becomes a reported set "
+        "and `heldout-5`, a set designated for blind authoring, a gate set."
+    )
+
+    @pytest.mark.parametrize(
+        ("set_name", "role", "counterpart"),
+        [
+            ("scripts", "a gate set", "= rule v2's verdict on this set"),
+            ("heldout-4", "a reported set", "rule v2 has no row for this set"),
+            ("heldout-5", "a gate set", "rule v2 has no row for this set"),
+        ],
+    )
+    def test_a_rule_v4_report_says_rule_v4_at_every_label_site(
+        self, set_name: str, role: str, counterpart: str
+    ) -> None:
+        """Larger-model D5: every place the label prints — the heading's two
+        verdicts, the first two verdict lines, the residue heading and its
+        after-the-classes line — reads "rule v4"; the run-information line
+        carries rule v3's history verbatim and then the v4 sentence; no other
+        line names rule v3."""
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        report = render_report(
+            _excused_outcomes(), _repository_rule_v4(), info, set_name=set_name
+        )
+        lines = report.splitlines()
+        assert lines[0] == (
+            f"## Validation run - rule `rule-v4` - set `{set_name}` - rule v4 PASS, rule v4 "
+            "without the R1 exemption FAIL, rule v1 FAIL"
+        )
+        assert lines[2:5] == [
+            f"- Rule v4 verdict, set `{set_name}` ({role}): PASS. Failing encounters: none; "
+            "set-level: none; set-level errors: 0. The gate is a rule v4 pass on every gate "
+            "set (`heldout-5`, `scripts`); the other sets are reported in full (`heldout`, "
+            "`heldout-2`, `heldout-3`, `heldout-4`).",
+            "- Rule v4 without the R1 exemption verdict (the same outcomes, every unsupported "
+            f"clinical line failing; {counterpart}): FAIL. Failing encounters: syn-001 "
+            "(unsupported_clinical_line); set-level: none; set-level errors: 0.",
+            "- Rule v1 verdict (the same outcomes on the raw counts, no residue class): FAIL. "
+            "Failing encounters: syn-001 (unsupported_clinical_line, material_wrong).",
+        ]
+        heading = f"### Residue classes (rule v4, set `{set_name}`, {role})"
+        tail = lines[lines.index(heading):]
+        assert tail[11] == (
+            "- After the classes (the counts rule v4 reads): material wrong 0 (raw 1), silent "
+            "omissions 0 (raw 0), uncertainty missed 0 (raw 0)."
+        )
+        (run_information,) = [line for line in lines if line.startswith("Whisper model `")]
+        assert run_information.endswith(self._RULE_V3_HISTORY + self._RULE_V4_SENTENCE)
+        assert run_information.count(" Rule v4 (") == 1
+        assert [line for line in lines if "v3" in line] == [run_information]
+
+    @pytest.mark.parametrize("set_name", ["scripts", "heldout-4"])
+    def test_a_rule_v3_report_prints_none_of_rule_v4(self, set_name: str) -> None:
+        """The other way: under rule v3 the history prints verbatim, last,
+        and nothing names rule v4 or ``heldout-5``."""
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        report = render_report(
+            _excused_outcomes(), _repository_rule_v3(), info, set_name=set_name
+        )
+        (run_information,) = [
+            line for line in report.splitlines() if line.startswith("Whisper model `")
+        ]
+        assert run_information.endswith(self._RULE_V3_HISTORY)
+        assert "v4" not in report
+        assert "Rule v4" not in report
+        assert "heldout-5" not in report
+        assert f"### Residue classes (rule v3, set `{set_name}`," in report
+        assert report.splitlines()[0].endswith(
+            "- rule v3 PASS, rule v3 without the R1 exemption FAIL, rule v1 FAIL"
+        )
 
     @pytest.mark.parametrize(
         ("set_name", "wording"),

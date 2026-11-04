@@ -2351,6 +2351,19 @@ class PassRule(BaseModel):
         return row.require_uncertainty_surfaced
 
     @property
+    def label(self) -> str:
+        """The report's name for this rule (larger-model plan D5): ``vN``
+        from a ``rule-vN`` or ``rule-vN-…`` name, else ``v<schema>``. Rule
+        v4 shares rule v3's schema, so the schema alone would print "rule
+        v3" on a rule-v4 run; every existing rule's label is unchanged. A
+        name never labels a rule older than its schema (a schema-3 file
+        named ``rule-v1`` is "v3", never confused with rule v1's verdict)."""
+        named = re.fullmatch(r"rule-v(\d+)(-.*)?", self.rule_name)
+        if named is not None and int(named.group(1)) >= self.schema_version:
+            return f"v{int(named.group(1))}"
+        return f"v{self.schema_version}"
+
+    @property
     def exempts_r1_lines(self) -> bool:
         """The rule applies D4's R1 exemption (schema 3, the field true)."""
         return self.unsupported_line_r1_exemption is True
@@ -3188,12 +3201,14 @@ def _verdict_lines(
     rule v2's for the named set — the gate sets named beside the reported
     ones — and rule v1's on the same outcomes. A schema-3 run's three
     (validation-run7 plan D4): rule v3's, rule v3's without the R1 exemption
-    (saying whether that is rule v2's verdict on the set), and rule v1's."""
+    (saying whether that is rule v2's verdict on the set), and rule v1's —
+    the first two named by ``PassRule.label`` (rule v4's under ``rule-v4``,
+    larger-model plan D5)."""
     sets = rule.sets or {}
     gate = sorted(name for name, row in sets.items() if row.gate)
     reported = sorted(name for name, row in sets.items() if not row.gate)
     role = "a gate set" if rule.set_row(set_name).gate else "a reported set"
-    label = f"v{rule.schema_version}"
+    label = rule.label
 
     def set_level(scored: PassRule) -> str:
         breaches = class_breaches(scored, outcomes, set_name)
@@ -3231,8 +3246,8 @@ def _verdict_lines(
             ),
         }[rule_v2_counterpart(rule, set_name)]
         lines.append(
-            "- Rule v3 without the R1 exemption verdict (the same outcomes, every unsupported "
-            f"clinical line failing; {counterpart}): "
+            f"- Rule {label} without the R1 exemption verdict (the same outcomes, every "
+            f"unsupported clinical line failing; {counterpart}): "
             f"{_verdict(run_passed(plain, outcomes, errors=errors, set_name=set_name))}. "
             f"Failing encounters: {failing(plain)}; set-level: {set_level(plain) or 'none'}; "
             f"set-level errors: {errors}."
@@ -3266,13 +3281,13 @@ def render_report(
         heading = [f"## Validation run - rule `{rule.rule_name}` - {verdict}"]
     else:
         v1 = _verdict(run_passed_v1(rule, outcomes, errors=errors))
-        verdicts = f"rule v{rule.schema_version} {verdict}"
+        verdicts = f"rule {rule.label} {verdict}"
         if rule.schema_version == 3:
             # Validation-run7 plan D4: the cycle's one loosening, visible.
             plain = run_passed(
                 rule.without_r1_exemption(), outcomes, errors=errors, set_name=set_name
             )
-            verdicts += f", rule v3 without the R1 exemption {_verdict(plain)}"
+            verdicts += f", rule {rule.label} without the R1 exemption {_verdict(plain)}"
         heading = [
             f"## Validation run - rule `{rule.rule_name}` - set `{set_name}` - "
             f"{verdicts}, rule v1 {v1}",
@@ -3305,6 +3320,15 @@ def render_report(
             "is printed beside it; the raw counts in the tables and the rule v1 verdict are "
             "unchanged. A cell or total nothing measured reads `-`; a measured zero reads 0."
         )
+        # Larger-model plan D5: the sentence above is rule v3's history and
+        # prints unchanged; rule v4 (the same schema) only adds this one.
+        if rule.label == "v4":
+            amendments += (
+                " Rule v4 (schema 3; larger-model D5, decided 2026-11-04) keeps rule v3's "
+                "predicates and ceilings and changes the set schedule only: `heldout-4` "
+                "becomes a reported set and `heldout-5`, a set designated for blind "
+                "authoring, a gate set."
+            )
     elif set_name is not None:
         amendments += (
             " Rule v2 (schema 2; decision 0.7 of 2026-10-22, amended 2026-10-24 by "
@@ -3536,7 +3560,7 @@ def _residue_section(
     schema-3 run's adds the unsupported lines the R1 exemption excuses, as
     ``<id>/line <n> (segment <i>)`` (validation-run7 plan D4)."""
     row = rule.set_row(set_name)
-    label = f"rule v{rule.schema_version}"
+    label = f"rule {rule.label}"
     measured = [o.metrics for o in outcomes if o.metrics is not None]
     # PR-LOW-016's convention here too (peer round 46 PR-LOW-001): with no
     # measured encounter every count below reads ``-``, never a measured 0.
@@ -3752,8 +3776,8 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "the set this folder was built from, one the rule names (scripts, heldout, "
-            "heldout-2, heldout-3, heldout-4): required with a schema-2 or schema-3 rule, "
-            "whose row for it holds the ceilings; not taken with a schema-1 rule"
+            "heldout-2, heldout-3, heldout-4, heldout-5): required with a schema-2 or "
+            "schema-3 rule, whose row for it holds the ceilings; not taken with a schema-1 rule"
         ),
     )
     parser.add_argument(

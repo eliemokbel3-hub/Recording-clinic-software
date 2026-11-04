@@ -3545,6 +3545,151 @@ class TestRuleV3:
         assert _RULE_V2.exempts_r1_lines is False and OPTION_A.exempts_r1_lines is False
 
 
+class TestRuleV4:
+    """Larger-model plan D5 (C16): ``rule-v4.json`` is rule v3 with a new
+    set schedule only — ``heldout-4`` reported, a gate row for the blind
+    ``heldout-5`` — and the report names it "rule v4"."""
+
+    def test_the_repository_rule_v4_file(self) -> None:
+        rule = validation.load_pass_rule(_RULES / "rule-v4.json")
+        assert rule == PassRule.model_validate(
+            {
+                "schema_version": 3,
+                "rule_name": "rule-v4",
+                "unsupported_line_r1_exemption": True,
+                "sets": {
+                    "scripts": {
+                        "gate": True,
+                        "max_r1_facts": 2,
+                        "max_r2_facts": 2,
+                        "max_r3_encounters": 2,
+                    },
+                    "heldout": {
+                        "gate": False,
+                        "max_r1_facts": 1,
+                        "max_r2_facts": 1,
+                        "max_r3_encounters": 1,
+                    },
+                    "heldout-2": {
+                        "gate": False,
+                        "max_r1_facts": 1,
+                        "max_r2_facts": 1,
+                        "max_r3_encounters": 1,
+                    },
+                    "heldout-3": {
+                        "gate": False,
+                        "max_r1_facts": 1,
+                        "max_r3_encounters": 1,
+                        "require_uncertainty_surfaced": False,
+                    },
+                    "heldout-4": {
+                        "gate": False,
+                        "max_r1_facts": 1,
+                        "max_r3_encounters": 1,
+                        "require_uncertainty_surfaced": False,
+                    },
+                    "heldout-5": {
+                        "gate": True,
+                        "max_r1_facts": 1,
+                        "max_r3_encounters": 1,
+                        "require_uncertainty_surfaced": False,
+                    },
+                },
+            }
+        )
+        sets = rule.sets or {}
+        assert list(sets) == [
+            "scripts",
+            "heldout",
+            "heldout-2",
+            "heldout-3",
+            "heldout-4",
+            "heldout-5",
+        ]
+        assert {name for name, row in sets.items() if row.gate} == {"scripts", "heldout-5"}
+        assert rule.schema_version == 3
+        assert rule.exempts_r1_lines is True
+        assert rule.label == "v4"
+
+    def test_rule_v4_is_rule_v3_but_for_the_set_schedule(self) -> None:
+        """Every predicate and ceiling equals rule v3's; only ``heldout-4``'s
+        ``gate`` moves, and ``heldout-5``'s row is ``heldout-4``'s in rule v3
+        (gated) — no measurement informs it (C16)."""
+        v3 = validation.load_pass_rule(_RULES / "rule-v3.json")
+        v4 = validation.load_pass_rule(_RULES / "rule-v4.json")
+        not_schedule = {"rule_name", "sets"}
+        assert v4.model_dump(exclude=not_schedule) == v3.model_dump(exclude=not_schedule)
+        v3_sets, v4_sets = v3.sets or {}, v4.sets or {}
+        assert set(v4_sets) == set(v3_sets) | {"heldout-5"}
+        for name, row in v3_sets.items():
+            if name == "heldout-4":
+                assert (row.gate, v4_sets[name].gate) == (True, False)
+                assert v4_sets[name] == row.model_copy(update={"gate": False})
+            else:
+                assert v4_sets[name] == row
+        assert v4_sets["heldout-5"] == v3_sets["heldout-4"]
+
+    def test_rule_v2s_counterpart_under_rule_v4(self) -> None:
+        v4 = validation.load_pass_rule(_RULES / "rule-v4.json")
+        for name in ("scripts", "heldout", "heldout-2", "heldout-3"):
+            assert validation.rule_v2_counterpart(v4, name) == "same"
+        assert validation.rule_v2_counterpart(v4, "heldout-4") == "no_row"
+        assert validation.rule_v2_counterpart(v4, "heldout-5") == "no_row"
+
+    def test_every_repository_rules_label(self) -> None:
+        """The label reads ``rule-vN`` from the name, else the schema, so
+        every existing rule keeps its label and only rule v4 differs from
+        its schema."""
+        labels = {
+            name: validation.load_pass_rule(_RULES / name).label
+            for name in (
+                "option-a-proposed.json",
+                "rule-v2.json",
+                "rule-v3.json",
+                "rule-v4.json",
+            )
+        }
+        assert labels == {
+            "option-a-proposed.json": "v1",
+            "rule-v2.json": "v2",
+            "rule-v3.json": "v3",
+            "rule-v4.json": "v4",
+        }
+
+    @pytest.mark.parametrize(
+        ("rule_name", "schema_version", "label"),
+        [
+            ("rule-v4", 3, "v4"),
+            ("rule-v4-test", 3, "v4"),
+            ("rule-v3", 3, "v3"),
+            ("rule-v3-test", 3, "v3"),
+            ("rule-v2-test", 2, "v2"),
+            ("rule-v12", 3, "v12"),
+            ("relaxed", 2, "v2"),
+            ("option-a-proposed", 1, "v1"),
+            ("test-rule", 1, "v1"),
+            ("my-rule-v4", 3, "v3"),
+            ("rule-v", 3, "v3"),
+            ("rule-vx", 3, "v3"),
+            ("rule-v4x", 3, "v3"),
+            ("rule-v1", 3, "v3"),
+            ("rule-v2-test", 3, "v3"),
+            ("rule-v0", 1, "v1"),
+            ("rule-v1", 1, "v1"),
+        ],
+    )
+    def test_the_label_derivation(self, rule_name: str, schema_version: int, label: str) -> None:
+        payload: dict[str, object] = {"schema_version": schema_version, "rule_name": rule_name}
+        if schema_version >= 2:
+            payload["sets"] = {
+                "gate": {"gate": True, "max_r1_facts": 0, "max_r3_encounters": 0,
+                         "require_uncertainty_surfaced": False}
+            }
+        if schema_version == 3:
+            payload["unsupported_line_r1_exemption"] = True
+        assert PassRule.model_validate(payload).label == label
+
+
 class TestR1Exemption:
     """D4's predicate, both ways, on hand-built alignments: a line is
     excused when EVERY flagged structured-claim word in it is (i) never an
