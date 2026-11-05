@@ -306,7 +306,9 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
    2026-09-15) and, for the prose styles (note-learning-and-styles plan Phase
    4), `language-model\Qwen3-4B-Instruct-2507-Q4_K_M.gguf` (~2.33 GiB; size
    and SHA-256 verified again at every load, flow 17) — so the whole cache is
-   ~5.3 GiB with all four benchmark candidates and the language model (of the
+   ~5.3 GiB with all four benchmark candidates and the language model; the
+   larger-model plan's three candidates, measured in 2026-11 and not chosen,
+   add ~6.0 GiB while they are kept (of the
    whisper models, the installed app's model pack holds only `medium`; it
    also carries the speaker model's CC BY 4.0 attribution notice). Static
    program data, no clinical content. Written ONLY by flow 9 (a source
@@ -331,7 +333,12 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
    24) or, with `--root DIR`, into a staging folder for the release model
    pack (nothing under `%LOCALAPPDATA%` is then touched): silero-vad from its pinned GitHub release tag
    (SHA-256-verified), whisper snapshots from Hugging Face pinned to
-   immutable commit SHAs, the speaker-embedding model (WeSpeaker
+   immutable commit SHAs (since the larger-model plan, 2026-11-05, a plain
+   run fetches only the shipped `medium`; every other candidate, including
+   the three larger ones, the turbo one a conversion by
+   `deepdml/faster-whisper-large-v3-turbo-ct2` rather than Systran and trusted
+   by its commit pin and recorded digests, only by `--only <name>`, after a
+   free-space check against the Hub's sizes at that commit), the speaker-embedding model (WeSpeaker
    VoxCeleb ResNet34-LM ONNX export, `Wespeaker/wespeaker-voxceleb-resnet34-LM`
    on Hugging Face) pinned by SHA-256 exactly like silero — a
    trust-on-first-download digest recorded from the practitioner's own
