@@ -227,6 +227,7 @@ C1 the agent never reads, plays or describes a kept recording, transcript or not
 See the Planning Extraction Summary (Deferred, Excluded, Accepted). In short: the practitioner's phrases (deferred, likely future work); GPU, a sealed `heldout-6`, a primer or parameter change, a per-name completeness rule, a report tag (excluded; the first three with revisit triggers); the ui-refresh adoption (follow-up at its merge); the carried validation-pass items (owned there).
 
 ## Current State / Handoff Note
+- Retro report: .cursor/loops/retro-larger-model-20261105-050945-0496-2026-11-06.md (2026-11-06)
 - Last completed step: 2026-11-06, Task 0.6 decided No change and Flow 4's records written; the plan is Completed — Follow-ups Retained (the Phase 0 bullet below). Earlier: Task 0.1 (c) + (d) built (stage-2, below) and committed. Before it: planning committed (`db7460e`, 2026-11-04 — Task 0.1 (a)); `/execute-loop` run `larger-model-20261105-050945-0496` started 2026-11-05 (isolation none, builds on `main`); Task 0.1 (b) committed in `e2509e3` (stage-1).
 - Stage-1 record — Task 0.1 (b), rule v4 and the label property, committed alone in `e2509e3`. **Built 2026-11-05T05:17+11:00 (stage-1 executor, leg rx1):**
   - `validation/rules/rule-v4.json` (NEW; LF like the other three): rule v3's file but `rule_name` `rule-v4`, `heldout-4` `gate: false`, and a sixth row `heldout-5` (gate, R1 1, R3 1, uncertainty reported) — key order scripts, heldout, heldout-2, heldout-3, heldout-4, heldout-5. The three older rule files untouched (C2).
