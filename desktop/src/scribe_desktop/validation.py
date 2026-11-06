@@ -946,6 +946,21 @@ class FactOutcome:
         """``silent_omission`` unless R1 excuses it (D8) — R1 alone may."""
         return self.silent_omission and not self.residue_r1
 
+    # Validation-run8 plan D1: R1's two kinds, read only by a schema-4 row's
+    # ceiling. Every R1 fact is exactly one of them.
+    @property
+    def residue_r1_silent(self) -> bool:
+        """R1 by a silent omission — nothing in the review surfaces it. A
+        ``wrong`` fact silently omitted on another equal-cost alignment is
+        both kinds and counts as this one (the precedence)."""
+        return self.residue_r1 and self.silent_omission
+
+    @property
+    def residue_r1_marked(self) -> bool:
+        """R1 marked wrong — a misheard material fact under a review mark on
+        every alignment, silently omitted on none."""
+        return self.residue_r1 and self.verdict == "wrong" and not self.silent_omission
+
     @property
     def uncertainty_missed_v2(self) -> bool:
         """An unsurfaced uncertainty unless R2 excuses it (D8) — R2 alone
@@ -2395,7 +2410,8 @@ class PassRule(BaseModel):
 
     @property
     def exempts_r1_lines(self) -> bool:
-        """The rule applies D4's R1 exemption (schema 3, the field true)."""
+        """The rule applies D4's R1 exemption (schema 3 or later, the field
+        true)."""
         return self.unsupported_line_r1_exemption is True
 
     def without_r1_exemption(self) -> PassRule:
@@ -2406,8 +2422,22 @@ class PassRule(BaseModel):
             return self
         return self.model_copy(update={"unsupported_line_r1_exemption": False})
 
+    def counting_marked_r1(self) -> PassRule:
+        """This rule with every row's ``r1_marked_reported`` false — "rule v5
+        with marked R1 counted", a schema-4 report's second verdict
+        (validation-run8 plan D1): the marked R1 facts back under the R1
+        ceiling. A rule no row of which reports them is returned as it is."""
+        sets = self.sets or {}
+        if not any(row.r1_marked_reported is True for row in sets.values()):
+            return self
+        counted = {
+            name: row.model_copy(update={"r1_marked_reported": False})
+            for name, row in sets.items()
+        }
+        return self.model_copy(update={"sets": counted})
+
     def set_row(self, set_name: str | None) -> SetCeilings:
-        """The named set's row of a schema-2 or schema-3 rule; ``RuleError``
+        """The named set's row of a schema-2 or later rule; ``RuleError``
         for a schema-1 rule, or a name the rule does not hold (never
         printed)."""
         if self.sets is None:
@@ -2465,7 +2495,10 @@ def rule_v2_counterpart(rule: PassRule, set_name: str) -> RuleV2Counterpart:
     ``set_name`` (D4): ``same`` when the top-level fields and the set's row
     equal ``RULE_V2_RATIFIED``'s but for ``gate``; ``no_row`` when rule v2
     holds no row for the set (``heldout-4``, ``heldout-5``); ``differs`` otherwise — a
-    top-level threshold or the set's row (the report names both causes)."""
+    top-level threshold or the set's row (the report names both causes). A
+    schema-4 row's ``r1_marked_reported`` false counts marked R1 as rule v2
+    does, so it equals rule v2's None; true is a substantive difference
+    (validation-run8 plan D1, peer round 1 PR-MED-002)."""
     ratified = RULE_V2_RATIFIED.sets or {}
     if set_name not in ratified:
         return "no_row"
@@ -2474,10 +2507,14 @@ def rule_v2_counterpart(rule: PassRule, set_name: str) -> RuleV2Counterpart:
     not_ceilings = {"schema_version", "rule_name", "sets", "unsupported_line_r1_exemption"}
     if rule.model_dump(exclude=not_ceilings) != RULE_V2_RATIFIED.model_dump(exclude=not_ceilings):
         return "differs"
-    row = rule.set_row(set_name)
-    if row.model_copy(update={"gate": False}) != ratified[set_name].model_copy(
-        update={"gate": False}
-    ):
+
+    def comparable(row: SetCeilings) -> SetCeilings:
+        update: dict[str, object] = {"gate": False}
+        if row.r1_marked_reported is False:
+            update["r1_marked_reported"] = None
+        return row.model_copy(update=update)
+
+    if comparable(rule.set_row(set_name)) != comparable(ratified[set_name]):
         return "differs"
     return "same"
 
@@ -2699,12 +2736,16 @@ class ClassCount(NamedTuple):
     """One residue class over a set's outcomes: its total (facts for R1 and
     R2, encounters for R3), the set's ceiling (None: R2 where uncertainty is
     only reported) and the members — ``(encounter id, fact index)`` pairs,
-    or for R3 ``(encounter id, None)`` once per encounter."""
+    or for R3 ``(encounter id, None)`` once per encounter.
+    ``reported_members`` (validation-run8 plan D1): on a schema-4 row that
+    reports marked R1, R1's marked facts, reported beside the ceiling and
+    counted in neither ``total`` nor ``members``; empty everywhere else."""
 
     residue_class: ResidueClass
     total: int
     ceiling: int | None
     members: tuple[tuple[str, int | None], ...]
+    reported_members: tuple[tuple[str, int | None], ...] = ()
 
     @property
     def within(self) -> bool:
@@ -2715,15 +2756,21 @@ def class_counts(
     rule: PassRule, outcomes: Sequence[EncounterOutcome], set_name: str | None
 ) -> tuple[ClassCount, ...]:
     """R1, R2 and R3 over ``outcomes`` against the named set's ceilings
-    (D8 as amended by D14: R3 counts DISTINCT encounters)."""
+    (D8 as amended by D14: R3 counts DISTINCT encounters). On a row that
+    reports marked R1 (schema 4, validation-run8 plan D1) R1 counts its
+    silent facts only and holds the marked ones as ``reported_members``."""
     row = rule.set_row(set_name)
+    split = row.r1_marked_reported is True
     members: dict[str, list[tuple[str, int | None]]] = {name: [] for name in RESIDUE_CLASSES}
+    reported: list[tuple[str, int | None]] = []
     for outcome in outcomes:
         metrics = outcome.metrics
         if metrics is None:
             continue
         for fact in metrics.facts:
-            if fact.residue_r1:
+            if split and fact.residue_r1_marked:
+                reported.append((outcome.encounter_id, fact.fact_index))
+            elif fact.residue_r1:
                 members["R1"].append((outcome.encounter_id, fact.fact_index))
             if fact.residue_r2:
                 members["R2"].append((outcome.encounter_id, fact.fact_index))
@@ -2735,7 +2782,13 @@ def class_counts(
         "R3": row.max_r3_encounters,
     }
     return tuple(
-        ClassCount(name, len(members[name]), ceilings[name], tuple(members[name]))
+        ClassCount(
+            name,
+            len(members[name]),
+            ceilings[name],
+            tuple(members[name]),
+            tuple(reported) if name == "R1" else (),
+        )
         for name in RESIDUE_CLASSES
     )
 
@@ -3233,7 +3286,10 @@ def _verdict_lines(
     (validation-run7 plan D4): rule v3's, rule v3's without the R1 exemption
     (saying whether that is rule v2's verdict on the set), and rule v1's —
     the first two named by ``PassRule.label`` (rule v4's under ``rule-v4``,
-    larger-model plan D5)."""
+    larger-model plan D5). A schema-4 run's four (validation-run8 plan D1):
+    the rule's, the rule's with marked R1 counted (``counting_marked_r1``),
+    the rule's without the R1 exemption, and rule v1's — the first three
+    named by ``PassRule.label``."""
     sets = rule.sets or {}
     gate = sorted(name for name, row in sets.items() if row.gate)
     reported = sorted(name for name, row in sets.items() if not row.gate)
@@ -3263,7 +3319,19 @@ def _verdict_lines(
         + (", ".join(f"`{name}`" for name in reported) or "none")
         + ").",
     ]
-    if rule.schema_version == 3:
+    if rule.schema_version >= 4:
+        # Validation-run8 plan D1: the earlier reading, beside it. No claim
+        # that it is rule v4's verdict (peer round 1 PR-MED-002) — the loader
+        # admits any schema-4 thresholds.
+        counted = rule.counting_marked_r1()
+        lines.append(
+            f"- Rule {label} with marked R1 counted verdict (the same outcomes, every marked "
+            "R1 fact counted under the R1 ceiling): "
+            f"{_verdict(run_passed(counted, outcomes, errors=errors, set_name=set_name))}. "
+            f"Failing encounters: {failing(counted)}; set-level: "
+            f"{set_level(counted) or 'none'}; set-level errors: {errors}."
+        )
+    if rule.schema_version >= 3:
         plain = rule.without_r1_exemption()
         counterpart = {
             "same": "= rule v2's verdict on this set",
@@ -3305,14 +3373,21 @@ def render_report(
     needs ``set_name`` (its row picks the ceilings) and adds the two verdict
     lines and the residue-class section (validation-run6 plan D8, D15, D17);
     a schema-3 rule likewise, with three verdict lines and the R1-excused
-    lines in that section (validation-run7 plan D4)."""
+    lines in that section (validation-run7 plan D4); a schema-4 rule with
+    four verdict lines and the marked-R1 line in that section
+    (validation-run8 plan D1)."""
     verdict = _verdict(run_passed(rule, outcomes, errors=errors, set_name=set_name))
     if set_name is None:
         heading = [f"## Validation run - rule `{rule.rule_name}` - {verdict}"]
     else:
         v1 = _verdict(run_passed_v1(rule, outcomes, errors=errors))
         verdicts = f"rule {rule.label} {verdict}"
-        if rule.schema_version == 3:
+        if rule.schema_version >= 4:
+            counted = run_passed(
+                rule.counting_marked_r1(), outcomes, errors=errors, set_name=set_name
+            )
+            verdicts += f", rule {rule.label} with marked R1 counted {_verdict(counted)}"
+        if rule.schema_version >= 3:
             # Validation-run7 plan D4: the cycle's one loosening, visible.
             plain = run_passed(
                 rule.without_r1_exemption(), outcomes, errors=errors, set_name=set_name
@@ -3335,7 +3410,7 @@ def render_report(
         "same-speaker piece ending mid-sentence joined to the next), metric amendment "
         "2026-10-26 (validation-run7 D1)."
     )
-    if set_name is not None and rule.schema_version == 3:
+    if set_name is not None and rule.schema_version >= 3:
         amendments += (
             " Rule v3 (schema 3; validation-run7 D4, decided 2026-10-25) keeps rule v2's "
             "residue classes (decision 0.7 of 2026-10-22, amended "
@@ -3351,13 +3426,28 @@ def render_report(
             "unchanged. A cell or total nothing measured reads `-`; a measured zero reads 0."
         )
         # Larger-model plan D5: the sentence above is rule v3's history and
-        # prints unchanged; rule v4 (the same schema) only adds this one.
-        if rule.label == "v4":
+        # prints unchanged; rule v4 (the same schema) only adds this one —
+        # itself history under schema 4 (validation-run8 plan D1).
+        if rule.label == "v4" or rule.schema_version >= 4:
             amendments += (
                 " Rule v4 (schema 3; larger-model D5, decided 2026-11-04) keeps rule v3's "
                 "predicates and ceilings and changes the set schedule only: `heldout-4` "
                 "becomes a reported set and `heldout-5`, a set designated for blind "
                 "authoring, a gate set."
+            )
+        if rule.label == "v5" and rule.schema_version >= 4:
+            reports = rule.set_row(set_name).r1_marked_reported is True
+            amendments += (
+                " Rule v5 (schema 4; validation-run8 D1, decided 2026-11-06) keeps rule v4's "
+                "predicates and ceilings and, on a row that reports marked R1, counts only the "
+                "silent R1 facts under the R1 ceiling and prints the marked ones (a misheard "
+                "material fact under a review mark) beside it with no ceiling ("
+                + (
+                    "this set reports them"
+                    if reports
+                    else "this set counts them under the ceiling"
+                )
+                + "); the verdict with marked R1 counted is printed beside it."
             )
     elif set_name is not None:
         amendments += (
@@ -3587,9 +3677,12 @@ def _residue_section(
     totals beside the raw ones, "Surfaced / expected", the new omission
     code's load, what only the joined run credits (validation-run7 plan D1)
     and D14's reference-boundary record — ids and integers. A
-    schema-3 run's adds the unsupported lines the R1 exemption excuses, as
-    ``<id>/line <n> (segment <i>)`` (validation-run7 plan D4)."""
+    schema-3 or later run's adds the unsupported lines the R1 exemption
+    excuses, as ``<id>/line <n> (segment <i>)`` (validation-run7 plan D4); a
+    schema-4 run's adds the marked R1 facts after R1's members, reported or
+    counted under the ceiling as the row says (validation-run8 plan D1)."""
     row = rule.set_row(set_name)
+    reports_marked = row.r1_marked_reported is True
     label = f"rule {rule.label}"
     measured = [o.metrics for o in outcomes if o.metrics is not None]
     # PR-LOW-016's convention here too (peer round 46 PR-LOW-001): with no
@@ -3612,19 +3705,43 @@ def _residue_section(
     for count in counts:
         unit = "encounters" if count.residue_class == "R3" else "facts"
         ceiling = "none (reported)" if count.ceiling is None else str(count.ceiling)
+        name = RESIDUE_CLASS_NAMES[count.residue_class]
+        if count.residue_class == "R1" and reports_marked:
+            name += " (silent only; marked R1 reported below)"
         lines.append(
-            f"| {count.residue_class} {RESIDUE_CLASS_NAMES[count.residue_class]} "
+            f"| {count.residue_class} {name} "
             f"| {total(count.total)} | {unit} | {ceiling} "
             f"| {_flag(count.within if any_measured else None)} |"
         )
     lines.append("")
-    for count in counts:
-        members = ", ".join(
-            encounter if fact is None else f"{encounter}/f{fact}"
-            for encounter, fact in count.members
-        )
+
+    def listed(pairs: Sequence[tuple[str, int | None]]) -> str:
         empty = "none" if any_measured else "- (no encounter measured)"
-        lines.append(f"- {count.residue_class}: {members or empty}")
+        return (
+            ", ".join(
+                encounter if fact is None else f"{encounter}/f{fact}" for encounter, fact in pairs
+            )
+            or empty
+        )
+
+    for count in counts:
+        lines.append(f"- {count.residue_class}: {listed(count.members)}")
+        if count.residue_class == "R1" and rule.schema_version >= 4:
+            # Validation-run8 plan D1: on every schema-4 row, so a seen set's
+            # report carries the split too.
+            marked = (
+                count.reported_members
+                if reports_marked
+                else tuple(
+                    (outcome.encounter_id, fact.fact_index)
+                    for outcome in outcomes
+                    if outcome.metrics is not None
+                    for fact in outcome.metrics.facts
+                    if fact.residue_r1_marked
+                )
+            )
+            how = "reported, no ceiling" if reports_marked else "counted under the ceiling"
+            lines.append(f"- R1 marked wrong ({how}): {total(len(marked))} - {listed(marked)}")
     wrong = total(sum(m.material_wrong for m in measured))
     silent = total(sum(m.silent_omissions for m in measured))
     missed = total(sum(m.uncertainty_missed for m in measured))
@@ -3635,7 +3752,7 @@ def _residue_section(
         f"uncertainty missed {total(sum(m.uncertainty_missed_v2 for m in measured))} "
         f"(raw {missed})."
     )
-    if rule.schema_version == 3:
+    if rule.schema_version >= 3:
         excused = [
             f"{outcome.encounter_id}/line {ordinal + 1} (segment {segment_index})"
             for outcome in outcomes
@@ -3807,7 +3924,7 @@ def _parser() -> argparse.ArgumentParser:
         help=(
             "the set this folder was built from, one the rule names (scripts, heldout, "
             "heldout-2, heldout-3, heldout-4, heldout-5): required with a schema-2 or "
-            "schema-3 rule, whose row for it holds the ceilings; not taken with a schema-1 rule"
+            "later rule, whose row for it holds the ceilings; not taken with a schema-1 rule"
         ),
     )
     parser.add_argument(
@@ -3871,7 +3988,7 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
     ``--model`` value not shaped as a model name (never echoed), a
     missing set or config folder, the app's own config folder, an unusable
     rule, a ``--set`` that does not fit the rule (given with a schema-1 rule;
-    missing, or not one of its sets, with a schema-2 or schema-3 rule —
+    missing, or not one of its sets, with a schema-2 or later rule —
     validation-run6 plan D17), an unusable config, a config carrying the app's learned
     content, a template
     profile that cannot be bound, then the models (by name, before any is
@@ -3926,7 +4043,7 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
     set_name: str | None = args.set_name
     if rule.sets is None and set_name is not None:
         print(
-            "[refused] --set is taken only with a schema-2 or schema-3 rule (a schema-1 rule "
+            "[refused] --set is taken only with a schema-2 or later rule (a schema-1 rule "
             "has no sets)"
         )
         return 2

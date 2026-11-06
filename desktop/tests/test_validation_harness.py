@@ -1349,7 +1349,7 @@ class TestRunValidationMain:
         refusal, not ignored."""
         assert validation.main(_argv(tmp_path, "--set", "scripts")) == 2
         out = capsys.readouterr().out
-        assert "[refused] --set is taken only with a schema-2 or schema-3 rule" in out
+        assert "[refused] --set is taken only with a schema-2 or later rule" in out
         assert "Whisper" not in out
 
     @pytest.mark.parametrize("given", [None, "Margaret"])
@@ -1441,11 +1441,44 @@ class TestRunValidationMain:
             assert "Whisper" not in out
             assert "Margaret" not in out
 
-    def test_the_set_help_names_rule_v4s_sets(self) -> None:
+    @pytest.mark.parametrize(
+        ("given", "goes_on"),
+        [
+            (None, False),
+            ("Margaret", False),
+            ("scripts", True),
+            ("heldout", True),
+            ("heldout-2", True),
+            ("heldout-3", True),
+            ("heldout-4", True),
+            ("heldout-5", True),
+        ],
+    )
+    def test_the_repository_rule_v5_needs_one_of_its_six_sets(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], given: str | None, goes_on: bool
+    ) -> None:
+        """Validation-run8 D1 through ``main``: ``rule-v5.json`` (schema 4)
+        takes ``--set`` as rule v4 does; the refusal names the schema."""
+        argv = _argv(tmp_path) if given is None else _argv(tmp_path, "--set", given)
+        argv[argv.index("--rule") + 1] = str(REPO / "validation" / "rules" / "rule-v5.json")
+        assert validation.main(argv) == 2
+        out = capsys.readouterr().out
+        if goes_on:
+            assert "[refused] no Whisper model is installed in" in out
+        else:
+            assert out.strip().endswith(
+                "[refused] a schema-4 rule needs --set naming one of its sets: heldout, "
+                "heldout-2, heldout-3, heldout-4, heldout-5, scripts"
+            )
+            assert "Whisper" not in out
+            assert "Margaret" not in out
+
+    def test_the_set_help_names_rule_v5s_sets(self) -> None:
         """Validation-run7 review round 18 LOW-001: the ``--set`` help names
         the sets as a literal, so it is pinned to the newest rule's rows —
-        ``rule-v4.json``'s since larger-model D5 — so a renamed or added set
-        fails here, not in a stale help line."""
+        ``rule-v5.json``'s since validation-run8 D1 — so a renamed or added
+        set fails here, not in a stale help line; the help says which
+        schemas take it."""
         (action,) = [a for a in validation._parser()._actions if a.dest == "set_name"]
         assert action.help is not None
         listed = re.search(r"\(([^)]*)\)", action.help)
@@ -1458,7 +1491,9 @@ class TestRunValidationMain:
             "heldout-4",
             "heldout-5",
         ]
-        assert listed.group(1).split(", ") == list(_repository_rule_v4().sets or {})
+        assert listed.group(1).split(", ") == list(_repository_rule_v5().sets or {})
+        assert "required with a schema-2 or later rule" in action.help
+        assert "schema-3" not in action.help
 
     def test_the_repository_rule_v2_has_no_fifth_set(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1983,6 +2018,11 @@ def _repository_rule_v3() -> PassRule:
 def _repository_rule_v4() -> PassRule:
     """``validation/rules/rule-v4.json`` (larger-model D5)."""
     return validation.load_pass_rule(REPO / "validation" / "rules" / "rule-v4.json")
+
+
+def _repository_rule_v5() -> PassRule:
+    """``validation/rules/rule-v5.json`` (validation-run8 D1)."""
+    return validation.load_pass_rule(REPO / "validation" / "rules" / "rule-v5.json")
 
 
 def _rule_v3(*, exempt: bool) -> PassRule:
@@ -2853,6 +2893,481 @@ class TestReport:
         assert errored[0].endswith(
             "- rule v3 FAIL, rule v3 without the R1 exemption FAIL, rule v1 FAIL"
         )
+
+    # Validation-run8 D1 (Task 0.2b): rule v5's reports. The run information
+    # line in full: the fixed text, the amendments, rule v3's history, rule
+    # v4's sentence and rule v5's.
+    _RUN_INFORMATION = (
+        "Whisper model `medium`; VAD `silero`; prose stage `off`; commit `unknown`; models "
+        "manifest SHA-256 `absent`. Encounters: {encounters}; set-level errors: 0. Words "
+        "compared after canonical spelling, metric amendment 2026-10-11: Ref words, WER and "
+        "every fact verdict are over canonical tokens (read beside runs 1-2, not compared "
+        "with them). Uncertainty is also surfaced by a hedge mark on a correct, hedged line, "
+        "metric amendment 2026-10-13 (the recogniser's alone: Surfaced (acoustic only)). "
+        "Attribution `enrolment`, metric amendment 2026-10-23: the clinician is the enrolled "
+        "speaker (an enrolment of each script's clinician voice), confirmed by the label "
+        "track; the two seconds columns show the attribution residue both ways (recorded, "
+        "never failing). The hedge credit reads the hedge scope (the line's own words, or a "
+        "same-speaker neighbour joined mid-sentence), metric amendment 2026-10-22 "
+        "(validation-run6 D5); a silent omission's `warned` also holds on a wholly uncovered "
+        "line of the confirmed clinician that an omission warning flags before the "
+        "next-patient boundary, metric amendments 2026-10-22 and 2026-10-24 (validation-run6 "
+        "D7, D13; 0.3.3's reading: Silent (0.3.3 predicate)); that flagged line is the whole "
+        "joined run of the pieces the recogniser split it into (a same-speaker piece ending "
+        "mid-sentence joined to the next), metric amendment 2026-10-26 (validation-run7 D1)."
+    )
+    _RULE_V5_SENTENCE = (
+        " Rule v5 (schema 4; validation-run8 D1, decided 2026-11-06) keeps rule v4's "
+        "predicates and ceilings and, on a row that reports marked R1, counts only the "
+        "silent R1 facts under the R1 ceiling and prints the marked ones (a misheard "
+        "material fact under a review mark) beside it with no ceiling ({how}); the verdict "
+        "with marked R1 counted is printed beside it."
+    )
+    _COLUMNS = (
+        "Encounter",
+        "Status",
+        "Segments",
+        "Ref words",
+        "WER",
+        "Spelling-normalised words",
+        "Unsupported clinical lines",
+        "Other unsupported words",
+        "Transcript lines",
+        "Config lines",
+        "Facts",
+        "Correct",
+        "Wrong (material)",
+        "Omitted",
+        "Silent omissions",
+        "Silent (run-1 predicate)",
+        "Silent (0.3.3 predicate)",
+        "Warned omissions",
+        "Uncertainty missed",
+        "Surfaced (acoustic only)",
+        "Hedge marks on unhedged segments",
+        "Ambiguous facts",
+        "Checker failures",
+        "Suspect segments",
+        "Clinician speech labelled other (s)",
+        "Other speech labelled clinician (s)",
+        "Prose p/f/e",
+        "Rule",
+    )
+    _FACTS_HEADER = (
+        "| Encounter | Fact | Kind | Material | Verdict | Warned | Uncertainty surfaced "
+        "| Not transcribed | Ambiguous | Residue class |"
+    )
+    _BOUNDARY_RECORD = (
+        "- Reference boundary on the script's own words, every next-patient script the run "
+        "read, measured or role unresolved (id: reference boundary, tail start): syn-001: 5, "
+        "5; syn-002: none, 4. Mismatches (a reference boundary that is neither none nor the "
+        "tail start; never R3, a finding): none."
+    )
+
+    @staticmethod
+    def _row(*cells: object) -> str:
+        assert len(cells) == 28
+        return "| " + " | ".join(str(cell) for cell in cells) + " |"
+
+    @staticmethod
+    def _seen_shape_outcomes() -> list[EncounterOutcome]:
+        """The rule-v3 ``heldout-4`` pin's outcomes: ``syn-001`` a marked
+        R1 fact and the line the exemption excuses (line 2, segment 3), two
+        left-out-line warnings, two run-only segments, a reference boundary
+        at its tail start; ``syn-002`` a correct fact and an R3 fact."""
+        return [
+            _measured_outcome(
+                "syn-001",
+                _fact_outcome(verdict="wrong", residue_r1=True),
+                transcript_lines=3,
+                unsupported_clinical_lines=1,
+                unsupported_lines_excused_by_r1=((1, 3),),
+                checker_tally=(("clinician_line_omitted", 2),),
+                segments_credited_by_run_only=2,
+                reference=_axis_reading(5, 5),
+            ),
+            _measured_outcome(
+                "syn-002",
+                _fact_outcome(),
+                _fact_outcome(1, kind="absent", verdict="wrongly_present", residue_r3=True),
+                checker_tally=(("clinician_line_omitted", 1),),
+                segments_credited_by_run_only=1,
+                reference=_axis_reading(None, 4),
+            ),
+        ]
+
+    def _blind_shape_outcomes(self) -> list[EncounterOutcome]:
+        """The seen shape plus ``syn-003``: a silent R1 fact (``f0``,
+        omitted unwarned) and a second marked R1 fact (``f1``)."""
+        return [
+            *self._seen_shape_outcomes(),
+            _measured_outcome(
+                "syn-003",
+                _fact_outcome(verdict="omitted", residue_r1=True),
+                _fact_outcome(1, verdict="wrong", residue_r1=True),
+            ),
+        ]
+
+    def test_a_heldout_5_report_under_rule_v5_is_pinned_line_by_line(self) -> None:
+        """Validation-run8 D1 on the blind row (marked R1 reported), every
+        line: four verdict lines and no fifth — rule v5 PASSES (R1 counts
+        the one silent fact, at its ceiling of 1), with marked R1 counted it
+        FAILS at the set level on all three, without the exemption it fails
+        ``syn-001``'s line; the R1 row's name, its silent-only count and
+        ceiling; the marked line after R1's members; the Facts table's
+        ``R1`` on both kinds."""
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        outcomes = self._blind_shape_outcomes()
+        lines = render_report(
+            outcomes, _repository_rule_v5(), info, set_name="heldout-5"
+        ).splitlines()
+        assert lines[:7] == [
+            "## Validation run - rule `rule-v5` - set `heldout-5` - rule v5 PASS, rule v5 with "
+            "marked R1 counted FAIL, rule v5 without the R1 exemption FAIL, rule v1 FAIL",
+            "",
+            "- Rule v5 verdict, set `heldout-5` (a gate set): PASS. Failing encounters: none; "
+            "set-level: none; set-level errors: 0. The gate is a rule v5 pass on every gate "
+            "set (`heldout-5`, `scripts`); the other sets are reported in full (`heldout`, "
+            "`heldout-2`, `heldout-3`, `heldout-4`).",
+            "- Rule v5 with marked R1 counted verdict (the same outcomes, every marked R1 fact "
+            "counted under the R1 ceiling): FAIL. Failing encounters: none; set-level: R1 3 "
+            "over the ceiling of 1; set-level errors: 0.",
+            "- Rule v5 without the R1 exemption verdict (the same outcomes, every unsupported "
+            "clinical line failing; rule v2 has no row for this set): FAIL. Failing "
+            "encounters: syn-001 (unsupported_clinical_line); set-level: none; set-level "
+            "errors: 0.",
+            "- Rule v1 verdict (the same outcomes on the raw counts, no residue class): FAIL. "
+            "Failing encounters: syn-001 (unsupported_clinical_line, material_wrong); "
+            "syn-002 (material_wrong); syn-003 (material_wrong, silent_omission).",
+            "",
+        ]
+        assert lines[7] == (
+            self._RUN_INFORMATION.format(encounters=3)
+            + self._RULE_V3_HISTORY
+            + self._RULE_V4_SENTENCE
+            + self._RULE_V5_SENTENCE.format(how="this set reports them")
+        )
+        none = ("-", "-", "-", "-")  # suspect, the two seconds, prose
+        assert lines[8:15] == [
+            "",
+            self._row(*self._COLUMNS),
+            "|" + "---|" * 28,
+            self._row("syn-001", "measured", 1, 1, "0.000", 0, 1, 0, 3, 0, 1, 0, 1, 0,
+                      0, 0, 0, 0, 0, 0, 0, 0, 0, *none, "PASS"),
+            self._row("syn-002", "measured", 1, 1, "0.000", 0, 0, 0, 1, 0, 2, 1, 1, 0,
+                      0, 0, 0, 0, 0, 0, 0, 0, 0, *none, "PASS"),
+            # syn-003: two facts, one wrong, one omitted and silent (all
+            # three readings).
+            self._row("syn-003", "measured", 1, 1, "0.000", 0, 0, 0, 1, 0, 2, 0, 1, 1,
+                      1, 1, 1, 0, 0, 0, 0, 0, 0, *none, "PASS"),
+            self._row("TOTAL", "3 measured", "-", 3, "0.000", 0, 1, 0, "-", "-", 5, 1, 3, 1,
+                      1, 1, 1, 0, 0, 0, 0, 0, 0, *none, "PASS"),
+        ]
+        assert lines[15:31] == [
+            "",
+            "### Checker warnings (code = count)",
+            "",
+            "- syn-001: clinician_line_omitted=2",
+            "- syn-002: clinician_line_omitted=1",
+            "- syn-003: none",
+            "",
+            "### Facts",
+            "",
+            self._FACTS_HEADER,
+            "|" + "---|" * 10,
+            "| syn-001 | 0 | present | yes | wrong | no | - | no | no | R1 |",
+            "| syn-002 | 0 | present | yes | correct | no | - | no | no | - |",
+            "| syn-002 | 1 | absent | yes | wrongly_present | no | - | no | no | R3 |",
+            # Both kinds read R1 in the Facts table.
+            "| syn-003 | 0 | present | yes | omitted | no | - | no | no | R1 |",
+            "| syn-003 | 1 | present | yes | wrong | no | - | no | no | R1 |",
+        ]
+        assert lines[31:] == [
+            "",
+            "### Residue classes (rule v5, set `heldout-5`, a gate set)",
+            "",
+            "| Class | Count | Unit | Ceiling | Within |",
+            "|---|---|---|---|---|",
+            "| R1 recogniser (silent only; marked R1 reported below) | 1 | facts | 1 | yes |",
+            "| R2 tone only | 0 | facts | none (reported) | yes |",
+            "| R3 unbroken next patient | 1 | encounters | 1 | yes |",
+            "",
+            "- R1: syn-003/f0",
+            "- R1 marked wrong (reported, no ceiling): 2 - syn-001/f0, syn-003/f1",
+            "- R2: none",
+            "- R3: syn-002",
+            "- After the classes (the counts rule v5 reads): material wrong 0 (raw 3), silent "
+            "omissions 0 (raw 1), uncertainty missed 0 (raw 0).",
+            "- Unsupported clinical lines the R1 exemption excuses (applied under this rule): "
+            "1 (raw 1): syn-001/line 2 (segment 3).",
+            "- Surfaced / expected: 0 / 0 (reported, not required, in this set).",
+            "- clinician_line_omitted per measured encounter: total 3, median 1, maximum 2.",
+            _run_only_line("3", "0"),
+            self._BOUNDARY_RECORD,
+        ]
+        # The counted verdict is the real rule v4's on the same outcomes.
+        v4 = _repository_rule_v4()
+        assert validation.run_passed(v4, outcomes, set_name="heldout-5") is False
+
+    @pytest.mark.parametrize(
+        ("silent", "verdict", "within"),
+        [(1, "PASS", "yes"), (2, "FAIL", "no")],
+    )
+    def test_the_blind_rows_set_level_reads_the_silent_kind_only(
+        self, silent: int, verdict: str, within: str
+    ) -> None:
+        """The blind row's R1 ceiling (1) at n and n + 1 silent facts, with
+        three marked ones reported beside and never counted."""
+        outcomes = [
+            _measured_outcome(f"syn-{i:03d}", _fact_outcome(verdict="wrong", residue_r1=True))
+            for i in (1, 2, 3)
+        ] + [
+            _measured_outcome(f"syn-{i:03d}", _fact_outcome(verdict="omitted", residue_r1=True))
+            for i in range(4, 4 + silent)
+        ]
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        lines = render_report(
+            outcomes, _repository_rule_v5(), info, set_name="heldout-5"
+        ).splitlines()
+        assert lines[0].startswith(f"## Validation run - rule `rule-v5` - set `heldout-5` - "
+                                   f"rule v5 {verdict}, rule v5 with marked R1 counted FAIL,")
+        set_level = "none" if silent == 1 else "R1 2 over the ceiling of 1"
+        assert f"FAIL. Failing encounters: none; set-level: R1 {3 + silent} over the" in lines[3]
+        assert f"Failing encounters: none; set-level: {set_level}; set-level errors" in lines[2]
+        silent_ids = ", ".join(f"syn-{i:03d}/f0" for i in range(4, 4 + silent))
+        assert (
+            f"| R1 recogniser (silent only; marked R1 reported below) | {silent} | facts | 1 "
+            f"| {within} |"
+        ) in lines
+        assert f"- R1: {silent_ids}" in lines
+        assert (
+            "- R1 marked wrong (reported, no ceiling): 3 - syn-001/f0, syn-002/f0, syn-003/f0"
+        ) in lines
+
+    def test_a_heldout_4_report_under_rule_v5_is_pinned_line_by_line(self) -> None:
+        """A seen row under rule v5 (``heldout-4``, a reported set that
+        counts marked R1), every line, on the rule-v3 ``heldout-4`` pin's
+        outcomes: the lines D5 lists differ from that report — the heading,
+        verdict line 1's label, gate list and role, the new second verdict
+        line (= the first here), the third's label, the run information, the
+        residue heading, the after-classes label and the "counted under the
+        ceiling" line — and nothing else does."""
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        outcomes = self._seen_shape_outcomes()
+        lines = render_report(
+            outcomes, _repository_rule_v5(), info, set_name="heldout-4"
+        ).splitlines()
+        assert lines[:7] == [
+            "## Validation run - rule `rule-v5` - set `heldout-4` - rule v5 PASS, rule v5 with "
+            "marked R1 counted PASS, rule v5 without the R1 exemption FAIL, rule v1 FAIL",
+            "",
+            "- Rule v5 verdict, set `heldout-4` (a reported set): PASS. Failing encounters: "
+            "none; set-level: none; set-level errors: 0. The gate is a rule v5 pass on every "
+            "gate set (`heldout-5`, `scripts`); the other sets are reported in full "
+            "(`heldout`, `heldout-2`, `heldout-3`, `heldout-4`).",
+            "- Rule v5 with marked R1 counted verdict (the same outcomes, every marked R1 fact "
+            "counted under the R1 ceiling): PASS. Failing encounters: none; set-level: none; "
+            "set-level errors: 0.",
+            "- Rule v5 without the R1 exemption verdict (the same outcomes, every unsupported "
+            "clinical line failing; rule v2 has no row for this set): FAIL. Failing "
+            "encounters: syn-001 (unsupported_clinical_line); set-level: none; set-level "
+            "errors: 0.",
+            "- Rule v1 verdict (the same outcomes on the raw counts, no residue class): FAIL. "
+            "Failing encounters: syn-001 (unsupported_clinical_line, material_wrong); "
+            "syn-002 (material_wrong).",
+            "",
+        ]
+        assert lines[7] == (
+            self._RUN_INFORMATION.format(encounters=2)
+            + self._RULE_V3_HISTORY
+            + self._RULE_V4_SENTENCE
+            + self._RULE_V5_SENTENCE.format(how="this set counts them under the ceiling")
+        )
+        none = ("-", "-", "-", "-")
+        assert lines[8:14] == [
+            "",
+            self._row(*self._COLUMNS),
+            "|" + "---|" * 28,
+            self._row("syn-001", "measured", 1, 1, "0.000", 0, 1, 0, 3, 0, 1, 0, 1, 0,
+                      0, 0, 0, 0, 0, 0, 0, 0, 0, *none, "PASS"),
+            self._row("syn-002", "measured", 1, 1, "0.000", 0, 0, 0, 1, 0, 2, 1, 1, 0,
+                      0, 0, 0, 0, 0, 0, 0, 0, 0, *none, "PASS"),
+            self._row("TOTAL", "2 measured", "-", 2, "0.000", 0, 1, 0, "-", "-", 3, 1, 2, 0,
+                      0, 0, 0, 0, 0, 0, 0, 0, 0, *none, "PASS"),
+        ]
+        assert lines[14:27] == [
+            "",
+            "### Checker warnings (code = count)",
+            "",
+            "- syn-001: clinician_line_omitted=2",
+            "- syn-002: clinician_line_omitted=1",
+            "",
+            "### Facts",
+            "",
+            self._FACTS_HEADER,
+            "|" + "---|" * 10,
+            "| syn-001 | 0 | present | yes | wrong | no | - | no | no | R1 |",
+            "| syn-002 | 0 | present | yes | correct | no | - | no | no | - |",
+            "| syn-002 | 1 | absent | yes | wrongly_present | no | - | no | no | R3 |",
+        ]
+        assert lines[27:] == [
+            "",
+            "### Residue classes (rule v5, set `heldout-4`, a reported set)",
+            "",
+            "| Class | Count | Unit | Ceiling | Within |",
+            "|---|---|---|---|---|",
+            "| R1 recogniser | 1 | facts | 1 | yes |",
+            "| R2 tone only | 0 | facts | none (reported) | yes |",
+            "| R3 unbroken next patient | 1 | encounters | 1 | yes |",
+            "",
+            "- R1: syn-001/f0",
+            "- R1 marked wrong (counted under the ceiling): 1 - syn-001/f0",
+            "- R2: none",
+            "- R3: syn-002",
+            "- After the classes (the counts rule v5 reads): material wrong 0 (raw 2), silent "
+            "omissions 0 (raw 0), uncertainty missed 0 (raw 0).",
+            "- Unsupported clinical lines the R1 exemption excuses (applied under this rule): "
+            "1 (raw 1): syn-001/line 2 (segment 3).",
+            "- Surfaced / expected: 0 / 0 (reported, not required, in this set).",
+            "- clinician_line_omitted per measured encounter: total 3, median 1.5, maximum 2.",
+            _run_only_line("3", "0"),
+            self._BOUNDARY_RECORD,
+        ]
+        # Against rule v3's report on the same outcomes: the R1 row, every
+        # member line but the new one, the excused line, the tables and the
+        # facts are the same lines.
+        v3_lines = render_report(
+            outcomes, _repository_rule_v3(), info, set_name="heldout-4"
+        ).splitlines()
+        assert lines[8:27] == v3_lines[7:26]
+        assert [line for line in lines[27:] if line not in v3_lines] == [
+            "### Residue classes (rule v5, set `heldout-4`, a reported set)",
+            "- R1 marked wrong (counted under the ceiling): 1 - syn-001/f0",
+            "- After the classes (the counts rule v5 reads): material wrong 0 (raw 2), silent "
+            "omissions 0 (raw 0), uncertainty missed 0 (raw 0).",
+        ]
+
+    def test_a_schema_4_rule_of_another_name_prints_its_own_label(self) -> None:
+        """Peer round 2 PR-LOW-002: the fourth verdict's name is
+        ``PassRule.label`` — "v6" for a schema-4 rule named
+        ``rule-v6-test`` — at every label site; rule v5's sentence is rule
+        v5's alone, and nothing names v5."""
+        payload = _repository_rule_v5().model_dump()
+        payload["rule_name"] = "rule-v6-test"
+        rule = PassRule.model_validate(payload)
+        assert (rule.schema_version, rule.label) == (4, "v6")
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        report = render_report(
+            self._blind_shape_outcomes(), rule, info, set_name="heldout-5"
+        )
+        lines = report.splitlines()
+        assert lines[0] == (
+            "## Validation run - rule `rule-v6-test` - set `heldout-5` - rule v6 PASS, rule v6 "
+            "with marked R1 counted FAIL, rule v6 without the R1 exemption FAIL, rule v1 FAIL"
+        )
+        assert [line.split(" verdict", 1)[0] for line in lines[2:6]] == [
+            "- Rule v6",
+            "- Rule v6 with marked R1 counted",
+            "- Rule v6 without the R1 exemption",
+            "- Rule v1",
+        ]
+        assert lines[6] == ""
+        assert lines[7] == (
+            self._RUN_INFORMATION.format(encounters=3)
+            + self._RULE_V3_HISTORY
+            + self._RULE_V4_SENTENCE
+        )
+        assert "### Residue classes (rule v6, set `heldout-5`, a gate set)" in lines
+        after = "- After the classes (the counts rule v6 reads)"
+        assert any(line.startswith(after) for line in lines)
+        assert "- R1 marked wrong (reported, no ceiling): 2 - syn-001/f0, syn-003/f1" in lines
+        assert "v5" not in report
+        assert "= rule v4" not in report
+
+    def test_a_schema_3_rule_named_v5_prints_no_rule_v5_sentence(self) -> None:
+        """The other side of the rule-v5 sentence's gate (label v5 AND schema
+        4): a schema-3 file named ``rule-v5-test`` is labelled "v5" but
+        prints rule v3's history alone — no schema-4 claim, no fourth
+        verdict, no marked-R1 line."""
+        payload = _repository_rule_v4().model_dump()
+        payload["rule_name"] = "rule-v5-test"
+        rule = PassRule.model_validate(payload)
+        assert (rule.schema_version, rule.label) == (3, "v5")
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        report = render_report(self._blind_shape_outcomes(), rule, info, set_name="heldout-5")
+        lines = report.splitlines()
+        # Three verdict lines, so the run information line is the seventh.
+        assert lines[6] == self._RUN_INFORMATION.format(encounters=3) + self._RULE_V3_HISTORY
+        assert "schema 4" not in report
+        assert "marked R1" not in report
+        assert sum(1 for line in lines[2:7] if line.startswith("- Rule ")) == 3
+
+    def test_a_schema_4_row_reporting_marked_r1_on_a_rule_v2_set_differs_from_rule_v2(
+        self,
+    ) -> None:
+        """PR-MED-002 in the report: rule v5 with ``scripts`` reporting
+        marked R1 says its third verdict is not rule v2's there."""
+        payload = _repository_rule_v5().model_dump()
+        payload["sets"]["scripts"]["r1_marked_reported"] = True
+        rule = PassRule.model_validate(payload)
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        lines = render_report(
+            self._seen_shape_outcomes(), rule, info, set_name="scripts"
+        ).splitlines()
+        assert lines[4].startswith(
+            "- Rule v5 without the R1 exemption verdict (the same outcomes, every unsupported "
+            "clinical line failing; not rule v2's verdict: this rule's top-level thresholds or "
+            "this set's row differ from rule v2's): FAIL."
+        )
+        assert lines[7].endswith(self._RULE_V5_SENTENCE.format(how="this set reports them"))
+        row = "| R1 recogniser (silent only; marked R1 reported below) | 0 | facts | 2 | yes |"
+        assert row in lines
+        assert "- R1 marked wrong (reported, no ceiling): 1 - syn-001/f0" in lines
+
+    @pytest.mark.parametrize(
+        ("set_name", "how"),
+        [("heldout-5", "reported, no ceiling"), ("scripts", "counted under the ceiling")],
+    )
+    def test_the_marked_line_with_nothing_measured_reads_dash(
+        self, set_name: str, how: str
+    ) -> None:
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        report = render_report(
+            [EncounterOutcome("syn-001", "error", "OSError")],
+            _repository_rule_v5(),
+            info,
+            set_name=set_name,
+        )
+        assert f"- R1 marked wrong ({how}): - - - (no encounter measured)" in report.splitlines()
+
+    @pytest.mark.parametrize(
+        ("rule_file", "set_name"),
+        [
+            ("rule-v3.json", "scripts"),
+            ("rule-v3.json", "heldout-4"),
+            ("rule-v4.json", "scripts"),
+            ("rule-v4.json", "heldout-4"),
+            ("rule-v4.json", "heldout-5"),
+        ],
+    )
+    def test_a_schema_3_report_prints_no_v5_and_no_marked_r1_line(
+        self, rule_file: str, set_name: str
+    ) -> None:
+        """The mirror of the rule-v5 pins: a rule-v3 or rule-v4 report (schema
+        3) prints no ``v5``, no second verdict with marked R1 counted, no
+        marked-R1 line and the R1 row under its old name, on outcomes that
+        hold both kinds."""
+        rule = validation.load_pass_rule(REPO / "validation" / "rules" / rule_file)
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        report = render_report(self._blind_shape_outcomes(), rule, info, set_name=set_name)
+        lines = report.splitlines()
+        assert "v5" not in report
+        assert "marked R1" not in report
+        assert not any(line.startswith("- R1 marked wrong") for line in lines)
+        assert [line for line in lines if line.startswith("| R1 recogniser")] == [
+            "| R1 recogniser | 3 | facts | " + str(rule.set_row(set_name).max_r1_facts) + " | no |"
+        ]
+        assert sum(1 for line in lines[2:7] if line.startswith("- Rule ")) == 3
 
     @pytest.mark.parametrize("slot", ["words", "metrics", "prose", "reference"])
     def test_an_outcome_holds_only_its_validated_types(self, slot: str) -> None:

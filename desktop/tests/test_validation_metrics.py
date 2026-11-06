@@ -3985,6 +3985,214 @@ class TestRuleV5:
             assert sets[name].model_copy(update={"r1_marked_reported": None}) == row
 
 
+# Validation-run8 plan D1's two R1 kinds, as one encounter holds them.
+_R1_MARKED = _residue_fact(verdict="wrong", residue_r1=True)
+_R1_SILENT = _residue_fact(verdict="omitted", residue_r1=True)
+# Reported ``wrong``, silently omitted on another equal-cost alignment: both.
+_R1_BOTH = _residue_fact(verdict="wrong", silently_omitted_somewhere=True, residue_r1=True)
+
+
+def _r1_outcomes(marked: int, silent: int, both: int = 0) -> list[EncounterOutcome]:
+    """One encounter per R1 fact, ``syn-001`` on: the marked ones first,
+    then the silent ones, then the both-case ones."""
+    facts = [_R1_MARKED] * marked + [_R1_SILENT] * silent + [_R1_BOTH] * both
+    return [_residue_outcome(f"syn-{i:03d}", fact) for i, fact in enumerate(facts, start=1)]
+
+
+class TestRuleV5Reading:
+    """Validation-run8 plan D1 (C16, C18): R1's two kinds, the schema-4 row
+    that reports marked R1, ``counting_marked_r1`` and rule v2's
+    counterpart under schema 4 — on invented outcomes."""
+
+    @pytest.mark.parametrize(
+        ("fact", "silent", "marked"),
+        [
+            (_R1_MARKED, False, True),
+            (_R1_SILENT, True, False),
+            # The both-case precedence: silent, never marked.
+            (_R1_BOTH, True, False),
+            # Not R1: neither kind, whatever the verdict.
+            (_residue_fact(verdict="wrong"), False, False),
+            (_residue_fact(verdict="omitted"), False, False),
+            (_residue_fact(verdict="wrong", silently_omitted_somewhere=True), False, False),
+            (_residue_fact(), False, False),
+        ],
+    )
+    def test_each_r1_fact_is_exactly_one_kind(
+        self, fact: FactOutcome, silent: bool, marked: bool
+    ) -> None:
+        assert (fact.residue_r1_silent, fact.residue_r1_marked) == (silent, marked)
+        if fact.residue_r1:
+            assert fact.residue_r1_silent is not fact.residue_r1_marked
+        # The kinds change no encounter-level predicate (R1 still excuses
+        # its own fact's failure).
+        if fact.residue_r1:
+            assert (fact.material_wrong_v2, fact.silent_omission_v2) == (False, False)
+
+    def test_a_marked_fact_is_counted_where_the_row_counts_it(self) -> None:
+        """``reported`` (``r1_marked_reported`` false): the marked fact is
+        an R1 member under the ceiling, nothing reported beside it."""
+        (r1, r2, r3) = class_counts(_RULE_V5, _r1_outcomes(1, 0), "reported")
+        assert (r1.total, r1.members, r1.reported_members) == (1, (("syn-001", 0),), ())
+        assert (r2.reported_members, r3.reported_members) == ((), ())
+
+    def test_a_marked_fact_is_reported_where_the_row_reports_it(self) -> None:
+        """``gate`` (true): no R1 member, the fact reported beside."""
+        (r1, r2, r3) = class_counts(_RULE_V5, _r1_outcomes(1, 0), "gate")
+        assert (r1.total, r1.members, r1.reported_members) == (0, (), (("syn-001", 0),))
+        assert (r2.reported_members, r3.reported_members) == ((), ())
+
+    @pytest.mark.parametrize("set_name", ["gate", "reported"])
+    def test_a_silent_fact_is_counted_under_both(self, set_name: str) -> None:
+        (r1, _r2, _r3) = class_counts(_RULE_V5, _r1_outcomes(0, 1), set_name)
+        assert (r1.total, r1.members, r1.reported_members) == (1, (("syn-001", 0),), ())
+
+    @pytest.mark.parametrize("set_name", ["gate", "reported"])
+    def test_the_both_case_is_counted_and_never_reported(self, set_name: str) -> None:
+        (r1, _r2, _r3) = class_counts(_RULE_V5, _r1_outcomes(0, 0, both=1), set_name)
+        assert (r1.total, r1.members, r1.reported_members) == (1, (("syn-001", 0),), ())
+
+    def test_a_schema_3_row_counts_every_r1_fact(self) -> None:
+        (r1, _r2, _r3) = class_counts(_RULE_V3, _r1_outcomes(1, 1, both=1), "gate")
+        assert (r1.total, r1.reported_members) == (3, ())
+
+    @pytest.mark.parametrize(
+        ("marked", "silent", "both", "within"),
+        [
+            # The reporting row's R1 ceiling (1) reads the silent kind only.
+            (0, 1, 0, True),
+            (0, 2, 0, False),
+            (0, 0, 1, True),
+            (0, 1, 1, False),
+            (5, 1, 0, True),
+            (5, 0, 0, True),
+            (5, 2, 0, False),
+        ],
+    )
+    def test_the_reporting_rows_ceiling_at_n_and_n_plus_1(
+        self, marked: int, silent: int, both: int, within: bool
+    ) -> None:
+        outcomes = _r1_outcomes(marked, silent, both)
+        (r1, _r2, _r3) = class_counts(_RULE_V5, outcomes, "gate")
+        assert (r1.total, r1.within) == (silent + both, within)
+        assert len(r1.reported_members) == marked
+        assert run_passed(_RULE_V5, outcomes, set_name="gate") is within
+
+    @pytest.mark.parametrize(
+        ("marked", "silent", "within"),
+        [(1, 0, True), (2, 0, False), (0, 1, True), (1, 1, False)],
+    )
+    def test_the_counting_rows_ceiling_at_n_and_n_plus_1(
+        self, marked: int, silent: int, within: bool
+    ) -> None:
+        outcomes = _r1_outcomes(marked, silent)
+        (r1, _r2, _r3) = class_counts(_RULE_V5, outcomes, "reported")
+        assert (r1.total, r1.within, r1.reported_members) == (marked + silent, within, ())
+        assert run_passed(_RULE_V5, outcomes, set_name="reported") is within
+
+    def test_counting_marked_r1_sets_every_row_false(self) -> None:
+        v5 = validation.load_pass_rule(_RULES / "rule-v5.json")
+        counted = v5.counting_marked_r1()
+        assert counted is not v5
+        sets, counted_sets = v5.sets or {}, counted.sets or {}
+        assert list(counted_sets) == list(sets)
+        for name, row in sets.items():
+            assert counted_sets[name].r1_marked_reported is False
+            assert counted_sets[name].model_dump(exclude={"r1_marked_reported"}) == (
+                row.model_dump(exclude={"r1_marked_reported"})
+            )
+        assert counted.model_dump(exclude={"sets"}) == v5.model_dump(exclude={"sets"})
+        assert (v5.sets or {})["heldout-5"].r1_marked_reported is True  # never mutated
+        # No row reports: the rule itself.
+        assert counted.counting_marked_r1() is counted
+        v4 = validation.load_pass_rule(_RULES / "rule-v4.json")
+        for rule in (_RULE_V3, _RULE_V2, OPTION_A, v4):
+            assert rule.counting_marked_r1() is rule
+
+    def test_without_the_exemption_marked_r1_is_still_reported(self) -> None:
+        plain = validation.load_pass_rule(_RULES / "rule-v5.json").without_r1_exemption()
+        assert plain.exempts_r1_lines is False
+        assert (plain.sets or {})["heldout-5"].r1_marked_reported is True
+
+    # Invented outcome shapes for the fourth verdict's equality: R1 of each
+    # kind at and over the ceilings, an R3 event, an R2 fact, an excused and
+    # an unexcused unsupported line, a plain wrong fact.
+    _SHAPES: dict[str, list[EncounterOutcome]] = {
+        "clean": [_residue_outcome("syn-001", _residue_fact())],
+        "one marked": _r1_outcomes(1, 0),
+        "two marked": _r1_outcomes(2, 0),
+        "three marked": _r1_outcomes(3, 0),
+        "one silent": _r1_outcomes(0, 1),
+        "two silent": _r1_outcomes(0, 2),
+        "one both": _r1_outcomes(0, 0, both=1),
+        "marked and silent": _r1_outcomes(1, 1),
+        "two marked one silent": _r1_outcomes(2, 1),
+        "r3 twice": [
+            _residue_outcome("syn-001", _CLASS_MEMBER["R3"]),
+            _residue_outcome("syn-002", _CLASS_MEMBER["R3"]),
+        ],
+        "r2 twice": [
+            _residue_outcome("syn-001", _CLASS_MEMBER["R2"]),
+            _residue_outcome("syn-002", _CLASS_MEMBER["R2"]),
+        ],
+        "excused line": [
+            _residue_outcome("syn-001", _R1_MARKED, unsupported=1, excused=((0, 2),))
+        ],
+        "unexcused line": [
+            _residue_outcome("syn-001", _R1_MARKED, unsupported=2, excused=((0, 2),))
+        ],
+        "plain wrong": [_residue_outcome("syn-001", _WRONG)],
+        "plain silent": [_residue_outcome("syn-001", _SILENT)],
+    }
+
+    @pytest.mark.parametrize("shape", sorted(_SHAPES))
+    @pytest.mark.parametrize(
+        "set_name", ["scripts", "heldout", "heldout-2", "heldout-3", "heldout-4", "heldout-5"]
+    )
+    def test_marked_r1_counted_is_rule_v4s_verdict(self, set_name: str, shape: str) -> None:
+        """C18 / D1: on every row, rule v5 with marked R1 counted gives the
+        real ``rule-v4.json``'s verdict; on the five seen rows (none
+        reports) it is rule v5's own verdict too."""
+        v4 = validation.load_pass_rule(_RULES / "rule-v4.json")
+        v5 = validation.load_pass_rule(_RULES / "rule-v5.json")
+        outcomes = self._SHAPES[shape]
+        counted = run_passed(v5.counting_marked_r1(), outcomes, set_name=set_name)
+        assert counted is run_passed(v4, outcomes, set_name=set_name)
+        if set_name != "heldout-5":
+            assert counted is run_passed(v5, outcomes, set_name=set_name)
+
+    def test_heldout_5_alone_reads_differently(self) -> None:
+        """Two marked R1 facts: rule v4's ``heldout-5`` ceiling (1) fails,
+        rule v5's passes (reported); the seen rows agree under both."""
+        v4 = validation.load_pass_rule(_RULES / "rule-v4.json")
+        v5 = validation.load_pass_rule(_RULES / "rule-v5.json")
+        outcomes = _r1_outcomes(2, 0)
+        assert run_passed(v4, outcomes, set_name="heldout-5") is False
+        assert run_passed(v5, outcomes, set_name="heldout-5") is True
+        assert run_passed(v5.counting_marked_r1(), outcomes, set_name="heldout-5") is False
+
+    def test_rule_v2s_counterpart_under_rule_v5(self) -> None:
+        """PR-MED-002: a row's ``r1_marked_reported`` false equals rule v2's
+        None, so the four rule-v2 sets read ``same``; the two later sets
+        have no rule-v2 row."""
+        v5 = validation.load_pass_rule(_RULES / "rule-v5.json")
+        for name in ("scripts", "heldout", "heldout-2", "heldout-3"):
+            assert validation.rule_v2_counterpart(v5, name) == "same"
+        assert validation.rule_v2_counterpart(v5, "heldout-4") == "no_row"
+        assert validation.rule_v2_counterpart(v5, "heldout-5") == "no_row"
+
+    @pytest.mark.parametrize(("reported", "counterpart"), [(False, "same"), (True, "differs")])
+    def test_a_true_row_differs_from_rule_v2(self, reported: bool, counterpart: str) -> None:
+        """The other way: a hand-built schema-4 rule, rule v5's but with
+        ``scripts`` reporting marked R1, is NOT rule v2's verdict there."""
+        v5 = validation.load_pass_rule(_RULES / "rule-v5.json")
+        payload = v5.model_dump()
+        payload["sets"]["scripts"]["r1_marked_reported"] = reported
+        rule = PassRule.model_validate(payload)
+        assert validation.rule_v2_counterpart(rule, "scripts") == counterpart
+        assert validation.rule_v2_counterpart(rule, "heldout") == "same"
+
+
 class TestR1Exemption:
     """D4's predicate, both ways, on hand-built alignments: a line is
     excused when EVERY flagged structured-claim word in it is (i) never an
