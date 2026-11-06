@@ -1,7 +1,7 @@
 # Feature Implementation Plan
 **Feature:** validation-run8 — rule v5 (the review-controlled class named and reported on the blind set), the clinician review guide's control in plain words, a fresh blind `heldout-5`, validation run 8 as the run of record, and the practitioner's shadow-off decision. No version change: developer tooling, a blind set, documents and a decision — no app code, no build of record, no install. Shadow mode is turned off, if it is, on the installed 0.3.5 by the Status tab's tick.
 
-**Overall Progress:** `53%` (8 of 15 buildable tasks done — 0.1, 0.2a, 0.2b, 0.3, 0.4, 0.5, 1.1 and 1.2. The 15: 0.1, 0.2a, 0.2b, 0.3, 0.4, 0.5, 1.1, 1.2, H1–H4, P.1, P.3, P.4′; the `[decision]` entries 0.0 and P.2 are outside the count, the 0.3.4 convention)
+**Overall Progress:** `80%` (12 of 15 buildable tasks done — 0.1, 0.2a, 0.2b, 0.3, 0.4, 0.5, 1.1, 1.2 and H1–H4. The 15: 0.1, 0.2a, 0.2b, 0.3, 0.4, 0.5, 1.1, 1.2, H1–H4, P.1, P.3, P.4′; the `[decision]` entries 0.0 and P.2 are outside the count, the 0.3.4 convention)
 
 ## Lifecycle State
 - Active
@@ -80,6 +80,7 @@ Populated 2026-11-06 from:
   - Revisit by: when the practitioner can name their phrases.
 - **The leftover status-bar message** (0.3.5's P.2 take 3; 2026-11-06: "Defer to the next install smoke (Recommended)"). Why deferred: no build in this plan to smoke it on. Intended outcome: the call that sets the text and what should clear it found; a fix or a register row. Files: `ui/main_window.py`'s status bar, the new-consultation warning. Recommended next action: reproduce on two mocks in a row at the next install smoke. Risk if deferred: minor — the warning never acts. Revisit by: the next install smoke.
 - **The joined-hedge `[check: unsure]` mark never exercised live** (2026-11-06: "Defer to the next install smoke (Recommended)"). Why deferred: the same. Intended outcome: one live take with a long comma pause, or a kept recording's replay, shows the mark. Files: `note.segment_hedged`. Risk if deferred: minor — it rests on the suite's pins. Revisit by: the next install smoke.
+- **The stale "schema 3" docstring words in `validation.py`** (recorded 2026-11-06 by H1 review round 19 LOW-002; the deferral itself was Task 0.2b's, peer round 7, forced by C17 (b)). Why deferred: C17 (b) bars any `validation.py` hunk outside its symbol list until run 8, and these sit outside it. Intended outcome: ONE docstring-only commit naming schema 4 where the text still calls schema 3 the newest or the last — `EncounterMetrics` (two docstrings), `RULE_V2_RATIFIED`, `rule_failures`, `run_passed` ("a schema-2 or schema-3 rule") and `evaluate_encounter` (Task 0.2b deviation (iv)). Files: `desktop/src/scribe_desktop/validation.py` alone. Risk if deferred: minor — docstrings only; the behaviour is schema 4's and pinned. Revisit by: after P.1 is committed, when C17 lapses (before P.3's commit, or as its own).
 - Carried from `plan-validation-pass.md`, unchanged and still owned there: the one-click undo of a false boundary; the transcript divider at the possible next patient; the mark pairing a retracted statement with its carried correction; the carry's question-answer hop.
 
 ### Excluded — Revisit Only If Needed
@@ -241,8 +242,91 @@ None in the app. The harness's pass-rule schema gains version 4 (D1); a schema-1
 See the Planning Extraction Summary (Deferred, Excluded, Accepted). In short: the distinct mark for a low-confidence number (deferred with the band-rule trigger), the practitioner's phrases, the two install-smoke items (deferred to the next build); a fitted ceiling, reporting all of R1, rule v4 unchanged, a sealed `heldout-6`, any decode or model change (excluded); the four validation-pass items (owned there).
 
 ## Current State / Handoff Note
-- **COMPOSER RUN-STATE (2026-11-06 21:05, RUNNING — MUST-PAUSE `heldout5-author-launch` answered by the practitioner's launch, EXIT:0):** `/execute-loop` run iso `validation-run8-20261106-144633-d8ae` (ownership marker `.cursor/loops/validation-run8-20261106-144633-d8ae-active`, isolation none, builds on `main` from `9884f04`), composer = Claude Code desktop session `local_325ca34f`'s side session; started at Task 0.2a. Commits so far: Task 0.2a `ba71ff5`; Task 0.2b `d15a28f`; Task 0.3 `431a38e`; Task 0.4 (THE pre-registration) `edd1a7d`; Task 0.5's preparation `4e0d550`; Task 0.5 itself (the authored set, `edd1a7d` carried) `2228b25`; Phase 1 (Tasks 1.1 and 1.2) the commit after it. Stage-5's prep converged: `/review-loop` round 14 (1 LOW), codex peer rounds 15 (1 LOW, record-only, fixed) and 16 (0 findings). The composer created `C:\heldout5-author` holding the regenerated `SPEC.md` alone (SHA-256 `819be450…994f54` re-checked after the copy); the practitioner launched the author (EXIT:0, `DONE 22`); the set copied in unread; stage-5 closed. Stage-6 (Phase 1) closed: `/review-loop` round 17, codex peer round 18 (0 findings). Next: stage-7 = H1–H4. Stage map: stage-1 = Task 0.2a, stage-2 = 0.2b, stage-3 = 0.3, stage-4 = 0.4, stage-5 = 0.5 up to the practitioner's author launch, stage-6 = Phase 1, stage-7 = H1–H4. Helpers `.cursor/loops/vr8-spawn.sh` / `vr8-peer-run.sh`; policy log `.cursor/loops/validation-run8-20261106-144633-d8ae-policy.log` (high-auto `816c39ef6949`, gates `3aac04e88393`).
+- **COMPOSER RUN-STATE (2026-11-06 21:55, PAUSED at Phase P — MUST-PAUSE `run8-p1`: the practitioner runs P.1, run 8; the earlier `heldout5-author-launch` was answered by the practitioner's launch, EXIT:0):** `/execute-loop` run iso `validation-run8-20261106-144633-d8ae` (ownership marker `.cursor/loops/validation-run8-20261106-144633-d8ae-active`, isolation none, builds on `main` from `9884f04`), composer = Claude Code desktop session `local_325ca34f`'s side session; started at Task 0.2a. Commits so far: Task 0.2a `ba71ff5`; Task 0.2b `d15a28f`; Task 0.3 `431a38e`; Task 0.4 (THE pre-registration) `edd1a7d`; Task 0.5's preparation `4e0d550`; Task 0.5 itself (the authored set, `edd1a7d` carried) `2228b25`; Phase 1 (Tasks 1.1 and 1.2) `60d553d`; the hardening stage (H1–H4) the commit after it — THE H4 commit P.1 runs from. Stage-5's prep converged: `/review-loop` round 14 (1 LOW), codex peer rounds 15 (1 LOW, record-only, fixed) and 16 (0 findings). The composer created `C:\heldout5-author` holding the regenerated `SPEC.md` alone (SHA-256 `819be450…994f54` re-checked after the copy); the practitioner launched the author (EXIT:0, `DONE 22`); the set copied in unread; stage-5 closed. Stage-6 (Phase 1) closed: `/review-loop` round 17, codex peer round 18 (0 findings). Stage-7 (H1–H4) closed: rounds 19–21, codex H4 rounds 22–30 (converged: documents at 29, code at 30). Next: Phase P, practitioner-owned — the loop is paused. Stage map: stage-1 = Task 0.2a, stage-2 = 0.2b, stage-3 = 0.3, stage-4 = 0.4, stage-5 = 0.5 up to the practitioner's author launch, stage-6 = Phase 1, stage-7 = H1–H4. Helpers `.cursor/loops/vr8-spawn.sh` / `vr8-peer-run.sh`; policy log `.cursor/loops/validation-run8-20261106-144633-d8ae-policy.log` (high-auto `816c39ef6949`, gates `3aac04e88393`).
 - Loop config: executor=claude-p model="claude-opus-5-5" effort=high profile=default; peer=codex model="gpt-6-astra" effort=medium; architect=off; cadence=every-phase; caps=review:3,peer:5; gates=executor; cap-raise=executor; high-auto=on; peer-max=12; notify=action-only; scope=all; autocommit=on; isolation=none; merge=off; perms=scoped; liveness=10; monitor-delivery=auto; verify=composer
+- **2026-11-06T21:44:32+11:00 — stage-7 executor (leg x5), peer round 28's one LOW applied; plan records only.** Operator brief:
+  - **Round 28 PR-LOW-001: CONFIRMED** (🔁, a sibling leg x4's sweep missed). Round 8's Scope line said "permitted-symbol compliance" unqualified over the 0.2b diff, which also changes `render_report`'s docstring. A dated qualification now sits under it.
+  - **One further search** over the Review History, the Findings Log and the handoff notes: `symbol compliance`, `symbol-level`, `permitted-symbol`, `permitted symbol`, `C17 held`, `C17 hold`, `C17 unchanged`, `C17 text`, `unchanged C17`, `C17 boundar`, `C17 compliance`, `compliance` / `complies` / `compliant`, `C17 remain`, `C17(b)`, `C17 … confirmed`, and every Review History line naming C17. Hits and dispositions:
+    - Round 8 Scope ("permitted-symbol compliance") → QUALIFIED (the docstring).
+    - Round 5 Scope ("C17 boundaries", 0 findings over Task 0.2a) → QUALIFIED (`RULE_SCHEMA_VERSION`). This is a sibling the peer did not name.
+    - Round 7's finding and its fix notes (`C17(b)`, "permitted-symbol list", "symbol-level check") → the peer's own finding, kept as history; its fix notes were qualified in leg x4.
+    - Round 6's "confined to the permitted symbols" → already qualified (leg x4).
+    - Rounds 22, 26, 27 and 28 (the quoted findings, "compliance claim/record") and their Review History lines (rounds 7, 22, 27, 28) → peer quotes and summaries of findings, kept.
+    - Round 23's Scope ("C16 and C17 remain unchanged", about the constraint TEXT) and the peer Scope lines of rounds 24–29 ("constraint text unchanged", "both exceptions correctly identified") → true; nothing to qualify.
+    - The scoped `/review-plan` History line ("C16–C18 unchanged", the text) → true; kept.
+    - "C17 holds" in the lineage line, Task 0.0 and the stage-3 handoff → the base or no package change; true.
+    - The stage-1 and stage-2 leg x1 handoffs' "C17 holds" → already qualified (leg x4).
+    - The leg x4 bullet's and round 26's sweep lists → the search terms; kept, and corrected for the count.
+  - **Counts corrected:** nine records qualified in legs x4–x5, not seven — in round 26's `/fix` notes, round 22's pointer, round 27's `/fix` decision and the leg x4 bullet.
+  - Round 28 is closed (0 pending). Round 29 converged with 0 findings.
+  - Only this plan changed: no code, test or document. C17's text is unchanged. C12: `validation/heldout-5/` not opened, listed or searched.
+  - **No MUST-PAUSE; no Deferral Confirmation Gate candidates.**
+  - **Next (composer):** the last codex re-check the cap allows (peer round 5 of 5), if the loop config asks; then close H4 and make the H4 commit, which P.1 runs from.
+- **2026-11-06T21:38:57+11:00 — stage-7 executor (leg x4), peer rounds 26–27's one LOW applied by an exhaustive sweep; plan records only.** Operator brief:
+  - Rounds 26 and 27 (PR-LOW-001 in each) are one defect, CONFIRMED (🔁 round 22's family). Round 22's fix had qualified three records, and more unqualified claims that the run's `validation.py` diff fits C17 (b)'s list remained.
+  - **The sweep:** the whole plan, for `permitted list`, `C17 (b) holds`, `C17 (b):`, `every hunk`, `inside the permitted`, `confined to`, `sits in`, `within C17`, `inside C17`, `C17 (b)'s list`, `permitted symbols`, `C17 (b) as recorded`, `C17 (b) for`, `C17 holds`, `(b) nothing`, `(b) no`, and every `C17` mention, each hit read in full.
+  - **Qualified, dated, beside the record**, naming the exception(s) that apply — `RULE_SCHEMA_VERSION` and its comment (Task 0.2a) and/or `render_report`'s docstring (Task 0.2b):
+    1. the stage-2 leg x3 handoff;
+    2. the stage-2 leg x1 handoff;
+    3. the stage-1 leg x1 handoff;
+    4. Round 4's C17 (b) line;
+    5. Round 6's "**C17 (b).**" line;
+    6. Round 7's verify notes ("19 hunks, every one");
+    7. Task 0.2b's composer Closed record.
+  - **Pointers added:** the stage-7 leg x2 handoff and round 22's verification notes, where "three records" is now incomplete.
+  - **Already qualified** by round 22's fix: round 19, the stage-1 leg x2 handoff, and Task 0.2b's "supersedes" record (which also covers the leg-x1 task-line enumeration).
+  - **Checked, nothing to qualify:**
+    - C17's text;
+    - Task 0.2a's own C17 line and Closed record (they name the constant);
+    - the stage-2 leg x2 handoff (`evaluate_encounter` untouched — true);
+    - the lineage line and Task 0.0 (the base, not the list);
+    - the stage-3 handoff (no package change);
+    - the per-stage "(b) nothing changed" lines of stages 3–7;
+    - the H4 peer instruction;
+    - the "Reviewed: every hunk" scope lines;
+    - the peer quotes;
+    - the Deferred bullet and round 20.
+  - The full table is in round 26's `/fix` notes. Both rounds closed (0 pending).
+  - `[2026-11-06T21:44:32+11:00, peer round 28 PR-LOW-001]` "Exhaustive" was wrong. The sweep missed two round summaries: Round 8's Scope line ("permitted-symbol compliance") and Round 5's ("C17 boundaries", 0 findings). Leg x5 qualified both: nine records in all, not seven.
+  - Only this plan changed: no code, test or document. C17's text is unchanged. C12: `validation/heldout-5/` not opened, listed or searched.
+  - **No MUST-PAUSE; no Deferral Confirmation Gate candidates.**
+  - **Next (composer):** a codex re-check if the loop config asks for one; then close H4 and make the H4 commit, which P.1 runs from.
+- **2026-11-06T21:33:33+11:00 — stage-7 executor (leg x3), the re-check's one LOW applied; plan records only.** Operator brief:
+  - Rounds 24 and 25 (PR-LOW-001 in each) are one defect, CONFIRMED. The stage-7 leg x1 handoff bullet below still called an extra count-only scan of `author-session.jsonl` C12-permitted, and said the log was redacted. Round 23 had fixed round 21 but missed this copy (🔁).
+  - A dated correction now sits under that bullet: no scan before P.3, and the one count was Task 0.5's copy-in (0 identifying forms found, log copied unchanged).
+  - Sibling sweep: no other uncorrected copy in the plan (round 24's `/fix` notes list the hits and why each stands).
+  - Both rounds closed (0 pending). Only this plan changed. C12 unchanged; `validation/heldout-5/` not opened, listed or searched.
+  - No MUST-PAUSE; no Deferral Confirmation Gate candidates.
+  - **Next (composer):** a codex re-check if the loop config asks for one; then close H4 and make the H4 commit, which P.1 runs from.
+- **2026-11-06T21:28:43+11:00 — stage-7 executor (leg x2), H4's two peer findings verified and applied; plan records only.** Operator brief:
+  - **Round 22 PR-LOW-001: confirmed.** Two inert, task-authorised hunks lie outside C17 (b)'s literal list: `RULE_SCHEMA_VERSION`'s value and comment (Task 0.2a) and `render_report`'s docstring (Task 0.2b). Three records said every hunk was inside it, and each is corrected in place, dated: round 19, the stage-1 leg x2 handoff, and Task 0.2b's record. (`[2026-11-06]` Not exhaustive: peer rounds 26–27 found more siblings. Leg x4 qualified every one; its handoff bullet lists them.)
+    - C17's text is unchanged, so no MUST-PAUSE. Its purpose (nothing decodes or routes) holds. The code cannot be conformed: the constant is Task 0.2a's own requirement and is pinned, and the docstring is correct.
+    - Neither hunk belongs in the post-P.1 docstring commit, because both are already correct.
+  - **Round 23 PR-LOW-001: confirmed.** Round 21's note wrongly called an extra count-only scan of `author-session.jsonl` C12-permitted. It now says no further scan is made before P.3. It also names the one count already made at Task 0.5's copy-in: 0 identifying forms, so the log was copied unchanged. C12 is unchanged.
+  - Both rounds are closed (0 pending). Only this plan changed: no code, test or document. ruff and mypy were not re-run, since nothing they read changed. C12: `validation/heldout-5/` was not opened, listed or searched.
+  - **No MUST-PAUSE; no Deferral Confirmation Gate candidates.**
+  - **Next (composer):** a codex re-check of the two corrections, if the loop config asks for one. Then close H4 and make the H4 commit, which P.1 runs from.
+- **2026-11-06T21:11:57+11:00 — stage-7 executor (leg x1), hardening H1–H3 DONE over the whole run; H4 is the composer's codex pass.** Operator brief:
+  - **Scope.** One pass over `git diff 9884f04 HEAD -- . ':(exclude)validation/heldout-5'`: 28 files, Tasks 0.2a to Phase 1.
+  - **H1, `/review-loop` round 19:** converged on its first round, with 2 LOWs, both applied.
+    - LOW-001: `validation-harness.md`'s "The gate for run 8" said only `heldout` and `heldout-2` still fail. Predictions v5 have `heldout-4` failing too, so it is now named.
+    - LOW-002: the one docstring-only `validation.py` commit owed after P.1 was recorded only in round 7's log. It is now a Deferred bullet, with its symbols and the trigger "after P.1, when C17 lapses".
+  - **H2, `/simplify` round 20:** 0 findings. Five candidates were left alone, each plan-chosen or barred by C17 (b).
+  - **H3, `/security-review` round 21:** 0 findings (portable checklist). One note for the composer, not a finding: `validation/heldout-5/author-session.jsonl` is in the public repository with only the user name redacted, and C12 kept this round from opening it. A count-only check (integers, no statement) is within C12 if you want that assurance before the push; otherwise P.3 is its first examination.
+    - `[2026-11-06T21:33:33+11:00, corrected by peer rounds 24–25 PR-LOW-001, as round 23 corrected round 21]` Both claims above are wrong.
+      - No further scan is made before P.3: C12 names its readers, and a count-only check is not one of them.
+      - The log was not redacted. At Task 0.5's copy-in the composer counted the identifying forms (the Windows user name, the account name, the e-mail domain and the user-profile path forms) and found 0, so the log was copied unchanged (Task 0.5's Closed sub-bullet, item 1).
+      - P.3 is the log's first examination. C12's text is unchanged.
+  - **What changed.** One line of `docs/testing/validation-harness.md` (CRLF kept: 0 LF-only lines, 0 bare `\r`) and this plan. No code or test. ruff passes; mypy reports no issues in 66 source files. pytest not run (C12).
+  - **Constraints.** C12: nothing under `validation/heldout-5/` or `.cursor/loops/held-out-lint/` opened, listed or searched. C16: no fixed record touched. C17 (a) empty since `170345d`; (b) no `validation.py` change in this stage; (c) unchanged.
+  - **No MUST-PAUSE; no Deferral Confirmation Gate candidates** (both LOWs were do-the-work, LOW and non-production).
+  - **Next (composer):**
+    1. The suite ONLY through `scripts\lint-held-out-set.py validation\heldout-5`. `TestHarnessDocument` reads the edited document; its tables are unchanged.
+    2. **H4, the codex peer re-check, in two slices** (run 7's rounds 26–27 shape):
+       - **Code slice:** `validation.py` (the 0.2b hunks: the `FactOutcome` partition against `__post_init__`, `class_counts`' split, `counting_marked_r1`, `rule_v2_counterpart`'s neutralisation, the heading, `_verdict_lines`, the amendments' gates, `_residue_section`'s two marked-line branches), `rule-v5.json`, `test_validation_metrics.py` and `test_validation_harness.py`. Ask it to check for vacuous or mis-indexed pins, and that C17 (b)'s symbol list covers every hunk.
+       - **Documents slice, one evidence line per document:** `validation-harness.md` (the Rule v5 section against the code and Task 0.3's predictions, including round 19's LOW-001 line), `validation/README.md`, `docs/pilot/README.md`, `exit-gate.md` (still a proposal), `findings-register.md`, `docs/practice/clinician-review-guide.md` and `README.md` (still awaiting approval; the counts against run 7's reports), `threat-model.md`, `data-flow-map.md`, `scripts/README.md`, the two launchers' docstrings, `ci.yml`'s comment, the comment-only test edits, `AGENTS.md`, `CHANGELOG.md`, `plan-pilot.md`'s override and P.5 lines, `plan-larger-model.md`'s two lines, and this plan's round 19–21 records and the new Deferred bullet.
+       - Both slices bound by C12: no read of `validation/heldout-5/`, and no `h5-` id named.
+    3. Close H4, then commit. This is the H4 commit P.1 runs from.
 - **2026-11-06T20:48:39+11:00 — stage-6 executor (leg x1), Phase 1 BUILT and REVIEWED, converged; the suite is owed (composer).** Operator brief:
   - **Done.**
     - Task 1.1 🟩: the review guide's misheard-number, unit and abbreviation lines and its shadow-mode-off line, and the practice README. Both are marked "awaiting the practitioner's approval", with counts re-read from run 7's reports and no ids.
@@ -362,7 +446,7 @@ See the Planning Extraction Summary (Deferred, Excluded, Accepted). In short: th
   - The fix keeps C17's text unchanged:
     - `_r1_marked_members` is folded into `class_counts` / `_residue_section`;
     - the `EncounterMetrics` ×2, `RULE_V2_RATIFIED`, `rule_failures` and `run_passed` edits are reverted to `ba71ff5`.
-  - Every `validation.py` hunk since `ba71ff5` is now in C17 (b)'s list. Behaviour is unchanged.
+  - Every `validation.py` hunk since `ba71ff5` is now in C17 (b)'s list. Behaviour is unchanged. (`[2026-11-06, peer rounds 26–27 PR-LOW-001]` But for `render_report`'s docstring (Task 0.2b), which sits in the heading's hunk. C17 (b)'s literal list names the heading and the amendments, not the docstring. It is inert, and C17's text is unchanged; see round 22's `/fix` notes.)
   - Not taken: amending C17 (b) to admit the helper and the inert docstrings. That needs the practitioner's word on a Critical Constraint, for a LOW with no decode or routing effect. rec=conform-the-code (done). The stale "schema 3" docstring words, `evaluate_encounter`'s with them, wait for one docstring-only commit after P.1.
   - ruff and mypy green. Next: the composer re-runs `desktop full pytest`, then the 0.2b commit ALONE (or a peer re-check by the loop config).
 - **2026-11-06T15:52+11:00 — stage-2 executor (leg x2), Task 0.2b REVIEWED, converged; suite re-run owed.**
@@ -371,14 +455,14 @@ See the Planning Extraction Summary (Deferred, Excluded, Accepted). In short: th
   - LOW-001 adds one test, so the composer re-runs `desktop full pytest` before the 0.2b commit. The test pins that a schema-3 file named `rule-v5-test` prints no rule-v5 sentence. LOW-002 re-words the Overall Progress line (record-only).
   - ruff and mypy green. C17 (b) as recorded on the task line: `evaluate_encounter` untouched.
   - Next: the suite re-run, the 0.2b commit ALONE, then the codex peer pass (cadence every-phase) or stage-3 as the composer runs it.
-- **2026-11-06T15:37+11:00 — stage-2 executor (leg x1), Task 0.2b BUILT, suite owed.** Operator brief: rule v5's reading and report are in — R1's two kinds (`FactOutcome.residue_r1_silent` / `residue_r1_marked`, the both-case silent), `ClassCount.reported_members`, `class_counts` counting only silent R1 under the ceiling where a row reports marked R1, `PassRule.counting_marked_r1()`, `rule_v2_counterpart` reading `False` as rule v2's `None` and `True` as `differs`, the fourth verdict ("rule {label} with marked R1 counted", named by `PassRule.label`, no "= rule v4" claim) in the heading and the verdict lines, the amendments' history gates and the rule-v5 sentence, the residue section's R1 row name and the new marked-R1 line on every schema-4 row, the excused-lines gate `>= 3`, "schema-2 or later" in the help / docstring / refusal; tests in `test_validation_metrics.py` (`TestRuleV5Reading`) and `test_validation_harness.py` (whole `heldout-5` and `heldout-4` rule-v5 reports, the `rule-v6-test` label pin, the mirror pin, the rule-v5 `main` pin, the help test on rule v5). ruff and mypy green; pytest NOT run (verify=composer). Rule v3 / v4 whole-report pins byte-unchanged. C17 holds (the task line's record; `validation.py` the only decode-path file changed since `170345d`). Four trivial deviations on the task line — the most notable: `evaluate_encounter`'s stale docstring word left alone because C17 (b) forbids touching it (rec: leave it; fix after P.1). No MUST-PAUSE; no Deferral Confirmation Gate candidates. Next: the composer runs `desktop full pytest`, then resumes this executor for fixes and `/review-loop` (the first build round is 6 — `loop-history-check.py` to confirm), then the 0.2b commit ALONE.
-- **2026-11-06T15:10+11:00 — stage-1 executor (leg x2), Task 0.2a REVIEWED, converged; suite re-run owed.** The composer's suite on the leg-x1 build: 9471 passed, 0 failed, 9 skipped (720 s); C17 (a) empty. `/review-loop` round 4 (Review Findings Log): 0 CRIT / 0 HIGH / 0 MED / 1 LOW — the `SetCeilings` docstring's opening ("a schema-2 or later rule"), applied; converged on the loop's first round. ruff and mypy green after the fix; it is docstring-only, but it is a code change, so the composer re-runs `desktop full pytest` before the 0.2a commit. **C17 (b) for Task 0.2a:** `git diff 170345d -- desktop/src/scribe_desktop/validation.py` touches only the `RULE_SCHEMA_VERSION` comment and value (named by the task; no decode or routing), `SetCeilings` (docstring, the `r1_marked_reported` field), `PassRule`'s docstring and `schema_version`, and `_check_sets` — inside C17 (b)'s permitted list; never `evaluate_encounter`, the alignment, `_FactState`, the reference reading, the metric amendments or `UNCERTAINTY_THRESHOLD`. C17 (c): `scripts/run-validation.py` unchanged. Next: the suite re-run, the rule's blob on the task, the 0.2a commit ALONE, then the codex peer pass (cadence every-phase) or stage-2 as the composer runs it.
-- **2026-11-06T14:54+11:00 — stage-1 executor (leg x1), Task 0.2a BUILT, suite owed.** Operator brief: rule v5 is in — schema 4 (`RULE_SCHEMA_VERSION` 4, `Literal[1, 2, 3, 4]`), `SetCeilings.r1_marked_reported` required non-None on every schema-4 row and refused non-None below schema 4, the exemption gate `>= 3`, `validation/rules/rule-v5.json` (D1's rows exactly; LF; rule v4's key order), and the loader pins in `test_validation_metrics.py` (`TestRuleV5`, C18's field-by-field equality, the schema-5 refusal, the re-pinned exemption messages, the label pins). ruff and mypy green; pytest NOT run (verify=composer). C17 holds (the task line's record). No MUST-PAUSE: a schema-4 file loads and renders under the pre-0.2b report code without a crash (the task line says what it prints meanwhile). Nothing touched outside `validation.py`, the new rule file, `test_validation_metrics.py` and this plan; rule v1–v4's files unchanged (C2). No Deferral Confirmation Gate candidates. Next: the composer runs the full desktop suite (`cd desktop && ../.venv/Scripts/python.exe -m pytest`), records the rule's blob on the task, then resumes this executor for fixes and `/review-loop` (first build round 4 — `loop-history-check.py` OK: 3 findings-log rounds), then the 0.2a commit ALONE.
+- **2026-11-06T15:37+11:00 — stage-2 executor (leg x1), Task 0.2b BUILT, suite owed.** Operator brief: rule v5's reading and report are in — R1's two kinds (`FactOutcome.residue_r1_silent` / `residue_r1_marked`, the both-case silent), `ClassCount.reported_members`, `class_counts` counting only silent R1 under the ceiling where a row reports marked R1, `PassRule.counting_marked_r1()`, `rule_v2_counterpart` reading `False` as rule v2's `None` and `True` as `differs`, the fourth verdict ("rule {label} with marked R1 counted", named by `PassRule.label`, no "= rule v4" claim) in the heading and the verdict lines, the amendments' history gates and the rule-v5 sentence, the residue section's R1 row name and the new marked-R1 line on every schema-4 row, the excused-lines gate `>= 3`, "schema-2 or later" in the help / docstring / refusal; tests in `test_validation_metrics.py` (`TestRuleV5Reading`) and `test_validation_harness.py` (whole `heldout-5` and `heldout-4` rule-v5 reports, the `rule-v6-test` label pin, the mirror pin, the rule-v5 `main` pin, the help test on rule v5). ruff and mypy green; pytest NOT run (verify=composer). Rule v3 / v4 whole-report pins byte-unchanged. C17 holds (the task line's record; `validation.py` the only decode-path file changed since `170345d`). (`[2026-11-06, peer rounds 26–27 PR-LOW-001]` C17's purpose holds, but C17 (b)'s literal list does not cover two inert, task-authorised hunks: `RULE_SCHEMA_VERSION` and its comment (Task 0.2a), and `render_report`'s docstring (Task 0.2b). C17's text is unchanged; see round 22's `/fix` notes.) Four trivial deviations on the task line — the most notable: `evaluate_encounter`'s stale docstring word left alone because C17 (b) forbids touching it (rec: leave it; fix after P.1). No MUST-PAUSE; no Deferral Confirmation Gate candidates. Next: the composer runs `desktop full pytest`, then resumes this executor for fixes and `/review-loop` (the first build round is 6 — `loop-history-check.py` to confirm), then the 0.2b commit ALONE.
+- **2026-11-06T15:10+11:00 — stage-1 executor (leg x2), Task 0.2a REVIEWED, converged; suite re-run owed.** The composer's suite on the leg-x1 build: 9471 passed, 0 failed, 9 skipped (720 s); C17 (a) empty. `/review-loop` round 4 (Review Findings Log): 0 CRIT / 0 HIGH / 0 MED / 1 LOW — the `SetCeilings` docstring's opening ("a schema-2 or later rule"), applied; converged on the loop's first round. ruff and mypy green after the fix; it is docstring-only, but it is a code change, so the composer re-runs `desktop full pytest` before the 0.2a commit. **C17 (b) for Task 0.2a:** `git diff 170345d -- desktop/src/scribe_desktop/validation.py` touches only the `RULE_SCHEMA_VERSION` comment and value (named by the task; no decode or routing), `SetCeilings` (docstring, the `r1_marked_reported` field), `PassRule`'s docstring and `schema_version`, and `_check_sets` — inside C17 (b)'s permitted list (`[2026-11-06, peer round 22 PR-LOW-001]` but for the `RULE_SCHEMA_VERSION` comment and value, which Task 0.2a names and C17 (b)'s literal list does not; inert); never `evaluate_encounter`, the alignment, `_FactState`, the reference reading, the metric amendments or `UNCERTAINTY_THRESHOLD`. C17 (c): `scripts/run-validation.py` unchanged. Next: the suite re-run, the rule's blob on the task, the 0.2a commit ALONE, then the codex peer pass (cadence every-phase) or stage-2 as the composer runs it.
+- **2026-11-06T14:54+11:00 — stage-1 executor (leg x1), Task 0.2a BUILT, suite owed.** Operator brief: rule v5 is in — schema 4 (`RULE_SCHEMA_VERSION` 4, `Literal[1, 2, 3, 4]`), `SetCeilings.r1_marked_reported` required non-None on every schema-4 row and refused non-None below schema 4, the exemption gate `>= 3`, `validation/rules/rule-v5.json` (D1's rows exactly; LF; rule v4's key order), and the loader pins in `test_validation_metrics.py` (`TestRuleV5`, C18's field-by-field equality, the schema-5 refusal, the re-pinned exemption messages, the label pins). ruff and mypy green; pytest NOT run (verify=composer). C17 holds (the task line's record). (`[2026-11-06, peer rounds 26–27 PR-LOW-001]` But for `RULE_SCHEMA_VERSION` and its comment, which Task 0.2a names and C17 (b)'s literal list does not. It is inert, and C17's text is unchanged; see round 22's `/fix` notes.) No MUST-PAUSE: a schema-4 file loads and renders under the pre-0.2b report code without a crash (the task line says what it prints meanwhile). Nothing touched outside `validation.py`, the new rule file, `test_validation_metrics.py` and this plan; rule v1–v4's files unchanged (C2). No Deferral Confirmation Gate candidates. Next: the composer runs the full desktop suite (`cd desktop && ../.venv/Scripts/python.exe -m pytest`), records the rule's blob on the task, then resumes this executor for fixes and `/review-loop` (first build round 4 — `loop-history-check.py` OK: 3 findings-log rounds), then the 0.2a commit ALONE.
 - Last completed step: Task 0.3 — closed and committed alone (`431a38e`, the composer, 2026-11-06T16:50+11:00). Before it: Task 0.2b — closed and committed alone (`d15a28f`, the composer, 2026-11-06T16:25+11:00). Before it: Task 0.2a — closed and committed alone (`ba71ff5`, the composer, 2026-11-06). Before that: Task 0.1 — the plan committed on the practitioner's word (2026-11-06). Before that: planning — the Plan Mode draft approved through ExitPlanMode (2026-11-06), hardened by this `/review-plan` pass (three lenses, 36 findings reconciled); the practitioner's decisions recorded (Key Design Decisions); the codex plan peer pass (2026-11-06, gpt-6-astra high, cap 5): round 1 — 1 HIGH, 4 MED, 1 LOW; round 2 — 1 HIGH, 2 LOW; round 3 — 1 record-only LOW, converged; every finding applied. Nothing built, nothing committed.
-- Current in-progress step: Phase 1 ✅ (2026-11-06T21:05+11:00) — Tasks 1.1 and 1.2 built (stage-6 leg x1), `/review-loop` round 17 converged (4 LOW applied), the runner green (9660 passed / 0 failed / 9 skipped), codex peer round 18 converged (0 findings); committed. Next: stage-7 = the hardening stage H1–H4. Earlier: Task 0.5 ✅ (20:20) — `heldout-5` authored blind, committed `2228b25`.
-- Immediate next action: the composer opens stage-7 (H1 `/review-loop`, H2 `/simplify`, H3 `/security-review`, H4 the final cross-family peer re-check with the documents as their own slice) with an executor leg; every suite run goes through `scripts\lint-held-out-set.py validation\heldout-5` (C12).
+- Current in-progress step: the hardening stage ✅ (2026-11-06T21:55+11:00) — H1–H3 (stage-7 leg x1: rounds 19–21) and H4, the codex re-check in two slices: the documents slice converged at round 29, the code slice at round 30 (rounds 22–30; every finding a LOW about the plan's own records, fixed record-only by legs x2–x5; C12's and C17's text and the code unchanged). The runner green after H1–H3 (9660 passed / 0 failed / 9 skipped); plan-only edits since. Committed as the H4 commit. Next: Phase P (practitioner) — P.1, run 8, from a clean checkout at this commit.
+- Immediate next action: the PRACTITIONER — P.1, run 8, the run of record (the Phase P line: a clean committed checkout at the H4 commit, a normal terminal, the installed app closed, lid open). The loop stops here (MUST-PAUSE `run8-p1`).
 - Open blockers / open questions: the GPU plan's half of Task 0.0's Done-when (its session). Owed from the practitioner, in order: the `/execute-loop` start; the launch of the isolated author (Task 0.5); run 8 (P.1); the P.5 decision and the approvals (P.2); the diagnosis commit (P.3); the untick (P.4′).
-- Last plan sync: 2026-11-06T21:05+11:00 (Phase 1 closed by the composer: runner green, codex round 18 converged, committed; at 20:20 Task 0.5 closed by the composer: copy-in, tails, runner green, committed; at 20:13 Task 0.5: the author ran, the README entry and the presence pin written, the copy-in owed; at 17:12 peer round 15's PR-LOW-001 applied, record-only, round closed; at 17:07 Task 0.5's leak run and preflight recorded, review round 14 converged, the author launch owed; at 17:04 Task 0.5's prep built, the leak run owed; at 17:00 Task 0.4 committed `edd1a7d`; at 16:57 Task 0.4's pre-registration written, review round 12 converged, commit owed; at 16:50 Task 0.3 closed and committed `431a38e`; at 16:45 peer round 10's two LOWs applied, script re-run owed; at 16:37 Task 0.3's predictions frozen, review round 9 converged, script re-run owed; at 16:33 Task 0.3's script written, run owed; at 16:25 Task 0.2b closed and committed `d15a28f`; at 16:08 peer round 7's PR-LOW-001 applied, suite re-run owed; at 15:52 Task 0.2b reviewed, round 6 converged; at 15:37 built, suite owed; before it Task 0.2a committed `ba71ff5` after round 4 and peer round 5 converged; Task 0.1 committed and Task 0.0 decided A)
+- Last plan sync: 2026-11-06T21:55+11:00 (H4 closed by the composer: round 30 converged; the H4 commit; at 21:44:32 stage-7 executor leg x5: peer round 28's LOW applied — Rounds 8 and 5 qualified, nine records in all; round 28 closed, round 29 converged; at 21:38:57 stage-7 executor leg x4: peer rounds 26–27's one LOW applied by an exhaustive sweep, seven C17 (b) records qualified, both rounds closed; at 21:33:33 stage-7 executor leg x3: peer rounds 24–25's one LOW applied to the leg x1 handoff, both rounds closed; at 21:28:43 stage-7 executor leg x2: peer rounds 22–23's two LOWs verified and applied to the records, both rounds closed; at 21:11:57 stage-7 executor: H1–H3 done, rounds 19–21; at 21:05 Phase 1 closed by the composer: runner green, codex round 18 converged, committed; at 20:20 Task 0.5 closed by the composer: copy-in, tails, runner green, committed; at 20:13 Task 0.5: the author ran, the README entry and the presence pin written, the copy-in owed; at 17:12 peer round 15's PR-LOW-001 applied, record-only, round closed; at 17:07 Task 0.5's leak run and preflight recorded, review round 14 converged, the author launch owed; at 17:04 Task 0.5's prep built, the leak run owed; at 17:00 Task 0.4 committed `edd1a7d`; at 16:57 Task 0.4's pre-registration written, review round 12 converged, commit owed; at 16:50 Task 0.3 closed and committed `431a38e`; at 16:45 peer round 10's two LOWs applied, script re-run owed; at 16:37 Task 0.3's predictions frozen, review round 9 converged, script re-run owed; at 16:33 Task 0.3's script written, run owed; at 16:25 Task 0.2b closed and committed `d15a28f`; at 16:08 peer round 7's PR-LOW-001 applied, suite re-run owed; at 15:52 Task 0.2b reviewed, round 6 converged; at 15:37 built, suite owed; before it Task 0.2a committed `ba71ff5` after round 4 and peer round 5 converged; Task 0.1 committed and Task 0.0 decided A)
 
 ## Review History
 - 2026-11-06 — Round 1 — codex gpt-6-astra high plan peer-review (`/peer-loop` plan-review, cap 5; composer-recorded from the read-only peer's log) — 1 HIGH, 4 MED, 1 LOW; all six accepted and applied; not converged.
@@ -400,6 +484,18 @@ See the Planning Extraction Summary (Deferred, Excluded, Accepted). In short: th
 - 2026-11-06 — Round 16 — codex gpt-6-astra medium cross-family peer re-check (pass stage-5.p1, peer round 2 of cap 5; composer-recorded from the read-only peer's log) over Task 0.5's preparation after Round 15's fix — 0 findings (8 claims checked, 8 confirmed); **CONVERGED**.
 - 2026-11-06 round 17: 0 CRIT / 0 HIGH / 0 MED / 4 LOW; skew=none; action=none
 - 2026-11-06 — Round 18 — codex gpt-6-astra medium cross-family peer (pass stage-6.p1, peer round 1 of cap 5; composer-recorded from the read-only peer's log) over Phase 1's documents, one evidence line per document — 0 findings (25 file-level claims checked, 25 confirmed); **CONVERGED**.
+- 2026-11-06 round 19: 0 CRIT / 0 HIGH / 0 MED / 2 LOW; skew=none; action=none
+- 2026-11-06 round 20: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
+- 2026-11-06 round 21: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
+- 2026-11-06 — Round 22 — codex gpt-6-astra medium cross-family peer, H4 code slice (pass stage-7.p1, peer round 1 of cap 5; composer-recorded from the read-only peer's log) over the run's code — 1 LOW (PR-LOW-001 docs-only: C17 (b)'s literal list omits `RULE_SCHEMA_VERSION` and `render_report`'s docstring; 5 claims checked, 5 confirmed); routed to the executor's verify and /fix; not converged.
+- 2026-11-06 — Round 23 — codex gpt-6-astra medium cross-family peer, H4 documents slice (pass stage-7.p2, peer round 1 of cap 5; composer-recorded from the read-only peer's log) over the run's documents, one evidence line per document — 1 LOW (PR-LOW-001 docs-only: round 21's note presents an extra count-only scan of the author log as within C12; 1 claim checked, 1 confirmed); routed to the executor's verify and /fix; not converged.
+- 2026-11-06 — Round 24 — codex gpt-6-astra medium cross-family peer re-check, H4 code slice (pass stage-7.p1, peer round 2 of cap 5; composer-recorded from the read-only peer's log) over round 22's fix — round 22's fix confirmed; 1 LOW (PR-LOW-001 docs-only: the stage-7 leg x1 handoff bullet still carries round 21's corrected advice); routed to the executor's /fix; not converged.
+- 2026-11-06 — Round 25 — codex gpt-6-astra medium cross-family peer re-check, H4 documents slice (pass stage-7.p2, peer round 2 of cap 5; composer-recorded from the read-only peer's log) over round 23's fix — the same LOW as round 24 (the leg x1 handoff duplicate); routed to the executor's /fix; not converged.
+- 2026-11-06 — Round 26 — codex gpt-6-astra medium cross-family peer re-check, H4 code slice (pass stage-7.p1, peer round 3 of cap 5; composer-recorded from the read-only peer's log) over rounds 22 and 24's fixes — the C12 duplicate confirmed fixed; 1 LOW (PR-LOW-001 docs-only: Task 0.2b's composer Closed record still confines `render_report`'s change to the heading and amendments); routed to the executor's /fix; not converged.
+- 2026-11-06 — Round 27 — codex gpt-6-astra medium cross-family peer re-check, H4 documents slice (pass stage-7.p2, peer round 3 of cap 5; composer-recorded from the read-only peer's log) over rounds 23 and 25's fixes — 1 LOW (PR-LOW-001 docs-only: two more unqualified C17 (b) compliance claims, Round 4's and Task 0.2b's Closed record); routed to the executor's /fix; not converged.
+- 2026-11-06 — Round 28 — codex gpt-6-astra medium cross-family peer re-check, H4 code slice (pass stage-7.p1, peer round 4 of cap 5; composer-recorded from the read-only peer's log) over rounds 26–27's sweep — every qualified record confirmed; 1 LOW (PR-LOW-001 docs-only: Round 8's "permitted-symbol compliance" left unqualified); routed to the executor's /fix; not converged.
+- 2026-11-06 — Round 29 — codex gpt-6-astra medium cross-family peer re-check, H4 documents slice (pass stage-7.p2, peer round 4 of cap 5; composer-recorded from the read-only peer's log) over rounds 26–27's sweep — 0 findings (18 claims checked, 18 confirmed); **CONVERGED** (pass stage-7.p2).
+- 2026-11-06 — Round 30 — codex gpt-6-astra medium cross-family peer re-check, H4 code slice (pass stage-7.p1, peer round 5 of cap 5; composer-recorded from the read-only peer's log) over round 28's fix and a whole-plan sibling search — 0 findings (20 claims checked, 20 confirmed); **CONVERGED** (pass stage-7.p1). H4 converged on both slices.
 
 ## Review Findings Log
 
@@ -554,7 +650,7 @@ Materiality: 0 build-affecting / 1 record-only / 0 invalid
 Source: Claude Code (`/review-loop` round 1 of cap 3, stage-1 executor leg x2, `claude-opus-5-5`) — Task 0.2a only; the first build round of run `validation-run8-20261106-144633-d8ae`.
 Primary baseline: `9884f04` (HEAD; the 0.2a work is uncommitted). Changed files: `desktop/src/scribe_desktop/validation.py`, `desktop/tests/test_validation_metrics.py`, `validation/rules/rule-v5.json` (new), this plan (bookkeeping; only its 0.2a lines reviewed). The diff read in full; the touched regions of `validation.py` (`RULE_SCHEMA_VERSION`, `SetCeilings`, `PassRule` through `set_row`, `rule_v2_counterpart`) and of the test file (`TestRuleV2`'s refusal table and both-ways tests, the fixtures, `TestRuleV3`'s file test, `TestRuleV4`'s label tests, `TestRuleV5`) read in full. Composer-run suite on the build: 9471 passed, 0 failed, 9 skipped.
 Round status: Closed (0 pending)
-Checked: rule-v5.json against D1 and rule-v4.json key by key (top level identical but `schema_version` 3 → 4 and `rule_name`; every row rule v4's with `r1_marked_reported` appended — `false` × 5, `true` on `heldout-5`; LF, no NUL; C18's test excludes the field on both sides); C2 — no older rule file, `validation/config` or script in the diff; every new predicate both ways — the exemption at schema 4 refused missing / null and accepted true / false, the new field refused non-null on schemas 2–3 and accepted null there, required on every schema-4 row (absent, null, a second row missing it) and accepted true / false, a non-bool refused; schema 1 refused by "holds no set ceilings" before the field is read (a schema-1 rule holds no row); the old "a schema-3 rule needs …" pins still match the f-string; `>= 3` / `>= 4` against `Literal[1, 2, 3, 4]`; no reader of `schema_version` outside `validation.py` in `desktop/src` or `scripts/`; a schema-4 rule under the pre-0.2b report code — `_verdict_lines`, the heading, the amendments, `_residue_section`, `main`'s refusals — takes no schema-3 branch and raises nothing (the suite green); nothing of 0.2b started (no `FactOutcome` property, no `ClassCount` field, no `counting_marked_r1`, no `rule_v2_counterpart` change, no report string) — the docstrings 0.2b's task line lists (`set_row`'s "schema-2 or schema-3", `exempts_r1_lines`'s "schema 3") left for 0.2b; the `SetCeilings` docstring describing the reading 0.2b builds is the planned two-commit split, recorded on the task line, not a finding. C17 (b): `validation.py`'s hunks since `170345d` are the `RULE_SCHEMA_VERSION` comment and value (named by Task 0.2a; not decode or routing), `SetCeilings` (docstring and field), `PassRule`'s docstring and `schema_version`, `_check_sets` — inside the permitted list.
+Checked: rule-v5.json against D1 and rule-v4.json key by key (top level identical but `schema_version` 3 → 4 and `rule_name`; every row rule v4's with `r1_marked_reported` appended — `false` × 5, `true` on `heldout-5`; LF, no NUL; C18's test excludes the field on both sides); C2 — no older rule file, `validation/config` or script in the diff; every new predicate both ways — the exemption at schema 4 refused missing / null and accepted true / false, the new field refused non-null on schemas 2–3 and accepted null there, required on every schema-4 row (absent, null, a second row missing it) and accepted true / false, a non-bool refused; schema 1 refused by "holds no set ceilings" before the field is read (a schema-1 rule holds no row); the old "a schema-3 rule needs …" pins still match the f-string; `>= 3` / `>= 4` against `Literal[1, 2, 3, 4]`; no reader of `schema_version` outside `validation.py` in `desktop/src` or `scripts/`; a schema-4 rule under the pre-0.2b report code — `_verdict_lines`, the heading, the amendments, `_residue_section`, `main`'s refusals — takes no schema-3 branch and raises nothing (the suite green); nothing of 0.2b started (no `FactOutcome` property, no `ClassCount` field, no `counting_marked_r1`, no `rule_v2_counterpart` change, no report string) — the docstrings 0.2b's task line lists (`set_row`'s "schema-2 or schema-3", `exempts_r1_lines`'s "schema 3") left for 0.2b; the `SetCeilings` docstring describing the reading 0.2b builds is the planned two-commit split, recorded on the task line, not a finding. C17 (b): `validation.py`'s hunks since `170345d` are the `RULE_SCHEMA_VERSION` comment and value (named by Task 0.2a; not decode or routing), `SetCeilings` (docstring and field), `PassRule`'s docstring and `schema_version`, `_check_sets` — inside the permitted list. (`[2026-11-06, peer rounds 26–27 PR-LOW-001]` But for the `RULE_SCHEMA_VERSION` comment and value, which C17 (b)'s literal list does not name. Task 0.2a authorised them, they are inert, and C17's text is unchanged; see round 22's `/fix` notes.)
 Round classification: 1 🆕 / 0 ⚡ / 0 🔁.
 - **[LOW]** LOW-001: `desktop/src/scribe_desktop/validation.py:2277` — the `SetCeilings` docstring opened "One set's row of a schema-2 rule" above the new sentence on schema 4's field (the opening predates rule v3; the task names this docstring) — 🆕 — Triage: Fix-now; Decision: Applied ("of a schema-2 or later rule", rewrapped).
 Missed-issue pass: re-read `_check_sets`'s order of checks (exemption, schema 1, the set count, then per row: name, the new field, R2) and `_RULE_V5`'s construction (`_RULE_V3`'s dump with every row's field set; the fixture test pins it back to `_RULE_V3`'s rows); result: none.
@@ -568,6 +664,7 @@ Finding verification: 1 candidate; 0 dropped; 0 downgraded.
 - Source: independent cross-family codex peer review
 - Reviewer: codex gpt-6-astra (medium)
 - Scope: Task 0.2a working-tree diff against 9884f04; rule-v5.json against D1 and rules v3/v4; schema validation, loader tests, current report compatibility, C17 boundaries, and Round 4's applied fix. Static reading only; no tests run or files written. Task 0.2b's explicitly deferred behavior excluded.
+  - `[2026-11-06T21:44:32+11:00, peer round 28 PR-LOW-001 sweep]` The round's 0 findings over "C17 boundaries" passed the `RULE_SCHEMA_VERSION` comment and value. Task 0.2a authorised them, but C17 (b)'s literal list does not name them. They are inert, and C17's text is unchanged; see round 22's `/fix` notes.
 
 #### Findings
 - Verification counts: 6 claims checked, 6 confirmed, 0 dropped as unverifiable
@@ -588,7 +685,7 @@ Checked:
 - **Every new line on every schema-4 row and none on schema 3.** The marked line is gated `>= 4` alone ("counted under the ceiling" on seen rows, "reported, no ceiling" on the blind one). The R1 row's name changes only where the row reports (D1). The fourth verdict and its heading entry are gated `>= 4`. Pinned on `heldout-5`, `heldout-4`, `scripts` (True) and the nothing-measured case.
 - **D5's allowed-to-differ list.** On `heldout-4` the rule-v5 report equals rule v3's on the same outcomes at the tables, the checker tally and the Facts table (`lines[8:27] == v3_lines[7:26]`). In the residue section only the heading, the marked line and the after-classes label differ. The excused-lines line is the same.
 - **C16.** `rule-v5.json` and rules v1–v4 are untouched (no diff).
-- **C17 (b).** The hunks are confined to the permitted symbols, plus docstrings Task 0.2b names: `EncounterMetrics` ×2, `rule_failures`, `run_passed`. `evaluate_encounter` is untouched (the task-line note).
+- **C17 (b).** The hunks are confined to the permitted symbols, plus docstrings Task 0.2b names: `EncounterMetrics` ×2, `rule_failures`, `run_passed`. `evaluate_encounter` is untouched (the task-line note). (`[2026-11-06, peer rounds 26–27 PR-LOW-001]` Not so. Peer round 7 found a helper and five docstring and comment edits outside the list; they were reverted or folded. `render_report`'s docstring, Task 0.2b's, also sits outside C17 (b)'s literal list, which names the heading and the amendments. It is inert, and C17's text is unchanged; see round 22's `/fix` notes.)
 - **C18.** Pinned by 0.2a's field-by-field test, unchanged.
 - **No logging.** No new log or print call.
 Round classification: 2 🆕 / 0 ⚡ / 0 🔁.
@@ -619,7 +716,7 @@ Finding verification: 3 candidates; 1 dropped (`residue_r1_marked`'s docstring "
   - the helper is folded into the two permitted readers: `class_counts` collects the marked facts in its own loop, and `_residue_section` derives them inline on a counting row;
   - the five out-of-list docstring and comment edits are reverted, byte for byte, to `ba71ff5`. They stay stale ("schema 3" as the newest), with `evaluate_encounter`'s, for one docstring-only commit after P.1, when C17 lapses.
 
-  Behaviour is unchanged. `git diff ba71ff5 -- desktop/src/scribe_desktop/validation.py` now holds 19 hunks, every one in C17 (b)'s list. ruff and mypy green; the suite re-run is owed.
+  Behaviour is unchanged. `git diff ba71ff5 -- desktop/src/scribe_desktop/validation.py` now holds 19 hunks, every one in C17 (b)'s list. ruff and mypy green; the suite re-run is owed. (`[2026-11-06, peer rounds 26–27 PR-LOW-001]` But for `render_report`'s docstring, which sits in the heading's hunk. C17 (b)'s literal list names the heading and the amendments, not the docstring. It is inert, and C17's text is unchanged; see round 22's `/fix` notes.)
 
 - Verification counts: 1 claims checked, 1 confirmed, 0 dropped as unverifiable
 - Last reviewed: 2026-11-06
@@ -630,6 +727,7 @@ Finding verification: 3 candidates; 1 dropped (`residue_r1_marked`'s docstring "
 - Source: independent cross-family codex peer review
 - Reviewer: codex gpt-6-astra (medium)
 - Scope: Task 0.2b diff against ba71ff5, named rule files, permitted neighbours and plan sections. Confirmed Round 6–7 fixes, unchanged C17 text, permitted-symbol compliance, behavior-preserving helper fold, R1 split and ceilings, comparison verdicts, schema-3 report preservation, schema-4 output and test assertions. Static reading only; no files written, tests run or network commands.
+  - `[2026-11-06T21:44:32+11:00, peer round 28 PR-LOW-001]` "Permitted-symbol compliance" was not literally true. The `render_report` heading hunk of the 0.2b diff also changes the function's docstring (Task 0.2b), and C17 (b)'s literal list names the heading and the amendments, not the docstring. The docstring is inert, and C17's text is unchanged; see round 22's `/fix` notes. `RULE_SCHEMA_VERSION` (Task 0.2a) lies outside this round's diff against `ba71ff5`.
 
 #### Findings
 
@@ -890,6 +988,344 @@ Finding verification: 4 candidates; 0 dropped; 0 downgraded.
 - Verification counts: 25 file-level claims checked, 25 confirmed, 0 dropped as unverifiable
 - Last reviewed: 2026-11-06
 
+### Round 19 — 2026-11-06
+Source: Claude Code (`/review-loop` round 1 of cap 3 — the hardening stage's H1, stage-7 executor leg x1, `claude-opus-5-5`; ONE pass over the whole run as one change, `git diff 9884f04 HEAD -- . ':(exclude)validation/heldout-5'` — Tasks 0.2a `ba71ff5`, 0.2b `d15a28f`, 0.3 `431a38e`, 0.4 `edd1a7d`, 0.5 prep `4e0d550`, 0.5 `2228b25`, Phase 1 `60d553d` — bound by C1, C12, C16 and C17; no pytest, the suite runs only through the `heldout-5` runner, composer-run).
+Primary baseline: `9884f04` (the run's base). 28 files changed (`git diff --stat`), `validation/heldout-5/` excluded and never opened, listed or searched; `.cursor/loops/` not opened.
+Reviewed: every hunk of `validation.py` (the two `FactOutcome` properties against `FactOutcome.__post_init__`'s R1 invariant; `SetCeilings`; `PassRule._check_sets`, `counting_marked_r1`, `set_row`; `rule_v2_counterpart`'s `comparable`; `ClassCount` / `class_counts`; `class_breaches` → `run_passed`; `_verdict_lines`; `render_report`'s heading and amendments; `_residue_section`; `_parser` / `main` strings) read in full context; `rule-v5.json`; every added test in `test_validation_metrics.py` (`TestRuleV2`'s rows, `TestRuleV5`, `TestRuleV5Reading`) and `test_validation_harness.py` (`TestRunValidationMain`, `TestHarnessDocument`, `TestReport`'s rule-v5 pins) for vacuous or mis-indexed pins; the comment-only test, fixture, CI and launcher edits; every document and plan hunk (Rounds 17–18 had read the Phase 1 slice; this round re-read it as part of the whole); `conftest.blind_run_refusal` against `scripts/README.md`'s bare-run sentence; `test_pilot_docs.py`'s Category vocabulary against the register's marked-R1 row rule.
+Round status: Closed (0 pending)
+Checked:
+- **Every R1 fact is exactly one kind, by construction.** `FactOutcome.__post_init__` refuses `residue_r1` unless `material and (verdict == "wrong" or silent_omission)`, so `residue_r1_silent` (`residue_r1 and silent_omission`) and `residue_r1_marked` (`residue_r1 and verdict == "wrong" and not silent_omission`) partition R1; the both-case is silent (D1's precedence). Pinned both ways (`test_each_r1_fact_is_exactly_one_kind`).
+- **The gate path reads the split in one place.** `class_counts` alone moves a marked fact to `reported_members` on a row whose `r1_marked_reported is True`; `class_breaches`, `run_passed`, `set_level` and the residue table read `total` / `ceiling` unchanged. Per-encounter predicates are untouched: `material_wrong_v2` / `silent_omission_v2` still excuse every R1 fact. C17 (b) holds for the diff except for two inert hunks the tasks themselves authorised (corrected 2026-11-06 by peer round 22 PR-LOW-001; this round first said "holds for the diff"): the `RULE_SCHEMA_VERSION` value and its comment (Task 0.2a: "`RULE_SCHEMA_VERSION` → 4") and the docstring lines of `render_report`'s heading hunk (Task 0.2b) lie outside C17 (b)'s literal list, and neither decodes nor routes. Every other hunk — the 0.2b record's list and the composer's `h5-` rows of `REFERENCE_TAIL_STARTS`, which this round did not re-derive — is inside it.
+- **The loader both ways:** schema 4 requires the field non-None on every row (a missing row field, an explicit `null`, and one of two rows missing it are all refused); schemas 2–3 refuse it non-None and accept `null`; the exemption gate reads `>= 3`; schema 5 and 0 refused. Lax bool coercion matches the existing row and top-level flags; the repository file is pinned value for value and byte-shape (`test_the_file_is_lf_in_rule_v4s_key_order`).
+- **`counting_marked_r1`** copies rows in order and returns `self` when no row reports; `rule_v2_counterpart` neutralises `False` to rule v2's `None` and keeps `True` as `differs` (pinned both ways, in the metric and the report).
+- **The report pins are line-exact, not vacuous:** the whole `heldout-5` and `heldout-4` rule-v5 reports index every line; the `heldout-4` pin also compares its tables to the rule-v3 report's offset by the one new verdict line; the mirror pins assert no `v5`, no `marked R1` and three verdict lines on rule v3's and rule v4's reports over outcomes holding both kinds.
+- **The documents against the code and the frozen records:** the Rule v5 section's table, split, four verdicts, counterpart readings and report lines equal the code's; the bare-run sentence in `scripts/README.md` equals `blind_run_refusal` ("such script" = a script of a set whose cases are not written); the register's marked-R1 categories (`wrong-dose`, `quality`) are in `test_pilot_docs.py`'s Category vocabulary; no `h5-` id is named beyond `validation/README.md`'s existing range form.
+- **C16:** no edit to rule v5, predictions v5, the pre-registration, D4 or D7; **C17 (a)** empty since `170345d` (no decode-path file in the diff besides `validation.py`); **(c)** `scripts/run-validation.py` docstring-only.
+Round classification: 2 🆕 / 0 ⚡ / 0 🔁 (the first `/review`-class round over the whole run; both pre-existing in the run's commits).
+- **[LOW]** LOW-001: `docs/testing/validation-harness.md:206` — "The gate for run 8" said a pass is evidence about the gated sets only because "`heldout` and `heldout-2` still fail", carried from the Goal's forecast (written before predictions v5); predictions v5 (Task 0.3, the same section's line 220) have `heldout-4` FAIL too, on R1 2 over its reported row's ceiling of 1 — the sentence read as if `heldout-4` passed. Pattern siblings: searched `still fail` and `still FAIL` over the tracked files (C12's paths excluded) — the plan's Goal (`:41`, a forecast written before any measurement, left as written) and this line; none other. — 🆕 — Triage: Fix-now (documents only; LOW, non-production, auto-disposable); Decision: Applied ("`heldout`, `heldout-2` and `heldout-4` are predicted to fail (predictions v5, below) and are reported").
+- **[LOW]** LOW-002: `.cursor/plans/plan-validation-run8.md` (Deferred — Actionable Later) — the one docstring-only `validation.py` commit owed after P.1 (the stale "schema 3" words in `EncounterMetrics` ×2, `RULE_V2_RATIFIED`, `rule_failures`, `run_passed` and `evaluate_encounter`, reverted or left by Task 0.2b under C17 (b), peer round 7) was recorded only in Round 7's log text and Task 0.2b's record, on no task, Deferred entry or retained item, so the plan's close could drop it. — 🆕 — Triage: Fix-now (record only; the deferral was already decided by C17, this records where the close finds it); Decision: Applied (a dated Deferred bullet with its symbols, file, risk `minor` and trigger "after P.1 is committed, when C17 lapses").
+Missed-issue pass: re-read `validation.py`'s `_residue_section` (both branches of the marked line with nothing measured, `listed`'s empty text), the heading's verdict order against `_verdict_lines`', the rule-v4 history sentence's gate (`label == "v4" or schema_version >= 4`, so a schema-4 rule of any name prints it — D1's reading), `PassRule.label` for schema-4 names (`relaxed` → `v4`, the existing derivation, plan-chosen at peer round 2), the CI comment's tense, and LOW-001's document region; result: none beyond LOW-001 and LOW-002.
+Finding verification: 2 candidates; 0 dropped; 0 downgraded.
+/fix notes: applied 2026-11-06 by the stage-7 executor (leg x1), one at a time, each re-read after applying. LOW-001: one line of a CRLF file, edited inside the line; 0 LF-only lines and 0 bare `\r` after (multiline Grep); the Rule v5 ceiling table, which `TestHarnessDocument` reads, untouched. LOW-002: the plan (LF) holds 0 `\r` after.
+
+**CONVERGED (round 19: no CRIT / HIGH / MED; two 🆕 LOWs, both applied).** `/review-loop` converged on its first round (plan round 19; cap 3).
+
+### Round 20 — 2026-11-06
+Source: Claude Code simplify (the hardening stage's H2, stage-7 executor leg x1, `claude-opus-5-5`; the same scope as round 19 — `git diff 9884f04 HEAD`, `validation/heldout-5` excluded; propose-only, under the conservatism guard; bound by C1, C12 and C17 (b), which bars any `validation.py` hunk outside its symbol list until run 8).
+Round status: Closed (0 findings)
+Scope: the code hunks of round 19's list read in full context (`FactOutcome`, `SetCeilings`, `PassRule`, `rule_v2_counterpart`, `ClassCount` / `class_counts`, `_verdict_lines`, `render_report`, `_residue_section`), the new tests and `rule-v5.json`; the documents for redundant restatement only.
+Simplifications found: none — no simplifications worth a maintainer's attention.
+Consciously left alone (each fails the conservatism guard or is plan-chosen):
+- `_residue_section` re-derives the marked members from the facts on a row that counts them, while `class_counts` holds them as `reported_members` only on a row that reports — D1 fixes `reported_members` "for R1 only where `row.r1_marked_reported is True`", and peer round 7 folded the would-be shared helper into these two sites to keep C17 (b); a shared helper is a symbol C17 (b) does not list.
+- `FactOutcome.residue_r1_silent` has no production reader (only `residue_r1_marked` is read) — D1 names both properties and the test pins them as a partition; removing it saves four lines and loses the stated invariant.
+- The heading and `_verdict_lines` each compute the counted verdict — the existing shape of the without-exemption verdict since rule v3; folding both is a refactor of the report's structure for no behaviour change.
+- `counting_marked_r1` and `without_r1_exemption` share a "return `self` when nothing changes" shape — two short methods, each with its own field; no duplication worth a layer.
+- The documents restate the split in the harness document, the threat model, the pilot README and `CHANGELOG.md` — each for its own reader; the harness document is the canonical one and the others point to it.
+Summary: 0 findings (0 CRIT / 0 HIGH / 0 MED / 0 LOW); round 20.
+
+### Round 21 — 2026-11-06
+Source: Claude Code security-review (the hardening stage's H3, stage-7 executor leg x1, `claude-opus-5-5`; the portable threat-model checklist in this session — no native subagent was spawned; the scope of round 19; references: the threat model's "The pilot" (harness residues) and its new marked-R1 residue, data-flow flow 26; bound by C1 and C12).
+Round status: Closed (0 findings)
+Trust boundaries examined: the rule file (a tracked, practitioner-ratified input read through `load_pass_rule`'s 64 KiB cap and `model_validate_json`); the report on standard output (the run of record's only output, copied to `.cursor/loops/` and recorded in tracked documents as ids and counts); the blind set's process controls (C12: the conftest refusal, the presence pin, the tails script's output in `REFERENCE_TAIL_STARTS`); the public repository's documents (the register's content-free rules, `docs/pilot/`'s no-hash rule).
+Checked and clean:
+- **Injection and taint into the report:** every new printed field is a pattern-checked encounter id, a fact index (an int), a rule label derived from the pattern-checked `rule_name`, or a set name the rule's pattern admits; the new `ValueError` texts carry only the schema's digit; `hide_input_in_errors` stays on the rule models, so a refused rule file's values are not echoed.
+- **Deserialization:** `extra="forbid"` and `frozen` unchanged; the new field is `bool | None`, its lax coercion the same as the existing `gate`, `require_uncertainty_surfaced` and `unsupported_line_r1_exemption`; the repository's `rule-v5.json` is pinned value for value. A hand-edited rule file is the practitioner's own input, not a trust boundary the threat model names.
+- **Sensitive data:** no transcript, note, script or name text enters a new line; the marked-R1 line prints `<id>/f<n>` only, as the threat model's new paragraph says. The two SHA-256s in `validation/README.md` (the brief and the prompt) are integrity records of public files, and `docs/pilot/` carries no 16+ hex run (round 17's Grep, unchanged by this stage).
+- **C12 (the blind set as a confidentiality control):** nothing in the diff prints an `h5-` script's words; the presence pin reads file names only; the `h5-` rows are ids and integers; the CI comment changes no executable step. `validation/heldout-5/` holds `author-session.jsonl`, committed to the public repository after Task 0.5's redaction step (the identifying forms counted, 0 found, the log copied unchanged); this round did NOT open it (C12) and makes no claim about its other content. `[2026-11-06, corrected by peer round 23 PR-LOW-001]` This round first said that a further count-only check would be "within C12's permitted machine reads". It is not: C12 names its readers (the lints through the runner, the tail script, the presence pin, P.1's builder and harness), and a further scan is none of them. The one count is the one Task 0.5's own copy-in step already made. Before copying the log, the composer counted the identifying forms in it — the Windows user name, the account name, the e-mail domain and the user-profile path forms — and found 0 (Task 0.5's Closed sub-bullet), so the log was copied unchanged. No further read of the log or the set is made before P.3, which is its first examination. C12's text is unchanged.
+- **Resource and availability:** no new unbounded input; the rule-size cap, the label-track cap and the script cap are unchanged.
+- **Dependencies and config:** no new dependency, environment variable or runtime network; no change to the offline guards.
+Summary: 0 findings (0 CRIT / 0 HIGH / 0 MED / 0 LOW); round 21 — no security issues found in scope. The project's own security tests run in the suite (composer, through the `heldout-5` runner).
+
+### Round 22 - 2026-11-06 - Stage-7 (H4 code slice), independent cross-family codex peer review (pass stage-7.p1)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Specified code/test diff against `9884f04`, permitted supporting code, rules and plan sections; static reading only, no execution or writes.
+  - job 1: checked the R1 predicate, `FactOutcome.__post_init__` and both partition properties; every valid R1 fact belongs to exactly one side, with the both-case counted as silent (`desktop/src/scribe_desktop/validation.py:900`, `:959`, `:2204`).
+  - job 2: checked row-controlled splitting, reported members, counted-rule copying and counterpart neutralisation; D1 is implemented and the repository rule’s counted verdict equals rule v4 by construction (`desktop/src/scribe_desktop/validation.py:2432`, `:2518`, `:2762`).
+  - job 3: checked headings, verdict lines, amendment gates and both marked-line branches; schema-3 report output remains unchanged by the diff (`desktop/src/scribe_desktop/validation.py:3329`, `:3392`, `:3420`, `:3734`).
+  - job 4: checked fixtures, parametrization, report indexes, ceiling boundaries and table comparison; no vacuous pin found. Both R1 readings exercise n/n+1 and both-case precedence; changing a ceiling alone changes the table test’s expected cells and fails equality (`desktop/tests/test_validation_metrics.py:2963`, `:3370`, `:3467`; `desktop/tests/test_validation_harness.py:2097`).
+  - job 5: checked every `validation.py` hunk against C17(b); the schema-version constant/comment and `render_report` docstring are outside its literal list, as detailed below.
+
+#### Findings
+
+- **PR-LOW-001** (LOW, docs-only, `.cursor/plans/plan-validation-run8.md:214`): C17(b)’s explicit permitted list still does not cover every code hunk, despite the compliance claim. It omits `RULE_SCHEMA_VERSION` and its comment (`desktop/src/scribe_desktop/validation.py:205`), and names only the report heading/amendments rather than the changed `render_report` docstring (`:3383`). These implement task-authorised schema/report changes, but the literal confinement check does not pass. - Evidence: C17(b) requires the diff be “confined to” its list, including “`_verdict_lines` / the heading / the amendments / `_residue_section`”; the diff changes `RULE_SCHEMA_VERSION: Final = 4` and adds “four verdict lines and the marked-R1 line in that section” to `render_report`’s docstring. Task 0.2a explicitly requires “`RULE_SCHEMA_VERSION` → 4” (`:967`), while Round 19 states “C17 (b) holds for the diff” (`:921`). Recommendation: Fix-now - Reconcile C17(b) with these narrowly bounded, already-authorised hunks and correct the compliance record, preserving all decoding/routing prohibitions. /fix decision: Applied — verified tuple (PR-LOW-001, CONFIRMED, 🆕 pre-existing since Tasks 0.2a / 0.2b, Fix-now record-only; no C17 amendment).
+  - Verification (stage-7 executor leg x2, 2026-11-06T21:28:43+11:00): `git diff 9884f04 HEAD -- desktop/src/scribe_desktop/validation.py` holds 25 hunks. The first (`@@ -202,10`) is `RULE_SCHEMA_VERSION`'s comment and value, which Task 0.2a names ("`RULE_SCHEMA_VERSION` → 4") and C17 (b)'s list (Critical Constraints, C17) does not. The `@@ -3281,14` hunk changes `render_report`'s docstring with its heading; the list names "the heading / the amendments", not the docstring. Neither touches decoding or routing. Three records over-claimed: round 19 ("C17 (b) holds for the diff"), the stage-1 leg x2 handoff ("inside C17 (b)'s permitted list"), and Task 0.2b's record ("19 hunks, all inside C17 (b)'s list"); Task 0.2a's own C17 line names the constant and makes no such claim. (`[2026-11-06]` "Three" was not exhaustive: peer rounds 26–27 found seven more unqualified siblings, qualified by the stage-7 executor leg x4. Round 26's `/fix` notes list them. Peer round 28 found two more round summaries, Rounds 8 and 5, qualified by leg x5: nine in all.)
+  - Disposition: the records corrected, not C17. C17 (b)'s purpose — nothing that decodes or routes between Task 0.3 and run 8 — holds. Conforming the code is not open: the constant's value is Task 0.2a's own requirement and is pinned (`TestRuleV5`), and the docstring is correct. So an amendment to C17's text adds nothing a practitioner would decide differently, and it is not raised (no MUST-PAUSE). Neither hunk belongs in the post-P.1 docstring commit (Deferred, round 19 LOW-002): both are already correct for schema 4, and that commit is for stale words.
+  - /fix notes: applied 2026-11-06T21:28:43+11:00 by the stage-7 executor (leg x2), plan records only. Round 19's Checked bullet is corrected in place, with the date and this round named. Dated `[2026-11-06, peer round 22 PR-LOW-001]` corrections are added to the stage-1 leg x2 handoff and under Task 0.2b's "supersedes" record. No code, test or document changed.
+
+- Verification counts: 5 claims checked, 5 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-11-06
+
+### Round 23 - 2026-11-06 - Stage-7 (H4 documents slice), independent cross-family codex peer review (pass stage-7.p2)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Documents diff against `9884f04`, including working-tree changes; verified by reading permitted evidence only. No writes, scripts, suites or network commands.
+  - `docs/testing/validation-harness.md`: checked schema 4, ceiling table, split precedence, four verdicts, predictions, bands and run placeholder; consistent with code, rules and records. Round-19 LOW-001 correctly includes `heldout-4`.
+  - `validation/README.md`: checked rule history, six-set schedule and blind-set lifecycle; consistent with records, with blind identifiers limited to the range form.
+  - `docs/pilot/README.md`: checked run-8 rule, gate sets and verdict descriptions; matches rule v5.
+  - `docs/pilot/exit-gate.md`: checked approval boundary; rule-v5 wording remains a dated proposal explicitly leaving the approved line operative.
+  - `docs/pilot/findings-register.md`: checked marked-R1 policy, categories and referenced rows; consistent with D1 and the test vocabulary.
+  - `docs/practice/clinician-review-guide.md`: checked measured counts and approval status; 139 encounters, seven misheard facts, five marked and two unmarked match run-7 reports. Dated, awaiting approval, without encounter ids.
+  - `docs/practice/README.md`: checked testing summary and approval qualification; matches the reports and D2, without encounter ids.
+  - `docs/security/threat-model.md`: checked fourth verdict, identifier-only output and marked-R1 residue; matches implementation and D1.
+  - `docs/security/data-flow-map.md`: checked schema-4 set selection and added report fields; matches implementation.
+  - `scripts/README.md`: checked rule-v5 description and blind-runner lifecycle; preserves the P.3 boundary.
+  - `scripts/run-validation.py`: checked docstring example and six-set description; correct, with no executable changes.
+  - `scripts/lint-held-out-set.py`: checked docstring lifecycle references; correctly names Tasks 0.5 and P.3.
+  - `.github/workflows/ci.yml`: checked comments; identifies `heldout-5` as blind and `heldout-4` as seen, without changing executable steps.
+  - `desktop/tests/fixtures/heldout_transcripts.py`: checked citation edits; authorship and case-writing references correctly identify this plan.
+  - `desktop/tests/test_consultation_boundary.py`: checked diagnosis citation; correctly points to validation-run8 P.3.
+  - `desktop/tests/test_lint_held_out_set.py`: checked blind-set comment; P.3 citation is correct and assertion unchanged.
+  - `desktop/tests/test_note.py`: checked diagnosis citation; correctly points to validation-run8 P.3.
+  - `desktop/tests/test_note_check.py`: checked diagnosis citation; correctly points to validation-run8 P.3.
+  - `desktop/tests/test_validation_scripts.py`: checked authorship, case-writing and presence-test descriptions; consistent with the documented lifecycle.
+  - `AGENTS.md`: checked changed rule summary, next steps and noise count; consistent with records and eight `snr_db` metadata entries.
+  - `CHANGELOG.md`: checked tooling-only scope, split, verdicts, band and pending approvals; consistent with implementation and records.
+  - `.cursor/plans/plan-pilot.md`: checked both override quotations and P.5 sequencing; quotations match D1 verbatim, with the band remaining advisory.
+  - `.cursor/plans/plan-larger-model.md`: checked takeover and override lines; preserves the historical outcome and quotes D1 verbatim.
+  - `.cursor/plans/plan-validation-run8.md`: checked rounds 19–21 and LOW-002’s Deferred entry; both round-19 fixes are recorded, but round 21 overstates C12’s permitted reads as detailed below. C16 and C17 remain unchanged.
+
+#### Findings
+
+- **PR-LOW-001** (LOW, docs-only, `.cursor/plans/plan-validation-run8.md:957`): Round 21 incorrectly presents an additional pre-P.3 author-log scan as already permitted by C12. C12 enumerates the permitted machine readers; an arbitrary count-only scan is not among them. This advice could lead the composer to expand blind-set access without a recorded constraint decision. - Evidence: line 957 says a count-only check “is within C12's permitted machine reads”; C12 at line 210 permits “the lints through the runner, the tail script … the file-name-only presence pin … and P.1's builder and harness.” Task 0.4 also explicitly postpones another count-only computation, author overlap, until P.3. Recommendation: Fix-now - Correct the round-21 advice to defer this additional scan until P.3 rather than assert existing authorization; keep C12 unchanged. /fix decision: Applied — verified tuple (PR-LOW-001, CONFIRMED, ⚡ introduced by round 21's own note, Fix-now record-only).
+  - Verification (stage-7 executor leg x2, 2026-11-06T21:28:43+11:00): C12 (Critical Constraints) names its readers: the lints through the runner, the tail script, the file-name-only presence pin, and P.1's builder and harness. An extra count-only scan of `author-session.jsonl` is not among them, and D4 defers the one other count-only reading, author overlap, to P.3. Round 21's "is within C12's permitted machine reads" was wrong.
+  - /fix notes: applied 2026-11-06T21:28:43+11:00 by the stage-7 executor (leg x2), plan records only. Round 21's note is corrected in place, dated. There is no further scan before P.3. The one count already made is Task 0.5's own copy-in redaction step: the identifying forms were counted, 0 were found, and the log was copied unchanged (Task 0.5's Closed sub-bullet, item 1, re-read). Round 21's "with the user name redacted" now reads as that record does. C12's text is unchanged, and this leg did not open, list or search `validation/heldout-5/`.
+
+- Verification counts: 1 defect claims checked, 1 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-11-06
+
+### Round 24 - 2026-11-06 - Stage-7 (H4 code slice re-check), independent cross-family codex peer review (stage-7.p1)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Requested plan and harness-document diffs, corrected records and `validation.py` diff against `9884f04`; static reads only.
+  - Round 19: checked the corrected C17 claim against every code hunk; both literal-list exceptions are accurately identified.
+  - Stage-1 leg x2 / Task 0.2a: checked the constant/comment exception against task authorization and C17; correction is accurate.
+  - Task 0.2b: checked the dated correction against `render_report`; its docstring is correctly distinguished from the permitted heading and amendments.
+  - Round 21 / Task 0.5: checked the corrected scan advice and copy-in account against C12 and the task’s Closed record; consistent, without independently examining the log.
+  - Round 22: checked verification and disposition; the two exceptions are accurately recorded without changing C17.
+  - Round 23: checked fix notes; the Round 21 correction is present, but its handoff duplicate remains incorrect.
+  - New handoff: checked the correction summary; accurate, but contradicted by the preceding leg’s retained advice.
+  - C12 / C16 / C17: checked the plan diff; constraint text unchanged and no individual blind-case identifier added.
+  - Harness document: checked the one-line correction; consistent with the recorded predictions.
+
+#### Findings
+
+- **PR-LOW-001** (LOW, docs-only, `.cursor/plans/plan-validation-run8.md:261`): The stage-7 leg x1 handoff retains the incorrect C12 permission and redaction account corrected in Round 21. This leaves contradictory operational advice in the handoff. - Evidence: “A count-only check (integers, no statement) is within C12 if you want that assurance before the push” and “with only the user name redacted”; the corrected Round 21 explicitly rejects that permission, and Task 0.5 records zero identifying occurrences and an unchanged copy. Recommendation: Fix-now - Add a dated correction to this duplicate handoff bullet, deferring further examination until P.3 and accurately recording the unchanged copy; preserve C12. /fix decision: Applied — verified tuple (PR-LOW-001, CONFIRMED, 🔁 same family as round 23 PR-LOW-001 — a sibling copy that round's fix missed, Fix-now record-only); one defect with round 25 PR-LOW-001.
+  - /fix notes (stage-7 executor leg x3, 2026-11-06T21:33:33+11:00):
+    - Line 261's two quoted sentences were re-read and confirmed. A dated correction now sits under that handoff bullet, kept as history: no scan before P.3, and the one count was Task 0.5's copy-in (0 found, log copied unchanged).
+    - Sibling sweep over the plan, searching `within C12`, `user name redacted` and `only the user name redacted`. No other uncorrected copy was found. The other hits are:
+      - D4 (C16-fixed) and Task 0.5's spec, which name the redaction STEP, not its result;
+      - the stage-5 leg x2 handoff, which planned that step before it ran;
+      - the peer rounds' own quotes;
+      - round 21, already corrected.
+    - C12's text is unchanged, and `validation/heldout-5/` was not opened, listed or searched.
+
+- Verification counts: 1 defect claim checked, 1 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-11-06
+
+### Round 25 - 2026-11-06 - Stage-7 (H4 documents slice re-check), independent cross-family codex peer review (stage-7.p2)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Requested plan and harness-document diffs, corrected records, constraints and `validation.py` diff; static inspection only.
+  - Round 19: checked the corrected C17 claim against the code diff; both literal-list exceptions are accurately identified.
+  - Stage-1 leg x2 / Task 0.2a: checked the constant/comment qualification against the task and C17; correction is accurate.
+  - Task 0.2b: checked the dated qualification against `render_report`; its changed docstring is correctly distinguished from the permitted heading and amendments.
+  - Round 21: checked the corrected scan advice against C12; the additional scan is now deferred until P.3.
+  - Task 0.5: checked the copy-in record; it records zero identifying-form matches and an unchanged log copy, supporting the corrected account.
+  - Rounds 22–23 / new handoff: checked fix notes against corrected entries; those entries support the notes, but the earlier stage-7 handoff retains contradictory advice.
+  - C12 / C16 / C17: checked the plan diff; constraint text remains unchanged, with no new specific blind-set identifier.
+  - Harness-document LOW-001: checked the one-line correction against recorded predictions; correctly includes `heldout-4`.
+
+#### Findings
+
+- **PR-LOW-001** (LOW, docs-only, `.cursor/plans/plan-validation-run8.md:261`): Round 23’s correction missed the duplicate advice in the stage-7 leg-x1 handoff. It still presents an additional pre-P.3 scan as C12-permitted and incorrectly says the user name was redacted, contradicting the corrected Round 21 and Task 0.5 record. - Evidence: “A count-only check (integers, no statement) is within C12 if you want that assurance before the push”; “with only the user name redacted”. C12 enumerates permitted readers without this additional scan; Task 0.5 records “0 occurrences, so the log is copied unchanged”. Recommendation: Fix-now - Add a dated correction at this duplicate handoff entry, deferring the additional scan until P.3 and accurately recording the unchanged copy; preserve C12. /fix decision: Applied — verified tuple (PR-LOW-001, CONFIRMED, 🔁 same family as round 23 PR-LOW-001, Fix-now record-only); the same defect as round 24 PR-LOW-001, fixed once (round 24's `/fix` notes; the dated correction under line 261's bullet, 2026-11-06T21:33:33+11:00).
+
+- Verification counts: 1 defect claims checked, 1 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-11-06
+
+### Round 26 - 2026-11-06 - Stage-7 (H4 code slice re-check), independent cross-family codex peer review (stage-7.p1)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Requested plan and harness-document diffs, corrected records, constraints and `validation.py` diff against `9884f04`; read-only inspection.
+  - Round 19: checked the corrected confinement claim; both literal-list exceptions match the code.
+  - Stage-1 leg x2 / Task 0.2a: checked the constant/comment qualification; accurate.
+  - Task 0.2b: checked the dated docstring qualification; accurate, but the separate Closed record retains the narrower, incorrect hunk description.
+  - Round 21 / Task 0.5: checked scan advice and copy-in account; consistent with C12 and the recorded zero occurrences, without examining the log.
+  - Rounds 22–23: checked fix notes against corrected entries; the named corrections are present.
+  - Stage-7 leg x1: checked the new dated correction; explicitly withdraws both incorrect claims.
+  - Stage-7 legs x2–x3 / Rounds 24–25: checked correction summaries; the C12 duplicate is fixed.
+  - Plan-wide sibling check: checked permission, redaction and confinement claims; one remaining confinement-record duplicate identified below.
+  - C12 / C16 / C17: checked the plan diff; constraint text unchanged, with no new individual blind-case identifier.
+  - Harness document: checked the one-line correction; correctly includes `heldout-4` among predicted failures.
+
+#### Findings
+
+- **PR-LOW-001** (LOW, docs-only, `.cursor/plans/plan-validation-run8.md:1122`): Task 0.2b’s separate Closed record still claims every hunk fits a list restricting `render_report` changes to its heading and amendments. The dated correction above qualifies the earlier executor record, but this subsequent composer record repeats the inaccurate description without qualification. - Evidence: “every hunk … sits in … `render_report` (the heading and the amendments)”; the code diff also changes its docstring to include “four verdict lines and the marked-R1 line in that section”. Recommendation: Fix-now - Add the same dated docstring exception to this Closed record, preserving C17’s text and the code. /fix decision: Applied — verified tuple (PR-LOW-001, CONFIRMED, 🔁 same family as round 22 PR-LOW-001, whose fix missed these siblings; Fix-now record-only; no C17 amendment, no code change). The same defect as round 27 PR-LOW-001.
+  - Verification (stage-7 executor leg x4, 2026-11-06T21:38:57+11:00): Task 0.2b's composer Closed record says every hunk of `git diff ba71ff5` sits in its list with `render_report` limited to "(the heading and the amendments)". The `@@ -3281,14` hunk also changes `render_report`'s docstring. Confirmed, and likewise Round 4's record (round 27).
+  - /fix notes (exhaustive sweep). I searched the whole plan for `permitted list`, `C17 (b) holds`, `C17 (b):`, `every hunk`, `inside the permitted`, `confined to`, `sits in`, `within C17`, `inside C17`, `C17 (b)'s list`, `permitted symbols`, `C17 (b) as recorded`, `C17 (b) for`, `C17 holds`, `(b) nothing`, `(b) no`, and every `C17` mention. Each hit was read in full.
+    - **QUALIFIED, dated `[2026-11-06, peer rounds 26–27 PR-LOW-001]`, beside the record, the record kept:**
+      - the stage-2 leg x3 handoff, "Every `validation.py` hunk since `ba71ff5` is now in C17 (b)'s list" (`render_report`'s docstring);
+      - the stage-2 leg x1 handoff, "C17 holds (the task line's record …)" (both hunks);
+      - the stage-1 leg x1 handoff, "C17 holds (the task line's record)" (`RULE_SCHEMA_VERSION`);
+      - Round 4's C17 (b) line, "inside the permitted list" (`RULE_SCHEMA_VERSION`);
+      - Round 6's "**C17 (b).** The hunks are confined to the permitted symbols …" (round 7's corrections and the docstring);
+      - Round 7's verify notes, "19 hunks, every one in C17 (b)'s list" (the docstring);
+      - Task 0.2b's composer Closed record, "every hunk … sits in …" (the docstring).
+    - **POINTERS added** where "three records" is now incomplete: the stage-7 leg x2 handoff and round 22's verification notes.
+    - **ALREADY QUALIFIED** (rounds 22–23's fix): round 19's Checked bullet; the stage-1 leg x2 handoff ("inside C17 (b)'s permitted list"); Task 0.2b's "supersedes" record, "19 hunks, all inside C17 (b)'s list". The dated sub-bullet under the last also covers the leg-x1 task-line enumeration it supersedes ("`render_report` (heading, amendments)").
+    - **CHECKED, no claim to qualify:**
+      - C17's own text (left as is);
+      - Task 0.2a's own C17 line and its composer Closed record: they name the constant explicitly ("confined to the `RULE_SCHEMA_VERSION` comment and value, …") and claim nothing about C17 (b)'s list;
+      - the stage-2 leg x2 handoff, "C17 (b) as recorded on the task line: `evaluate_encounter` untouched": true, and it refers to that record;
+      - the lineage line and Task 0.0, "C17 holds" with base `170345d` / "as written": the base, not the hunk list;
+      - the stage-3 handoff's "C17 holds": Task 0.3 changed no package file;
+      - every stage record whose "(b)" says nothing under `desktop/src` or no `validation.py` changed in that stage (stages 3–7): true;
+      - the instruction to the H4 peer, "covers every hunk";
+      - the "Reviewed: every hunk" scope lines of rounds 17 and 19;
+      - the peer rounds' own quotes (rounds 7, 22, 26, 27): kept as history;
+      - the Deferred bullet (round 19 LOW-002) and round 20's C17 (b) references: about the bar, not a confinement claim.
+    - C17's text and the code are unchanged. No document changed.
+    - `[2026-11-06T21:44:32+11:00, peer round 28 PR-LOW-001]` The sweep above was NOT exhaustive. It searched confinement wordings and missed two round summaries:
+      - Round 8's Scope line ("permitted-symbol compliance"), qualified by leg x5 (the `render_report` docstring);
+      - Round 5's Scope line ("C17 boundaries" with 0 findings), qualified by leg x5 (`RULE_SCHEMA_VERSION`).
+      - So NINE records were qualified in legs x4–x5, not seven. Leg x5's one further search (round-summary and compliance wordings, listed in its handoff bullet) found no others.
+
+- Verification counts: 1 defect claim checked, 1 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-11-06
+
+### Round 27 - 2026-11-06 - Stage-7 (H4 documents slice re-check), independent cross-family codex peer review (stage-7.p2)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Requested plan and harness-document diffs, corrected records, whole-plan sibling search and `validation.py` diff against `9884f04`; read-only inspection.
+  - Round 19: checked the qualified C17 claim against the code diff; both exceptions accurately identified.
+  - Stage-1 leg x2 / Task 0.2a: checked the constant/comment qualification; accurate.
+  - Task 0.2b: checked the dated docstring qualification; accurate, but its Closed record retains the narrower claim.
+  - Round 21: checked scan advice against C12; further examination correctly deferred until P.3.
+  - Task 0.5: checked the Closed copy-in record; zero identifying-form matches and an unchanged copy support the correction.
+  - Rounds 22–23: checked fix notes against corrected entries; the named corrections are present.
+  - Stage-7 leg x1 / Round 25: checked the new dated correction; both incorrect claims are explicitly superseded.
+  - Stage-7 legs x2–x3: checked correction summaries; consistent with the amended entries.
+  - C12 / C16 / C17: checked the working-tree diff; constraint text unchanged, with no newly added individual blind-case identifier.
+  - Harness-document LOW-001: checked the one-line correction against recorded predictions; correctly includes `heldout-4`.
+
+#### Findings
+
+- **PR-LOW-001** (LOW, docs-only, `.cursor/plans/plan-validation-run8.md:601`): The C17 correction still has unqualified sibling claims elsewhere in the plan. Round 4 includes `RULE_SCHEMA_VERSION` in hunks declared inside the permitted list; Task 0.2b’s Closed record at line 1122 still confines `render_report` changes to its heading and amendments. Neither record carries the dated qualification applied to the other copies. - Evidence: line 601 lists “the `RULE_SCHEMA_VERSION` comment and value” and concludes “inside the permitted list”; line 1122 says “every hunk” sits in its enumeration including “`render_report` (the heading and the amendments)”. C17 at line 214 omits the constant and report docstring, while the code diff changes both. Recommendation: Fix-now - Add dated qualifications to these two historical records, preserving C17 and the already-correct code. /fix decision: Applied — verified tuple (PR-LOW-001, CONFIRMED, 🔁 same family as round 22 PR-LOW-001, Fix-now record-only; no C17 amendment, no code change). This is the same defect as round 26 PR-LOW-001 and was fixed once in one exhaustive sweep. Round 4's line and Task 0.2b's composer Closed record are qualified, together with five more siblings the sweep found (`[2026-11-06]` and, after peer round 28, Rounds 8 and 5 by leg x5); round 26's `/fix` notes list every location checked and what was done at each (stage-7 executor leg x4, 2026-11-06T21:38:57+11:00).
+
+- Verification counts: 1 defect claim checked, 1 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-11-06
+
+### Round 28 - 2026-11-06 - Stage-7 (H4 code slice re-check), independent cross-family codex peer review (stage-7.p1)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Requested plan and harness-document diffs, corrected records, whole-plan sibling search and `validation.py` diff against `9884f04`; read-only inspection.
+  - Stage-2 leg x3: checked the qualification; accurately identifies the report-docstring exception.
+  - Stage-2 leg x1: checked both exceptions against the code and tasks; accurate.
+  - Stage-1 leg x1: checked the constant/comment exception; accurate.
+  - Round 4: checked the permitted-list qualification; accurate.
+  - Round 6: checked the correction against the subsequent fold/reversions and remaining docstring exception; accurate.
+  - Round 7: checked the qualified nineteen-hunk claim; accurately excludes the report docstring.
+  - Task 0.2b Closed record: checked the new qualification; accurate.
+  - Round 19: checked both recorded exceptions against the code diff; accurate.
+  - Stage-1 leg x2 / Task 0.2a: checked the qualification and explicit constant authorization; consistent.
+  - Task 0.2b superseding record: checked the dated docstring exception; accurate.
+  - Round 21 / Task 0.5: checked scan advice against C12 and the recorded copy-in result; no further scan permitted, zero matches and unchanged copy recorded.
+  - Stage-7 leg x1: checked the dated correction; both incorrect claims explicitly withdrawn.
+  - Stage-7 legs x2–x4 / Rounds 22–27: checked correction summaries and pointers; listed corrections present, but the exhaustive-sweep claim misses Round 8.
+  - Whole-plan sibling search: checked confinement and scan-permission claims; one unqualified compliance claim remains below.
+  - C12 / C16 / C17: checked the working-tree diff; constraint text unchanged, with no newly added individual blind-case identifier.
+  - Harness-document LOW-001: checked the one-line correction against recorded predictions; correctly includes `heldout-4`.
+
+#### Findings
+
+- **PR-LOW-001** (LOW, docs-only, `.cursor/plans/plan-validation-run8.md:706`): Round 8 retains an unqualified confirmation of permitted-symbol compliance, despite the report-docstring exception now acknowledged in the surrounding records. The seven-record sweep missed this sibling. - Evidence: “Confirmed Round 6–7 fixes, unchanged C17 text, permitted-symbol compliance”. C17 names “the heading / the amendments”, while the code diff also changes `render_report`’s docstring to describe “four verdict lines and the marked-R1 line in that section”. Recommendation: Fix-now - Add a dated qualification to Round 8 naming the task-authorised docstring exception, and update the sweep record; preserve C17 and the code. /fix decision: Applied — verified tuple (PR-LOW-001, CONFIRMED, 🔁 same family as round 22 PR-LOW-001, a sibling leg x4's sweep missed; Fix-now record-only; no C17 amendment, no code change).
+  - Verification (stage-7 executor leg x5, 2026-11-06T21:44:32+11:00): Round 8's Scope line reads "Confirmed Round 6–7 fixes, unchanged C17 text, permitted-symbol compliance". Its diff was Task 0.2b's against `ba71ff5`, whose `render_report` heading hunk also changes the docstring that C17 (b)'s literal list does not name. The claim is unqualified: confirmed. The constant is Task 0.2a's, outside that diff, so it is not named for Round 8.
+  - /fix notes:
+    - A dated qualification now sits under Round 8's Scope line (the docstring).
+    - The one further search, plan-wide, over the Review History, the Findings Log and the Current State / Handoff Note: `symbol compliance`, `symbol-level`, `permitted-symbol`, `permitted symbol`, `C17 held`, `C17 hold`, `C17 unchanged`, `C17 text`, `unchanged C17`, `C17 boundar`, `C17 compliance`, `compliance`, `complies`, `compliant`, `C17 remain`, `C17(b)`, `C17 … confirmed` / `confirmed … C17`, and every Review History line holding `C17`. It found ONE more sibling: Round 5's Scope ("C17 boundaries", 0 findings, over Task 0.2a), now qualified (`RULE_SCHEMA_VERSION`).
+    - The counts are corrected — nine records in legs x4–x5, not seven — in round 26's `/fix` notes, round 22's verification pointer, round 27's `/fix` decision and the leg x4 handoff bullet.
+    - Every other hit is listed in the leg x5 handoff bullet, with what was done at each.
+    - C17's text and the code are unchanged. No document changed.
+
+- Verification counts: 1 defect claim checked, 1 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-11-06
+
+### Round 29 - 2026-11-06 - Stage-7 (H4 documents slice re-check), independent cross-family codex peer review (stage-7.p2)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Requested plan and harness-document diffs, corrected records, whole-plan sibling search and `validation.py` diff against `9884f04`; read-only inspection.
+  - Stage-2 leg x3 handoff: checked the qualification against the report hunk; correctly identifies the docstring exception.
+  - Stage-2 leg x1 handoff: checked both exceptions against task authorization and C17; accurately qualified.
+  - Stage-1 leg x1 handoff: checked the constant/comment exception; accurately qualified.
+  - Round 4: checked its permitted-list claim; the adjacent correction explicitly excludes the constant/comment.
+  - Round 6: checked its confinement claim; the correction distinguishes the reverted edits from the remaining report-docstring exception.
+  - Round 7 verification notes: checked the “every one” claim; the adjacent docstring qualification corrects it.
+  - Task 0.2b Closed record: checked the heading/amendments enumeration; its new qualification explicitly includes the omitted docstring.
+  - Stage-1 leg x2 handoff: checked the earlier constant/comment correction; accurate.
+  - Task 0.2b superseding record: checked the earlier docstring correction and its relationship to the initial task record; accurate.
+  - Round 19: checked the qualified compliance claim against the code diff; both literal-list exceptions are correctly identified.
+  - Round 21: checked the corrected scan advice against C12 and Task 0.5; no additional scan is authorized before P.3.
+  - Stage-7 leg x1 handoff: checked the duplicate scan/redaction advice; its dated correction explicitly withdraws both incorrect claims.
+  - Task 0.5: checked the copy-in record; zero identifying-form matches and an unchanged copy support the corrected account.
+  - Stage-7 legs x2–x4 handoffs: checked correction summaries and the expanded sibling list; consistent with the amended records.
+  - Rounds 22–27 fix records: checked correction locations and dispositions; the named qualifications are present, and historical finding quotations remain distinguishable from operative claims.
+  - Whole-plan sibling search: checked confinement, permission and redaction wording; no remaining unqualified copy of either corrected claim found.
+  - C12 / C16 / C17: checked the working-tree changes; constraint text and frozen decisions remain unchanged, with no newly introduced individual blind-case identifier.
+  - Harness-document LOW-001: checked the one-line correction against recorded predictions; correctly includes `heldout-4` among predicted failures.
+
+#### Findings
+
+- Verification counts: 18 claims checked, 18 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-11-06
+
+### Round 30 - 2026-11-06 - Stage-7 (H4 code slice re-check), independent cross-family codex peer review (stage-7.p1)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Specified plan and harness-document diffs, corrected records, whole-plan sibling search and `validation.py` diff against `9884f04`; read-only inspection, no writes or execution.
+  - Stage-2 leg x3 handoff: checked the confinement qualification; correctly identifies the report-docstring exception.
+  - Stage-2 leg x1 handoff: checked both exceptions against the code and task records; accurate.
+  - Stage-1 leg x1 handoff: checked the constant/comment qualification; accurate.
+  - Round 4: checked the permitted-list correction; correctly excludes the constant/comment.
+  - Round 5: checked the new scope qualification; accurately identifies Task 0.2a’s constant/comment exception.
+  - Round 6: checked the corrected confinement claim; distinguishes reverted edits from the remaining docstring exception.
+  - Round 7 verification notes: checked the qualified nineteen-hunk claim; accurately identifies the remaining docstring exception.
+  - Round 8: checked the new qualification; correctly withdraws literal permitted-symbol compliance and distinguishes its baseline from Task 0.2a.
+  - Task 0.2b Closed record: checked the heading/amendments enumeration; the adjacent qualification covers the docstring.
+  - Stage-1 leg x2 handoff: checked the constant/comment correction against Task 0.2a; accurate.
+  - Task 0.2b superseding record: checked the dated docstring correction; accurate.
+  - Round 19: checked both exceptions against the code diff; accurately qualified.
+  - Round 21: checked scan advice against C12; no additional scan authorized before P.3.
+  - Stage-7 leg x1 handoff: checked the dated correction; both incorrect permission and redaction claims explicitly withdrawn.
+  - Task 0.5: checked the copy-in record; records zero identifying-form matches and an unchanged copy, without independently examining the log.
+  - Rounds 22–28 fix records: checked dispositions and correction pointers; named corrections are present.
+  - Stage-7 legs x2–x5 handoffs: checked correction summaries and sweep accounting; nine additional qualified records match the enumerated locations.
+  - Whole-plan sibling search: checked compliance, confinement, scan-permission and redaction claims; no remaining unqualified copy of either corrected claim found.
+  - C12 / C16 / C17: checked constraint text against HEAD; identical, with no new individual blind-case identifier introduced by the edits.
+  - Harness-document LOW-001: checked the one-line correction against recorded predictions; correctly includes `heldout-4`.
+
+#### Findings
+
+- Verification counts: 20 claims checked, 20 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-11-06
+
 ## Tasks
 
 ### Phase 0 — The rule, the predictions, the blind set (the order is the point; C16)
@@ -909,9 +1345,10 @@ Finding verification: 4 candidates; 0 dropped; 0 downgraded.
     **This supersedes the leg-x1 record above in two places:**
     - the task-named docstrings at `:974`, `:1127-1134`, `:2400`, `:2640-2643` and `:3130` are NOT edited in 0.2b. With `:1958` (deviation (iv)), they are left for one docstring-only commit after P.1, where C17 lapses;
     - C17 (b)'s hunk list now reads `FactOutcome` (the two properties), `PassRule` (`exempts_r1_lines` and `set_row` docstrings, `counting_marked_r1`), `rule_v2_counterpart`, `ClassCount` / `class_counts`, `_verdict_lines`, `render_report` (heading, amendments), `_residue_section`, `_parser`'s help, and `main`'s docstring and refusal — 19 hunks, all inside C17 (b)'s list.
+    - `[2026-11-06, peer round 22 PR-LOW-001]` Not quite: the `render_report` heading hunk also changes the function's docstring (the "four verdict lines and the marked-R1 line" sentence), and C17 (b)'s list names the heading and the amendments, not the docstring. That docstring is correct and inert (no decoding or routing). With Task 0.2a's `RULE_SCHEMA_VERSION` value and comment, it is one of the two task-authorised hunks outside C17 (b)'s literal list. C17's own text is unchanged (round 22's `/fix` notes).
 
     ruff and mypy green; the suite re-run is owed.
-  - **Closed (2026-11-06T16:25+11:00, composer):** suite re-run after the fold 9614 passed / 0 failed / 9 skipped (651 s); codex peer round 8 (pass stage-2.p1, re-check) 0 findings, converged; C17 (a) empty since `170345d`; C17 (b) read by the composer — every hunk of `git diff ba71ff5 -- desktop/src/scribe_desktop/validation.py` sits in `FactOutcome` / `PassRule` / `rule_v2_counterpart` / `ClassCount` / `class_counts` / `_verdict_lines` / `render_report` (the heading and the amendments) / `_residue_section` / `_parser` / `main`, and peer round 8 confirmed the same; C16: `rule-v5.json` unchanged since Task 0.2a (`ba71ff5`). Task 0.2a's commit is `ba71ff5`; 0.2b is committed alone.
+  - **Closed (2026-11-06T16:25+11:00, composer):** suite re-run after the fold 9614 passed / 0 failed / 9 skipped (651 s); codex peer round 8 (pass stage-2.p1, re-check) 0 findings, converged; C17 (a) empty since `170345d`; C17 (b) read by the composer — every hunk of `git diff ba71ff5 -- desktop/src/scribe_desktop/validation.py` sits in `FactOutcome` / `PassRule` / `rule_v2_counterpart` / `ClassCount` / `class_counts` / `_verdict_lines` / `render_report` (the heading and the amendments) / `_residue_section` / `_parser` / `main`, and peer round 8 confirmed the same (`[2026-11-06, peer rounds 26–27 PR-LOW-001]` but for `render_report`'s docstring, which the heading's hunk also changes and C17 (b)'s literal list does not name. It is inert, and C17's text is unchanged; see round 22's `/fix` notes); C16: `rule-v5.json` unchanged since Task 0.2a (`ba71ff5`). Task 0.2a's commit is `ba71ff5`; 0.2b is committed alone.
 - [x] ✅ **0.3 Predictions v5** (D5; C17) — `.cursor/loops/run8-predict.py` (NEW; `utf-8-sig`): parses the five run-7 reports into outcome objects, asserts the rule-v3 verdict lines and residue section reproduce byte for byte, then prints each seen set's rule-v5 lines (ids, counts, verdicts); the per-fact rule applied — the six R1 members asserted by id and listed with their kind, an ambiguous R1 member refused (PR-MED-001); the C17 check recorded. Frozen on this task and committed. Done when: on the task and committed.
   - **Script written, run owed (2026-11-06T16:33+11:00, stage-3 executor leg x1).** `.cursor/loops/run8-predict.py` (NEW, git-ignored, imported by nothing). It reads only the five `run7-reports/report-<set>.md` (decoded `utf-8-sig`; CRLF split, a NUL or a stray line break refused) and `validation/rules/rule-v3.json` / `rule-v5.json` through `validation.load_pass_rule`; it never reads `run8-reports/`, `validation/heldout-5` or any pickle. In order, each step only once the one before holds:
     1. **Parse** the run information, the encounter table, the checker warnings (tally, `failing:`, `expected but absent:`), the Facts table, the excused lines (`<id>/line n (segment i)`), the joined-run credit totals and the reference-boundary record.
@@ -1173,7 +1610,8 @@ Finding verification: 4 candidates; 0 dropped; 0 downgraded.
   - **Closed (2026-11-06T21:05+11:00, composer):** the suite ONLY through `scripts\lint-held-out-set.py validation\heldout-5`: ran 9669, passed 9660, failed 0, errored 0, skipped 9, exit 0 (`test_pilot_docs.py` and `test_the_rule_v5_ceiling_table_is_the_files` among them). Line endings checked by `git ls-files --eol` on every changed file: none mixed, the CRLF files still CRLF. No `h5-NN` id in the diff. C17 (a) empty since `170345d`. Codex peer round 18 (pass stage-6.p1) converged with 0 findings over all 25 files, one evidence line per document. Committed by the composer; Phase 1 closed. Next: stage-7 = H1–H4.
 
 ### Hardening stage
-- [ ] 🟥 **H1** `/review-loop` to convergence · [ ] 🟥 **H2** `/simplify` — log findings; trivial → `/fix`, substantial → scoped `/review-plan` · [ ] 🟥 **H3** `/security-review` — same routing · [ ] 🟥 **H4** final cross-family `/peer-review` re-check (documents as their own slice, one evidence line per document). No H5: nothing to build.
+- [x] ✅ **H1** `/review-loop` to convergence · [x] ✅ **H2** `/simplify` — log findings; trivial → `/fix`, substantial → scoped `/review-plan` · [x] ✅ **H3** `/security-review` — same routing · [x] ✅ **H4** final cross-family `/peer-review` re-check (documents as their own slice, one evidence line per document). No H5: nothing to build.
+  - **H1–H3 done (2026-11-06T21:10+11:00, stage-7 executor leg x1)** over the whole run, `git diff 9884f04 HEAD -- . ':(exclude)validation/heldout-5'`: H1 `/review-loop` round 19 converged on its first round (2 LOW, both applied — the harness document's "The gate for run 8" sentence now names `heldout-4` among the sets predictions v5 have failing; the owed post-P.1 docstring commit recorded under Deferred); H2 `/simplify` round 20, 0 findings (five candidates consciously left alone, each plan-chosen or C17-barred); H3 `/security-review` round 21, 0 findings (portable checklist). Only a document and this plan changed; no code or test. ruff and mypy green. C12: nothing under `validation/heldout-5/` or `.cursor/loops/held-out-lint/` opened, listed or searched. C16: no fixed record touched. C17 (a) empty since `170345d`; (b) no `validation.py` change in this stage; (c) unchanged.
 
 ### Phase P — Practitioner (normal terminal, developer build, installed app closed; C1, C8, C10)
 - [ ] 🟥 **P.1 Run 8, the run of record** — from a clean committed checkout at the H4 commit (`git status --short` empty); the voice baseline printed and checked; six sets built into empty folders outside the repository (synthetic only); each `.venv\Scripts\python.exe scripts\run-validation.py <set> --config validation\config --rule validation\rules\rule-v5.json --set <name>`, exit codes PRINTED (15–55 min a set as measured 2026-11-05, lid OPEN — a closed lid slows it several-fold; roughly 1.5–5.5 h plus the builds); the reports copied byte for byte to `.cursor/loops/run8-of-record/` (NOT `run8-reports/`, the measurement's folder); read against predictions v5 (every printed line but D5's listed ones) and the pre-registration; recorded in `validation-harness.md` "Runs of record", `plan-pilot.md` P.3 and `CHANGELOG.md` (commit, manifest hash, voices, rule blob, the four verdict lines per set with the gate sets named, the residue counts by class with R1's split, the excused lines, surfaced / expected, the load, each falsifier's and band's outcome (the author-overlap band "pending P.3"), the band rule's reading, the validated-commit sentence); the set folders deleted except `heldout-5`'s (kept until P.3 is committed), with `C:\run7-sets\`, `C:\heldout4-author\` and — confirmed from the practitioner's terminal — `C:\scribe-run7\`, `C:\run7-p4\`; `%TEMP%` checked for `scribe-speaker-eval-*` from the practitioner's own terminal. Done when: recorded and committed on the practitioner's word.
