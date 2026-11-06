@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h5-03",
+  "appointment_type": "acute",
+  "axes": ["laterality", "negation", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "So the ankle went over playing five a side on Tuesday night?"},
+    {"role": "patient", "text": "Yeah, I'm coming in with a swollen left ankle, it ballooned straight away."},
+    {"role": "clinician", "text": "Bruising along the outer side and tender in front of the ankle bone, but you managed four steps, so there's no fracture to worry about."},
+    {"role": "clinician", "text": "Strap it for the next few days and keep it raised when you're sat down, and no football for two weeks."},
+    {"role": "patient", "text": "Cheers, I'll keep it up."},
+    {"role": "clinician", "text": "Ta-ra then, mind how you go."},
+    {"role": "clinician", "text": "Now then duck, come on in, sit yourself down."},
+    {"role": "next_patient", "text": "Ta. My shoulder's been locking up when I reach for the top shelf."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["swollen", "left", "ankle"], "line": 1, "material": true},
+    {"kind": "negation", "tokens": ["no", "fracture", "to", "worry", "about"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["no", "football", "for", "two", "weeks"], "line": 3, "material": true},
+    {"kind": "absent", "tokens": ["shoulder's", "been", "locking", "up"], "line": 7, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

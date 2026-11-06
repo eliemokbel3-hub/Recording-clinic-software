@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h5-04",
+  "appointment_type": "chronic",
+  "axes": ["laterality", "uncertain"],
+  "lines": [
+    {"role": "clinician", "text": "Morning. How have the hips been since last time?"},
+    {"role": "patient", "text": "Since last time the morning stiffness has lasted about an hour, though I can't be certain because I'm usually rushing the dog out, and it eases once I'm moving."},
+    {"role": "clinician", "text": "And what about the evening pain you mentioned before?"},
+    {"role": "patient", "text": "The evening pain's gone completely since last time, no doubt about that."},
+    {"role": "clinician", "text": "Good. Lie on your back and I'll bend the hip up. You've lost a little turning inwards on the left compared to the right."},
+    {"role": "clinician", "text": "Carry on with the stretches twice a day, and try a warm shower first thing before you do them."},
+    {"role": "patient", "text": "Will do. Same time in a month?"},
+    {"role": "clinician", "text": "Yes, a month is fine. Have a good evening."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["morning", "stiffness", "has", "lasted", "about", "an", "hour"], "line": 1, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["evening", "pain's", "gone", "completely"], "line": 3, "material": true},
+    {"kind": "laterality", "tokens": ["turning", "inwards", "on", "the", "left"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["stretches", "twice", "a", "day"], "line": 5, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

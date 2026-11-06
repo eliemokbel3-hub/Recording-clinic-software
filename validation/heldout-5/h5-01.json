@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h5-01",
+  "appointment_type": "initial",
+  "axes": ["laterality", "negation", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Hello, come and sit down. What's brought you in today?"},
+    {"role": "patient", "text": "I'm coming in with pain on the right side of my lower back."},
+    {"role": "clinician", "text": "When did it start?"},
+    {"role": "patient", "text": "About three weeks ago, after I'd been digging the allotment all weekend."},
+    {"role": "clinician", "text": "Any numbness or tingling down the legs, or trouble going to the toilet?"},
+    {"role": "patient", "text": "No, none of that, no tingling at all and going to the toilet is fine."},
+    {"role": "clinician", "text": "Bend forward for me as far as is comfortable. Right, you're stopping about mid shin, and the muscles beside the spine on the right are guarding."},
+    {"role": "clinician", "text": "Keep walking every day, little and often, and avoid sitting for longer than half an hour at a stretch."},
+    {"role": "clinician", "text": "If you lose feeling in your saddle area or can't control your bladder, ring 111 or go to A and E straight away."},
+    {"role": "patient", "text": "Will do. Thanks very much."},
+    {"role": "clinician", "text": "Lovely, book in for a week's time at the desk. Take care now."},
+    {"role": "clinician", "text": "Right then, come on through. Hiya, I'm Dan, have a seat."},
+    {"role": "next_patient", "text": "Hiya. I've had this clicking in my jaw for about two months now."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["right", "side", "of", "my", "lower", "back"], "line": 1, "material": true},
+    {"kind": "negation", "tokens": ["no", "tingling", "at", "all"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["stopping", "about", "mid", "shin"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["avoid", "sitting", "for", "longer", "than", "half", "an", "hour"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["ring", "111", "or", "go", "to", "a", "and", "e", "straight", "away"], "line": 8, "material": true},
+    {"kind": "absent", "tokens": ["clicking", "in", "my", "jaw"], "line": 12, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

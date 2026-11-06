@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h5-22",
+  "appointment_type": "follow_up",
+  "axes": ["uncertain", "rate"],
+  "lines": [
+    {"role": "clinician", "text": "Welcome back. How's the shoulder since last time?"},
+    {"role": "patient", "text": "Since last time I can reach the top cupboard again, no bother."},
+    {"role": "patient", "text": "The night pain since last time is still waking me, though I couldn't tell you how many nights."},
+    {"role": "clinician", "text": "Lift up sideways. That's nearly full height now, just the last bit catches."},
+    {"role": "clinician", "text": "Lie on the other side at night with a pillow under the sore arm, and we'll call this the last session if it keeps going this way."},
+    {"role": "patient", "text": "Great, thanks for all your help."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["reach", "the", "top", "cupboard", "again"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["night", "pain", "since", "last", "time", "is", "still", "waking", "me"], "line": 2, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["nearly", "full", "height"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["call", "this", "the", "last", "session"], "line": 4, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}, "rate": -3}
+}

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h5-05",
+  "appointment_type": "post_operative",
+  "axes": ["numbers", "small_talk"],
+  "lines": [
+    {"role": "clinician", "text": "So it's three weeks since the knee replacement. How are you getting on?"},
+    {"role": "patient", "text": "I'm moving a bit better since last time and can manage the stairs one at a time now."},
+    {"role": "clinician", "text": "Let's measure the bend. You're at 95 degrees of bend and just 5 short of straight."},
+    {"role": "receptionist", "text": "Sorry to barge in, there's a delivery driver at the front asking for you, I'll tell him ten minutes."},
+    {"role": "clinician", "text": "Thanks, Maureen. Right, where were we."},
+    {"role": "clinician", "text": "For the pain you're going to take paracetamol 1 gram four times a day, and the codeine 30 milligrams only at night if you need it."},
+    {"role": "patient", "text": "Is it alright to drive yet?"},
+    {"role": "clinician", "text": "Not until you're six weeks out and can stamp on a brake hard, check with your insurer too."},
+    {"role": "clinician", "text": "See you next week."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["manage", "the", "stairs", "one", "at", "a", "time"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["95", "degrees", "of", "bend"], "line": 2, "material": true},
+    {"kind": "absent", "tokens": ["delivery", "driver"], "line": 3, "material": false},
+    {"kind": "dose", "tokens": ["paracetamol", "1", "gram", "four", "times", "a", "day"], "line": 5, "material": true},
+    {"kind": "dose", "tokens": ["codeine", "30", "milligrams", "only", "at", "night"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["check", "with", "your", "insurer"], "line": 7, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "receptionist": 1}}
+}

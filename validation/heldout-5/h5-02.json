@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h5-02",
+  "appointment_type": "follow_up",
+  "axes": ["laterality", "numbers", "uncertain", "contradictory"],
+  "lines": [
+    {"role": "clinician", "text": "Good to see you again. How's the knee been since last time?"},
+    {"role": "patient", "text": "Since last time it's given way on the stairs twice."},
+    {"role": "patient", "text": "Don't hold me to that number, mind."},
+    {"role": "clinician", "text": "Let me have a look. The left knee is a bit warmer than the other."},
+    {"role": "clinician", "text": "Sorry, the right knee, I'm reading it off the wrong side of the couch."},
+    {"role": "clinician", "text": "You're going to take naproxen 250 milligrams twice a day with food, for ten days."},
+    {"role": "patient", "text": "Okay. Is that alright with my blood pressure tablets?"},
+    {"role": "clinician", "text": "It should be fine for a short course, but I'd probably check with the pharmacist to be safe."},
+    {"role": "clinician", "text": "See you next week."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["given", "way", "on", "the", "stairs", "twice"], "line": 1, "material": true, "expect_uncertain": true},
+    {"kind": "laterality", "tokens": ["right", "knee"], "line": 4, "material": true},
+    {"kind": "dose", "tokens": ["naproxen", "250", "milligrams", "twice", "a", "day"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["check", "with", "the", "pharmacist"], "line": 7, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

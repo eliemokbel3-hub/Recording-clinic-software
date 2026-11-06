@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h5-19",
+  "appointment_type": "acute",
+  "axes": ["laterality", "uncertain"],
+  "lines": [
+    {"role": "clinician", "text": "So you twisted reaching into the back seat?"},
+    {"role": "patient", "text": "I'm coming in with a sharp catch under my left shoulder blade when I breathe in deep."},
+    {"role": "patient", "text": "Hard to point at your own back, mind, it could be a bit higher."},
+    {"role": "clinician", "text": "Let me have a look. Yes, there's a stiff, tender joint where the rib meets the spine on the left, about level with the bottom of the shoulder blade."},
+    {"role": "clinician", "text": "I'd like to do a quick manipulation there, you'll probably hear a pop. Are you happy for a crack?"},
+    {"role": "patient", "text": "Yes, go for it, I'm happy for a crack."},
+    {"role": "clinician", "text": "Done. Breathe in deep for me. Better? Keep turning side to side every hour while you're at work, and no lifting the grandkids till Monday."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["under", "my", "left", "shoulder", "blade"], "line": 1, "material": true, "expect_uncertain": true},
+    {"kind": "laterality", "tokens": ["where", "the", "rib", "meets", "the", "spine", "on", "the", "left"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["i'm", "happy", "for", "a", "crack"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["no", "lifting", "the", "grandkids", "till", "monday"], "line": 6, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h5-21",
+  "appointment_type": "post_operative",
+  "axes": ["laterality", "contradictory", "overlap"],
+  "lines": [
+    {"role": "clinician", "text": "Morning. Two weeks since the hip replacement, how are you doing?"},
+    {"role": "patient", "text": "Not bad. I'm coming in with the wound a bit red at the bottom end, mind."},
+    {"role": "clinician", "text": "Let me have a look. It's clean and dry, slightly pink at the lower end, no discharge, so that's healing as it should."},
+    {"role": "clinician", "text": "When did you last take the blood thinner injection?"},
+    {"role": "patient", "text": "Last night at eight."},
+    {"role": "patient", "text": "No, this morning at eight, my husband did it before breakfast."},
+    {"role": "clinician", "text": "Good. Keep doing those until the full 28 days are up."},
+    {"role": "clinician", "text": "Let's see you walk. Nice, you're using the frame well, try to step through rather than bringing the feet together."},
+    {"role": "patient", "text": "I've had some tingling and an ache in my left calf since yesterday, is that normal?"},
+    {"role": "clinician", "text": "Let me check. The calf's soft and not swollen, but I'm not happy leaving it, so I want you to see a GP today for a scan to rule out a clot."},
+    {"role": "clinician", "text": "If you get chest pain or feel short of breath, call 999 straight away."},
+    {"role": "patient", "text": "Blimey. Okay."},
+    {"role": "clinician", "text": "It's most likely nothing, but better safe."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["wound", "a", "bit", "red", "at", "the", "bottom", "end"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["this", "morning", "at", "eight"], "line": 5, "material": false},
+    {"kind": "present", "tokens": ["step", "through", "rather", "than", "bringing", "the", "feet", "together"], "line": 7, "material": true},
+    {"kind": "laterality", "tokens": ["tingling", "and", "an", "ache", "in", "my", "left", "calf"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["see", "a", "gp", "today"], "line": 9, "material": true},
+    {"kind": "present", "tokens": ["call", "999", "straight", "away"], "line": 10, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}, "overlap_seconds": 1, "overlap_lines": [4, 9]}
+}

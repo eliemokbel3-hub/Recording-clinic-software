@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h5-09",
+  "appointment_type": "discharge",
+  "axes": ["noise"],
+  "lines": [
+    {"role": "clinician", "text": "This is our last session, so let's check where you've got to since last time."},
+    {"role": "patient", "text": "Since last time I've done a 5k parkrun with no pain at all."},
+    {"role": "clinician", "text": "Single leg squats look strong, both sides are even now."},
+    {"role": "clinician", "text": "Keep doing the calf raises three times a week going forward, and if the Achilles flares up again, drop back to every other day and ring us."},
+    {"role": "patient", "text": "Brilliant. Thanks for everything."},
+    {"role": "clinician", "text": "You're welcome. All the best with the half marathon."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["done", "a", "5k", "parkrun", "with", "no", "pain"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["both", "sides", "are", "even", "now"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["drop", "back", "to", "every", "other", "day", "and", "ring", "us"], "line": 3, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}, "snr_db": 20}
+}

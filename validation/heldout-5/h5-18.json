@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h5-18",
+  "appointment_type": "follow_up",
+  "axes": ["numbers", "contradictory", "small_talk", "scribe_instruction", "noise"],
+  "lines": [
+    {"role": "clinician", "text": "How's the back since last time?"},
+    {"role": "patient", "text": "Since last time the massage has really helped, I'm sleeping through now."},
+    {"role": "clinician", "text": "Great. Lie face down and I'll carry on with the massage. Any plans for the weekend?"},
+    {"role": "patient", "text": "We're off to a caravan in Skegness, if the weather holds."},
+    {"role": "clinician", "text": "Lovely. Right, stand up and reach for your toes. Fingertips 15 centimetres from the floor."},
+    {"role": "clinician", "text": "Sorry, 10 centimetres, I misread the tape."},
+    {"role": "clinician", "text": "Scribe, leave the caravan chat out of the note."},
+    {"role": "clinician", "text": "Keep up the walking, add a hill on alternate days, and if the leg pain comes back below the knee, give us a ring before the next visit."},
+    {"role": "patient", "text": "Will do."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["massage", "has", "really", "helped"], "line": 1, "material": true},
+    {"kind": "absent", "tokens": ["caravan", "in", "skegness"], "line": 3, "material": false},
+    {"kind": "present", "tokens": ["10", "centimetres"], "line": 5, "material": true},
+    {"kind": "absent", "tokens": ["leave", "the", "caravan", "chat", "out"], "line": 6, "material": false},
+    {"kind": "present", "tokens": ["give", "us", "a", "ring", "before", "the", "next", "visit"], "line": 7, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}, "snr_db": 15}
+}

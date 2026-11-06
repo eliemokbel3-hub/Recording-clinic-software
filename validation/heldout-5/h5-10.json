@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h5-10",
+  "appointment_type": "acute",
+  "axes": ["laterality", "negation", "numbers", "uncertain", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "So what's happened?"},
+    {"role": "patient", "text": "I bent down to pick up the cat on Sunday and something went in my back."},
+    {"role": "clinician", "text": "Any numbness in the legs, or anything odd with going to the toilet?"},
+    {"role": "patient", "text": "I haven't had any numbness, and going to the toilet is normal."},
+    {"role": "patient", "text": "I'm getting a bit of tingling down the back of my left leg, or it might be the right, it swaps about."},
+    {"role": "clinician", "text": "It's probably the nerve being a bit irritated rather than anything serious, I'd guess, but I'll keep an eye on it."},
+    {"role": "clinician", "text": "You're going to take ibuprofen 400 milligrams three times a day after food, for five days."},
+    {"role": "clinician", "text": "Keep moving gently, short walks every couple of hours, bed rest will make it worse."},
+    {"role": "clinician", "text": "Right, off you go, see you next week."},
+    {"role": "clinician", "text": "Next! Hi, come in."},
+    {"role": "next_patient", "text": "Hi. I'm coming in with a sore heel, it's worst first thing."}
+  ],
+  "facts": [
+    {"kind": "negation", "tokens": ["haven't", "had", "any", "numbness"], "line": 3, "material": true},
+    {"kind": "laterality", "tokens": ["tingling", "down", "the", "back", "of", "my", "left", "leg"], "line": 4, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["nerve", "being", "a", "bit", "irritated"], "line": 5, "material": true},
+    {"kind": "dose", "tokens": ["ibuprofen", "400", "milligrams", "three", "times", "a", "day"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["short", "walks", "every", "couple", "of", "hours"], "line": 7, "material": true},
+    {"kind": "absent", "tokens": ["sore", "heel"], "line": 10, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

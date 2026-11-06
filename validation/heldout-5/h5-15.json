@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h5-15",
+  "appointment_type": "initial",
+  "axes": ["laterality", "numbers", "small_talk"],
+  "lines": [
+    {"role": "clinician", "text": "Hi there, take a seat. What's the problem?"},
+    {"role": "patient", "text": "I'm coming in with a sore Achilles on the right, it's been stiff for about a month."},
+    {"role": "clinician", "text": "Let me have a look. Can you pop up onto your tiptoes? Good."},
+    {"role": "patient", "text": "Sorry, that's my phone, it'll be my son."},
+    {"role": "patient", "text": "Hello? Yeah, still at the physio, ring you back in twenty minutes, bye."},
+    {"role": "clinician", "text": "No problem. So, single leg heel raises, you managed 12 on the right and 25 on the left."},
+    {"role": "clinician", "text": "There's a thickened, tender spot about two finger widths above the heel, so it's a tendon that's been overloaded."},
+    {"role": "clinician", "text": "Welcome to the world of tendon rehab, it's slow but it works."},
+    {"role": "clinician", "text": "Twice a day, stand on the edge of a step and slowly lower both heels down for a count of five, three sets of fifteen."},
+    {"role": "clinician", "text": "Use ibuprofen 5 percent gel three times a day on the tender area, and keep off the hill sprints for now."},
+    {"role": "patient", "text": "Great, thanks."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["sore", "achilles", "on", "the", "right"], "line": 1, "material": true},
+    {"kind": "absent", "tokens": ["still", "at", "the", "physio"], "line": 4, "material": false},
+    {"kind": "laterality", "tokens": ["12", "on", "the", "right"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["three", "sets", "of", "fifteen"], "line": 8, "material": true},
+    {"kind": "dose", "tokens": ["ibuprofen", "5", "percent", "gel", "three", "times", "a", "day"], "line": 9, "material": true},
+    {"kind": "present", "tokens": ["keep", "off", "the", "hill", "sprints"], "line": 9, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}
