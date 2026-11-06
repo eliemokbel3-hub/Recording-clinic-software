@@ -1285,8 +1285,9 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       own scripts and label tracks, were to be added to it under decision
       3.6 — retired before any was recorded.)
     - RUN. `scripts/run-validation.py <set-folder> --config <folder> --rule
-      <file>` (and, with a schema-2 rule since validation-run6 plan D17 or a
-      schema-3 rule since validation-run7 plan D4, `--set <name>`, a name the
+      <file>` (and, with a schema-2 rule since validation-run6 plan D17, a
+      schema-3 rule since validation-run7 plan D4 or a schema-4 rule since
+      validation-run8 plan D1, `--set <name>`, a name the
       rule holds) applies and asserts the offline
       environment, reads the rule
       file, the explicit config folder (never the app's own) and the models,
@@ -1314,7 +1315,9 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       to a file; under a schema-3 rule (rule v3, validation-run7 plan D4) it
       also prints the verdict without the R1 exemption and rule v1's, and
       names each line the exemption excuses by id, line number and segment
-      index only. It reads no voice profile, and writes no audit row, no
+      index only; under a schema-4 rule (rule v5, validation-run8 plan D1) it
+      also prints the verdict with marked R1 counted and names each marked R1
+      fact by id and fact index only. It reads no voice profile, and writes no audit row, no
       Past-sessions entry and nothing into either data folder. A run stopped
       with Ctrl+C prints no report and no traceback — one fixed line naming
       the temporary folder and the `scribe-speaker-eval-*` prefix for a

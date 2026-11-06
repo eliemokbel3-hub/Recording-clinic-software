@@ -2094,6 +2094,37 @@ class TestHarnessDocument:
             for name, row in sets.items()
         }
 
+    def test_the_rule_v5_ceiling_table_is_the_files(self) -> None:
+        """Validation-run8 plan D8: the "Rule v5" section's ceiling table
+        states ``rule-v5.json``'s six rows in its order — role, R1's ceiling,
+        whether marked R1 is counted or reported, R2's and R3's ceilings ("—"
+        for none) and whether uncertainty is required."""
+        text = (REPO / "docs" / "testing" / "validation-harness.md").read_text(encoding="utf-8")
+        section = text.split("\n## Rule v5 ", 1)[1].split("\n## ", 1)[0]
+        rows = [
+            [cell.strip() for cell in line.strip().strip("|").split("|")]
+            for line in section.splitlines()
+            if line.startswith("| `")
+        ]
+        rule = _repository_rule_v5()
+        sets = rule.sets or {}
+
+        def ceiling(value: int | None) -> str:
+            return "—" if value is None else str(value)
+
+        assert [row[0].split("`")[1] for row in rows] == list(sets)
+        assert [row[1:] for row in rows] == [
+            [
+                "gate" if row.gate else "reported",
+                ceiling(row.max_r1_facts),
+                "reported" if row.r1_marked_reported else "counted",
+                ceiling(row.max_r2_facts),
+                ceiling(row.max_r3_encounters),
+                "required" if rule.uncertainty_required(row) else "reported, not required",
+            ]
+            for row in sets.values()
+        ]
+
 
 class TestReport:
     def test_errors_and_set_level_errors_fail_the_run(self) -> None:

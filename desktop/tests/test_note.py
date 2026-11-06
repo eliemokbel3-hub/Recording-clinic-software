@@ -3347,7 +3347,7 @@ _PREDICTED_CORRECTION_DIVERGENCES_BY_SET: dict[
         "h4-12": ((), (2,)),  # a marker opening new information is carried (D4's residue)
     },
     # Larger-model Task 0.1 (d): blind until run 8 (C12); its entries are
-    # written in its Task P.4.
+    # written in validation-run8 Task P.3.
     "heldout-5": {},
 }
 _PREDICTED_CORRECTION_DIVERGENCES =by_case(_PREDICTED_CORRECTION_DIVERGENCES_BY_SET)

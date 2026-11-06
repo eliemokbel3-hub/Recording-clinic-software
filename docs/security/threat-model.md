@@ -4051,14 +4051,22 @@ error type (round 26). A refusal names the rule file only as "the rule file"
 (peer round 27); folder paths given on the command line are echoed as typed.
 The rule file (64 KiB), the label track (4 MiB)
 and the script (256 KiB) are read capped. A rule of sets (schema 2 since
-validation-run6 plan D17; schema 3, rule v3, since validation-run7 plan D4)
+validation-run6 plan D17; schema 3, rule v3, since validation-run7 plan D4;
+schema 4, rule v5, since validation-run8 plan D1)
 needs `--set <name>`, one of the sets the rule holds: a missing or unknown
 name is refused before any model loads, naming the rule's sets and never
 echoing what was typed. A schema-3 report prints three verdicts on the same
 outcomes — rule v3, rule v3 without its R1 exemption, and rule v1 — so the
 exemption's one loosening is visible in the printout, and it names each line
 the exemption excuses only as `<id>/line <n> (segment <i>)`: ids and integers,
-never the line. The SET
+never the line. A schema-4 report prints four — rule v5, rule v5 with marked
+R1 counted, rule v5 without its R1 exemption, and rule v1 — and one more
+residue line naming the marked R1 facts as `<id>/f<n>`, ids and integers
+only. Its one new loosening is a named residue: on the blind row a misheard
+material fact under a review mark no longer fails the R1 ceiling at any
+count, and its control is the review mark and the clinician's reading of
+every marked number, unit and abbreviation, the worst case a wrong dose under
+`[check: number]`, which every quoted number carries. The SET
 BUILDER (`build-validation-set.py`) speaks the repository's invented scripts
 with the installed Windows (SAPI) voices into a temporary folder
 (`scribe-validation-set-*`, removed after each turn), resamples, mixes and

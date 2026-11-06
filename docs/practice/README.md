@@ -17,7 +17,10 @@ version 0.3.3 (a possible next patient, removing lines, self-corrections and the
 mark), on 2026-10-24 for version 0.3.4 (a whole line the practitioner said that the
 note leaves out, wider doubt marks and a shorter next-patient mark) and on 2026-10-26 and
 2026-10-27 for version 0.3.5 (more goodbyes and greetings recognised, and a line split
-into pieces counted once) — each in the clinician review guide only;
+into pieces counted once) and in 2026-11, after validation run 7 and the larger-model
+measurement, with no new version (misheard numbers, units and abbreviations, and what
+the review is relied on for once shadow mode is off) — each in the clinician review
+guide only;
 where a document and the app disagree, the app's behaviour is what happens, and the
 document must be corrected.
 
@@ -77,8 +80,8 @@ below.
 ## What the drafts rely on
 
 The research behind these drafts was done on 2026-10-01. Nothing here goes beyond it
-except the practitioner's own finding marked below; where it runs out, the documents say
-so.
+except the practitioner's own finding and the program's own testing, marked below; where
+it runs out, the documents say so.
 
 - **The practitioner's own finding (pilot comparison appointments, 2026-10; not external
   research).** Over background sound — music is the likeliest cause — the speech software
@@ -87,6 +90,14 @@ so.
   clinician review guide asks for music off or as low as practical while recording. The
   marks are a review aid: a real line can be marked and an invented one can go unmarked,
   so reading every line against the transcript stays the control.
+- **The program's own testing (2026-11; not external research).** In 139 invented
+  consultations read aloud by computer voices, the speech software wrote 7 facts wrong —
+  a misheard number, unit or abbreviation said letter by letter among them. For 5 the
+  line carried a review mark; 2 carried none. A larger speech model was measured and did
+  no better. Real voices and accents and everyday background sound were not measured, so
+  the true rate may be higher. The clinician review guide (awaiting the practitioner's
+  approval) asks the practitioner to read every number, unit and abbreviation against
+  what they remember, marked or not: the marks and that reading stay the control.
 
 - **Ahpra, "Meeting your professional obligations when using AI in healthcare".** It sets
   no retention period for transcripts. It asks practitioners to tell patients about the

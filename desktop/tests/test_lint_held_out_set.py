@@ -456,7 +456,8 @@ class TestBlindRunGuard:
         # Validation-run7 plan Task P.4 (2026-11-04): heldout-4's cases were
         # written after run 7, as heldout-3's were after run 6 (validation-run6
         # Task P.4). Larger-model Task 0.1 (d) (D6): heldout-5 is blind until
-        # its Task P.4, after run 8; any other blind set is a pin change.
+        # validation-run8 Task P.3, after run 8; any other blind set is a pin
+        # change.
         assert [s.name for s in HELD_OUT_SETS if not s.cases_written] == ["heldout-5"]
 
 

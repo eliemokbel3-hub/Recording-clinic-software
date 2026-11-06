@@ -22,7 +22,8 @@ Validation-run6 plan Task 0.11: the held-out lints run per set over the
 fixture's table (``HELD_OUT_SETS``: ``validation/heldout``,
 ``validation/heldout-2``, since Task 0.17 ``validation/heldout-3``, since
 validation-run7 Task 0.5 ``validation/heldout-4`` and, since larger-model Task
-0.1 (d), ``validation/heldout-5``); a set with no scripts yet
+0.1 (d), ``validation/heldout-5``, its scripts since validation-run8 Task 0.5);
+a set with no scripts yet
 — its folder absent or empty — passes them vacuously, and a set whose cases
 are not yet written gets the script lints only.
 
@@ -653,7 +654,8 @@ class TestHeldOutScripts:
         with the same brief's bounds; since its Task P.4 (2026-11-04)
         ``heldout-4``'s cases are written, one per script. Larger-model Task
         0.1 (d) (D6): ``heldout-5`` is the third, with the same bounds, and
-        the one blind set — no case until its Task P.4. The R3 table reads
+        the one blind set — no case until validation-run8 Task P.3. The R3
+        table reads
         the run-of-record set and all five held-out sets."""
         role_sets = [held_out for held_out in HELD_OUT_SETS if held_out.tails_by_role]
         assert [held_out.name for held_out in role_sets] == ["heldout-3", "heldout-4", "heldout-5"]
@@ -731,7 +733,7 @@ class TestHeldOutScripts:
         are written — Task 0.10 authors a set before its cases); Task 0.17
         (D16): ``heldout-3``'s 20–25 scripts and 3–6 facts per script (and
         ``heldout-4``'s, validation-run7 Task 0.5, and ``heldout-5``'s,
-        larger-model Task 0.1 (d)), read
+        larger-model Task 0.1 (d), authored in validation-run8 Task 0.5), read
         from the scripts' metadata only. The absent and empty states pass."""
         problems = _codes(held_out, {"facts-out-of-bounds"}) + [
             entry for entry in _set_problems(held_out) if _code(entry) == "size-out-of-bounds"

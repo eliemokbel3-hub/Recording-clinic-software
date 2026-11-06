@@ -112,13 +112,18 @@ result is recorded there as a dated RUN line.
    with `heldout`, `heldout-2` and `heldout-3` run and reported in full; its
    report prints rule v3's verdict beside the verdict without its R1
    exemption and rule v1's (validation-run7 plan D4, D5;
-   `docs/testing/validation-harness.md`). Validation run 8 (0.3.6, planned in
-   the larger-model plan) is to read it under rule v4
-   (`validation\rules\rule-v4.json`, each of six sets named with `--set`) on
-   the 50 scripts and the blind `heldout-5`, with
-   `heldout`, `heldout-2`, `heldout-3` and `heldout-4` run and reported in
-   full; rule v4 keeps rule v3's predicates and ceilings and changes only
-   which sets are read for the gate (larger-model plan D5, D6).
+   `docs/testing/validation-harness.md`). Validation run 8 (the
+   validation-run8 plan; no new version) reads it under rule v5
+   (`validation\rules\rule-v5.json`, each of six sets named with `--set`) on
+   the 50 scripts and the blind `heldout-5`, with `heldout`, `heldout-2`,
+   `heldout-3` and `heldout-4` run and reported in full. Rule v5 keeps rule
+   v4's predicates, ceilings and gate sets (rule v4: rule v3 with `heldout-4`
+   reported and `heldout-5` the gate, the larger-model plan's D5); on
+   `heldout-5` it counts only the silent R1 facts under R1's ceiling and
+   reports each misheard material fact under a review mark beside it, with no
+   ceiling. Its report prints four verdicts: rule v5's, rule v5's with those
+   marked facts counted, rule v5's without its R1 exemption, and rule v1's
+   (validation-run8 plan D1, D3).
    *Amended 2026-10-09, after run 1 failed:* the shadow consultations of
    step 4 may start while run 1's findings are controlled by shadow mode (a
    shadow note never reaches Cliniko); step 5 and the exit gate still wait for

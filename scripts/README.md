@@ -91,7 +91,11 @@ set up and build it, and make releases; the installed app needs none of them.
   (one the rule names: `scripts`, `heldout`, `heldout-2`, `heldout-3`, under
   rule v3 `heldout-4`, and under rule v4 — `validation/rules/rule-v4.json`,
   rule v3's predicates with a new set schedule, the larger-model plan's D5 —
-  `heldout-4` and `heldout-5`). `--model <name>` (the larger-model plan's D8;
+  `heldout-4` and `heldout-5`; rule v5 — `validation/rules/rule-v5.json`, the
+  rule of validation run 8, the validation-run8 plan's D1 — keeps rule v4's six
+  sets and ceilings, counts only the silent R1 facts under R1's ceiling on
+  `heldout-5` with the misheard ones under a review mark reported beside it,
+  and prints four verdicts). `--model <name>` (the larger-model plan's D8;
   also on `measure-transcription-guard.py`) measures with that installed
   Whisper model instead of the shipped one: the report names it, it is never
   a fallback, and a name not shaped as a model folder name is refused without
@@ -144,7 +148,8 @@ set up and build it, and make releases; the installed app needs none of them.
   [--verbose]` (validation-run6 plan Task 0.17, C12) — runs the desktop test
   suite while a blind held-out set is in the tree (the blind set is
   `validation/heldout-5` — in the fixture's table since the larger-model
-  plan's Task 0.1 (d), its scripts from that plan's Task 0.11;
+  plan's Task 0.1 (d), its scripts authored in the validation-run8 plan's
+  Task 0.5 and blind until that plan's Task P.3;
   `validation/heldout-4` until its cases were written after run 7, and
   `validation/heldout-3` until its cases were written after run 6). The set
   folder must exist (a missing one is refused,
@@ -158,8 +163,9 @@ set up and build it, and make releases; the installed app needs none of them.
   grammar, the counts, `FAIL <code>` for a run that cannot be trusted, and
   the exit code. While any script of a set whose cases are not written (an
   `h5-` script) is in the tree, run pytest only this way (the conftest
-  refuses a bare run); with `validation/heldout-5` absent or empty a bare
-  run goes ahead.
+  refuses a bare run); with no such script in the tree (as before
+  `validation/heldout-5` was authored, and again once its cases are written)
+  a bare run goes ahead.
 - `probe-cliniko.py` (Cliniko workflow safeguards plan Task 1.3, run at Task
   P.1) — read-only feasibility check of one clinic through the app's own Cliniko
   client (`scribe_desktop.cliniko_client`: GET only, host pinned from the key's

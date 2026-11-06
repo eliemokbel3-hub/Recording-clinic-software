@@ -2756,7 +2756,7 @@ _PREDICTED_UNSURE_DIVERGENCES_BY_SET: dict[
         "h4-22": ((4,), ()),  # a bare-modal hedge, outside the frozen list
     },
     # Larger-model Task 0.1 (d): blind until run 8 (C12); its entries are
-    # written in its Task P.4.
+    # written in validation-run8 Task P.3.
     "heldout-5": {},
 }
 _PREDICTED_UNSURE_DIVERGENCES = by_case(_PREDICTED_UNSURE_DIVERGENCES_BY_SET)

@@ -34,8 +34,8 @@ and its own detail stays in Cliniko and in your off-repository pilot log.
 - **Encounter** — a synthetic id (`syn-NN`; or, from the five held-out sets,
   `hld-NN` (`heldout`), `h2-NN` (`heldout-2`), `h3-NN` (`heldout-3`), `h4-NN`
   (`heldout-4`, the blind set of validation run 7 — its rows were entered after
-  that run) or `h5-NN` (`heldout-5`, the blind set planned for validation
-  run 8 — its rows are entered only after that run)), or `—`.
+  that run) or `h5-NN` (`heldout-5`, the blind set of validation run 8 — its
+  rows are entered after that run)), or `—`.
 - **Severity** — `high`, `medium` or `low` (below).
 - **Category** — one of:
   - the rubric's R4 kinds: `wrong-side`, `wrong-dose`, `negation-flipped`,
@@ -74,11 +74,14 @@ and its own detail stays in Cliniko and in your off-repository pilot log.
 - **High** — any R4 kind that survived review (or would have, in a shadow note);
   any `cross-patient`, `privacy` or `custody` finding; each encounter that fails
   the validation run under the pass rule ratified for that run (decision 3.5,
-  rule v1; rule v2 from run 6 and rule v3 from run 7 — each in
-  `docs/testing/validation-harness.md`); and anything that put, or could have
-  put, wrong content into a Cliniko draft. An unsupported clinical line rule
-  v3's R1 exemption excuses is still entered, as a `controlled` row, whatever
-  the run's verdict (validation-run7 plan D4).
+  rule v1; rule v2 from run 6, rule v3 from run 7 and rule v5 from run 8 —
+  each in `docs/testing/validation-harness.md`); and anything that put, or
+  could have put, wrong content into a Cliniko draft. An unsupported clinical
+  line rule v3's R1 exemption excuses is still entered, as a `controlled` row,
+  whatever the run's verdict (validation-run7 plan D4), and so is every
+  misheard material fact under a review mark (marked R1) on any set, at any
+  count — `wrong-dose` for a dose and `quality` otherwise, never `resolved` by
+  a run (validation-run8 plan D1).
 - **Medium** — a quality or workflow problem that cost real review time or could
   mislead a hurried review, with no wrong content surviving it.
 - **Low** — a nuisance, a wording problem or a cosmetic fault.

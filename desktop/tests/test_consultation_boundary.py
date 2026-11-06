@@ -160,7 +160,7 @@ _PREDICTED_BOUNDARY_DIVERGENCES_BY_SET: Final[
         "h4-20": (8, None),  # neither is listed
     },
     # Larger-model Task 0.1 (d): blind until run 8 (C12); its entries are
-    # written in its Task P.4.
+    # written in validation-run8 Task P.3.
     "heldout-5": {},
 }
 _PREDICTED_BOUNDARY_DIVERGENCES: Final = by_case(_PREDICTED_BOUNDARY_DIVERGENCES_BY_SET)

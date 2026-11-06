@@ -14,7 +14,9 @@ version 0.3.3, approved by the practitioner on 2026-10-22; the left-out-line, wi
 shorter next-patient-mark lines added 2026-10-24 for version 0.3.4, approved by the
 practitioner on 2026-11-04; the longer goodbye-and-greeting list lines added 2026-10-26 and
 the split-line line added 2026-10-27 for version 0.3.5, approved by the practitioner on
-2026-11-04). For the
+2026-11-04; the misheard number, unit and abbreviation lines and the shadow-mode-off line
+added after validation run 7 and the larger-model measurement, 2026-11, with no new
+version, awaiting the practitioner's approval). For the
 practitioner, before saving a note and before finalising it in Cliniko.
 
 **Why this matters.** Ahpra's guidance on AI in healthcare ("Meeting your professional
@@ -46,6 +48,17 @@ note.
 
 - Words the speech software was unsure of — and numbers and names — are marked like
   `[word?]`. Check every mark that matters clinically against what you remember.
+- **The speech software can mishear a number, a unit (milligrams, weeks) or an
+  abbreviation said letter by letter, and write a different one.** In the program's own
+  testing (139 invented consultations read aloud by computer voices, a few with a steady
+  hiss mixed in) 7 facts came out wrong this way: for 5 the line carried a mark —
+  `[word?]` on a word, or the line marked `[check: number]`, `[check: unsure]` or
+  `[check: possibly not speech]` — and 2 carried no mark at all. Real voices and accents
+  and everyday background sound were not measured, so the true rate may be higher. A
+  larger speech model was measured and did no better, so these marks and your reading are
+  the control. A mark does not point at the wrong word: `[check: number]` is on every
+  quoted number, and a `[word?]` may be on another word of the same line. Read every
+  number, unit and abbreviation against what you remember, marked or not.
 - A line that starts `[possibly not speech]` holds a short burst of words the app
   suspects may be music or noise, not speech — for example a few words packed in faster
   than ordinary talk that the software was also unsure of.
@@ -100,7 +113,10 @@ where each line came from: the transcript, something you typed, or your own pre-
    `[check: possibly not speech]` — after the line in the Clean clinical style, inside its
    label in Verbatim, and at the front of its row when you edit the note (a prose style
    says how many of a section's lines are marked). Check each one against the transcript:
-   remove anything that was not said, keep the rest. Each kind has its own review warning
+   remove anything that was not said, keep the rest. A misheard number, unit or
+   abbreviation is the known kind of error (Reading the transcript, above): check each
+   marked line against the transcript AND against what you remember, because the
+   transcript can be wrong too. Each kind has its own review warning
    ("A quoted line contains a number", "A quoted line may be music or noise, not
    speech") that **"Acknowledge all review warnings" does not clear** — press its own
    Acknowledge. Most notes quote a number, so most notes need that click before you can
@@ -197,6 +213,9 @@ where each line came from: the transcript, something you typed, or your own pre-
   shown, the note's text cannot be selected (a line you open to edit can be changed, but
   not copied or cut), and saving it teaches the app nothing. Review
   and score it as the pilot asks, then write your own note in Cliniko the usual way.
+  Once shadow mode is turned off (after a validation run passes), Write and Copy
+  work, and your review is the only check between the app's draft and your Cliniko draft
+  note: the checks above are what the testing relied on.
 
 ## If something looks wrong
 
