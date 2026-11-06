@@ -22,6 +22,7 @@ from __future__ import annotations
 import ast
 import dataclasses
 import inspect
+import json
 import textwrap
 import typing
 from collections.abc import Sequence
@@ -3068,9 +3069,11 @@ class TestRuleV2:
         assert (rule.max_material_wrong, rule.max_silent_omissions) == (0, 0)
         assert rule.require_uncertainty_surfaced is True
         assert rule.max_word_error_rate is None
-        # Unchanged by rule v3 (validation-run7 C2): still schema 2, no
-        # exemption field; the newest schema is rule v3's (``TestRuleV3``).
+        # Unchanged by rule v3 (validation-run7 C2) and rule v5
+        # (validation-run8 C2): still schema 2, no exemption field and no
+        # ``r1_marked_reported``; the newest schema is rule v5's (``TestRuleV5``).
         assert (rule.schema_version, rule.unsupported_line_r1_exemption) == (2, None)
+        assert all(row.r1_marked_reported is None for row in (rule.sets or {}).values())
 
     @pytest.mark.parametrize(
         ("payload", "message"),
@@ -3118,18 +3121,85 @@ class TestRuleV2:
                                                      "max_r4_facts": 0}}},
                 "Extra inputs are not permitted",
             ),
-            ({"schema_version": 4}, "schema_version"),
+            ({"schema_version": 5}, "schema_version"),
+            ({"schema_version": 0}, "schema_version"),
             # Validation-run7 D4: the exemption is required at schema 3 and
-            # refused at schemas 1 and 2.
+            # later (validation-run8 D1: schema 4 too) and refused at schemas
+            # 1 and 2.
             (
                 {"schema_version": 1, "unsupported_line_r1_exemption": False},
-                "only a schema-3 rule takes unsupported_line_r1_exemption",
+                "only a schema-3 or later rule takes unsupported_line_r1_exemption",
             ),
             (
                 {"schema_version": 2, "unsupported_line_r1_exemption": True,
                  "sets": {"a": {"gate": True, "max_r1_facts": 0, "max_r2_facts": 0,
                                 "max_r3_encounters": 0}}},
-                "only a schema-3 rule takes unsupported_line_r1_exemption",
+                "only a schema-3 or later rule takes unsupported_line_r1_exemption",
+            ),
+            (
+                {"schema_version": 4, "sets": {"a": {"gate": True, "max_r1_facts": 0,
+                                                     "max_r2_facts": 0, "max_r3_encounters": 0,
+                                                     "r1_marked_reported": False}}},
+                "a schema-4 rule needs unsupported_line_r1_exemption",
+            ),
+            (
+                {"schema_version": 4, "unsupported_line_r1_exemption": None,
+                 "sets": {"a": {"gate": True, "max_r1_facts": 0, "max_r2_facts": 0,
+                                "max_r3_encounters": 0, "r1_marked_reported": False}}},
+                "a schema-4 rule needs unsupported_line_r1_exemption",
+            ),
+            (
+                {"schema_version": 4, "unsupported_line_r1_exemption": True},
+                "a schema-4 rule names at least one set",
+            ),
+            # Validation-run8 D1: ``r1_marked_reported`` is required on every
+            # row at schema 4 and refused on a row below it (a schema-1 rule
+            # holds no row at all).
+            (
+                {"schema_version": 1, "sets": {"a": {"gate": True, "max_r1_facts": 0,
+                                                     "max_r2_facts": 0, "max_r3_encounters": 0,
+                                                     "r1_marked_reported": True}}},
+                "a schema-1 rule holds no set ceilings",
+            ),
+            (
+                {"schema_version": 2, "sets": {"a": {"gate": True, "max_r1_facts": 0,
+                                                     "max_r2_facts": 0, "max_r3_encounters": 0,
+                                                     "r1_marked_reported": False}}},
+                "only a schema-4 or later rule takes r1_marked_reported",
+            ),
+            (
+                {"schema_version": 3, "unsupported_line_r1_exemption": True,
+                 "sets": {"a": {"gate": True, "max_r1_facts": 0, "max_r2_facts": 0,
+                                "max_r3_encounters": 0, "r1_marked_reported": True}}},
+                "only a schema-4 or later rule takes r1_marked_reported",
+            ),
+            (
+                {"schema_version": 4, "unsupported_line_r1_exemption": True,
+                 "sets": {"a": {"gate": True, "max_r1_facts": 0, "max_r2_facts": 0,
+                                "max_r3_encounters": 0}}},
+                "a schema-4 rule needs r1_marked_reported on every set",
+            ),
+            (
+                {"schema_version": 4, "unsupported_line_r1_exemption": True,
+                 "sets": {"a": {"gate": True, "max_r1_facts": 0, "max_r2_facts": 0,
+                                "max_r3_encounters": 0, "r1_marked_reported": None}}},
+                "a schema-4 rule needs r1_marked_reported on every set",
+            ),
+            (
+                {"schema_version": 4, "unsupported_line_r1_exemption": True,
+                 "sets": {
+                     "a": {"gate": True, "max_r1_facts": 0, "max_r2_facts": 0,
+                           "max_r3_encounters": 0, "r1_marked_reported": True},
+                     "b": {"gate": False, "max_r1_facts": 0, "max_r2_facts": 0,
+                           "max_r3_encounters": 0},
+                 }},
+                "a schema-4 rule needs r1_marked_reported on every set",
+            ),
+            (
+                {"schema_version": 4, "unsupported_line_r1_exemption": True,
+                 "sets": {"a": {"gate": True, "max_r1_facts": 0, "max_r2_facts": 0,
+                                "max_r3_encounters": 0, "r1_marked_reported": "sometimes"}}},
+                "r1_marked_reported",
             ),
             (
                 {"schema_version": 3, "sets": {"a": {"gate": True, "max_r1_facts": 0,
@@ -3184,9 +3254,72 @@ class TestRuleV2:
             assert rule.exempts_r1_lines is False
         else:
             with pytest.raises(
-                ValueError, match="only a schema-3 rule takes unsupported_line_r1_exemption"
+                ValueError,
+                match="only a schema-3 or later rule takes unsupported_line_r1_exemption",
             ):
                 PassRule.model_validate(payload)
+
+    @pytest.mark.parametrize("value", [None, True, False])
+    @pytest.mark.parametrize("schema", [2, 3])
+    def test_below_schema_4_only_a_non_null_marked_field_is_refused(
+        self, schema: int, value: bool | None
+    ) -> None:
+        """Validation-run8 D1, the exemption's pattern: below schema 4 a
+        row's ``r1_marked_reported`` is refused only when it holds a value —
+        an explicit ``null`` is the default and is accepted; ``true`` and
+        ``false`` are refused."""
+        payload: dict[str, Any] = {
+            "schema_version": schema,
+            "rule_name": "test-rule",
+            "sets": {
+                "a": {
+                    "gate": True,
+                    "max_r1_facts": 0,
+                    "max_r2_facts": 0,
+                    "max_r3_encounters": 0,
+                    "r1_marked_reported": value,
+                }
+            },
+        }
+        if schema == 3:
+            payload["unsupported_line_r1_exemption"] = True
+        if value is None:
+            rule = PassRule.model_validate(payload)
+            assert (rule.sets or {})["a"].r1_marked_reported is None
+        else:
+            with pytest.raises(
+                ValueError, match="only a schema-4 or later rule takes r1_marked_reported"
+            ):
+                PassRule.model_validate(payload)
+
+    @pytest.mark.parametrize("exemption", [True, False])
+    @pytest.mark.parametrize("marked", [True, False])
+    def test_schema_4_takes_the_exemption_and_the_marked_field_either_way(
+        self, exemption: bool, marked: bool
+    ) -> None:
+        """Validation-run8 D1: a schema-4 rule takes the R1 exemption true or
+        false (``>= 3``, not schema 3 alone) and a row's
+        ``r1_marked_reported`` true or false, each held as given."""
+        rule = PassRule.model_validate(
+            {
+                "schema_version": 4,
+                "rule_name": "test-rule",
+                "unsupported_line_r1_exemption": exemption,
+                "sets": {
+                    "a": {
+                        "gate": True,
+                        "max_r1_facts": 0,
+                        "max_r2_facts": 0,
+                        "max_r3_encounters": 0,
+                        "r1_marked_reported": marked,
+                    }
+                },
+            }
+        )
+        assert rule.schema_version == 4
+        assert rule.unsupported_line_r1_exemption is exemption
+        assert rule.exempts_r1_lines is exemption
+        assert (rule.sets or {})["a"].r1_marked_reported is marked
 
     def test_the_rule_uncertainty_field_is_the_default_a_set_overrides(self) -> None:
         """D17: a set row's ``require_uncertainty_surfaced`` overrides the
@@ -3329,6 +3462,19 @@ _RULE_V3 = PassRule.model_validate(
         "unsupported_line_r1_exemption": True,
     }
 )
+# ``_RULE_V3`` under schema 4 (validation-run8 D1): the ``gate`` row reports
+# marked R1, the ``reported`` row counts it.
+_RULE_V5 = PassRule.model_validate(
+    {
+        **_RULE_V3.model_dump(exclude={"sets"}),
+        "schema_version": 4,
+        "rule_name": "rule-v5-test",
+        "sets": {
+            name: {**row.model_dump(), "r1_marked_reported": name == "gate"}
+            for name, row in (_RULE_V3.sets or {}).items()
+        },
+    }
+)
 
 
 _SILENT = _residue_fact(verdict="omitted")  # material, unwarned, no class
@@ -3445,7 +3591,10 @@ class TestRuleV3:
             "heldout-3",
         }
         assert rule.exempts_r1_lines is True
-        assert validation.RULE_SCHEMA_VERSION == 3
+        # Unchanged by rule v5 (validation-run8 C2): still schema 3; the
+        # newest schema is rule v5's (``TestRuleV5``).
+        assert rule.schema_version == 3
+        assert all(row.r1_marked_reported is None for row in sets.values())
 
     def test_rule_v3s_seen_rows_are_rule_v2s_but_for_heldout_3s_gate(self) -> None:
         """D4 (peer rounds 1-2, PR-MED-002 and PR-MED-007): every field rule
@@ -3638,8 +3787,8 @@ class TestRuleV4:
 
     def test_every_repository_rules_label(self) -> None:
         """The label reads ``rule-vN`` from the name, else the schema, so
-        every existing rule keeps its label and only rule v4 differs from
-        its schema."""
+        every existing rule keeps its label and only rule v4 (schema 3) and
+        rule v5 (schema 4) differ from their schemas."""
         labels = {
             name: validation.load_pass_rule(_RULES / name).label
             for name in (
@@ -3647,6 +3796,7 @@ class TestRuleV4:
                 "rule-v2.json",
                 "rule-v3.json",
                 "rule-v4.json",
+                "rule-v5.json",
             )
         }
         assert labels == {
@@ -3654,6 +3804,7 @@ class TestRuleV4:
             "rule-v2.json": "v2",
             "rule-v3.json": "v3",
             "rule-v4.json": "v4",
+            "rule-v5.json": "v5",
         }
 
     @pytest.mark.parametrize(
@@ -3676,18 +3827,162 @@ class TestRuleV4:
             ("rule-v2-test", 3, "v3"),
             ("rule-v0", 1, "v1"),
             ("rule-v1", 1, "v1"),
+            # Validation-run8 D1: schema 4.
+            ("rule-v5", 4, "v5"),
+            ("rule-v6-test", 4, "v6"),
+            ("rule-v4", 4, "v4"),
+            ("rule-v3", 4, "v4"),
+            ("relaxed", 4, "v4"),
         ],
     )
     def test_the_label_derivation(self, rule_name: str, schema_version: int, label: str) -> None:
         payload: dict[str, object] = {"schema_version": schema_version, "rule_name": rule_name}
         if schema_version >= 2:
-            payload["sets"] = {
-                "gate": {"gate": True, "max_r1_facts": 0, "max_r3_encounters": 0,
-                         "require_uncertainty_surfaced": False}
-            }
-        if schema_version == 3:
+            row: dict[str, object] = {"gate": True, "max_r1_facts": 0, "max_r3_encounters": 0,
+                                      "require_uncertainty_surfaced": False}
+            if schema_version >= 4:
+                row["r1_marked_reported"] = False
+            payload["sets"] = {"gate": row}
+        if schema_version >= 3:
             payload["unsupported_line_r1_exemption"] = True
         assert PassRule.model_validate(payload).label == label
+
+
+class TestRuleV5:
+    """Validation-run8 plan D1 (C2, C16, C18): ``rule-v5.json`` is rule v4
+    under schema 4 — every predicate, ceiling and the set schedule rule
+    v4's — with ``r1_marked_reported`` on every row, true on the blind
+    ``heldout-5`` only."""
+
+    def test_the_repository_rule_v5_file(self) -> None:
+        rule = validation.load_pass_rule(_RULES / "rule-v5.json")
+        assert rule == PassRule.model_validate(
+            {
+                "schema_version": 4,
+                "rule_name": "rule-v5",
+                "max_material_wrong": 0,
+                "max_silent_omissions": 0,
+                "require_uncertainty_surfaced": True,
+                "max_word_error_rate": None,
+                "unsupported_line_r1_exemption": True,
+                "sets": {
+                    "scripts": {
+                        "gate": True,
+                        "max_r1_facts": 2,
+                        "max_r2_facts": 2,
+                        "max_r3_encounters": 2,
+                        "r1_marked_reported": False,
+                    },
+                    "heldout": {
+                        "gate": False,
+                        "max_r1_facts": 1,
+                        "max_r2_facts": 1,
+                        "max_r3_encounters": 1,
+                        "r1_marked_reported": False,
+                    },
+                    "heldout-2": {
+                        "gate": False,
+                        "max_r1_facts": 1,
+                        "max_r2_facts": 1,
+                        "max_r3_encounters": 1,
+                        "r1_marked_reported": False,
+                    },
+                    "heldout-3": {
+                        "gate": False,
+                        "max_r1_facts": 1,
+                        "max_r3_encounters": 1,
+                        "require_uncertainty_surfaced": False,
+                        "r1_marked_reported": False,
+                    },
+                    "heldout-4": {
+                        "gate": False,
+                        "max_r1_facts": 1,
+                        "max_r3_encounters": 1,
+                        "require_uncertainty_surfaced": False,
+                        "r1_marked_reported": False,
+                    },
+                    "heldout-5": {
+                        "gate": True,
+                        "max_r1_facts": 1,
+                        "max_r3_encounters": 1,
+                        "require_uncertainty_surfaced": False,
+                        "r1_marked_reported": True,
+                    },
+                },
+            }
+        )
+        sets = rule.sets or {}
+        assert list(sets) == [
+            "scripts",
+            "heldout",
+            "heldout-2",
+            "heldout-3",
+            "heldout-4",
+            "heldout-5",
+        ]
+        assert {name for name, row in sets.items() if row.gate} == {"scripts", "heldout-5"}
+        assert rule.schema_version == 4
+        assert validation.RULE_SCHEMA_VERSION == 4
+        assert rule.exempts_r1_lines is True
+        assert rule.label == "v5"
+
+    def test_heldout_5_is_the_only_row_reporting_marked_r1(self) -> None:
+        sets = validation.load_pass_rule(_RULES / "rule-v5.json").sets or {}
+        assert {name: row.r1_marked_reported for name, row in sets.items()} == {
+            "scripts": False,
+            "heldout": False,
+            "heldout-2": False,
+            "heldout-3": False,
+            "heldout-4": False,
+            "heldout-5": True,
+        }
+
+    def test_rule_v5_is_rule_v4_field_by_field_but_for_the_marked_field(self) -> None:
+        """C18: every top-level field but the schema and the name, and every
+        row field but ``r1_marked_reported`` (excluded on both sides — rule
+        v4's rows hold ``None``), equals rule v4's; the rows in the same
+        order. No measurement informs the file (C16)."""
+        v4 = validation.load_pass_rule(_RULES / "rule-v4.json")
+        v5 = validation.load_pass_rule(_RULES / "rule-v5.json")
+        assert (v4.schema_version, v5.schema_version) == (3, 4)
+        assert (v4.rule_name, v5.rule_name) == ("rule-v4", "rule-v5")
+        not_compared = {"schema_version", "rule_name", "sets"}
+        assert v5.model_dump(exclude=not_compared) == v4.model_dump(exclude=not_compared)
+        v4_sets, v5_sets = v4.sets or {}, v5.sets or {}
+        assert list(v5_sets) == list(v4_sets)
+        for name, row in v4_sets.items():
+            assert row.r1_marked_reported is None
+            assert v5_sets[name].model_dump(exclude={"r1_marked_reported"}) == row.model_dump(
+                exclude={"r1_marked_reported"}
+            )
+            assert v5_sets[name].r1_marked_reported is (name == "heldout-5")
+
+    def test_the_file_is_lf_in_rule_v4s_key_order(self) -> None:
+        """Rule v4's top-level keys in its order, each row's keys rule v4's
+        with ``r1_marked_reported`` last; LF line endings, a final newline."""
+        raw_v4 = (_RULES / "rule-v4.json").read_bytes()
+        raw_v5 = (_RULES / "rule-v5.json").read_bytes()
+        assert b"\r" not in raw_v5
+        assert b"\x00" not in raw_v5
+        assert raw_v5.endswith(b"}\n")
+        v4, v5 = json.loads(raw_v4), json.loads(raw_v5)
+        assert list(v5) == list(v4)
+        assert list(v5["sets"]) == list(v4["sets"])
+        for name, row in v4["sets"].items():
+            assert list(v5["sets"][name]) == [*row, "r1_marked_reported"]
+
+    def test_the_rule_v5_fixture(self) -> None:
+        """``_RULE_V5`` is ``_RULE_V3``'s rows under schema 4: the ``gate``
+        row reports marked R1 and the ``reported`` row counts it."""
+        assert (_RULE_V5.schema_version, _RULE_V5.label) == (4, "v5")
+        assert _RULE_V5.exempts_r1_lines is True
+        sets, v3_sets = _RULE_V5.sets or {}, _RULE_V3.sets or {}
+        assert {name: row.r1_marked_reported for name, row in sets.items()} == {
+            "gate": True,
+            "reported": False,
+        }
+        for name, row in v3_sets.items():
+            assert sets[name].model_copy(update={"r1_marked_reported": None}) == row
 
 
 class TestR1Exemption:

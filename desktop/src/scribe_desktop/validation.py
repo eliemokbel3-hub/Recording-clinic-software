@@ -202,10 +202,11 @@ from scribe_desktop.ui.note_review import ProposalDecision, build_resolutions, p
 # ---------------------------------------------------------------------------
 
 SCRIPT_SCHEMA_VERSION: Final = 1
-# The newest pass-rule schema (rule v3's R1 exemption for an unsupported
-# clinical line, validation-run7 plan D4, on rule v2's set layer,
-# validation-run6 plan D8); a schema-1 or schema-2 file still reads unchanged.
-RULE_SCHEMA_VERSION: Final = 3
+# The newest pass-rule schema (rule v5's per-set ``r1_marked_reported``,
+# validation-run8 plan D1, on rule v3's R1 exemption for an unsupported
+# clinical line, validation-run7 plan D4, and rule v2's set layer,
+# validation-run6 plan D8); a schema-1, -2 or -3 file still reads unchanged.
+RULE_SCHEMA_VERSION: Final = 4
 # Ids are the only names a report prints: lower-case, digits and hyphens.
 ENCOUNTER_ID_PATTERN: Final = r"^[a-z0-9][a-z0-9-]{0,63}$"
 ROLE_PATTERN: Final = r"^[a-z][a-z_]{0,31}$"
@@ -2273,14 +2274,20 @@ RESIDUE_CLASS_NAMES: Final[Mapping[str, str]] = {
 
 
 class SetCeilings(BaseModel):
-    """One set's row of a schema-2 rule (validation-run6 plan D8 as amended
-    by D14, D15 and D17): LITERAL ceilings — R1 and R2 count facts, R3
+    """One set's row of a schema-2 or later rule (validation-run6 plan D8 as
+    amended by D14, D15 and D17): LITERAL ceilings — R1 and R2 count facts, R3
     counts encounters (one unbroken next patient is one event) — never a
     formula over measured encounters and never an encounter id. ``gate``:
     the set is one the gate reads (D15) rather than one only reported.
     ``require_uncertainty_surfaced``: overrides the rule's own field for
     this set (None = the rule's value; D17). Where uncertainty is required
-    the R2 ceiling is required; where it is only reported R2 has none."""
+    the R2 ceiling is required; where it is only reported R2 has none.
+    ``r1_marked_reported`` (schema 4, validation-run8 plan D1): true on a
+    row whose R1 ceiling counts only the silent R1 facts, a misheard
+    material fact under a review mark reported beside it with no ceiling;
+    false on a row whose R1 ceiling counts both kinds. A schema-4 rule
+    requires it on every row and schemas 1-3 refuse it (None, the default,
+    is the field absent)."""
 
     model_config = _RULE_CONFIG
 
@@ -2289,6 +2296,7 @@ class SetCeilings(BaseModel):
     max_r2_facts: int | None = Field(default=None, ge=0)
     max_r3_encounters: int = Field(ge=0)
     require_uncertainty_surfaced: bool | None = None
+    r1_marked_reported: bool | None = None
 
 
 class PassRule(BaseModel):
@@ -2311,11 +2319,16 @@ class PassRule(BaseModel):
     excuses (``EncounterMetrics.unsupported_lines_excused_by_r1``) does not
     fail its encounter. The report prints the verdict without it beside the
     verdict with it, and rule v1's; a 0.3.4 harness refuses a schema-3 file
-    by its ``Literal[1, 2]``."""
+    by its ``Literal[1, 2]``.
+
+    Schema 4 (rule v5, validation-run8 plan D1) is schema 3 — the exemption
+    still required — plus each set row's ``r1_marked_reported``, which it
+    REQUIRES on every row and schemas 1-3 refuse; a 0.3.5 harness refuses a
+    schema-4 file by its ``Literal[1, 2, 3]``."""
 
     model_config = _RULE_CONFIG
 
-    schema_version: Literal[1, 2, 3]
+    schema_version: Literal[1, 2, 3, 4]
     rule_name: str = Field(pattern=RULE_NAME_PATTERN)
     max_material_wrong: int = Field(default=0, ge=0)
     max_silent_omissions: int = Field(default=0, ge=0)
@@ -2327,12 +2340,15 @@ class PassRule(BaseModel):
     @model_validator(mode="after")
     def _check_sets(self) -> PassRule:
         # ``extra="forbid"`` cannot tie a declared field to a schema, so the
-        # exemption is checked both ways here (D4).
-        if self.schema_version == 3:
+        # exemption (D4) and each row's ``r1_marked_reported`` (validation-run8
+        # D1) are checked both ways here.
+        if self.schema_version >= 3:
             if self.unsupported_line_r1_exemption is None:
-                raise ValueError("a schema-3 rule needs unsupported_line_r1_exemption")
+                raise ValueError(
+                    f"a schema-{self.schema_version} rule needs unsupported_line_r1_exemption"
+                )
         elif self.unsupported_line_r1_exemption is not None:
-            raise ValueError("only a schema-3 rule takes unsupported_line_r1_exemption")
+            raise ValueError("only a schema-3 or later rule takes unsupported_line_r1_exemption")
         if self.schema_version == 1:
             if self.sets is not None:
                 raise ValueError("a schema-1 rule holds no set ceilings")
@@ -2342,6 +2358,14 @@ class PassRule(BaseModel):
         for name, row in self.sets.items():
             if not re.fullmatch(RULE_NAME_PATTERN, name):
                 raise ValueError(f"set names must match {RULE_NAME_PATTERN}")
+            if self.schema_version >= 4:
+                if row.r1_marked_reported is None:
+                    raise ValueError(
+                        f"a schema-{self.schema_version} rule needs r1_marked_reported on "
+                        "every set"
+                    )
+            elif row.r1_marked_reported is not None:
+                raise ValueError("only a schema-4 or later rule takes r1_marked_reported")
             required = self.uncertainty_required(row)
             if required and row.max_r2_facts is None:
                 raise ValueError("a set that requires uncertainty surfaced needs max_r2_facts")
