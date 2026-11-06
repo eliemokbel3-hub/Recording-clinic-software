@@ -159,9 +159,17 @@ _PREDICTED_BOUNDARY_DIVERGENCES_BY_SET: Final[
         "h4-16": (8, None),
         "h4-20": (8, None),  # neither is listed
     },
-    # Larger-model Task 0.1 (d): blind until run 8 (C12); its entries are
-    # written in validation-run8 Task P.3.
-    "heldout-5": {},
+    # Validation-run8 Task P.3 (2026-11-07), read off the product after run 8.
+    "heldout-5": {
+        "h5-03": (6, None),  # its greeting is listed; its closing is not
+        "h5-06": (8, None),  # its closing holds "thank you" (2026-10-26); its greeting not
+        "h5-10": (9, None),  # its closing is listed; its greeting is not
+        "h5-12": (15, None),  # its closing holds "see you" (2026-10-26); its greeting not
+        # The greeting's segment also holds "thank you" (2026-10-26) before its
+        # listed greetings, so the same-segment pairing cuts at the NEXT
+        # segment, one later than the spec's (D2 rule 4 admits it, as h2-14).
+        "h5-14": (8, 9),
+    },
 }
 _PREDICTED_BOUNDARY_DIVERGENCES: Final = by_case(_PREDICTED_BOUNDARY_DIVERGENCES_BY_SET)
 
@@ -190,6 +198,16 @@ _BOUNDARY_CHANGES_ON_HELDOUT_4: Final[dict[str, tuple[int | None, int | None]]] 
     "h4-02": (6, None),
     "h4-13": (4, None),
 }
+# Validation-run8 plan Task P.3 (2026-11-07), the same reading over
+# ``heldout-5``, authored after the widening and blind until run 8 (C12):
+# ``h5-17`` now matches; ``h5-14`` is cut, one segment later than expected (its
+# recorded divergence). Under the old lists only ``h5-01`` of its seven next
+# patients was found.
+_BOUNDARY_CHANGES_ON_HELDOUT_5: Final[dict[str, tuple[int | None, int | None]]] = {
+    "h5-14": (8, None),
+    "h5-17": (14, None),
+}
+_SETS_READ_AFTER_THEIR_RUN: Final = ("heldout-4", "heldout-5")
 _SETS_SEEN_AT_RUN7_0_4: Final = ("heldout", "heldout-2", "heldout-3")
 # How many phrases each list held on 2026-09-28: the widening APPENDED, so the
 # lists' heads are the old lists (``test_vocabulary.py`` pins both halves).
@@ -461,7 +479,7 @@ class TestHeldOutBoundaries:
             "heldout-2": 4,
             "heldout-3": 6,
             "heldout-4": 4,
-            "heldout-5": 0,
+            "heldout-5": 5,
         }
 
     def test_the_widened_lists_changed_these_predictions_and_no_expectation(
@@ -474,7 +492,8 @@ class TestHeldOutBoundaries:
         today each matches its expected boundary or is today's recorded
         divergence. The case's expectation is unchanged (C2, C3). The record
         is over the sets seen at Task 0.4; ``heldout-4``'s changes, read after
-        run 7 (Task P.4), are their own record."""
+        run 7 (Task P.4), and ``heldout-5``'s, read after run 8
+        (validation-run8 Task P.3), are their own records."""
         today = {
             case.case_id: next_patient_boundary(case.document(), validation_config)
             for case in HELD_OUT_CASES
@@ -497,8 +516,24 @@ class TestHeldOutBoundaries:
         } == _BOUNDARY_CHANGES_ON_HELDOUT_4
         for case_id, (expected, result_2026_09_28) in _BOUNDARY_CHANGES_ON_HELDOUT_4.items():
             assert cases[case_id].boundary == expected == today[case_id] != result_2026_09_28
+        heldout_5 = {case.case_id for case in held_out_set("heldout-5").all_cases()}
+        assert {
+            case_id: entry for case_id, entry in changed.items() if case_id in heldout_5
+        } == _BOUNDARY_CHANGES_ON_HELDOUT_5
+        for case_id, (expected, result_2026_09_28) in _BOUNDARY_CHANGES_ON_HELDOUT_5.items():
+            assert cases[case_id].boundary == expected != result_2026_09_28, case_id
+            assert before[case_id] == result_2026_09_28, case_id
+            if case_id in _PREDICTED_BOUNDARY_DIVERGENCES:
+                assert _PREDICTED_BOUNDARY_DIVERGENCES[case_id] == (expected, today[case_id])
+            else:
+                assert today[case_id] == expected, case_id
+        read_after = {
+            case.case_id
+            for name in _SETS_READ_AFTER_THEIR_RUN
+            for case in held_out_set(name).all_cases()
+        }
         changed = {
-            case_id: entry for case_id, entry in changed.items() if case_id not in heldout_4
+            case_id: entry for case_id, entry in changed.items() if case_id not in read_after
         }
         assert changed == _BOUNDARY_PREDICTIONS_BEFORE_RUN7_0_4
         assert len(changed) == 9
@@ -580,7 +615,8 @@ def _seen_items() -> list[tuple[str, TranscriptDocument, int | None]]:
     """Every item seen at Task 0.4 (b) as (id, reference document, b): the
     50 (b their ``reference_tail_start``), then the three held-out sets seen
     then (``_held_out_items``). ``heldout-4`` was blind until its P.4
-    (validation-run7 Task 0.5, C12); rule 4 over it is its own test."""
+    (validation-run7 Task 0.5, C12) and ``heldout-5`` until its P.3
+    (validation-run8); rule 4 over each is its own test."""
     items: list[tuple[str, TranscriptDocument, int | None]] = []
     for path in sorted(_RUN_OF_RECORD_SCRIPTS.glob("*.json")):
         script = load_script(path)
@@ -653,7 +689,7 @@ class TestVocabularyRule4:
         positives. The widening changed nine held-out boundaries (the dated
         record) and none of the 50's; 16 positives still diverge."""
         written = [held_out.name for held_out in HELD_OUT_SETS if held_out.cases_written]
-        assert written == [*_SETS_SEEN_AT_RUN7_0_4, "heldout-4"]
+        assert written == [*_SETS_SEEN_AT_RUN7_0_4, *_SETS_READ_AFTER_THEIR_RUN]
         items = _seen_items()
         before, today, problems = _rule_4_walk(items, validation_config, monkeypatch)
         assert problems == {}
@@ -705,6 +741,37 @@ class TestVocabularyRule4:
             if b is not None and today[item_id] != b
         }
         assert still_divergent == set(_PREDICTED_BOUNDARY_DIVERGENCES_BY_SET["heldout-4"])
+
+    def test_rule_4_holds_on_heldout_5_read_after_run_8(
+        self, validation_config: NoteConfig, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Validation-run8 plan Task P.3 (2026-11-07): rule 4 over
+        ``heldout-5``, authored after the widening and blind until run 8
+        (C12) — 22 scripts, 15 negatives (none with the axis; every axis
+        script has a next patient) and 7 positives. No widened phrase cuts a
+        negative, cuts a positive early or loses a match; the widening found
+        two of its three boundaries (``_BOUNDARY_CHANGES_ON_HELDOUT_5``), one
+        of them a segment late (``h5-14``), and five positives still diverge
+        (four with no boundary)."""
+        items = _held_out_items(held_out_set("heldout-5"))
+        before, today, problems = _rule_4_walk(items, validation_config, monkeypatch)
+        assert problems == {}
+        expected = {item_id: b for item_id, _document, b in items}
+        assert len(items) == len(expected) == 22
+        negatives = [item_id for item_id, b in expected.items() if b is None]
+        assert (len(negatives), len(expected) - len(negatives)) == (15, 7)
+        assert all(today[item_id] is None for item_id in negatives)
+        changed = {item_id for item_id in expected if before[item_id] != today[item_id]}
+        assert changed == set(_BOUNDARY_CHANGES_ON_HELDOUT_5)
+        found = {item_id for item_id in expected if today[item_id] is not None}
+        assert found == {"h5-01", "h5-14", "h5-17"}
+        assert {item_id for item_id in expected if before[item_id] is not None} == {"h5-01"}
+        still_divergent = {
+            item_id
+            for item_id, b in expected.items()
+            if b is not None and today[item_id] != b
+        }
+        assert still_divergent == set(_PREDICTED_BOUNDARY_DIVERGENCES_BY_SET["heldout-5"])
 
     @pytest.mark.parametrize(
         ("turns", "before", "after"),

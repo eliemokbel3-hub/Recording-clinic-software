@@ -35,7 +35,7 @@ and its own detail stays in Cliniko and in your off-repository pilot log.
   `hld-NN` (`heldout`), `h2-NN` (`heldout-2`), `h3-NN` (`heldout-3`), `h4-NN`
   (`heldout-4`, the blind set of validation run 7 — its rows were entered after
   that run) or `h5-NN` (`heldout-5`, the blind set of validation run 8 — its
-  rows are entered after that run)), or `—`.
+  rows were entered after that run)), or `—`.
 - **Severity** — `high`, `medium` or `low` (below).
 - **Category** — one of:
   - the rubric's R4 kinds: `wrong-side`, `wrong-dose`, `negation-flipped`,
@@ -227,7 +227,7 @@ Cliniko.
 | F-127 | 2026-10 | — | validation | h2-17 | high | uncertainty | checker | controlled | Shadow mode on for every recording; a listed hedge the recogniser split from its fact, or a bare modal, is not marked; the clinician writes their own Cliniko note | 2026-10 |
 | F-128 | 2026-10 | — | validation | h2-18 | high | uncertainty | checker | controlled | Shadow mode on for every recording; a listed hedge the recogniser split from its fact, or a bare modal, is not marked; the clinician writes their own Cliniko note | 2026-10 |
 | F-129 | 2026-10 | — | validation | h2-05 | high | cross-patient | note-routing | resolved | Fixed in 0.3.5 (commit c985857): the wider closing and greeting lists now find this next patient; re-checked by validation run 7; shadow mode stays on until a validation run passes | 2026-11 |
-| F-130 | 2026-10 | — | validation | h3-03 | high | unsupported | transcription | controlled | Shadow mode on for every recording; a misheard number is marked for review and rule v3 excuses the line since validation run 7; the clinician checks each marked number | 2026-10 |
+| F-130 | 2026-10 | — | validation | h3-03 | high | unsupported | transcription | controlled | Shadow mode on for every recording; a misheard number is marked for review and rule v5 excuses the line in validation run 8, as rule v3 did in run 7; the clinician checks each marked number | 2026-10 |
 | F-131 | 2026-10 | — | validation | h3-02 | high | cross-patient | note-routing | resolved | Fixed in 0.3.5 (commit c985857): the wider closing and greeting lists now find this next patient; re-checked by validation run 7; shadow mode stays on until a validation run passes | 2026-11 |
 | F-132 | 2026-10 | — | validation | h3-17 | high | cross-patient | note-routing | controlled | Shadow mode on for every recording; a next patient met with an unlisted closing or greeting is not detected; the clinician checks the end of each transcript and writes their own Cliniko note | 2026-10 |
 | F-133 | 2026-10 | — | validation | h3-10 | high | uncertainty | checker | controlled | Shadow mode on for every recording; a hedge not on the frozen list, or outside the fact's sentence, is not marked; the clinician writes their own Cliniko note | 2026-10 |
@@ -246,3 +246,8 @@ Cliniko.
 | F-146 | 2026-10 | — | validation | h4-15 | high | uncertainty | checker | controlled | Shadow mode on for every recording; a hedge not on the frozen list, or outside the fact's sentence, is not marked; the clinician writes their own Cliniko note | 2026-11 |
 | F-147 | 2026-10 | — | validation | h4-22 | high | uncertainty | checker | controlled | Shadow mode on for every recording; a bare modal verb of doubt is not marked; the clinician writes their own Cliniko note | 2026-11 |
 | F-148 | 2026-11 | — | validation | — | high | quality | transcription | controlled | Shadow mode on for every recording; on this computer larger speech models made as many or more facts wrong, so the shipped one stays; the clinician checks marked words and writes their own note | 2026-11 |
+| F-149 | 2026-11 | — | validation | h5-17 | high | quality | transcription | controlled | Shadow mode on for every recording; a word of a fact dropped by the recogniser carries no review mark; the clinician checks every line against the transcript and writes their own Cliniko note | 2026-11 |
+| F-150 | 2026-11 | — | validation | h5-01 | high | quality | transcription | controlled | Shadow mode on for every recording; a misheard abbreviation, marked only by a number mark on its line; the clinician checks each marked line and writes their own Cliniko note | 2026-11 |
+| F-151 | 2026-11 | — | validation | h5-12 | medium | workflow | checker | controlled | Shadow mode on for every recording; a long consultation with a missed next patient drew six left-out-line warnings, each acknowledged on its own; the clinician writes their own Cliniko note | 2026-11 |
+| F-152 | 2026-11 | — | validation | — | high | uncertainty | checker | controlled | Shadow mode on for every recording; a doubt said with a hedge not on the frozen list, on a line of its own or by a bare modal is not marked; the clinician writes their own Cliniko note | 2026-11 |
+| F-153 | 2026-11 | — | validation | h5-10 | high | cross-patient | note-routing | controlled | Shadow mode on for every recording; a next patient met with an unlisted closing or greeting is not detected; the clinician checks the end of each transcript and writes their own Cliniko note | 2026-11 |

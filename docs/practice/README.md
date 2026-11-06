@@ -90,13 +90,13 @@ it runs out, the documents say so.
   clinician review guide asks for music off or as low as practical while recording. The
   marks are a review aid: a real line can be marked and an invented one can go unmarked,
   so reading every line against the transcript stays the control.
-- **The program's own testing (2026-11; not external research).** In 139 invented
-  consultations read aloud by computer voices, the speech software wrote 7 facts wrong —
-  a misheard number, unit or abbreviation said letter by letter among them. For 5 the
-  line carried a review mark; 2 carried none. A larger speech model was measured and did
+- **The program's own testing (2026-11; not external research).** In 161 invented
+  consultations read aloud by computer voices, the speech software wrote 9 facts wrong —
+  a misheard number, unit or abbreviation said letter by letter among them. For 6 the
+  line carried a review mark; 3 carried none. A larger speech model was measured and did
   no better. Real voices and accents and everyday background sound were not measured, so
-  the true rate may be higher. The clinician review guide (awaiting the practitioner's
-  approval) asks the practitioner to read every number, unit and abbreviation against
+  the true rate may be higher. The clinician review guide (these lines approved by the practitioner on 2026-11-07; the
+  shadow-mode-off line still awaits approval) asks the practitioner to read every number, unit and abbreviation against
   what they remember, marked or not: the marks and that reading stay the control.
 
 - **Ahpra, "Meeting your professional obligations when using AI in healthcare".** It sets

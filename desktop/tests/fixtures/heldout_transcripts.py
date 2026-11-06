@@ -73,12 +73,13 @@ until after run 7; it is ``tails_by_role`` and ``routed_material`` with
 in Task P.4 (2026-11-04).
 
 Larger-model plan Task 0.1 (d) (D6, C12): ``validation/heldout-5`` with
-``h5-``, the blind set, is in the table with ``cases_written=False`` until
-after run 8; it is ``tails_by_role`` and ``routed_material`` with
+``h5-``, the next blind set, was in the table with ``cases_written=False``
+until after run 8; it is ``tails_by_role`` and ``routed_material`` with
 ``heldout-4``'s bounds (its brief is ``heldout-4``'s). Its folder was absent
-until validation-run8 plan Task 0.5 authored it (2026-11-06); from then the
-suite runs only through ``scripts/lint-held-out-set.py``. Its cases are
-written in validation-run8 plan Task P.3.
+until validation-run8 plan Task 0.5 authored it (2026-11-06); from then until
+its cases the suite ran only through ``scripts/lint-held-out-set.py``. Its
+cases were written in validation-run8 plan Task P.3 (2026-11-07), so no set
+is blind now.
 """
 
 from __future__ import annotations
@@ -942,9 +943,192 @@ HELDOUT_4_CASES: Final[tuple[HeldOutCase, ...]] = (
     ),
 )
 
-# Larger-model plan Task 0.1 (d) (D6, C12): ``heldout-5`` is blind until run
-# 8 — no case is written before validation-run8 plan Task P.3.
-HELDOUT_5_CASES: Final[tuple[HeldOutCase, ...]] = ()
+# Validation-run8 plan Task P.3 (2026-11-07), after run 8: one case per
+# ``heldout-5`` script, read off its brief (``validation/heldout-5/SPEC.md``,
+# ``heldout-4``'s with four lines changed) and notes (``AUTHOR-NOTES.md``)
+# under the readings above, never off the frozen phrase lists — as
+# ``HELDOUT_4_CASES`` were. The boundary is the greeting's segment, or the next
+# one when the closing shares it; the harness's reference tail is the first
+# ``next_patient`` line (``tails_by_role``), one later when the clinician's
+# welcome has a line of its own (``h5-01``, ``h5-06``, ``h5-10``, ``h5-12``,
+# ``h5-14``, ``h5-17``).
+HELDOUT_5_CASES: Final[tuple[HeldOutCase, ...]] = (
+    HeldOutCase(
+        "h5-01",
+        11,
+        "closing at 10 ('Take care now'), the welcome 'come on through ... have a seat' at 11",
+    ),
+    HeldOutCase(
+        "h5-02",
+        None,
+        "the head greeting (0) has no closing before it; 'See you next week' (8) ends it",
+        corrections_reason=(
+            "the clinician's 4 fixes 3's side; only a non-clinician's fix is carried"
+        ),
+        unsure=(1,),
+        unsure_reason=(
+            "2 doubts 1 in a separate line, so 1 (the fact's line) is the line to mark"
+        ),
+    ),
+    HeldOutCase(
+        "h5-03",
+        6,
+        "closing at 5 ('Ta-ra then, mind how you go'), 'come on in' welcomes the next at 6",
+    ),
+    HeldOutCase(
+        "h5-04",
+        None,
+        "'Morning.' (0) and 'Have a good evening' (7) open and close one visit; no one new",
+        unsure=(1,),
+        unsure_reason=(
+            "patient doubts the stiffness mid-line (1, 'I can't be certain'); 3's 'no doubt'"
+            " is not"
+        ),
+    ),
+    HeldOutCase(
+        "h5-05",
+        None,
+        "the receptionist (3) interrupts with no greeting, and no one new follows the closing",
+    ),
+    HeldOutCase(
+        "h5-06",
+        8,
+        "closing at 7 ('Thank you, Mr Achterberg'), 'Mrs Delacroix-Hume? Do come in' at 8",
+        corrections_reason=(
+            "2 fixes 1's number but routes on its own cue, so it is quoted, not carried"
+        ),
+    ),
+    HeldOutCase(
+        "h5-07",
+        None,
+        "'Come in, both of you' (0) opens the visit; no closing and no one new",
+        corrections_reason="the partner's 2 contradicts the patient's 1 but is not a self-fix",
+        unsure=(2,),
+        unsure_reason=(
+            "the partner doubts the count (2, 'I'd guess'); 4's 'I've no doubt' is not"
+        ),
+    ),
+    HeldOutCase(
+        "h5-08",
+        None,
+        "the head greeting (0) has no closing before it; no one new is welcomed",
+        corrections_reason=(
+            "2 fixes 1's side but routes on its own cue, so it is quoted, not carried"
+        ),
+        unsure=(4,),
+        unsure_reason=(
+            "5 doubts 4 in a separate line, so 4 (the fact's line) is the line to mark"
+        ),
+    ),
+    HeldOutCase(
+        "h5-09",
+        None,
+        "'You're welcome' (5) answers the thanks; no one new is welcomed",
+    ),
+    HeldOutCase(
+        "h5-10",
+        9,
+        "closing at 8 ('see you next week'), 'Next! Hi, come in' welcomes the next at 9",
+        unsure=(4,),
+        unsure_reason="patient doubts the side mid-line (4, 'or it might be the right')",
+    ),
+    HeldOutCase(
+        "h5-11",
+        None,
+        "the same patient comes back after the goodbyes (6-7); no one new is welcomed",
+        corrections_reason=(
+            "the clinician's 5 fixes 4's time; only a non-clinician's fix is carried"
+        ),
+    ),
+    HeldOutCase(
+        "h5-12",
+        15,
+        "closing at 13-14 ('see you in a fortnight', 'bye'), 'come through, pet' at 15",
+    ),
+    HeldOutCase(
+        "h5-13",
+        None,
+        "the patient's 'See you next week then' (8) ends the recording; no one new",
+        corrections_reason=(
+            "5 opens 'Sorry, I meant to ask' but asks a new question - not a fix (the"
+            " author's deliberate non-fix)"
+        ),
+        unsure=(3,),
+        unsure_reason="patient doubts the swelling (3, 'I'm fairly sure')",
+    ),
+    HeldOutCase(
+        "h5-14",
+        8,
+        "closing at 6 ('Same time next week'), 'Good morning, Mr Oyelaran' welcomes at 8",
+        unsure=(4,),
+        unsure_reason=(
+            "patient doubts the bruise (4, 'I might be muddling it up'); 1's 'If I'm honest'"
+            " is confident"
+        ),
+    ),
+    HeldOutCase(
+        "h5-15",
+        None,
+        "the phone's 'Hello?' (4) and 'Welcome to ...' (7) are not a new visit; no closing",
+        corrections_reason="3 opens 'Sorry,' but is an apology, not a fix",
+    ),
+    HeldOutCase(
+        "h5-16",
+        None,
+        "no closing and no one new",
+        unsure_reason="2's 'I'm sure of that' is confident, not doubt",
+    ),
+    HeldOutCase(
+        "h5-17",
+        14,
+        "closing at 12 ('See you in a week'), 'Mr Petrakis? ... come on in' welcomes at 14",
+        unsure=(5,),
+        unsure_reason=(
+            "patient doubts the side mid-line (5, 'I'm not totally sure it wasn't my left');"
+            " 3 is vague but unquoted"
+        ),
+    ),
+    HeldOutCase(
+        "h5-18",
+        None,
+        "no closing and no one new",
+        corrections_reason=(
+            "the clinician's 5 fixes 4's number; only a non-clinician's fix is carried"
+        ),
+    ),
+    HeldOutCase(
+        "h5-19",
+        None,
+        "no closing and no one new",
+        unsure=(1,),
+        unsure_reason=(
+            "2 doubts 1 in a separate line, so 1 (the fact's line) is the line to mark"
+        ),
+    ),
+    HeldOutCase(
+        "h5-20",
+        None,
+        "the partner's late 'Hello, come in' (5) has no closing before it, not a new patient",
+        unsure=(3,),
+        unsure_reason="patient doubts the minutes (3, 'I don't really time it though')",
+    ),
+    HeldOutCase(
+        "h5-21",
+        None,
+        "the head 'Morning' (0) has no closing before it; no one new is welcomed",
+        corrections_reason=(
+            "the patient's 5 fixes 4's time, but 4 routes nowhere, so there is no section"
+            " to carry it into"
+        ),
+    ),
+    HeldOutCase(
+        "h5-22",
+        None,
+        "'Welcome back' (0) is the same patient; no closing before it and no one new",
+        unsure=(2,),
+        unsure_reason="patient doubts the nights mid-line (2, 'I couldn't tell you how many')",
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -1008,14 +1192,13 @@ HELD_OUT_SETS: Final[tuple[HeldOutSet, ...]] = (
         script_count=(20, 25),
         facts_per_script=(3, 6),
     ),
-    # Larger-model Task 0.1 (d) (D6): the blind set, its brief heldout-4's;
-    # authored in validation-run8 Task 0.5, never read before run 8 (C12); its
-    # ``h5-NN`` cases written in validation-run8 Task P.3, after run 8.
+    # Larger-model Task 0.1 (d) (D6): its brief heldout-4's; authored blind in
+    # validation-run8 Task 0.5, never read before run 8 (C12); its ``h5-NN``
+    # cases written in validation-run8 Task P.3, after run 8.
     HeldOutSet(
         "heldout-5",
         "h5-",
         HELDOUT_5_CASES,
-        cases_written=False,
         tails_by_role=True,
         routed_material=True,
         script_count=(20, 25),

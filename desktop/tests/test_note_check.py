@@ -2668,7 +2668,7 @@ class TestCheck1HedgeMark:
             "heldout-2": 10,
             "heldout-3": 7,
             "heldout-4": 6,
-            "heldout-5": 0,
+            "heldout-5": 10,
         }
         heldout = {c.case_id for c in held_out_set("heldout").all_cases()}
         assert set(_UNSURE_PREDICTIONS_BEFORE_RUN6_0_9) <= heldout
@@ -2755,9 +2755,20 @@ _PREDICTED_UNSURE_DIVERGENCES_BY_SET: dict[
         "h4-18": ((1,), ()),  # its hedge is outside the frozen list (an idiom)
         "h4-22": ((4,), ()),  # a bare-modal hedge, outside the frozen list
     },
-    # Larger-model Task 0.1 (d): blind until run 8 (C12); its entries are
-    # written in validation-run8 Task P.3.
-    "heldout-5": {},
+    # Validation-run8 Task P.3 (2026-11-07), read off the product after run 8: no
+    # hedge here is listed; ``h5-17``'s line holds one, and it matches.
+    "heldout-5": {
+        "h5-02": ((1,), ()),  # the doubt is a separate line, its hedge unlisted
+        "h5-04": ((1,), ()),  # its hedge is outside the frozen list
+        "h5-07": ((2,), ()),  # its hedge is outside the frozen list (a contraction)
+        "h5-08": ((4,), ()),  # the doubt is a separate line, its hedge unlisted
+        "h5-10": ((4,), ()),  # a bare-modal hedge, outside the frozen list
+        "h5-13": ((3,), ()),  # its hedge is outside the frozen list
+        "h5-14": ((4,), ()),  # a bare-modal hedge, outside the frozen list
+        "h5-19": ((1,), ()),  # the doubt is a separate line, its hedge unlisted
+        "h5-20": ((3,), ()),  # its hedge is outside the frozen list
+        "h5-22": ((2,), ()),  # its hedge is outside the frozen list
+    },
 }
 _PREDICTED_UNSURE_DIVERGENCES = by_case(_PREDICTED_UNSURE_DIVERGENCES_BY_SET)
 

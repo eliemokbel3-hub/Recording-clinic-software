@@ -648,15 +648,15 @@ class TestHeldOutScripts:
             assert STEM_RE.fullmatch(f"{held_out.prefix}01"), held_out.name
             assert PROBLEM_RE.fullmatch(f"{held_out.name}:bad-id:0"), held_out.name
 
-    def test_three_sets_take_their_tails_by_role_and_heldout_5_is_blind(self) -> None:
+    def test_three_sets_take_their_tails_by_role_and_none_is_blind(self) -> None:
         """Validation-run7 plan Task 0.5 (D6): ``heldout-3`` and
         ``heldout-4`` take their tails by role, both ``routed_material``
         with the same brief's bounds; since its Task P.4 (2026-11-04)
         ``heldout-4``'s cases are written, one per script. Larger-model Task
-        0.1 (d) (D6): ``heldout-5`` is the third, with the same bounds, and
-        the one blind set — no case until validation-run8 Task P.3. The R3
-        table reads
-        the run-of-record set and all five held-out sets."""
+        0.1 (d) (D6): ``heldout-5`` is the third, with the same bounds; since
+        validation-run8 Task P.3 (2026-11-07) its cases are written, one per
+        script, so no set is blind. The R3 table reads the run-of-record set
+        and all five held-out sets."""
         role_sets = [held_out for held_out in HELD_OUT_SETS if held_out.tails_by_role]
         assert [held_out.name for held_out in role_sets] == ["heldout-3", "heldout-4", "heldout-5"]
         routed = [held_out.name for held_out in HELD_OUT_SETS if held_out.routed_material]
@@ -665,8 +665,8 @@ class TestHeldOutScripts:
             assert held_out.script_count == (20, 25), held_out.name
             assert held_out.facts_per_script == (3, 6), held_out.name
         blind = [held_out.name for held_out in HELD_OUT_SETS if not held_out.cases_written]
-        assert blind == ["heldout-5"]
-        assert held_out_set("heldout-5").all_cases() == ()
+        assert blind == []
+        assert len(held_out_set("heldout-5").all_cases()) == 22
         assert len(held_out_set("heldout-4").all_cases()) == 22
         assert [held_out.name for held_out in _table_sets()] == [
             "scripts",
@@ -744,15 +744,6 @@ class TestHeldOutScripts:
         """A missing ``validation/heldout`` folder would pass the per-set
         lints vacuously; its cases are written, so its scripts must exist."""
         assert len(held_out_set("heldout").script_paths()) == 22
-
-    def test_the_blind_held_out_set_is_present(self) -> None:
-        """TEMPORARY — added at validation-run8 Task 0.5 (D4), removed at Task
-        P.3, which ends the blind rule. With the ``heldout-5`` folder absent
-        every per-set lint passes vacuously and CI's step names
-        ``heldout-4``'s log instead, so from Task 0.5 its scripts must exist.
-        Reads file names only — no script is opened; the 20–25 bound is the
-        size lint's."""
-        assert held_out_set("heldout-5").script_paths(), "heldout-5 has no scripts"
 
     @pytest.mark.parametrize("held_out", HELD_OUT_SETS, ids=_set_name)
     def test_every_held_out_script_is_synthetic_with_material_facts(

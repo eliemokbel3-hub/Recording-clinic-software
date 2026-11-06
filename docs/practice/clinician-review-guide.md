@@ -14,9 +14,9 @@ version 0.3.3, approved by the practitioner on 2026-10-22; the left-out-line, wi
 shorter next-patient-mark lines added 2026-10-24 for version 0.3.4, approved by the
 practitioner on 2026-11-04; the longer goodbye-and-greeting list lines added 2026-10-26 and
 the split-line line added 2026-10-27 for version 0.3.5, approved by the practitioner on
-2026-11-04; the misheard number, unit and abbreviation lines and the shadow-mode-off line
+2026-11-04; the misheard number, unit and abbreviation lines
 added after validation run 7 and the larger-model measurement, 2026-11, with no new
-version, awaiting the practitioner's approval). For the
+version, approved by the practitioner on 2026-11-07, their counts refreshed with validation run 8's; the shadow-mode-off line added with them, awaiting the practitioner's approval). For the
 practitioner, before saving a note and before finalising it in Cliniko.
 
 **Why this matters.** Ahpra's guidance on AI in healthcare ("Meeting your professional
@@ -50,10 +50,10 @@ note.
   `[word?]`. Check every mark that matters clinically against what you remember.
 - **The speech software can mishear a number, a unit (milligrams, weeks) or an
   abbreviation said letter by letter, and write a different one.** In the program's own
-  testing (139 invented consultations read aloud by computer voices, a few with a steady
-  hiss mixed in) 7 facts came out wrong this way: for 5 the line carried a mark —
+  testing (161 invented consultations read aloud by computer voices, a few with a steady
+  hiss mixed in) 9 facts came out wrong this way: for 6 the line carried a mark —
   `[word?]` on a word, or the line marked `[check: number]`, `[check: unsure]` or
-  `[check: possibly not speech]` — and 2 carried no mark at all. Real voices and accents
+  `[check: possibly not speech]` — and 3 carried no mark at all. Real voices and accents
   and everyday background sound were not measured, so the true rate may be higher. A
   larger speech model was measured and did no better, so these marks and your reading are
   the control. A mark does not point at the wrong word: `[check: number]` is on every
