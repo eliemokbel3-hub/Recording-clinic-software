@@ -241,8 +241,47 @@ None in the app. The harness's pass-rule schema gains version 4 (D1); a schema-1
 See the Planning Extraction Summary (Deferred, Excluded, Accepted). In short: the distinct mark for a low-confidence number (deferred with the band-rule trigger), the practitioner's phrases, the two install-smoke items (deferred to the next build); a fitted ceiling, reporting all of R1, rule v4 unchanged, a sealed `heldout-6`, any decode or model change (excluded); the four validation-pass items (owned there).
 
 ## Current State / Handoff Note
-- **COMPOSER RUN-STATE (2026-11-06 14:47, RUNNING):** `/execute-loop` run iso `validation-run8-20261106-144633-d8ae` (ownership marker `.cursor/loops/validation-run8-20261106-144633-d8ae-active`, isolation none, builds on `main` from `9884f04`), composer = Claude Code desktop session `local_325ca34f`'s side session; started at Task 0.2a. Commits so far: Task 0.2a `ba71ff5`; Task 0.2b `d15a28f`; Task 0.3 `431a38e`; Task 0.4 (THE pre-registration) the commit after it (stage-4 closed 2026-11-06T17:01+11:00). Next: stage-5 = Task 0.5 up to the practitioner's author launch. Stage map: stage-1 = Task 0.2a, stage-2 = 0.2b, stage-3 = 0.3, stage-4 = 0.4, stage-5 = 0.5 up to the practitioner's author launch, stage-6 = Phase 1, stage-7 = H1–H4. Helpers `.cursor/loops/vr8-spawn.sh` / `vr8-peer-run.sh`; policy log `.cursor/loops/validation-run8-20261106-144633-d8ae-policy.log` (high-auto `816c39ef6949`, gates `3aac04e88393`).
+- **COMPOSER RUN-STATE (2026-11-06 17:16, PAUSED at Task 0.5's practitioner launch of the isolated author — MUST-PAUSE `heldout5-author-launch`):** `/execute-loop` run iso `validation-run8-20261106-144633-d8ae` (ownership marker `.cursor/loops/validation-run8-20261106-144633-d8ae-active`, isolation none, builds on `main` from `9884f04`), composer = Claude Code desktop session `local_325ca34f`'s side session; started at Task 0.2a. Commits so far: Task 0.2a `ba71ff5`; Task 0.2b `d15a28f`; Task 0.3 `431a38e`; Task 0.4 (THE pre-registration) `edd1a7d`; Task 0.5's preparation recorded in the commit after it (not Task 0.5's own commit, which follows the authoring). Stage-5's prep converged: `/review-loop` round 14 (1 LOW), codex peer rounds 15 (1 LOW, record-only, fixed) and 16 (0 findings). The composer created `C:\heldout5-author` holding the regenerated `SPEC.md` alone (SHA-256 `819be450…994f54` re-checked after the copy); the author has NOT run; `validation/heldout-5` absent. Next: the practitioner's launch (the handoff note's practitioner step), then the composer resumes stage-5 for the rest of Task 0.5. Stage map: stage-1 = Task 0.2a, stage-2 = 0.2b, stage-3 = 0.3, stage-4 = 0.4, stage-5 = 0.5 up to the practitioner's author launch, stage-6 = Phase 1, stage-7 = H1–H4. Helpers `.cursor/loops/vr8-spawn.sh` / `vr8-peer-run.sh`; policy log `.cursor/loops/validation-run8-20261106-144633-d8ae-policy.log` (high-auto `816c39ef6949`, gates `3aac04e88393`).
 - Loop config: executor=claude-p model="claude-opus-5-5" effort=high profile=default; peer=codex model="gpt-6-astra" effort=medium; architect=off; cadence=every-phase; caps=review:3,peer:5; gates=executor; cap-raise=executor; high-auto=on; peer-max=12; notify=action-only; scope=all; autocommit=on; isolation=none; merge=off; perms=scoped; liveness=10; monitor-delivery=auto; verify=composer
+- **2026-11-06T17:12:09+11:00 — stage-5 executor (leg x3), peer round 15 routed: PR-LOW-001 CONFIRMED and applied (record-only).**
+  - Codex flagged that the leak record had which closing phrase was new the wrong way round, copied from run 7's Task 0.7 record. `see you next week` has been listed since 2026-09-28 (`consultation_phrases.py:90`); `see you` is the phrase `de8f5da` added (`:111`).
+  - Task 0.5's leak record now says so. Round 14's LOW-001, which copied the same mistake, gets a dated pointer. Run 7's plan is not edited.
+  - The disposition does not change. The line-48 hit was already present for the earlier authors, and the newer `see you` match lies inside that same phrase. So the brief goes to the author unchanged. No MUST-PAUSE.
+  - The brief, the prompt and the four tools are unchanged, so the leak run's hashes stand.
+  - Round 15 is closed (0 pending). No Deferral Confirmation Gate candidates.
+  - The practitioner's step below is unchanged.
+- **2026-11-06T17:07:37+11:00 — stage-5 executor (leg x2), Task 0.5 PREP REVIEWED, converged. STOP: the practitioner launches the author.**
+  - **Where things stand.** The leak run exited 0 with the same 10 hits as run 7 on the same lines, no new phrase and 0 primer hits. Its hashes are recorded on Task 0.5:
+    - `SPEC.md` `819be450…994f54`;
+    - `author-prompt.txt` `77584132…8103d5`.
+  - The runner's prompt equals the generated one. The CLI preflight with D4's flags passed: Claude Code 2.1.282, `PREFLIGHT_OK`, exit 0. `/review-loop` round 14 converged on its first round with one record-only LOW, applied. `validation/heldout-5` is absent.
+  - **What the practitioner does.** Use a NORMAL terminal (Git Bash), never an agent shell or a chat Run button.
+    1. Confirm that `C:\heldout5-author` holds the regenerated `SPEC.md` ALONE. `ls -A /c/heldout5-author` should print only `SPEC.md`. `sha256sum /c/heldout5-author/SPEC.md` should print `819be45027db4e9dfa2f5dd5e74e0b7a8447effae22c173ff2e1c525da994f54`.
+    2. From the repository root (`cd "/c/Recording clinic software"`), run `bash ".cursor/loops/validation-run8-heldout5-author-run.sh"`.
+    3. Wait for `.cursor/loops/validation-run8-heldout5-author.done`. It holds `EXIT:<code>`, and the author's last line should be `DONE <number of scripts>`. Do not open the scripts, `AUTHOR-NOTES.md` or the log.
+    4. If the script returns at once and no `.done` file appears, the `cd` into `/c/heldout5-author` failed (exit 9). Check that the folder exists and run the script again.
+  - **What happens after (the composer resumes Task 0.5).**
+    - The scripts are copied into `validation/heldout-5/` UNREAD, with `SPEC.md` and `author-prompt.txt` from the regenerated brief, `AUTHOR-NOTES.md` and the session log as `author-session.jsonl` with the user name redacted. Each copy is byte-checked against its source.
+    - `.cursor/loops/validation-run8-heldout5-tails.py` writes the `h5-` rows of `REFERENCE_TAIL_STARTS` (ids and integers only).
+    - The file-name-only presence pin is added.
+    - The suite and lints run ONLY through `scripts\lint-held-out-set.py validation\heldout-5` (C12). A lint failure goes back to the author as its code, never as a script edit.
+    - `validation/README.md`'s entry moves to the authored state.
+    - The commit carries the pre-registration hash `edd1a7d`.
+- **2026-11-06T17:04:06+11:00 — stage-5 executor (leg x1), Task 0.5 PREP BUILT; the leak run is owed (composer).** Operator brief:
+  - Task 0.5 is 🟨. The four git-ignored tools are written in `.cursor/loops/`, and none was run:
+    - `run8-brief-leak.py`;
+    - `validation-run8-heldout5-author-prompt.txt`;
+    - `validation-run8-heldout5-author-run.sh`;
+    - `validation-run8-heldout5-tails.py`.
+  - Each differs from its run-7 original by D4's edits. Five small extras are listed and justified on the task; none changes what the author sees.
+  - The tails anchor `"h4-21": None` is the current last row at `edd1a7d`.
+  - No MUST-PAUSE and no Deferral Confirmation Gate candidates.
+  - `validation/heldout-5` is absent. Nothing tracked changed but this plan.
+  - Next, in order:
+    1. The composer runs `.venv/Scripts/python.exe .cursor/loops/run8-brief-leak.py`. Expected: exit 0, `changed 4`, primer 33 terms with 0 hits, `[prompt] … yes`.
+    2. The composer runs the CLI preflight.
+    3. This executor is resumed to record both hashes and run `/review-loop`.
+    4. `C:\heldout5-author` is created with `SPEC.md` alone, and the PRACTITIONER launches the runner.
 - **2026-11-06T16:57:06+11:00 — stage-4 executor (leg x1), Task 0.4 PRE-REGISTRATION BUILT and REVIEWED, converged; the commit is owed (composer).** Operator brief:
   - `heldout-5`'s pre-registration is on Task 0.4, the only change, in this plan alone. The set does not exist, nothing names an `h5-` id, and no rule file, script or `desktop/` file changed (C2, C12, C16).
   - It holds:
@@ -302,10 +341,10 @@ See the Planning Extraction Summary (Deferred, Excluded, Accepted). In short: th
 - **2026-11-06T15:10+11:00 — stage-1 executor (leg x2), Task 0.2a REVIEWED, converged; suite re-run owed.** The composer's suite on the leg-x1 build: 9471 passed, 0 failed, 9 skipped (720 s); C17 (a) empty. `/review-loop` round 4 (Review Findings Log): 0 CRIT / 0 HIGH / 0 MED / 1 LOW — the `SetCeilings` docstring's opening ("a schema-2 or later rule"), applied; converged on the loop's first round. ruff and mypy green after the fix; it is docstring-only, but it is a code change, so the composer re-runs `desktop full pytest` before the 0.2a commit. **C17 (b) for Task 0.2a:** `git diff 170345d -- desktop/src/scribe_desktop/validation.py` touches only the `RULE_SCHEMA_VERSION` comment and value (named by the task; no decode or routing), `SetCeilings` (docstring, the `r1_marked_reported` field), `PassRule`'s docstring and `schema_version`, and `_check_sets` — inside C17 (b)'s permitted list; never `evaluate_encounter`, the alignment, `_FactState`, the reference reading, the metric amendments or `UNCERTAINTY_THRESHOLD`. C17 (c): `scripts/run-validation.py` unchanged. Next: the suite re-run, the rule's blob on the task, the 0.2a commit ALONE, then the codex peer pass (cadence every-phase) or stage-2 as the composer runs it.
 - **2026-11-06T14:54+11:00 — stage-1 executor (leg x1), Task 0.2a BUILT, suite owed.** Operator brief: rule v5 is in — schema 4 (`RULE_SCHEMA_VERSION` 4, `Literal[1, 2, 3, 4]`), `SetCeilings.r1_marked_reported` required non-None on every schema-4 row and refused non-None below schema 4, the exemption gate `>= 3`, `validation/rules/rule-v5.json` (D1's rows exactly; LF; rule v4's key order), and the loader pins in `test_validation_metrics.py` (`TestRuleV5`, C18's field-by-field equality, the schema-5 refusal, the re-pinned exemption messages, the label pins). ruff and mypy green; pytest NOT run (verify=composer). C17 holds (the task line's record). No MUST-PAUSE: a schema-4 file loads and renders under the pre-0.2b report code without a crash (the task line says what it prints meanwhile). Nothing touched outside `validation.py`, the new rule file, `test_validation_metrics.py` and this plan; rule v1–v4's files unchanged (C2). No Deferral Confirmation Gate candidates. Next: the composer runs the full desktop suite (`cd desktop && ../.venv/Scripts/python.exe -m pytest`), records the rule's blob on the task, then resumes this executor for fixes and `/review-loop` (first build round 4 — `loop-history-check.py` OK: 3 findings-log rounds), then the 0.2a commit ALONE.
 - Last completed step: Task 0.3 — closed and committed alone (`431a38e`, the composer, 2026-11-06T16:50+11:00). Before it: Task 0.2b — closed and committed alone (`d15a28f`, the composer, 2026-11-06T16:25+11:00). Before it: Task 0.2a — closed and committed alone (`ba71ff5`, the composer, 2026-11-06). Before that: Task 0.1 — the plan committed on the practitioner's word (2026-11-06). Before that: planning — the Plan Mode draft approved through ExitPlanMode (2026-11-06), hardened by this `/review-plan` pass (three lenses, 36 findings reconciled); the practitioner's decisions recorded (Key Design Decisions); the codex plan peer pass (2026-11-06, gpt-6-astra high, cap 5): round 1 — 1 HIGH, 4 MED, 1 LOW; round 2 — 1 HIGH, 2 LOW; round 3 — 1 record-only LOW, converged; every finding applied. Nothing built, nothing committed.
-- Current in-progress step: Task 0.4 🟨 — the pre-registration is written on the task and `/review-loop` round 12 converged (six record-only LOWs, applied; stage-4 leg x1, 2026-11-06T16:57+11:00). The commit is the composer's. History: Task 0.3 was 🟨 until its close — the script was run by the composer (exit 0), and predictions v5 are frozen on the task. `/review-loop` round 9 converged with two script LOWs applied (stage-3 leg x2, 2026-11-06T16:37+11:00). The round-9 re-run was clean: 158 lines, five blank lines added. Peer round 10's two LOWs are applied (leg x3, 16:45): one to the record, one to the script's difference check. The script's re-run and its facts on Task 0.3 are owed to the composer. Task 0.2b is closed and committed (`d15a28f`); Task 0.2a `ba71ff5`; Task 0.0 is closed (both halves: `1f9ab17`, `6fb6676`).
-- Immediate next action: the codex peer pass over Task 0.4 (cadence every-phase), if the composer runs one, then the 0.4 commit ALONE, BEFORE Task 0.5 starts (C16). Its hash goes on Task 0.5. (Done: Task 0.3's re-run after peer round 10 and its commit `431a38e`.)
+- Current in-progress step: Task 0.5 🟨 — prep built (stage-5 leg x1, 17:04), the leak run and CLI preflight recorded and `/review-loop` round 14 converged (leg x2, 17:07); waiting on the PRACTITIONER's author launch (the leg-x2 handoff bullet above). Before it, Task 0.4 🟨 — the pre-registration is written on the task and `/review-loop` round 12 converged (six record-only LOWs, applied; stage-4 leg x1, 2026-11-06T16:57+11:00). The commit is the composer's. History: Task 0.3 was 🟨 until its close — the script was run by the composer (exit 0), and predictions v5 are frozen on the task. `/review-loop` round 9 converged with two script LOWs applied (stage-3 leg x2, 2026-11-06T16:37+11:00). The round-9 re-run was clean: 158 lines, five blank lines added. Peer round 10's two LOWs are applied (leg x3, 16:45): one to the record, one to the script's difference check. The script's re-run and its facts on Task 0.3 are owed to the composer. Task 0.2b is closed and committed (`d15a28f`); Task 0.2a `ba71ff5`; Task 0.0 is closed (both halves: `1f9ab17`, `6fb6676`).
+- Immediate next action: the practitioner confirms `C:\heldout5-author` holds the regenerated `SPEC.md` alone and runs `bash ".cursor/loops/validation-run8-heldout5-author-run.sh"` from a normal Git Bash terminal, then waits for the `.done` file; the composer then resumes Task 0.5 (copy-in unread, tails, presence pin, the runner, the commit with `edd1a7d`). (Done: the leak run, the preflight, review round 14.) (Done: Task 0.4 committed `edd1a7d`, recorded on Task 0.5.) Earlier: the codex peer pass over Task 0.4 (cadence every-phase), if the composer runs one, then the 0.4 commit ALONE, BEFORE Task 0.5 starts (C16). Its hash goes on Task 0.5. (Done: Task 0.3's re-run after peer round 10 and its commit `431a38e`.)
 - Open blockers / open questions: the GPU plan's half of Task 0.0's Done-when (its session). Owed from the practitioner, in order: the `/execute-loop` start; the launch of the isolated author (Task 0.5); run 8 (P.1); the P.5 decision and the approvals (P.2); the diagnosis commit (P.3); the untick (P.4′).
-- Last plan sync: 2026-11-06T16:57:06+11:00 (Task 0.4's pre-registration written, review round 12 converged, commit owed; at 16:50 Task 0.3 closed and committed `431a38e`; at 16:45 peer round 10's two LOWs applied, script re-run owed; at 16:37 Task 0.3's predictions frozen, review round 9 converged, script re-run owed; at 16:33 Task 0.3's script written, run owed; at 16:25 Task 0.2b closed and committed `d15a28f`; at 16:08 peer round 7's PR-LOW-001 applied, suite re-run owed; at 15:52 Task 0.2b reviewed, round 6 converged; at 15:37 built, suite owed; before it Task 0.2a committed `ba71ff5` after round 4 and peer round 5 converged; Task 0.1 committed and Task 0.0 decided A)
+- Last plan sync: 2026-11-06T17:12:09+11:00 (peer round 15's PR-LOW-001 applied, record-only, round closed; at 17:07 Task 0.5's leak run and preflight recorded, review round 14 converged, the author launch owed; at 17:04 Task 0.5's prep built, the leak run owed; at 17:00 Task 0.4 committed `edd1a7d`; at 16:57 Task 0.4's pre-registration written, review round 12 converged, commit owed; at 16:50 Task 0.3 closed and committed `431a38e`; at 16:45 peer round 10's two LOWs applied, script re-run owed; at 16:37 Task 0.3's predictions frozen, review round 9 converged, script re-run owed; at 16:33 Task 0.3's script written, run owed; at 16:25 Task 0.2b closed and committed `d15a28f`; at 16:08 peer round 7's PR-LOW-001 applied, suite re-run owed; at 15:52 Task 0.2b reviewed, round 6 converged; at 15:37 built, suite owed; before it Task 0.2a committed `ba71ff5` after round 4 and peer round 5 converged; Task 0.1 committed and Task 0.0 decided A)
 
 ## Review History
 - 2026-11-06 — Round 1 — codex gpt-6-astra high plan peer-review (`/peer-loop` plan-review, cap 5; composer-recorded from the read-only peer's log) — 1 HIGH, 4 MED, 1 LOW; all six accepted and applied; not converged.
@@ -322,6 +361,9 @@ See the Planning Extraction Summary (Deferred, Excluded, Accepted). In short: th
 - 2026-11-06 — Round 11 — codex gpt-6-astra medium cross-family peer re-check (pass stage-3.p1, peer round 2 of cap 5; composer-recorded from the read-only peer's log) over Task 0.3 after Round 10's fixes — 0 findings (8 claims checked, 8 confirmed); **CONVERGED**.
 - 2026-11-06 round 12: 0 CRIT / 0 HIGH / 0 MED / 6 LOW; skew=none; action=none
 - 2026-11-06 — Round 13 — codex gpt-6-astra medium cross-family peer (pass stage-4.p1, peer round 1 of cap 5; composer-recorded from the read-only peer's log) over Task 0.4 — 0 findings (13 claims checked, 13 confirmed); **CONVERGED**.
+- 2026-11-06 round 14: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=none; action=none
+- 2026-11-06 — Round 15 — codex gpt-6-astra medium cross-family peer (pass stage-5.p1, peer round 1 of cap 5; composer-recorded from the read-only peer's log) over Task 0.5's preparation — 1 LOW (PR-LOW-001 docs-only: the leak disposition's provenance of the two closing phrases reversed, carried from run 7's record; 1 claim checked, 1 confirmed); routed to the executor's verify and /fix; not converged.
+- 2026-11-06 — Round 16 — codex gpt-6-astra medium cross-family peer re-check (pass stage-5.p1, peer round 2 of cap 5; composer-recorded from the read-only peer's log) over Task 0.5's preparation after Round 15's fix — 0 findings (8 claims checked, 8 confirmed); **CONVERGED**.
 
 ## Review Findings Log
 
@@ -675,6 +717,72 @@ Finding verification: 7 candidates; 1 dropped (the role-tails band cites run 7's
 - Verification counts: 13 claims checked, 13 confirmed, 0 dropped as unverifiable
 - Last reviewed: 2026-11-06
 
+### Round 14 — 2026-11-06
+Source: Claude Code (`/review-loop` round 1 of cap 3, stage-5 executor leg x2, `claude-opus-5-5`, 2026-11-06T17:07:37+11:00) — Task 0.5's prep only: the four git-ignored `.cursor/loops/` tools against their run-7 originals and D4, plus the plan record. No suite: no tracked code changed.
+Primary baseline: `edd1a7d` (HEAD). `git status --short` shows this plan alone.
+Reviewed:
+- `run8-brief-leak.py`, `validation-run8-heldout5-author-prompt.txt`, `validation-run8-heldout5-author-run.sh` and `validation-run8-heldout5-tails.py`, each read in full and diffed against its run-7 original (`git diff --no-index`);
+- the generated `heldout-5-brief/SPEC.md` and `author-prompt.txt`, diffed against `validation/heldout-4/`;
+- `run8-brief-leak-out.txt`;
+- run 7's Task 0.7 leak record and Task 0.8 records;
+- D4, C12, and Task 0.5's line and records.
+Round status: Closed (0 pending)
+Checked:
+- **The brief's four changed lines and nothing else.** `git diff --no-index -U0 validation/heldout-4/SPEC.md .cursor/loops/heldout-5-brief/SPEC.md` shows exactly four hunks: line 1 (set 5, validation-run8 plan, Task 0.5, 2026-11-06) and lines 5, 56 and 65 (`h4` → `h5`). The generated prompt differs from heldout-4's by `h4-01.json` → `h5-01.json` alone, and `git diff --no-index --stat` against the runner's prompt is empty.
+- **The primer terms are really in `LISTS`.** `"primer term": PRIMER_TERMS` is built from `CLINICAL_INITIAL_PROMPT` split on `.` and `,` (`transcription.py:211-220`). The run printed `primer term: 33`, which matches a hand count of the primer's parts, with 0 primer hits.
+- **The refusal.** `validation/heldout-5` existing → exit 2, before any read or write.
+- **The runner's flags equal D4's** character for character, plus run 7's output flags and closed stdin. The folder is `/c/heldout5-author`, and the composer's `diff` confirms the only differences are the folder and the three file names.
+- **The tails script.** The anchor `'    "h4-21": None,\n}\n'` occurs once in `validation.py` at HEAD (`:678-679`), and `"h5-` occurs nowhere there. The guard is `assert '"h5-' not in text`. Otherwise it is run 7's script with `SET` and the glob re-pointed: it prints ids and integers only (C12).
+- **No frozen-list phrase that run 7 had not accepted.** The 10 hits match run 7's Task 0.7 record line for line (`i think` ×2 :40; `see you next week` / `see you` :48; `uncertain` ×4 :67 :87; `doubtful` ×2 in the prompt). There is no greeting, no correction marker and no primer term.
+- **The hashes on the task equal the output file's**, and the "before the author runs" prefix `819be450…994f54` matches.
+Round classification: 1 🆕 / 0 ⚡ / 0 🔁.
+- **[LOW]** LOW-001: the leak record's disposition gave only the cue-table and hedge reasons. It left out run 7's reason for accepting `see you next week` — every match already matched the listed `see you` — which is what makes "no phrase run 7 had not accepted" hold for line 48 — 🆕 — Triage: Fix-now (record-only); Decision: Applied (run 7's reason quoted, its commit `de8f5da` named). [Round 15 PR-LOW-001, 2026-11-06T17:12:09+11:00: this finding copied run 7's reversed provenance. `see you next week` is the long-listed phrase and `see you` the one `de8f5da` added. The record is corrected on Task 0.5; this entry is history and is kept as written.]
+Missed-issue pass. Each was checked and found sound:
+- whether the leak script writes the brief before its asserts: no, every assert precedes the write;
+- whether exit 3 on a prompt mismatch could still leave a usable-looking brief: it writes, but the composer re-checks both hashes before the launch, as recorded;
+- whether `phrase_tokens` could hide a primer hit: both sides go through the same function;
+- whether the record's `lines 112` vs run 7's "111 lines" is a real difference: no — `rg` counts 111 lines, and `split("\n")` adds the empty piece after the final newline;
+- whether the runner's `cd … || exit 9` leaves no `.done` file: it does, as in run 7. That is named in the practitioner's step, not a code change.
+Result: none.
+Finding verification: 2 candidates; 1 dropped (the runner's missing `.done` on exit 9 is run 7's behaviour and outside D4's edits; it is covered in the handoff's practitioner step instead); 0 downgraded.
+/fix notes: applied 2026-11-06 by the stage-5 executor (leg x2), record-only, and re-read from disk. None of the four tools changed, so the leak run and its hashes stand.
+
+**CONVERGED (round 14: no CRIT / HIGH / MED; one 🆕 record-only LOW, applied).** `/review-loop` converged on its first round (plan round 14; cap 3).
+
+### Round 15 - 2026-11-06 - Stage-5 (Task 0.5 author prep), independent cross-family codex peer review (pass stage-5.p1)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Task 0.5 author-preparation tools, generated brief and prompt, leak output, permitted plan records, run-7 precedents, and named code definitions; read-only verification.
+
+#### Findings
+
+- **PR-LOW-001** (LOW, docs-only, `.cursor/plans/plan-validation-run8.md:924`): The leak disposition reverses which closing phrase was added in `de8f5da`, perpetuating an error in run 7’s record. `see you next week` was already listed; `see you` was added by that commit. The unchanged brief remains supported, but its recorded provenance is inaccurate. - Evidence: “`see you next week` (closing, new in `de8f5da`)” and “the long-listed `see you`”; `desktop/src/scribe_desktop/consultation_phrases.py:90` places `"see you next week"` in the original block, while lines 104–111 place `"see you"` under “Validation-run7 plan Task 0.4 (c)”; the named commit’s diff confirms `+    "see you",`. Recommendation: Fix-now - Correct the provenance and explain that the additional shorter-phrase hit occurs within the already-present follow-up cue; preserve the accepted disposition and author inputs. /fix decision: Applied — LEG-1 verified tuple (PR-LOW-001, CONFIRMED, LOW docs-only / record-only, rec=Fix-now).
+    - Evidence: `consultation_phrases.py:89-103` (the shipped 2026-09-28 block) holds `"see you next week"` at `:90`. `:104` opens the `# Validation-run7 plan Task 0.4 (c)` block, and `"see you"` is at `:111`. `git show de8f5da -- desktop/src/scribe_desktop/consultation_phrases.py` adds `+    "see you",` and does not add `see you next week`.
+    - Disposition unchanged, so no MUST-PAUSE. The line-48 cue row was already a hit (`see you next week`) for the heldout-3 and heldout-4 authors. The newer `see you` hit lies inside that same phrase and adds no word. C2 keeps the row equal to the cue file.
+    - /fix notes: `.cursor/plans/plan-validation-run8.md` only.
+      - Task 0.5's leak record: the provenance sentence is replaced by the corrected two-phrase account, with a dated correction note naming run 7's reversed record (run 7's plan is not edited).
+      - Sibling: Round 14 LOW-001 copied the same reversal. It gets a dated bracketed pointer and is kept as history.
+      - Other siblings swept (`long-listed`, `new in de8f5da`, `old-listed`, `already matched the listed`): none left.
+      - The brief, the prompt and the four tool files are unchanged, so the leak run's hashes stand.
+    - /fix date: 2026-11-06. /fix applied by: Claude Code (stage-5 executor leg x3).
+
+- Verification counts: 1 claims checked, 1 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-11-06
+
+### Round 16 - 2026-11-06 - Stage-5 (Task 0.5 author prep, re-check), independent cross-family codex peer review (pass stage-5.p1)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Round 15’s correction; named preparation tools, generated author inputs, hashes and leak output; permitted plan records, run-7 precedents, code definitions and provenance commit; static read-only verification.
+
+#### Findings
+
+- Verification counts: 8 claims checked, 8 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-11-06
+
 ## Tasks
 
 ### Phase 0 — The rule, the predictions, the blind set (the order is the point; C16)
@@ -802,7 +910,71 @@ Finding verification: 7 candidates; 1 dropped (the role-tails band cites run 7's
   - **Commit:** this record and the plan's bookkeeping, committed ALONE by the composer. The composer records the commit's hash on Task 0.5 before the author runs (Task 0.5 commits "with the pre-registration hash"). A commit cannot carry its own hash, so Task 0.4's "its hash on this task" is met there, as run 7's Task 0.7 hash was recorded on its 0.8. The harness document's Rule v5 section repeats the band rule and this pre-registration at Task 1.2 (D7, D8).
   - **C12 / C17 (this leg):** `git status --short` shows only this plan. Nothing under `validation/`, `desktop/` or `scripts/` was touched, and `validation/heldout-5` and `.cursor/loops/held-out-lint/` were not opened. The only scratch read was `.cursor/loops/run8-predict-out.txt`: every seen number above equals it and Task 0.3's record.
   - **Closed (2026-11-06T17:01+11:00, composer):** `/review-loop` round 12 (6 LOW, wording, applied) and codex peer round 13 (0 findings, 13 claims checked) converged; plan text only, no suite; nothing under `validation/`, `desktop/` or `scripts/` changed, `validation/heldout-5` absent; C17 (a) empty since `170345d`. THE pre-registration commit is this one, committed ALONE; its hash is recorded on Task 0.5 before the author runs (a commit cannot name itself).
-- [ ] 🟥 **0.5 Blind authoring of `heldout-5`** (D4; C12) — `run8-brief-leak.py` (the copy with D4's edits and the primer in `LISTS`; the brief's hash recorded), `validation-run8-heldout5-author-run.sh` and `...-author-prompt.txt` (the copies with D4's edits; the CLI preflighted), the practitioner launches the author in a NEW empty folder outside the repository; the scripts copied in unread with `SPEC.md`, `AUTHOR-NOTES.md`, `author-prompt.txt`, the redacted log; `validation-run8-heldout5-tails.py` writes the `h5-` tail rows; the file-name-only presence pin (`held_out_set("heldout-5").script_paths()` non-empty); lints ONLY through `scripts\lint-held-out-set.py validation\heldout-5` (a lint failure goes back to the author as its code, never a script edit); `validation/README.md`'s entry to the authored state (`heldout-4`'s shape). Done when: the runner is green; committed with the pre-registration hash. From here every suite run goes through the runner.
+- [ ] 🟨 **0.5 Blind authoring of `heldout-5`** (D4; C12) — `run8-brief-leak.py` (the copy with D4's edits and the primer in `LISTS`; the brief's hash recorded), `validation-run8-heldout5-author-run.sh` and `...-author-prompt.txt` (the copies with D4's edits; the CLI preflighted), the practitioner launches the author in a NEW empty folder outside the repository; the scripts copied in unread with `SPEC.md`, `AUTHOR-NOTES.md`, `author-prompt.txt`, the redacted log; `validation-run8-heldout5-tails.py` writes the `h5-` tail rows; the file-name-only presence pin (`held_out_set("heldout-5").script_paths()` non-empty); lints ONLY through `scripts\lint-held-out-set.py validation\heldout-5` (a lint failure goes back to the author as its code, never a script edit); `validation/README.md`'s entry to the authored state (`heldout-4`'s shape). Done when: the runner is green; committed with the pre-registration hash. From here every suite run goes through the runner.
+  - **The pre-registration commit (2026-11-06T17:00+11:00, composer):** Task 0.4 is `edd1a7d6eecd01d7839569e3615e7125b6f1298e` (`edd1a7d`), committed alone before any `h5-` script exists; `validation/heldout-5` absent at that commit. Task 0.5's commit carries this hash.
+  - **Prep built, leak run owed (2026-11-06T17:04:06+11:00, stage-5 executor leg x1).** Four NEW files in the git-ignored `.cursor/loops/`, none run by the executor. Each was checked against its run-7 original with `git diff --no-index`.
+    - `run8-brief-leak.py` (from `run7-brief-leak.py`). D4's edits:
+      - `SOURCE` is `validation/heldout-4` and `OUT` is `.cursor/loops/heldout-5-brief`.
+      - `EDITS` change brief lines 1, 5, 56 and 65 only. Line 1 becomes `# Held-out set 5 — the author's brief (validation-run8 plan, Task 0.5, 2026-11-06)`. Lines 5, 56 and 65 change `h4` to `h5`. Each old string is asserted to occur exactly once on its line. In `author-prompt.txt`, `h4-01.json` becomes `h5-01.json`.
+      - `LISTS` gain `"primer term"`: `CLINICAL_INITIAL_PROMPT` split on `.` and `,`, stripped, with empty parts dropped. That gives 33 terms, used as vocabulary only, and 0 hits are expected. The five run-7 lists are unchanged.
+      - The refusal is `validation/heldout-5` exists → exit 2.
+    - The leak script's asserts:
+      - no bare `\r` in the source brief;
+      - no `h4` and no `set 4` left in the brief, and exactly 6 `h5` and 1 `set 5` (lines 1, 5, 56 and 65; the source has exactly 6 `h4` and 1 `set 4`, all on those lines);
+      - the source prompt holds exactly one `h4` (its `h4-01.json`), and the result holds exactly one `h5-01.json` and no `h4`.
+    - What it prints, all inherited from run 7 except the last two items:
+      - `[brief] lines N, changed 4`;
+      - `[lists]` counts per list;
+      - `[hit] <file>:<line> <list>: '<LISTED phrase>'` (line numbers and listed phrases only);
+      - `[leak] hits N` (run 7's brief had 10, from the frozen lists);
+      - the two outputs' SHA-256 (`[sha256] SPEC.md …` and `[sha256] author-prompt.txt …`), as the spawn asks;
+      - `[prompt] equals validation-run8-heldout5-author-prompt.txt: yes|no`, with exit 3 on `no`.
+    - `validation-run8-heldout5-author-prompt.txt` (from `validation-run7-heldout4-author-prompt.txt`): `h4-01.json` → `h5-01.json`, the only change. LF, one trailing newline. Run 7's prompt and `validation/heldout-4/author-prompt.txt` have the same blob (`0d76591`), so this file should equal the leak script's generated `author-prompt.txt` byte for byte. The script's `[prompt]` line checks that.
+    - `validation-run8-heldout5-author-run.sh` (from `validation-run7-heldout4-author-run.sh`):
+      - the folder is `cd /c/heldout5-author || exit 9`, never `/c/heldout4-author`;
+      - the log, prompt and done paths are `validation-run8-heldout5-author{.log,-prompt.txt,.done}`;
+      - the flags are D4's exactly (`--restricted --safe-mode --strict-mcp-config --disallowedTools WebSearch Agent --permission-mode acceptEdits --model claude-opus-5-5`) plus run 7's `--output-format stream-json --verbose`, stdin closed;
+      - LF (the `*.sh` attribute).
+      - As in run 7, the folder is created EMPTY by the composer or practitioner and given the regenerated `SPEC.md` alone before the launch. The runner does not create it.
+    - `validation-run8-heldout5-tails.py` (from `validation-run7-heldout4-tails.py`): `SET` is `heldout-5`, the glob `h5-*.json`, the guard `assert '"h5-' not in text`, and the anchor `'    "h4-21": None,\n}\n'`. That anchor is checked as the CURRENT last row of `REFERENCE_TAIL_STARTS` at `edd1a7d` (`validation.py:678-679`, one occurrence, no `"h5-` in the file). It is NOT run before the set exists.
+    - **Differences beyond D4's named edits (justified here; none changes what the author sees):**
+      - (a) Both docstrings are re-pointed to this plan and task.
+      - (b) The refusal message reads "absent until Task 0.5's copy-in".
+      - (c) There are positive set-5 count asserts beside run 7's re-pointed negative ones. This is the reading taken of "the asserts read `"h5"` / `"set 5"` / `h5-01.json`". A brief with a stray or missing `h5` then fails before it is written.
+      - (d) The two SHA-256 lines, as the spawn names.
+      - (e) The `[prompt]` equality line with exit 3. It reads only the runner's own prompt file and guards deliverable 2's byte-equality, so a mismatch stops before the author runs (run 7's tool had no such check).
+      - No MUST-PAUSE: nothing D4 does not cover changes the brief, the prompt or the invocation.
+    - **C12 / C1 / C2 / C17 (this leg):** `validation/heldout-5` was not created and `.cursor/loops/held-out-lint/` was not opened. No `h4-*.json`, `AUTHOR-NOTES.md`, `author-session.jsonl` or set script was opened; only `validation/heldout-4/SPEC.md` and `author-prompt.txt` were read. Nothing under `desktop/`, `scripts/`, `validation/` or the rules changed. `git status --short` shows only this plan (the `.cursor/loops/` files are git-ignored).
+    - **Owed (composer):**
+      1. Run `.venv/Scripts/python.exe .cursor/loops/run8-brief-leak.py`. Expected: exit 0, `changed 4`, `primer term: 33`, 0 primer hits, `[prompt] … yes`. Record both SHA-256 values here.
+      2. Run the CLI preflight (a throwaway `claude -p` with D4's flags).
+      3. Run `/review-loop` (this executor, resumed).
+      4. Then create `C:\heldout5-author` empty, holding `SPEC.md` alone. The PRACTITIONER launches `bash .cursor/loops/validation-run8-heldout5-author-run.sh`.
+  - **The leak run and the preflight (recorded 2026-11-06T17:06:32+11:00, stage-5 executor leg x2, from the composer's results).**
+    - **The leak run (composer, 2026-11-06T17:05+11:00).** Command: `.venv/Scripts/python.exe .cursor/loops/run8-brief-leak.py > .cursor/loops/run8-brief-leak-out.txt`. It exited 0 with `validation/heldout-5` absent.
+      - It printed `[brief] lines 112, changed 4 (1, 5, 56, 65)`.
+      - The lists: closings 30, greetings 26, correction markers 4, `HEDGE_PHRASES` 33, `REFERENCE_HEDGES` 52, primer terms 33.
+    - **The hits: `[leak] hits 10`, the same 10 on the same lines as run 7's Task 0.7 record** (`plan-validation-run7.md`, the leak-check line under Task 0.7):
+      - `i think` ×2 (SPEC.md:40, the diagnosis cue row);
+      - `see you next week` and `see you` (SPEC.md:48, the follow-up cue row);
+      - `uncertain` ×4 (SPEC.md:67 and :87, the axis tag and the format example);
+      - `doubtful` ×2 (author-prompt.txt:1).
+      - The `lines 112` count is `split("\n")` over 111 newline-ended lines, so it includes the empty piece after the final newline. Run 7's record counted the same file shape as 111 lines. heldout-4's SPEC is heldout-3's with lines 1, 5, 56 and 65 changed, so every hit line number matches run 7's.
+      - **No hit is new.** No greeting and no correction marker occurs. **The primer terms: 0 hits.**
+      - Run 7's disposition carries over unchanged: kept unreworded.
+        - The cue table must repeat `validation/config/section_cues.json` exactly (C2).
+        - The hedge hits (`i think`, `uncertain`, `doubtful`) were accepted when heldout-3 was authored.
+        - The two closing hits on SPEC.md:48 (the follow-up cue row, which repeats the cue file under C2):
+          - `see you next week` has been listed since 2026-09-28 (`consultation_phrases.py:90`, the first closing). It is the cue row's own phrase, so it was already a hit when heldout-3 and heldout-4 were authored.
+          - `see you` is the phrase added by `de8f5da` (2026-10-26, validation-run7 Task 0.4 (c); `consultation_phrases.py:111`). Its one match on that line lies inside that same, already-listed `see you next week`. It adds no word to the brief and no hit on any other line.
+          - So the line steers the author to nothing the heldout-3 and heldout-4 authors were not shown, and the disposition (kept unreworded) stands.
+          - Correction (2026-11-06T17:12:09+11:00, codex peer round 15 PR-LOW-001): run 7's Task 0.7 record reverses which phrase was new. It calls `see you` closing 0 and listed since 2026-09-28, and `see you next week` closing 20 and new in `de8f5da`. This record had carried that over. Run 7's plan is closed history and is not edited.
+        - Nothing an author reads holds a frozen-list phrase that run 7 had not already accepted.
+    - **The hashes.** `SPEC.md` `819be45027db4e9dfa2f5dd5e74e0b7a8447effae22c173ff2e1c525da994f54`; `author-prompt.txt` `7758413210fbd24ee05e57b46f02120dc8e478e915935078767e4154908103d5`.
+    - `[prompt] equals validation-run8-heldout5-author-prompt.txt: yes`. The runner's prompt equals the generated prompt byte for byte.
+    - **The CLI preflight (composer, 2026-11-06).** The CLI is Claude Code 2.1.282. A throwaway `claude -p` used D4's flags exactly (`--restricted --safe-mode --strict-mcp-config --disallowedTools WebSearch Agent --permission-mode acceptEdits --model claude-opus-5-5`) and ran from a new empty scratch folder outside the repository. It replied `PREFLIGHT_OK`, exited 0 and left the folder empty. The Accepted Assumption on the flags holds.
+    - **The runner.** The composer's `diff` shows `validation-run8-heldout5-author-run.sh` differing from run 7's only in the folder (`/c/heldout5-author`) and the three run8/heldout5 file names.
+    - **Before the author runs:** the brief is regenerated by `run8-brief-leak.py` with `validation/heldout-5` absent. Both SHA-256 values must equal the two above, and a mismatch stops Task 0.5 before the launch (run 7's Task 0.8 shape). `C:\heldout5-author` is created empty and given the regenerated `SPEC.md` alone, its hash equal to `819be450…994f54`.
 
 ### Phase 1 — Documents (D2, D8)
 - [ ] 🟥 **1.1 The review guide and the practice README** (D2) — the dated clauses and lines, marked "awaiting the practitioner's approval"; the counts re-read from run 7's reports (ids never in the guide); CRLF kept. Done when: in, byte-checked for CRLF and no bare `\r`.
