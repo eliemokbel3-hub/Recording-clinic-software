@@ -1154,7 +1154,7 @@ class EncounterMetrics:
     @property
     def unsupported_clinical_lines_v3(self) -> int:
         """The unsupported clinical lines left once the R1 exemption is
-        applied — read only by a schema-3 rule that exempts (D4)."""
+        applied — read only by a schema-3 or later rule that exempts (D4)."""
         return self.unsupported_clinical_lines - self.unsupported_lines_excused
 
 
@@ -1979,7 +1979,7 @@ def encounter_metrics(
       The one alignment (``_Alignment``) carries R1, never
       ``align_transcripts``.
     - The R1 EXEMPTION (validation-run7 plan D4, read only by a schema-3
-      rule): once every fact's R1 is known, an unsupported clinical line is
+      or later rule): once every fact's R1 is known, an unsupported clinical line is
       excused when every structured-claim word flagged in it is a material
       R1 fact's own misrendering under a review mark, never an inserted word
       (``_excused_by_r1``); ``unsupported_lines_excused_by_r1`` names the
@@ -2458,7 +2458,7 @@ class PassRule(BaseModel):
 
 # Validation-run7 plan D4 (peer round 2 PR-MED-007): rule v2 as ratified —
 # ``validation/rules/rule-v2.json``, pinned equal by ``TestRuleV3`` — read only
-# to say whether a schema-3 report's verdict without the R1 exemption IS rule
+# to say whether a schema-3 or later report's verdict without the R1 exemption IS rule
 # v2's on its set: the verdicts read the top-level fields and a row's ceilings,
 # never its ``gate`` (the labels alone read that), so it is wherever those
 # equal rule v2's. Never a rule a run is scored against.
@@ -2705,10 +2705,10 @@ def rule_failures(
 ) -> tuple[RuleFailure, ...]:
     """Why ``outcome`` fails ``rule`` — empty when it passes. A schema-1
     rule reads the raw counts (``set_name`` must be None); a schema-2 or
-    schema-3 rule reads the named set's row (``PassRule.set_row``): the
+    later rule reads the named set's row (``PassRule.set_row``): the
     residue-adjusted counts, each class clearing only its own failure
     predicates, and the set's uncertainty requirement (D8, D17) — and a
-    schema-3 rule that exempts, the unsupported lines less the R1-excused
+    schema-3 or later rule that exempts, the unsupported lines less the R1-excused
     ones (validation-run7 plan D4). The set's class ceilings are
     ``class_breaches``'s, never an encounter's."""
     if rule.schema_version == 1:
@@ -2727,7 +2727,7 @@ def rule_failures(
 
 def v1_failures(rule: PassRule, outcome: EncounterOutcome) -> tuple[RuleFailure, ...]:
     """The per-encounter test on the RAW counts with the rule's top-level
-    fields — rule v1's verdict, printed beside rule v2's or v3's (D8: the v1
+    fields — rule v1's verdict, printed beside a schema-2 or later rule's (D8: the v1
     verdict stays visible; never the R1 exemption, D4); for a schema-1
     rule, ``rule_failures`` itself."""
     return _encounter_failures(
@@ -3211,7 +3211,7 @@ def run_passed(
 ) -> bool:
     """The run passes when at least one encounter ran, no set-level error
     occurred and every encounter passes ``rule`` — and, under a schema-2 or
-    schema-3 rule, every residue class is within the named set's ceiling
+    later rule, every residue class is within the named set's ceiling
     (D8)."""
     if not outcomes or errors:
         return False
