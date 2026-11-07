@@ -132,6 +132,10 @@ module = [
     "sounddevice",
     "faster_whisper",
     "faster_whisper.*",
+    # faster-whisper's runtime, imported directly for its CUDA device count
+    # (gpu-decoding plan D3, Task A.2).
+    "ctranslate2",
+    "ctranslate2.*",
     "onnxruntime",
     "onnxruntime.*",
     # python-docx ships no stubs (note-learning plan Task 3.3).

@@ -65,6 +65,53 @@ class TestWarmTranscriptionImports:
         ]
         assert WARMED_MODULES == ("numpy", "onnxruntime", "faster_whisper")
 
+    @pytest.mark.parametrize(("device", "expected"), [(None, "cpu"), ("cpu", "cpu"),
+                                                      ("cuda", "cuda")])
+    def test_the_preload_runs_just_before_the_faster_whisper_import(
+        self, monkeypatch: pytest.MonkeyPatch, device: str | None, expected: str
+    ) -> None:
+        """gpu-decoding plan D2: as before every faster-whisper import; the
+        warm-up's own default is the processor (a no-op preload)."""
+        from scribe_desktop import transcription
+
+        calls: list[str] = []
+        monkeypatch.setattr(ml_warmup, "assert_offline_env", lambda: calls.append("offline"))
+        monkeypatch.setattr(
+            transcription, "preload_cuda_libraries", lambda d: calls.append(f"preload {d}")
+        )
+
+        def importer(name: str) -> ModuleType:
+            calls.append(name)
+            return _FakeModule(name, calls)
+
+        if device is None:
+            warm_transcription_imports(importer)
+        else:
+            warm_transcription_imports(importer, device)  # type: ignore[arg-type]
+        assert calls[-2:] == [f"preload {expected}", "faster_whisper"]
+        assert calls.count(f"preload {expected}") == 1
+
+    def test_a_refused_preload_imports_no_faster_whisper(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop import transcription
+
+        imported: list[str] = []
+
+        def refused(device: str) -> None:
+            raise transcription.ComputeDeviceError(device, "no_device")
+
+        monkeypatch.setattr(transcription, "preload_cuda_libraries", refused)
+        monkeypatch.setattr(ml_warmup, "assert_offline_env", lambda: None)
+
+        def importer(name: str) -> ModuleType:
+            imported.append(name)
+            return _FakeModule(name, [])
+
+        with pytest.raises(transcription.ComputeDeviceError):
+            warm_transcription_imports(importer, "cuda")
+        assert imported == ["numpy", "onnxruntime"]
+
     def test_an_offline_refusal_imports_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         def refuse() -> None:
             raise OfflineEnvError("offline kill-switches not active: X")

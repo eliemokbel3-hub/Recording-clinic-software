@@ -364,6 +364,10 @@ def test_scribe_app_process_has_no_sockets(tmp_path: Path) -> None:
         "from scribe_desktop import install_layout\n"
         "install_layout.channel = lambda: 'production'\n"
         "install_layout.is_frozen = lambda: False\n"
+        # gpu-decoding plan C12: no card, no NVIDIA libraries, as the parent pins.
+        "from scribe_desktop import transcription\n"
+        "transcription.cuda_device_count = lambda: 0\n"
+        "transcription.preload_cuda_libraries = lambda device: None\n"
         "from PySide6.QtWidgets import QApplication\n"
         "from scribe_desktop.audio_capture import MockCaptureBackend\n"
         "from scribe_desktop.session import SessionController\n"
@@ -505,6 +509,9 @@ assert_offline_env()
 from scribe_desktop import install_layout
 install_layout.channel = lambda: "production"  # D2: what ships (round 22)
 install_layout.is_frozen = lambda: False
+from scribe_desktop import transcription
+transcription.cuda_device_count = lambda: 0  # gpu-decoding plan C12, as the parent pins
+transcription.preload_cuda_libraries = lambda device: None
 import win32con, win32file
 from PySide6.QtWidgets import QApplication
 from scribe_desktop.audio_capture import MockCaptureBackend
@@ -611,6 +618,9 @@ assert_offline_env()
 from scribe_desktop import install_layout
 install_layout.channel = lambda: "production"  # D2: what ships (round 22)
 install_layout.is_frozen = lambda: False
+from scribe_desktop import transcription
+transcription.cuda_device_count = lambda: 0  # gpu-decoding plan C12, as the parent pins
+transcription.preload_cuda_libraries = lambda device: None
 from PySide6.QtWidgets import QApplication
 from scribe_desktop.audio_capture import MockCaptureBackend
 from scribe_desktop.clinics import ClinicRegistry
@@ -952,6 +962,9 @@ from scribe_desktop import install_layout
 
 install_layout.channel = lambda: "production"
 install_layout.is_frozen = lambda: False  # a source run, as the parent pins (C6)
+from scribe_desktop import transcription
+transcription.cuda_device_count = lambda: 0  # gpu-decoding plan C12, as the parent pins
+transcription.preload_cuda_libraries = lambda device: None
 print("OFFLINE-OK", flush=True)
 
 from scribe_desktop.audio_capture import MockCaptureBackend
@@ -1126,6 +1139,9 @@ from scribe_desktop import install_layout
 
 install_layout.channel = lambda: "production"
 install_layout.is_frozen = lambda: False  # a source run, as the parent pins (C6)
+from scribe_desktop import transcription
+transcription.cuda_device_count = lambda: 0  # gpu-decoding plan C12, as the parent pins
+transcription.preload_cuda_libraries = lambda device: None
 print("OFFLINE-OK", flush=True)
 
 from scribe_desktop.audio_capture import MockCaptureBackend
@@ -1364,6 +1380,9 @@ from scribe_desktop import install_layout
 
 install_layout.channel = lambda: "production"
 install_layout.is_frozen = lambda: False  # a source run, as the parent pins (C6)
+from scribe_desktop import transcription
+transcription.cuda_device_count = lambda: 0  # gpu-decoding plan C12, as the parent pins
+transcription.preload_cuda_libraries = lambda device: None
 _real_ml_root = install_layout.models_root("dev")
 install_layout.models_root = lambda of=None: _real_ml_root
 print("OFFLINE-OK", flush=True)
@@ -1540,6 +1559,9 @@ from scribe_desktop import install_layout
 
 install_layout.channel = lambda: "production"  # D2: what ships (round 22)
 install_layout.is_frozen = lambda: False
+from scribe_desktop import transcription
+transcription.cuda_device_count = lambda: 0  # gpu-decoding plan C12, as the parent pins
+transcription.preload_cuda_libraries = lambda device: None
 print("OFFLINE-OK", flush=True)
 
 from scribe_desktop.language_model import MockLanguageModel, echo_prompt_lines
@@ -1629,6 +1651,9 @@ from scribe_desktop import install_layout
 
 install_layout.channel = lambda: "production"
 install_layout.is_frozen = lambda: False  # a source run, as the parent pins (C6)
+from scribe_desktop import transcription
+transcription.cuda_device_count = lambda: 0  # gpu-decoding plan C12, as the parent pins
+transcription.preload_cuda_libraries = lambda device: None
 _real_ml_root = install_layout.models_root("dev")
 install_layout.models_root = lambda of=None: _real_ml_root
 print("OFFLINE-OK", flush=True)
@@ -1721,6 +1746,9 @@ from scribe_desktop import install_layout
 
 install_layout.channel = lambda: "production"  # D2: what ships (round 22)
 install_layout.is_frozen = lambda: False
+from scribe_desktop import transcription
+transcription.cuda_device_count = lambda: 0  # gpu-decoding plan C12, as the parent pins
+transcription.preload_cuda_libraries = lambda device: None
 
 from scribe_desktop.audio_capture import MockCaptureBackend
 from scribe_desktop.encounter import unlinked_consent
@@ -1903,6 +1931,9 @@ from scribe_desktop import install_layout
 
 install_layout.channel = lambda: "production"
 install_layout.is_frozen = lambda: False  # a source run, as the parent pins (C6)
+from scribe_desktop import transcription
+transcription.cuda_device_count = lambda: 0  # gpu-decoding plan C12, as the parent pins
+transcription.preload_cuda_libraries = lambda device: None
 _real_ml_root = install_layout.models_root("dev")
 install_layout.models_root = lambda of=None: _real_ml_root
 

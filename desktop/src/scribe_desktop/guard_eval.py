@@ -83,13 +83,17 @@ from scribe_desktop.transcription import (
     # ``--model`` value's shape, the replay tool's own.
     _MODEL_NAME_RE,
     CLINICAL_INITIAL_PROMPT,
+    COMPUTE_DEVICES,
     DEFAULT_WHISPER_MODEL,
+    ComputeDevice,
+    ComputeDeviceError,
     GuardFeatures,
     MarkedSegment,
     TranscriptDocument,
     WhisperSpeechProvider,
     assign_words_to_segments,
     guard_features,
+    model_label,
     pack_transcription_windows,
     resolve_whisper_model,
     suspect_decision,
@@ -845,6 +849,16 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--device",
+        choices=COMPUTE_DEVICES,
+        default="cpu",
+        help=(
+            "decode on the processor (default) or the NVIDIA graphics card (`cuda`; the "
+            "report names the model as `<model>@cuda`); a graphics card that cannot decode "
+            "is refused, never replaced by the processor"
+        ),
+    )
+    parser.add_argument(
         "--all-rows",
         action="store_true",
         help="also print every segment row of the synthetic set",
@@ -864,8 +878,10 @@ def main(
     environment is applied and asserted, a ``--model`` value not shaped as a
     model name (never echoed), a missing set folder, the models
     (by name, before any is constructed), an unreadable set, a set holding
-    an unusable or non-synthetic script, no installed voice, and models that
-    cannot be loaded (by exception type)."""
+    an unusable or non-synthetic script, no installed voice, a ``--device
+    cuda`` the graphics card cannot decode on (by its code — gpu-decoding
+    plan D7; never a fall back to the processor), and models that cannot be
+    loaded (by exception type)."""
     configure_output()
     args = _parser().parse_args(argv)
     if install_layout.channel() != "dev":
@@ -950,17 +966,24 @@ def main(
 
     primer = PRIMERS[args.primer]
     load_failure: str | None = None
+    device_failure: str | None = None
     load_interrupted = False
+    device: ComputeDevice = args.device
     try:
         vad = SileroVad()
-        provider = WhisperSpeechProvider(model_name=whisper, initial_prompt=primer)
+        provider = WhisperSpeechProvider(model_name=whisper, initial_prompt=primer, device=device)
     except KeyboardInterrupt:
         load_interrupted = True
+    except ComputeDeviceError as exc:
+        device_failure = exc.error_code  # a type name or a fixed reason
     except Exception as exc:  # noqa: BLE001 - reported by TYPE
         load_failure = _error_type(exc)
     if load_interrupted:
         print("[stopped] the run was interrupted while the models loaded; nothing was run")
         return 1
+    if device_failure is not None:
+        print(f"[refused] --device {device}: the graphics card cannot decode ({device_failure})")
+        return 2
     if load_failure is not None:
         print(f"[refused] the models could not be loaded ({load_failure})")
         return 2
@@ -990,7 +1013,7 @@ def main(
             rows,
             args.candidates,
             errors,
-            whisper_model=whisper,
+            whisper_model=model_label(whisper, device),
             primer_name=args.primer,
             cases=len(cases),
             all_rows=args.all_rows,

@@ -397,12 +397,19 @@ class TestTheAudit:
 
     def test_every_variable_the_app_enforces_is_set_wrong(self, release: ModuleType) -> None:
         """Round 18 LOW-002: the audit's hostile set is EXACTLY what the app
-        sets or refuses (a new kill-switch must be exercised too), and each
-        value is wrong: a kill-switch not at its required value, an override
+        sets, refuses or pops (a new kill-switch must be exercised too — the
+        popped GPU variables since the gpu-decoding plan's D2, so the
+        self-check proves the pops), and each value is wrong: a kill-switch
+        not at its required value, an override or a popped variable
         present."""
         from scribe_desktop import benchmark
 
-        overrides = {*benchmark.FORBIDDEN_NATIVE_OVERRIDES, *benchmark.FORBIDDEN_TLS_OVERRIDES}
+        overrides = {
+            *benchmark.FORBIDDEN_NATIVE_OVERRIDES,
+            *benchmark.FORBIDDEN_TLS_OVERRIDES,
+            *benchmark.POPPED_GPU_VARIABLES,
+        }
+        assert len(benchmark.POPPED_GPU_VARIABLES) == 9
         assert set(release.HOSTILE_ENV) == set(benchmark.OFFLINE_ENV) | overrides
         for name, required in benchmark.OFFLINE_ENV.items():
             assert release.HOSTILE_ENV[name] != required, name

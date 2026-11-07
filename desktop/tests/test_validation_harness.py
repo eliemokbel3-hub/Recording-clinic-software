@@ -99,8 +99,14 @@ class TestCustodyHelperNames:
         offline environment before any of them can be imported."""
         runtimes = ("onnxruntime", "faster_whisper", "ctranslate2", "llama_cpp", "av",
                     "huggingface_hub")
+        # gpu-decoding plan C12: the graphics-card seams pinned as the parent
+        # pins them, after the modules (``validation`` already imports
+        # ``transcription``, so the runtimes the child prints are unchanged).
         code = (
             "import sys, scribe_desktop.validation, scribe_desktop.validation_set; "
+            "import scribe_desktop.transcription as transcription; "
+            "transcription.cuda_device_count = lambda: 0; "
+            "transcription.preload_cuda_libraries = lambda device: None; "
             f"print(','.join(n for n in {runtimes!r} if n in sys.modules))"
         )
         result = subprocess.run(
@@ -1715,6 +1721,70 @@ class TestRunValidationMain:
         out = capsys.readouterr().out
         assert f"Whisper model `{shown}`; VAD `silero`;" in out
         assert "FALLBACK" not in out
+
+    @windows_only
+    @pytest.mark.parametrize(
+        ("extra", "device", "shown"),
+        [((), "cpu", "medium"), (("--device", "cpu"), "cpu", "medium"),
+         (("--device", "cuda"), "cuda", "medium@cuda")],
+    )
+    def test_the_device_reaches_the_provider_and_its_label_the_report(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        extra: tuple[str, ...],
+        device: str,
+        shown: str,
+    ) -> None:
+        """gpu-decoding plan D7 / D8: ``--device`` (default ``cpu``) is the
+        provider's, and the run-information line APPENDS ``@cuda`` to the
+        model — the processor's line is unchanged."""
+        pytest.importorskip("numpy")
+        _FakeModels.install(monkeypatch)
+        built: list[dict[str, object]] = []
+
+        class _Whisper(_FakeModels.Whisper):
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                built.append(kwargs)
+
+        monkeypatch.setattr(validation, "WhisperSpeechProvider", _Whisper)
+        argv = _argv(tmp_path, "--attribution", "clustering", *extra)
+        _set_folder(tmp_path / "set")
+        assert validation.main(argv, repo_root=tmp_path) == 0
+        out = capsys.readouterr().out
+        assert built == [{"model_name": "medium", "device": device}]
+        assert f"Whisper model `{shown}`; VAD `silero`;" in out
+
+    def test_a_graphics_card_that_cannot_decode_is_refused_by_its_code(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """D7: a failing ``cuda`` is a refusal before any encounter runs,
+        never a run on the processor; the line names the code only."""
+        from scribe_desktop.transcription import ComputeDeviceError
+
+        _FakeModels.install(monkeypatch)
+        built: list[object] = []
+
+        def refused(*args: object, **kwargs: object) -> object:
+            built.append(kwargs)
+            raise ComputeDeviceError("cuda", "RuntimeError")
+
+        monkeypatch.setattr(validation, "WhisperSpeechProvider", refused)
+        argv = _argv(tmp_path, "--attribution", "clustering", "--device", "cuda")
+        _set_folder(tmp_path / "set")
+        assert validation.main(argv, repo_root=tmp_path) == 2
+        out = capsys.readouterr().out
+        assert out.strip().splitlines()[-1] == (
+            "[refused] --device cuda: the graphics card cannot decode (RuntimeError)"
+        )
+        assert "[run ]" not in out
+        assert built == [{"model_name": "medium", "device": "cuda"}]
+
+    def test_a_device_the_parser_does_not_take_exits_2(self, tmp_path: Path) -> None:
+        with pytest.raises(SystemExit) as info:
+            validation.main(_argv(tmp_path, "--device", "gpu"))
+        assert info.value.code == 2
 
     @windows_only
     def test_a_full_run_under_rule_v2_names_its_set(

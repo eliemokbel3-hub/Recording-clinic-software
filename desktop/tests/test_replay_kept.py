@@ -281,6 +281,8 @@ class _Seams:
         self.exclusion = _Exclusion(state)
         self.acquired = 0
         self.loaded = 0
+        # gpu-decoding plan D7: the device each load was asked for.
+        self.devices: list[str] = []
         self.enrolment: speaker_eval.EnrolmentInputs | None = None
         # Every entry key the run unwrapped, by session id (round 29 MED-001:
         # only a replayed entry is opened).
@@ -301,13 +303,20 @@ class _Seams:
         def open_store(folder: Path) -> PastSessionStore:
             return PastSessionStore(folder, wrap_key=_fake_wrap, unwrap_key=unwrap)
 
-        def load(model_name: str, enrolment_wav: Path | None) -> replay_kept.ReplayModels:
+        def load(
+            model_name: str, enrolment_wav: Path | None, device: str
+        ) -> replay_kept.ReplayModels:
             assert_offline_env()  # no model is built before the switches are on
             # Round 31 MED-004: the exclusion is HELD while the run works.
             assert not self.exclusion.released, "the exclusion was released mid-run"
             self.loaded += 1
+            self.devices.append(device)
             return replay_kept.ReplayModels(
-                _ReplayProvider(_ScriptedProvider()), amplitude_vad, model_name, self.enrolment
+                _ReplayProvider(_ScriptedProvider()),
+                amplitude_vad,
+                model_name,
+                self.enrolment,
+                device,  # type: ignore[arg-type]
             )
 
         def no_key_file(*args: object, **kwargs: object) -> None:
@@ -830,6 +839,26 @@ def _load_launcher() -> ModuleType:
     return module
 
 
+class TestTheModelLabel:
+    """gpu-decoding plan D8: a model is printed through ``MODEL_LABEL_RE`` —
+    a name, or a name and ``@cuda`` — else ``(unnamed)``."""
+
+    @pytest.mark.parametrize(
+        ("name", "shown"),
+        [("medium", "medium"), ("large-v3@cuda", "large-v3@cuda"), ("medium@cpu", "(unnamed)"),
+         ("medium@cuda@cuda", "(unnamed)"), ("Jane Citizen", "(unnamed)")],
+    )
+    def test_printed_through_the_label_shape(self, name: str, shown: str) -> None:
+        assert replay_kept._model(name) == shown
+
+    def test_the_models_label_follows_the_device(self) -> None:
+        provider = _ReplayProvider(_ScriptedProvider())
+        models = replay_kept.ReplayModels(provider, amplitude_vad, "medium")
+        assert (models.device, models.label) == ("cpu", "medium")
+        cuda = replay_kept.ReplayModels(provider, amplitude_vad, "large-v3", None, "cuda")
+        assert cuda.label == "large-v3@cuda"
+
+
 class TestMain:
     def test_the_launcher_is_thin_and_prints_usage(
         self, capsys: pytest.CaptureFixture[str]
@@ -882,6 +911,68 @@ class TestMain:
         [(config_dir, contents)] = configs
         assert config_dir.name.startswith(replay_kept.CONFIG_TEMP_PREFIX)
         assert contents == [] and not config_dir.exists()
+        assert seams.devices == ["cpu"]  # gpu-decoding plan D7: the default
+
+    @pytest.mark.parametrize(("extra", "suffix"), [((), ""), (("--device", "cuda"), "@cuda")])
+    def test_the_device_reaches_the_models_and_its_label_the_report(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        extra: tuple[str, ...],
+        suffix: str,
+    ) -> None:
+        """gpu-decoding plan D7 / D8: ``--device`` (default ``cpu``) reaches
+        the ``_load_models`` seam; the header and the row name the NEW model
+        with ``@cuda`` appended — on the processor both are unchanged, and the
+        kept model is printed as the kept transcript names it."""
+        pytest.importorskip("numpy")
+        folder = tmp_path / "past_sessions"
+        sid = _kept_entry(_store(folder))
+        seams = _Seams(monkeypatch)
+        assert replay_kept.main([str(folder), *extra]) == 0
+        out = _output(capsys)
+        assert seams.devices == ["cuda" if suffix else "cpu"]
+        assert f"- Whisper model (new): medium{suffix}; VAD: silero" in out
+        assert f"| {sid} | {SECONDS:.1f} | small | scripted{suffix} | " in out
+        _no_content(out)
+
+    def test_a_graphics_card_that_cannot_decode_is_refused_by_its_code(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """D7: refused before any recording is read, never replaced by the
+        processor; the line carries the code and fixed text only."""
+        from scribe_desktop.transcription import ComputeDeviceError
+
+        pytest.importorskip("numpy")
+        folder = tmp_path / "past_sessions"
+        _kept_entry(_store(folder))
+        seams = _Seams(monkeypatch)
+
+        def refuse(
+            model_name: str, enrolment_wav: Path | None, device: str
+        ) -> replay_kept.ReplayModels:
+            raise ComputeDeviceError(device, "library_missing")
+
+        monkeypatch.setattr(replay_kept, "_load_models", refuse)
+        assert replay_kept.main([str(folder), "--device", "cuda"]) == 2
+        out = _output(capsys)
+        assert out.strip().splitlines()[-1] == (
+            "[refused] the models could not be loaded (library_missing): --device cuda: the "
+            "graphics card cannot decode"
+        )
+        assert _run_lines(out) == []
+        assert seams.unwrapped == []
+        assert (seams.acquired, seams.released) == (1, 1)
+
+    def test_a_device_the_parser_does_not_take_is_fixed_text(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as info:
+            replay_kept.main([str(tmp_path), "--device", "Jane Citizen"])
+        assert info.value.code == 2
+        captured = capsys.readouterr()
+        assert "Jane" not in captured.out + captured.err
 
     @pytest.mark.parametrize("one_kept_speaker", [True, False])
     def test_the_row_compares_the_kept_labels_with_the_new_and_the_note_uses_the_new(
@@ -1198,7 +1289,9 @@ class TestMain:
         _kept_entry(_store(folder))
         seams = _Seams(monkeypatch)
 
-        def interrupted(model_name: str, enrolment_wav: Path | None) -> replay_kept.ReplayModels:
+        def interrupted(
+            model_name: str, enrolment_wav: Path | None, device: str
+        ) -> replay_kept.ReplayModels:
             raise KeyboardInterrupt
 
         monkeypatch.setattr(replay_kept, "_load_models", interrupted)
@@ -1524,7 +1617,9 @@ class TestRefusals:
         _kept_entry(_store(folder))
         seams = _Seams(monkeypatch)
 
-        def refuse(model_name: str, enrolment_wav: Path | None) -> replay_kept.ReplayModels:
+        def refuse(
+            model_name: str, enrolment_wav: Path | None, device: str
+        ) -> replay_kept.ReplayModels:
             raise raised
 
         monkeypatch.setattr(replay_kept, "_load_models", refuse)
@@ -1554,7 +1649,9 @@ class TestRefusals:
         _kept_entry(_store(folder))
         seams = _Seams(monkeypatch)
 
-        def refuse(model_name: str, enrolment_wav: Path | None) -> replay_kept.ReplayModels:
+        def refuse(
+            model_name: str, enrolment_wav: Path | None, device: str
+        ) -> replay_kept.ReplayModels:
             raise WavFormatError("Jane Citizen.wav: 44100 Hz stereo")
 
         monkeypatch.setattr(replay_kept, "_load_models", refuse)

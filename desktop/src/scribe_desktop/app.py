@@ -29,6 +29,7 @@ import ctypes
 import getpass
 import importlib.util
 import logging
+import os
 import sys
 import time
 from collections.abc import Callable, Sequence
@@ -41,7 +42,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from scribe_desktop import install_layout
 from scribe_desktop.audio_capture import SoundDeviceBackend
 from scribe_desktop.audit import AuditLog
-from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
+from scribe_desktop.benchmark import POPPED_GPU_VARIABLES, apply_offline_env, assert_offline_env
 from scribe_desktop.benchmark import run_worker as run_benchmark_worker
 from scribe_desktop.exclusions import (
     Win32WindowsLayer,
@@ -671,17 +672,22 @@ def run_offline_self_check(
 ) -> int | None:
     """``app.main``'s first step: when ``argv`` is EXACTLY the program and
     ``SELF_CHECK_FLAG``, apply and assert the offline environment exactly as a
-    start does, then check no Qt networking module can be found — and return
-    the exit code (``SELF_CHECK_*``). Otherwise ``None``: not the check, and
-    the arguments are ignored. It opens no window, writes no log and reads no
-    data root, so it may run before the install-folder check (an audit runs
-    the bundle where it was built, never from the install folder)."""
+    start does — and, since the gpu-decoding plan (D2), check that every
+    popped GPU variable (``POPPED_GPU_VARIABLES``) is gone, which the
+    assertion alone would not notice — then check no Qt networking module can
+    be found — and return the exit code (``SELF_CHECK_*``). Otherwise
+    ``None``: not the check, and the arguments are ignored. It opens no
+    window, writes no log and reads no data root, so it may run before the
+    install-folder check (an audit runs the bundle where it was built, never
+    from the install folder)."""
     if list(argv[1:]) != [SELF_CHECK_FLAG]:
         return None
     try:
         apply_offline_env()
         assert_offline_env()
     except Exception:  # noqa: BLE001 - exit code only, by design
+        return SELF_CHECK_OFFLINE_ENV
+    if any(name in os.environ for name in POPPED_GPU_VARIABLES):
         return SELF_CHECK_OFFLINE_ENV
     finder = find_spec if find_spec is not None else importlib.util.find_spec
     for module in _QT_NETWORK_MODULES:

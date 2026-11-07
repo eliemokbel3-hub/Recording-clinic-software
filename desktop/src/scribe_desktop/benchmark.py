@@ -27,6 +27,11 @@ panel's; when present, it is the RTF the status, the live-window line and
 the warnings read. The panel's own call (one call over the whole sample, no
 primer) understates the app's cost.
 
+``--device cuda`` (gpu-decoding plan D7) decodes every worker on the NVIDIA
+graphics card, its libraries preloaded by absolute path first; a card that
+cannot decode fails the run, never falling back to the processor. The table
+then names each result's device.
+
 Offline enforcement: the offline env kill-switches are set AND asserted before
 any ML import. Models must already be local (``install_layout.models_root``:
 scripts/setup-models.py from a source checkout, the installer's model pack in
@@ -55,8 +60,9 @@ from typing import TYPE_CHECKING, Final
 from scribe_desktop import install_layout
 from scribe_desktop.logging_setup import exception_type_name
 
-if TYPE_CHECKING:  # ``speech`` imports this module
+if TYPE_CHECKING:  # ``speech`` and ``transcription`` import this module
     from scribe_desktop.speech import FrameProbabilityFn, SpeechProvider
+    from scribe_desktop.transcription import ComputeDevice
 
 # RTF thresholds (plan Step 5 / Step 10). RTF < 1.0 is required; the margin
 # leaves headroom for clinic machines slower than the dev machine.
@@ -81,9 +87,8 @@ OFFLINE_ENV: dict[str, str] = {
 # wheel's own `lib/` — an inherited value would swap the native runtime the
 # D8 hash pinned, possibly for one on a network share. `apply_offline_env`
 # deletes it; `assert_offline_env` fails while it is present, naming it and
-# touching no path. `CUDA_PATH` / `HIP_PATH` are NOT refused: the runtime only
-# ADDS them as DLL search directories, the CPU wheel's bundled library has no
-# CUDA/HIP dependency, and they are ordinary system variables on a GPU host.
+# touching no path. `CUDA_PATH` / `HIP_PATH` are NOT refused — they are
+# ordinary system variables on a GPU host — but POPPED (`POPPED_GPU_VARIABLES`).
 FORBIDDEN_NATIVE_OVERRIDES: tuple[str, ...] = ("LLAMA_CPP_LIB_PATH",)
 # TLS-secret exports the offline contract REFUSES (Cliniko workflow safeguards
 # plan D9, Task 1.1): `ssl.create_default_context()` appends every session's
@@ -94,6 +99,27 @@ FORBIDDEN_NATIVE_OVERRIDES: tuple[str, ...] = ("LLAMA_CPP_LIB_PATH",)
 # overrides: deleted by `apply_offline_env`, refused BY NAME (its value is a
 # path, never read) by `assert_offline_env`.
 FORBIDDEN_TLS_OVERRIDES: tuple[str, ...] = ("SSLKEYLOGFILE",)
+# GPU variables `apply_offline_env` POPS (gpu-decoding plan D2) — popped, not
+# refused: they are ordinary variables on a GPU host, so `assert_offline_env`
+# does not fail on them, and `app.run_offline_self_check` checks they are gone.
+# `CUDA_PATH` / `HIP_PATH`: the prose runtime registers `%CUDA_PATH%\bin` and
+# `\lib` as DLL search folders when it is imported, so a folder they name
+# could supply a CUDA library to a later graphics-card decode (the preload by
+# absolute path is the first line, `transcription.preload_cuda_libraries`).
+# The six cuDNN / cuBLAS logging variables would make those libraries write
+# log files. `CUDA_CACHE_PATH` would move the driver's compiled-kernel cache
+# (kernels only, never audio) out of `%APPDATA%\NVIDIA\ComputeCache`.
+POPPED_GPU_VARIABLES: tuple[str, ...] = (
+    "CUDA_PATH",
+    "HIP_PATH",
+    "CUDNN_LOGDEST_DBG",
+    "CUDNN_LOGLEVEL_DBG",
+    "CUBLASLT_LOG_FILE",
+    "CUBLASLT_LOG_LEVEL",
+    "CUBLAS_LOGDEST_DBG",
+    "CUBLAS_LOGINFO_DBG",
+    "CUDA_CACHE_PATH",
+)
 
 # Fixed, deliberately non-clinical benchmark script (~45 s of speech at
 # default SAPI rate). Plain descriptive prose with numbers and names so the
@@ -129,7 +155,11 @@ _WORKER_ENV = "SCRIBE_BENCHMARK_WORKER"
 WORKER_FLAG: Final = "--benchmark-worker"
 # The worker's options, in the order ``worker_argv`` writes them; each takes
 # exactly one value.
-_WORKER_OPTIONS: Final = ("--single", "--models-root", "--audio", "--audio-seconds")
+_WORKER_OPTIONS: Final = ("--single", "--models-root", "--audio", "--audio-seconds", "--device")
+# The ``--device`` values (gpu-decoding plan D7): ``transcription.COMPUTE_DEVICES``,
+# spelled here because ``transcription`` imports this module (a test pins them
+# equal).
+BENCHMARK_DEVICES: Final = ("cpu", "cuda")
 # The options whose value becomes a path (the model name is joined to the
 # models root); a network (UNC) value is not the worker (round 27 PR-MED-021).
 _WORKER_PATH_OPTIONS: Final = ("--single", "--models-root", "--audio")
@@ -151,10 +181,11 @@ class OfflineEnvError(RuntimeError):
 
 def apply_offline_env() -> None:
     """Set the offline kill-switch environment variables for this process and
-    delete the forbidden native-library and TLS-secret overrides."""
+    delete the forbidden native-library and TLS-secret overrides and the
+    popped GPU variables."""
     for key, value in OFFLINE_ENV.items():
         os.environ[key] = value
-    for key in FORBIDDEN_NATIVE_OVERRIDES + FORBIDDEN_TLS_OVERRIDES:
+    for key in FORBIDDEN_NATIVE_OVERRIDES + FORBIDDEN_TLS_OVERRIDES + POPPED_GPU_VARIABLES:
         os.environ.pop(key, None)
 
 
@@ -239,6 +270,9 @@ class BenchmarkResult:
     # was not measured — the panel never measures it. Appended last with a
     # default: callers construct this positionally.
     app_rtf: float | None = None
+    # gpu-decoding plan D7: the device the worker decoded on, ``cpu`` or
+    # ``cuda``. Appended last with a default, as ``app_rtf``.
+    device: str = "cpu"
 
     @property
     def classified_rtf(self) -> float:
@@ -409,20 +443,27 @@ def threshold_report(
     gains an ``app RTF`` column beside the panel's (``-`` for a result
     without one), and every line after the table reads each result's
     classified RTF — the app-shape one when measured. Without one (the
-    Microphone tab's panel) the report is unchanged."""
+    Microphone tab's panel) the report is unchanged.
+
+    gpu-decoding plan D7: when any result was decoded on a device other than
+    the processor, the table gains a ``device`` column after the model's; a
+    processor-only table is unchanged."""
     app_column = any(r.app_rtf is not None for r in results)
     app_header = f" {'app RTF':>8}" if app_column else ""
+    device_column = any(r.device != "cpu" for r in results)
+    device_header = f" {'device':<6}" if device_column else ""
     lines = [
         f"RTF thresholds: required < {RTF_REQUIRED:.2f}, margin <= {RTF_MARGIN:.2f}",
-        f"{'model':<20} {'RTF':>6}{app_header} {'load s':>7} {'audio s':>8} "
+        f"{'model':<20}{device_header} {'RTF':>6}{app_header} {'load s':>7} {'audio s':>8} "
         f"{'peak MiB':>9} {'words':>6}  status",
     ]
     for r in results:
         app_cell = ""
         if app_column:
             app_cell = f" {r.app_rtf:>8.3f}" if r.app_rtf is not None else f" {'-':>8}"
+        device_cell = f" {r.device:<6}" if device_column else ""
         lines.append(
-            f"{r.model_name:<20} {r.rtf:>6.3f}{app_cell} {r.load_seconds:>7.2f} "
+            f"{r.model_name:<20}{device_cell} {r.rtf:>6.3f}{app_cell} {r.load_seconds:>7.2f} "
             f"{r.audio_seconds:>8.1f} {r.peak_memory_bytes / 2**20:>9.1f} "
             f"{r.word_count:>6}  {r.status.upper()}"
         )
@@ -498,8 +539,13 @@ def generate_speech_sample(target: Path) -> float:
         return wav.getnframes() / wav.getframerate()
 
 
-def run_single(model_dir: Path, audio_path: Path, audio_seconds: float) -> BenchmarkResult:
-    """Benchmark one local model in THIS process. Offline env must be active."""
+def run_single(
+    model_dir: Path, audio_path: Path, audio_seconds: float, *, device: ComputeDevice = "cpu"
+) -> BenchmarkResult:
+    """Benchmark one local model in THIS process on ``device`` (gpu-decoding
+    plan D7; ``transcription.COMPUTE_TYPES``' compute type). Offline env must
+    be active. A ``cuda`` that cannot decode raises — the benchmark never
+    falls back to the processor."""
     assert_offline_env()
     # Round 27 PR-MED-021: the same UNC refusal as the other model loaders,
     # before any filesystem touch — a network model or audio path would be
@@ -507,18 +553,28 @@ def run_single(model_dir: Path, audio_path: Path, audio_seconds: float) -> Bench
     for path in (model_dir, audio_path):
         if install_layout.is_unc_path(path):
             raise RuntimeError(f"benchmark path must be a local path, not UNC: {path}")
+    # Imported here: ``transcription`` imports this module. The mel-filter
+    # count is checked as the provider checks it after its own load
+    # (larger-model D8); the NVIDIA libraries are preloaded before the
+    # faster-whisper import (gpu-decoding plan D2; a no-op on the processor).
+    from scribe_desktop.transcription import (
+        COMPUTE_TYPES,
+        check_mel_filters,
+        preload_cuda_libraries,
+    )
+
+    preload_cuda_libraries(device)
     import psutil
     from faster_whisper import WhisperModel
 
     started = time.perf_counter()
     model = WhisperModel(
-        str(model_dir), device="cpu", compute_type="int8", local_files_only=True
+        str(model_dir),
+        device=device,
+        compute_type=COMPUTE_TYPES[device],
+        local_files_only=True,
     )
     load_seconds = time.perf_counter() - started
-    # Larger-model D8: the mel-filter count, as the provider checks it after
-    # its own load. Imported here: ``transcription`` imports this module.
-    from scribe_desktop.transcription import check_mel_filters
-
     check_mel_filters(model, model_dir)
 
     started = time.perf_counter()
@@ -536,6 +592,7 @@ def run_single(model_dir: Path, audio_path: Path, audio_seconds: float) -> Bench
         rtf=compute_rtf(transcribe_seconds, audio_seconds),
         peak_memory_bytes=peak,
         word_count=word_count,
+        device=device,
     )
 
 
@@ -600,29 +657,40 @@ def time_app_shape(
     )
 
 
-def run_app_shape(model_dir: Path, audio_path: Path, vad_model_path: Path) -> AppShapeTiming:
+def run_app_shape(
+    model_dir: Path,
+    audio_path: Path,
+    vad_model_path: Path,
+    *,
+    device: ComputeDevice = "cpu",
+) -> AppShapeTiming:
     """Larger-model D8: the app-shape timing of one local model in THIS
     process (the ``--app-shape`` worker). The sample is decoded to 16 kHz
     PCM16 by faster-whisper's own decoder (the resampler the panel's call
     uses), segmented by silero VAD and timed by ``time_app_shape`` through
     ``WhisperSpeechProvider`` with its defaults — the app's primer, language
-    and decode parameters. Offline env must be active."""
+    and decode parameters — on ``device`` (gpu-decoding plan D7: a ``cuda``
+    provider's warm decode runs at construction, before the timing; one that
+    cannot decode raises). Offline env must be active."""
     assert_offline_env()
     for path in (model_dir, audio_path, vad_model_path):
         if install_layout.is_unc_path(path):
             raise RuntimeError(f"benchmark path must be a local path, not UNC: {path}")
-    import numpy
-    from faster_whisper import decode_audio
-
     # Imported here: both modules import this one.
     from scribe_desktop import speech, transcription
+
+    # gpu-decoding plan D2: before the faster-whisper import (a no-op on the
+    # processor).
+    transcription.preload_cuda_libraries(device)
+    import numpy
+    from faster_whisper import decode_audio
 
     # ``decode_audio`` resamples to signed 16-bit and divides by 32768, so
     # this multiplication restores the 16-bit samples exactly.
     samples = decode_audio(str(audio_path), sampling_rate=speech.SAMPLE_RATE)
     pcm = numpy.clip(numpy.rint(samples * 32768.0), -32768, 32767).astype(numpy.int16).tobytes()
     vad = speech.SileroVad(vad_model_path)
-    provider = transcription.WhisperSpeechProvider(model_dir)
+    provider = transcription.WhisperSpeechProvider(model_dir, device=device)
     return time_app_shape(pcm, vad.frame_probability, provider)
 
 
@@ -633,6 +701,7 @@ def worker_argv(
     audio_seconds: float,
     *,
     app_shape: bool = False,
+    device: ComputeDevice = "cpu",
 ) -> list[str]:
     """The argv ``run_all`` spawns for one model: this module under ``-m``
     from a source run; ``scribe-app.exe --benchmark-worker`` in a packaged
@@ -641,9 +710,13 @@ def worker_argv(
     take, such as a candidate folder named like an option (round 13
     LOW-004).
 
-    ``app_shape`` (larger-model D8) appends ``--app-shape`` for the
-    app-shape worker. It is a source run's option only: the frozen worker's
-    shape (``is_worker_argv``) is unchanged, so a packaged build refuses it."""
+    ``device`` (gpu-decoding plan D7) is always written, as ``--device``
+    after the seconds, so the frozen worker's shape names the device it
+    decodes on — a packaged build runs the graphics-card benchmark through
+    this single-model worker. ``app_shape`` (larger-model D8) appends
+    ``--app-shape`` for the app-shape worker. It is a source run's option
+    only: the frozen worker's shape (``is_worker_argv``) does not take it, so
+    a packaged build refuses it."""
     if app_shape and install_layout.is_frozen():
         raise RuntimeError("the app-shape benchmark runs from a source checkout only")
     tail = [
@@ -655,6 +728,8 @@ def worker_argv(
         str(audio_path),
         "--audio-seconds",
         f"{audio_seconds}",
+        "--device",
+        device,
     ]
     if app_shape:
         tail.append("--app-shape")
@@ -684,13 +759,14 @@ def is_worker_argv(argv: Sequence[str]) -> bool:
             return False
         if option in _WORKER_PATH_OPTIONS and install_layout.is_unc_path(value):
             return False
-    # Round 24: every value is one ``main``'s parser takes (only the seconds
-    # are typed), so the worker never ends in argparse's usage text and exit 2.
+    # Round 24: every value is one ``main``'s parser takes (the seconds are
+    # typed and the device is a choice), so the worker never ends in
+    # argparse's usage text and exit 2.
     try:
         float(pairs[2 * _WORKER_OPTIONS.index("--audio-seconds") + 1])
     except ValueError:
         return False
-    return True
+    return pairs[2 * _WORKER_OPTIONS.index("--device") + 1] in BENCHMARK_DEVICES
 
 
 def run_worker(argv: Sequence[str]) -> int | None:
@@ -744,14 +820,19 @@ def _run_worker(argv: list[str], name: str) -> str:
 
 
 def run_all(
-    models_root: Path, names: list[str] | None = None, *, app_shape: bool = False
+    models_root: Path,
+    names: list[str] | None = None,
+    *,
+    app_shape: bool = False,
+    device: ComputeDevice = "cpu",
 ) -> list[BenchmarkResult]:
     """Benchmark each candidate in a fresh subprocess; aggregate results.
 
     With ``app_shape`` (larger-model D8) each candidate is then timed the
     app's way in a SECOND fresh subprocess (so the panel's peak memory and
     load time stay its own, measured alone), and its RTF is the result's
-    ``app_rtf``."""
+    ``app_rtf``. Every worker decodes on ``device`` (gpu-decoding plan D7);
+    a worker that cannot raises, as any failed worker does."""
     if install_layout.is_unc_path(models_root):
         raise RuntimeError(f"models folder must be a local path, not UNC: {models_root}")
     candidates = list_whisper_candidates(models_root)
@@ -777,11 +858,20 @@ def run_all(
         audio_seconds = generate_speech_sample(audio_path)
         results: list[BenchmarkResult] = []
         for name in candidates:
-            stdout = _run_worker(worker_argv(name, models_root, audio_path, audio_seconds), name)
+            stdout = _run_worker(
+                worker_argv(name, models_root, audio_path, audio_seconds, device=device), name
+            )
             result = BenchmarkResult(**json.loads(stdout))
             if app_shape:
                 stdout = _run_worker(
-                    worker_argv(name, models_root, audio_path, audio_seconds, app_shape=True),
+                    worker_argv(
+                        name,
+                        models_root,
+                        audio_path,
+                        audio_seconds,
+                        app_shape=True,
+                        device=device,
+                    ),
                     name,
                 )
                 timing = AppShapeTiming(**json.loads(stdout))
@@ -804,6 +894,13 @@ def main(argv: list[str] | None = None) -> int:
         "30 s, the app's own call per window) and print its RTF as an 'app RTF' "
         "column; a source checkout only",
     )
+    parser.add_argument(
+        "--device",
+        choices=BENCHMARK_DEVICES,
+        default="cpu",
+        help="decode on the processor (default) or the NVIDIA graphics card; a graphics "
+        "card that cannot decode fails the run, never falling back to the processor",
+    )
     args = parser.parse_args(argv)
 
     apply_offline_env()
@@ -823,15 +920,20 @@ def main(argv: list[str] | None = None) -> int:
             # The VAD file as ``speech.default_vad_model_path`` places it,
             # under the worker's own models root.
             timing = run_app_shape(
-                model_dir, args.audio, models_root / "silero-vad" / "silero_vad.onnx"
+                model_dir,
+                args.audio,
+                models_root / "silero-vad" / "silero_vad.onnx",
+                device=args.device,
             )
             print(json.dumps(asdict(timing)))
             return 0
-        result = run_single(model_dir, args.audio, args.audio_seconds)
+        result = run_single(model_dir, args.audio, args.audio_seconds, device=args.device)
         print(json.dumps(asdict(result)))
         return 0
 
-    results = run_all(models_root, args.models or None, app_shape=args.app_shape)
+    results = run_all(
+        models_root, args.models or None, app_shape=args.app_shape, device=args.device
+    )
     for line in threshold_report(results):
         print(line)
     return 0

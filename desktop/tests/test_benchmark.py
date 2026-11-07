@@ -669,6 +669,268 @@ class TestRunSingleMelCheck:
         assert calls == [{"audio": str(tmp_path / "a.wav"), "word_timestamps": True}]
 
 
+_POPPED = (
+    "CUDA_PATH",
+    "HIP_PATH",
+    "CUDNN_LOGDEST_DBG",
+    "CUDNN_LOGLEVEL_DBG",
+    "CUBLASLT_LOG_FILE",
+    "CUBLASLT_LOG_LEVEL",
+    "CUBLAS_LOGDEST_DBG",
+    "CUBLAS_LOGINFO_DBG",
+    "CUDA_CACHE_PATH",
+)
+
+
+class TestThePoppedGpuVariables:
+    """gpu-decoding plan D2: nine GPU variables are POPPED by
+    ``apply_offline_env`` and never refused by ``assert_offline_env``."""
+
+    def test_they_are_exactly_these(self) -> None:
+        assert benchmark.POPPED_GPU_VARIABLES == _POPPED
+        assert not set(_POPPED) & set(benchmark.FORBIDDEN_NATIVE_OVERRIDES)
+        assert not set(_POPPED) & set(benchmark.FORBIDDEN_TLS_OVERRIDES)
+
+    def test_apply_pops_every_one(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for name in _POPPED:
+            monkeypatch.setenv(name, r"C:\nowhere")
+        apply_offline_env()
+        assert [name for name in _POPPED if name in os.environ] == []
+
+    @pytest.mark.parametrize("name", _POPPED)
+    def test_assert_never_refuses_one(self, monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+        apply_offline_env()
+        monkeypatch.setenv(name, r"C:\nowhere")
+        assert_offline_env()  # popped, not refused: no OfflineEnvError
+        assert os.environ[name] == r"C:\nowhere"
+
+
+def _device_whisper_module(
+    monkeypatch: pytest.MonkeyPatch, events: list[tuple[str, object]], samples: Any = None
+) -> None:
+    """A ``faster_whisper`` stand-in recording, in order, each preload (the
+    conftest's no-op replaced), each load's keyword arguments, each
+    ``transcribe`` call's audio length and each ``decode_audio``."""
+    from scribe_desktop import transcription
+
+    monkeypatch.setattr(
+        transcription, "preload_cuda_libraries", lambda device: events.append(("preload", device))
+    )
+
+    class _Model:
+        def __init__(self, path: str, **kwargs: object) -> None:
+            events.append(("load", dict(kwargs)))
+            self.feature_extractor = types.SimpleNamespace(
+                mel_filters=types.SimpleNamespace(shape=(80, 201))
+            )
+            self.model = types.SimpleNamespace(n_mels=80)
+
+        def transcribe(self, audio: Any, **kwargs: object) -> tuple[list[object], None]:
+            events.append(("transcribe", audio if isinstance(audio, str) else len(audio)))
+            return [], None
+
+    def _decode_audio(path: str, sampling_rate: int) -> Any:
+        events.append(("decode", path))
+        return samples
+
+    fake = types.ModuleType("faster_whisper")
+    fake.WhisperModel = _Model  # type: ignore[attr-defined]
+    fake.decode_audio = _decode_audio  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "faster_whisper", fake)
+
+
+class TestTheDevice:
+    """gpu-decoding plan D7: ``--device`` on the benchmark — the worker loads
+    on the device asked for, after the NVIDIA-library preload, and records
+    it; nothing falls back to the processor."""
+
+    @pytest.mark.parametrize(
+        ("device", "compute_type"), [("cpu", "int8"), ("cuda", "int8_float16")]
+    )
+    def test_run_single_preloads_then_loads_on_the_device(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, device: str, compute_type: str
+    ) -> None:
+        apply_offline_env()
+        events: list[tuple[str, object]] = []
+        _device_whisper_module(monkeypatch, events)
+        audio = tmp_path / "a.wav"
+        result = benchmark.run_single(_snapshot_dir(tmp_path), audio, 10.0, device=device)
+        assert events == [
+            ("preload", device),
+            ("load", {"device": device, "compute_type": compute_type, "local_files_only": True}),
+            ("transcribe", str(audio)),
+        ]
+        assert result.device == device
+
+    def test_the_default_is_the_processor(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        apply_offline_env()
+        events: list[tuple[str, object]] = []
+        _device_whisper_module(monkeypatch, events)
+        result = benchmark.run_single(_snapshot_dir(tmp_path), tmp_path / "a.wav", 10.0)
+        assert events[:2] == [
+            ("preload", "cpu"),
+            ("load", {"device": "cpu", "compute_type": "int8", "local_files_only": True}),
+        ]
+        assert result.device == "cpu"
+        assert _result(0.4).device == "cpu"
+
+    def test_a_failed_preload_is_raised_before_any_load(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from scribe_desktop import transcription
+
+        apply_offline_env()
+        events: list[tuple[str, object]] = []
+        _device_whisper_module(monkeypatch, events)
+
+        def refused(device: str) -> None:
+            raise transcription.ComputeDeviceError(device, "no_device")
+
+        monkeypatch.setattr(transcription, "preload_cuda_libraries", refused)
+        with pytest.raises(transcription.ComputeDeviceError, match=r"cuda decoding .*no_device"):
+            benchmark.run_single(_snapshot_dir(tmp_path), tmp_path / "a.wav", 10.0, device="cuda")
+        assert events == []
+
+    def test_the_app_shape_worker_warm_decodes_on_cuda_before_the_timing(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        np = pytest.importorskip("numpy")
+        from scribe_desktop import speech
+
+        apply_offline_env()
+        speech_samples = np.full(625 * 512, 0.5, dtype=np.float32)
+        samples = np.concatenate(
+            [speech_samples, np.zeros(32 * 512, dtype=np.float32), speech_samples]
+        )
+        events: list[tuple[str, object]] = []
+        _device_whisper_module(monkeypatch, events, samples)
+
+        class _Vad:
+            def __init__(self, path: Path) -> None:
+                pass
+
+            def reset(self) -> None:
+                pass
+
+            def frame_probability(self, frame: bytes) -> float:
+                return _nonzero_frame(frame)
+
+        monkeypatch.setattr(speech, "SileroVad", _Vad)
+        audio = tmp_path / "sample.wav"
+        timing = benchmark.run_app_shape(
+            _snapshot_dir(tmp_path), audio, tmp_path / "v.onnx", device="cuda"
+        )
+        kinds = [kind for kind, _ in events]
+        # The worker's own preload, then the provider's (idempotent), the
+        # load, the provider's one-second warm decode, then the two windows.
+        assert kinds == [
+            "preload", "decode", "preload", "load", "transcribe", "transcribe", "transcribe",
+        ]
+        assert events[0] == ("preload", "cuda") and events[2] == ("preload", "cuda")
+        assert events[3] == (
+            "load", {"device": "cuda", "compute_type": "int8_float16", "local_files_only": True}
+        )
+        assert events[4] == ("transcribe", SAMPLE_RATE)  # one second, warm, untimed
+        assert timing.windows == 2
+        assert timing.audio_seconds == pytest.approx(40.2, abs=1e-3)
+
+    @pytest.mark.parametrize("app_shape", [False, True])
+    def test_run_all_spawns_every_worker_on_the_device(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, app_shape: bool
+    ) -> None:
+        spawned: list[list[str]] = []
+        result = replace(_result(0.05, "medium"), device="cuda")
+
+        def fake_run(argv: list[str], **kwargs: Any) -> Any:
+            spawned.append(argv)
+            payload = asdict(_TIMING) if "--app-shape" in argv else asdict(result)
+            return types.SimpleNamespace(returncode=0, stdout=json.dumps(payload), stderr="")
+
+        monkeypatch.setattr(benchmark, "list_whisper_candidates", lambda root: ["medium"])
+        monkeypatch.setattr(benchmark, "generate_speech_sample", lambda target: 10.0)
+        monkeypatch.setattr(benchmark.subprocess, "run", fake_run)
+        [got] = benchmark.run_all(tmp_path, app_shape=app_shape, device="cuda")
+        assert got.device == "cuda"
+        assert len(spawned) == (2 if app_shape else 1)
+        for argv in spawned:
+            index = argv.index("--device")
+            assert argv[index + 1] == "cuda"
+
+    def test_the_headless_run_passes_the_device(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        given: list[dict[str, object]] = []
+
+        def fake_run_all(root: Path, names: Any, **kwargs: object) -> list[BenchmarkResult]:
+            given.append(kwargs)
+            return [replace(_result(0.05, "medium"), device="cuda")]
+
+        monkeypatch.setattr(benchmark, "run_all", fake_run_all)
+        assert benchmark.main(["--models-root", str(tmp_path), "--device", "cuda"]) == 0
+        assert given == [{"app_shape": False, "device": "cuda"}]
+        assert "device" in capsys.readouterr().out.splitlines()[1]
+        assert benchmark.main(["--models-root", str(tmp_path)]) == 0
+        assert given[-1] == {"app_shape": False, "device": "cpu"}
+
+    def test_a_device_the_parser_does_not_take_exits_2(self, tmp_path: Path) -> None:
+        with pytest.raises(SystemExit) as exc:
+            benchmark.main(["--models-root", str(tmp_path), "--device", "gpu"])
+        assert exc.value.code == 2
+
+    @pytest.mark.parametrize("app_shape", [False, True])
+    def test_the_worker_passes_the_device(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, app_shape: bool,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv(benchmark._WORKER_ENV, "1")
+        given: list[object] = []
+
+        def fake_single(model_dir: Path, audio: Path, seconds: float, **kwargs: object) -> Any:
+            given.append(kwargs)
+            return _result(0.05, "medium")
+
+        def fake_app_shape(model_dir: Path, audio: Path, vad: Path, **kwargs: object) -> Any:
+            given.append(kwargs)
+            return _TIMING
+
+        monkeypatch.setattr(benchmark, "run_single", fake_single)
+        monkeypatch.setattr(benchmark, "run_app_shape", fake_app_shape)
+        argv = [
+            "--single", "medium", "--models-root", str(tmp_path), "--audio", "a.wav",
+            "--audio-seconds", "10", "--device", "cuda",
+        ]
+        assert benchmark.main([*argv, "--app-shape"] if app_shape else argv) == 0
+        assert given == [{"device": "cuda"}]
+        capsys.readouterr()
+
+
+class TestTheDeviceColumn:
+    """gpu-decoding plan D7: a table with a graphics-card result names each
+    result's device after its model; a processor-only table is unchanged
+    (``TestAppShapeReport``)."""
+
+    def test_a_cuda_result_adds_the_column(self) -> None:
+        lines = threshold_report(
+            [replace(_app(0.05, 0.06), device="cuda"), _result(0.4, "small")]
+        )
+        assert lines[1] == (
+            "model" + " " * 16 + "device    RTF  app RTF  load s  audio s  peak MiB  words  status"
+        )
+        assert lines[2].split() == [
+            "medium", "cuda", "0.050", "0.060", "1.50", "30.0", "512.0", "120", "OK",
+        ]
+        assert lines[3].split() == [
+            "small", "cpu", "0.400", "-", "1.50", "30.0", "512.0", "120", "OK",
+        ]
+
+    def test_a_processor_only_table_has_none(self) -> None:
+        lines = threshold_report([replace(_app(0.4, 0.5), device="cpu")])
+        assert lines[1] == _APP_HEADER
+        assert "cpu" not in lines[2].split()
+
+
 _TIMING = AppShapeTiming(windows=2, audio_seconds=50.0, transcribe_seconds=40.0, word_count=128)
 
 
@@ -738,21 +1000,27 @@ class TestAppShapeWorker:
     def test_main_passes_the_flag_to_run_all_and_prints_the_column(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        given: list[tuple[Path, list[str] | None, bool]] = []
+        given: list[tuple[Path, list[str] | None, bool, str]] = []
 
         def fake_run_all(
-            root: Path, names: list[str] | None = None, *, app_shape: bool = False
+            root: Path,
+            names: list[str] | None = None,
+            *,
+            app_shape: bool = False,
+            device: str = "unset",
         ) -> list[BenchmarkResult]:
-            given.append((root, names, app_shape))
+            given.append((root, names, app_shape, device))
             return [_app(0.4, 0.6)]
 
         monkeypatch.setattr(benchmark, "run_all", fake_run_all)
         assert benchmark.main(["--app-shape", "--models", "medium"]) == 0
-        assert given == [(benchmark.default_models_root(), ["medium"], True)]
+        # gpu-decoding plan D7: the device is passed, the processor by default.
+        assert given == [(benchmark.default_models_root(), ["medium"], True, "cpu")]
         assert capsys.readouterr().out.split("\n")[1] == _APP_HEADER
         given.clear()
         assert benchmark.main(["--models", "medium"]) == 0
         assert given[0][2] is False
+        assert given[0][3] == "cpu"
 
     def test_the_worker_times_the_app_shape_with_the_vad_beside_its_models(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -761,20 +1029,28 @@ class TestAppShapeWorker:
 
         monkeypatch.setenv(benchmark._WORKER_ENV, "1")
         timing = _TIMING
-        given: list[tuple[Path, Path, Path]] = []
+        given: list[tuple[Path, Path, Path, str]] = []
 
-        def fake_run_app_shape(model_dir: Path, audio: Path, vad: Path) -> AppShapeTiming:
-            given.append((model_dir, audio, vad))
+        def fake_run_app_shape(
+            model_dir: Path, audio: Path, vad: Path, *, device: str = "unset"
+        ) -> AppShapeTiming:
+            given.append((model_dir, audio, vad, device))
             return timing
 
         monkeypatch.setattr(benchmark, "run_app_shape", fake_run_app_shape)
-        monkeypatch.setattr(benchmark, "run_single", lambda *a: pytest.fail("panel timed"))
+        monkeypatch.setattr(benchmark, "run_single", lambda *a, **k: pytest.fail("panel timed"))
         argv = ["--single", "medium", "--audio", r"C:\t\s.wav", "--audio-seconds", "53.2"]
         assert benchmark.main([*argv, "--app-shape"]) == 0
         root = benchmark.default_models_root()
-        # The VAD path is the one the app loads (``speech.default_vad_model_path``).
+        # The VAD path is the one the app loads (``speech.default_vad_model_path``);
+        # the device is the processor by default (gpu-decoding plan D7).
         assert given == [
-            (root / "whisper" / "medium", Path(r"C:\t\s.wav"), speech.default_vad_model_path())
+            (
+                root / "whisper" / "medium",
+                Path(r"C:\t\s.wav"),
+                speech.default_vad_model_path(),
+                "cpu",
+            )
         ]
         assert json.loads(capsys.readouterr().out) == asdict(timing)
 

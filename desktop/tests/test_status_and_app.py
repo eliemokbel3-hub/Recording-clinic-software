@@ -340,6 +340,9 @@ _HOLDER_CHILD = """
 import os, sys, time
 from pathlib import Path
 from scribe_desktop import app
+from scribe_desktop import transcription
+transcription.cuda_device_count = lambda: 0  # gpu-decoding plan C12, as the parent pins
+transcription.preload_cuda_libraries = lambda device: None
 state = app.acquire_instance_exclusion(sys.argv[1], Path(sys.argv[2])).state
 print(state, os.getpid(), flush=True)
 time.sleep(120)

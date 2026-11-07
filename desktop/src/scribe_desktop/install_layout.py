@@ -38,6 +38,7 @@ from __future__ import annotations
 import ntpath
 import os
 import sys
+import sysconfig
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Literal
@@ -226,6 +227,34 @@ def models_root(of: Channel | None = None) -> Path:
     return _data_root_from(local_app_data, of) / MODELS_DIRNAME
 
 
+# --- the NVIDIA libraries (gpu-decoding plan D2) ------------------------------------
+
+
+def site_packages() -> Path:
+    """The running interpreter's ``site-packages`` (``sysconfig``'s
+    ``purelib``: the venv's ``Lib\\site-packages`` in a source run) — the seam
+    ``native_library_dirs`` reads a source run's folders through."""
+    return Path(sysconfig.get_path("purelib"))
+
+
+def native_library_dirs() -> tuple[Path, Path]:
+    """D2: the folders GPU decoding's NVIDIA libraries are loaded from, by
+    absolute path — cuBLAS's ``bin``, then cuDNN's. A packaged build's are
+    under ``_internal\\nvidia`` beside ``scribe-app.exe`` (links resolved, as
+    ``install_root`` resolves them, but with no install-folder refusal: a
+    build audit runs the bundle where it was built); a source run's are the
+    ``nvidia-cublas-cu12`` / ``nvidia-cudnn-cu12`` wheels' ``nvidia`` folder
+    in ``site-packages``. Never a folder named by an environment variable or
+    found on ``PATH``. Paths only: nothing is read here (the preload refuses
+    a missing file)."""
+    if is_frozen():
+        base = Path(os.path.realpath(executable())).parent / "_internal"
+    else:
+        base = site_packages()
+    nvidia = base / "nvidia"
+    return nvidia / "cublas" / "bin", nvidia / "cudnn" / "bin"
+
+
 # --- the remedies (Task 1.7) --------------------------------------------------------
 
 
@@ -315,6 +344,8 @@ __all__ = [
     "model_pack_name",
     "model_remedy",
     "models_root",
+    "native_library_dirs",
     "outside_install_folder",
     "registration_remedy",
+    "site_packages",
 ]

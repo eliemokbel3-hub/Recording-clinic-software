@@ -114,14 +114,24 @@ SELF_CHECK_FLAG = "--self-check-offline"
 # Each holds a native library the app loads by path (Task 0.1's checks).
 NATIVE_LIBRARY_DIRS = ("ctranslate2", "onnxruntime/capi", "llama_cpp/lib")
 # The packaged app must clear or override each of these itself (the offline
-# kill-switches and the two refused overrides, benchmark.OFFLINE_ENV and
-# FORBIDDEN_*): the self-check runs with them all set wrong.
+# kill-switches, the two refused overrides and the popped GPU variables —
+# benchmark.OFFLINE_ENV, FORBIDDEN_* and POPPED_GPU_VARIABLES, gpu-decoding
+# plan D2): the self-check runs with them all set wrong, so it proves the pops.
 HOSTILE_ENV: Mapping[str, str] = {
     "HF_HUB_OFFLINE": "0",
     "TRANSFORMERS_OFFLINE": "0",
     "HF_HUB_DISABLE_TELEMETRY": "0",
     "SSLKEYLOGFILE": r"C:\audit-not-a-file\keys.log",
     "LLAMA_CPP_LIB_PATH": r"C:\audit-not-a-folder",
+    "CUDA_PATH": r"C:\audit-not-a-folder\cuda",
+    "HIP_PATH": r"C:\audit-not-a-folder\hip",
+    "CUDNN_LOGDEST_DBG": r"C:\audit-not-a-file\cudnn.log",
+    "CUDNN_LOGLEVEL_DBG": "3",
+    "CUBLASLT_LOG_FILE": r"C:\audit-not-a-file\cublaslt.log",
+    "CUBLASLT_LOG_LEVEL": "5",
+    "CUBLAS_LOGDEST_DBG": r"C:\audit-not-a-file\cublas.log",
+    "CUBLAS_LOGINFO_DBG": "1",
+    "CUDA_CACHE_PATH": r"C:\audit-not-a-folder\cache",
 }
 SUMS_NAME = "SHA256SUMS.txt"
 BUILD_INFO_NAME = "BUILD-INFO.txt"

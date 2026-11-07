@@ -24,6 +24,7 @@ from scribe_desktop import (
     note_config,
     past_sessions,
     replay_kept,
+    transcription,
     validation_set,
 )
 from scribe_desktop.encounter import unlinked_consent
@@ -49,6 +50,26 @@ REAL_PART_KERNEL = past_sessions.part_kernel
 # exclusion (the app's production ``app.lock``), captured before
 # ``pytest_configure`` replaces it with ``_no_real_exclusion``.
 REAL_REPLAY_EXCLUSION = replay_kept._acquire_exclusion
+# gpu-decoding plan C12: the real graphics-card seams, captured before
+# ``pytest_configure`` pins them, for the tests of the functions themselves.
+REAL_CUDA_DEVICE_COUNT = transcription.cuda_device_count
+REAL_PRELOAD_CUDA_LIBRARIES = transcription.preload_cuda_libraries
+REAL_LOAD_LIBRARY = transcription._load_library
+
+
+def _no_cuda_device() -> int:
+    return 0
+
+
+def _no_preload(device: transcription.ComputeDevice) -> None:
+    return None
+
+
+def _no_real_library_load(path: Path) -> Any:
+    raise AssertionError(
+        "a test reached the real NVIDIA library loader (gpu-decoding plan C12) - replace "
+        "transcription._load_library in the test"
+    )
 
 
 def _production() -> Channel:
@@ -119,7 +140,15 @@ def pytest_configure(config: pytest.Config) -> None:
     loudly instead of reaching the real Windows API. So is the replay tool's
     instance exclusion (development-recordings plan Task 4.1a): no test ever
     takes the app's real ``app.lock``. A run with a blind set's script in the
-    tree and outside the lint runner is refused before collection (C12)."""
+    tree and outside the lint runner is refused before collection (C12).
+
+    The graphics-card seams (gpu-decoding plan C12), for the whole run — a
+    warm-up thread that outlives its test included: the CUDA device count is
+    0, the NVIDIA-library preload is a no-op, and the loader under the real
+    preload refuses, so no test reads this computer's card or its NVIDIA
+    wheels. A test injects its own with ``monkeypatch`` (the real functions
+    are ``REAL_*`` above); a subprocess a test starts pins the first two
+    itself (``test_integration_no_sockets.py``)."""
     from fixtures.heldout_transcripts import HELD_OUT_SETS
 
     refusal = blind_run_refusal(HELD_OUT_SETS, os.environ, lint_runner_active(config.pluginmanager))
@@ -129,6 +158,9 @@ def pytest_configure(config: pytest.Config) -> None:
     install_layout.is_frozen = _not_frozen  # type: ignore[assignment]
     past_sessions.part_kernel = _no_real_part_kernel
     replay_kept._acquire_exclusion = _no_real_exclusion
+    transcription.cuda_device_count = _no_cuda_device
+    transcription.preload_cuda_libraries = _no_preload
+    transcription._load_library = _no_real_library_load
 
 
 @pytest.fixture(autouse=True)

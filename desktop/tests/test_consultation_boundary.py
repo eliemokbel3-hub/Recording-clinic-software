@@ -1183,8 +1183,14 @@ class TestNoImportOfVoiceCommands:
         ``note_config`` through ``draft_write``; importing the note modules
         in a fresh interpreter must not load it."""
         modules = ", ".join(f"scribe_desktop.{name}" for name in _NOTE_MODULES)
+        # gpu-decoding plan C12: the graphics-card seams pinned as the parent
+        # pins them, after the note modules (which already import
+        # ``transcription``, so the module set the child prints is unchanged).
         code = (
             f"import sys; import {modules}; "
+            "import scribe_desktop.transcription as transcription; "
+            "transcription.cuda_device_count = lambda: 0; "
+            "transcription.preload_cuda_libraries = lambda device: None; "
             "print('scribe_desktop.voice_commands' in sys.modules)"
         )
         result = subprocess.run(

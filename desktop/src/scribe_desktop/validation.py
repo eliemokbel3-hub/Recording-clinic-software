@@ -177,12 +177,16 @@ from scribe_desktop.transcription import (
     # Package-private by name, shared deliberately (larger-model D8): the
     # ``--model`` value's shape, the replay tool's own.
     _MODEL_NAME_RE,
+    COMPUTE_DEVICES,
     DEFAULT_WHISPER_MODEL,
+    ComputeDevice,
+    ComputeDeviceError,
     TranscriptDocument,
     TranscriptSegment,
     TranscriptWord,
     WhisperSpeechProvider,
     is_number_token,
+    model_label,
     resolve_whisper_model,
     whisper_model_available,
     words_hold_suspect,
@@ -3956,6 +3960,16 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--device",
+        choices=COMPUTE_DEVICES,
+        default="cpu",
+        help=(
+            "decode on the processor (default) or the NVIDIA graphics card (`cuda`; the "
+            "report names the model as `<model>@cuda`); a graphics card that cannot decode "
+            "is refused, never replaced by the processor"
+        ),
+    )
+    parser.add_argument(
         "--prose",
         action="store_true",
         help="also run the narrative prose stage and report its section counts",
@@ -4001,9 +4015,11 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
     profile that cannot be bound, then the models (by name, before any is
     constructed; under ``enrolment`` attribution the speaker model too), an
     unreadable set folder, an enrolment WAV the set's scripts need missing
-    from ``<set>/enrolment/`` (D11), models that cannot be loaded (by
-    exception type — round 26), and an enrolment WAV that cannot be enrolled
-    (by type, naming the slot's file)."""
+    from ``<set>/enrolment/`` (D11), a ``--device cuda`` the graphics card
+    cannot decode on (by its code — gpu-decoding plan D7; never a fall back
+    to the processor), models that cannot be loaded (by exception type —
+    round 26), and an enrolment WAV that cannot be enrolled (by type, naming
+    the slot's file)."""
     configure_output()
     args = _parser().parse_args(argv)
     if install_layout.channel() != "dev":
@@ -4171,13 +4187,19 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
         return 2
 
     load_failure: str | None = None
+    device_failure: str | None = None
     load_interrupted = False
+    device: ComputeDevice = args.device
     try:
         vad = SileroVad()
-        provider = WhisperSpeechProvider(model_name=whisper)
+        # gpu-decoding plan D7: the provider is strict about the device, so a
+        # graphics card that cannot decode is a refusal, never the processor.
+        provider = WhisperSpeechProvider(model_name=whisper, device=device)
         prose_stage = build_prose_stage("narrative") if args.prose else None
     except KeyboardInterrupt:
         load_interrupted = True
+    except ComputeDeviceError as exc:
+        device_failure = exc.error_code  # a type name or a fixed reason
     except Exception as exc:  # noqa: BLE001 - reported by TYPE (round 26)
         # A model error's text names its path and the library's message:
         # refused by type, like every other refusal before a model runs.
@@ -4185,6 +4207,9 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
     if load_interrupted:
         print("[stopped] the run was interrupted while the models loaded; nothing was run")
         return 1
+    if device_failure is not None:
+        print(f"[refused] --device {device}: the graphics card cannot decode ({device_failure})")
+        return 2
     if load_failure is not None:
         print(f"[refused] the models could not be loaded ({load_failure})")
         return 2
@@ -4256,7 +4281,8 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
         )
         return 1
     info = RunInfo(
-        whisper_model=whisper,
+        # D8: the label, ``<model>@cuda`` for a graphics-card decode.
+        whisper_model=model_label(whisper, device),
         whisper_fallback=fallback,
         vad_model="silero",
         prose="narrative" if args.prose else None,

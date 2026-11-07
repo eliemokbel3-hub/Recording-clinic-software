@@ -325,9 +325,10 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
    starting itself as the worker (`scribe-app.exe --benchmark-worker …`); a
    source checkout starts `python -m scribe_desktop.benchmark`.
 
-9. **The TWO setup-time network steps (separate processes the user runs;
-   the app's own network use is flow 18 alone) — plus, since the installation
-   plan, the build-time steps in (c).**
+9. **The setup-time network steps — (a) and (b), and since the gpu-decoding
+   plan (d) on a computer with an NVIDIA graphics card (separate processes the
+   user runs; the app's own network use is flow 18 alone) — plus, since the
+   installation plan, the build-time steps in (c).**
    (a) `scripts/setup-models.py`. Explicit one-time HTTPS downloads into
    the model cache of a source checkout (`ClinikoScribe-dev\models`, flow
    24) or, with `--root DIR`, into a staging folder for the release model
@@ -394,6 +395,26 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
    and `--model-pack` read and copy local model files only — no network.
    None of these carries clinical data: they read the repository, the
    package indexes and the model files.
+   (d) The graphics-card libraries (gpu-decoding plan D2, Task A.1,
+   2026-11-07; a developer venv on a computer with an NVIDIA card only — NOT
+   part of `[ml]`, so CI never downloads them, and not yet in the build lock or
+   the bundle). `pip install --require-hashes --no-deps` of two PyPI wheels
+   pinned by version AND SHA-256 (`nvidia-cublas-cu12==12.9.2.10`,
+   `nvidia-cudnn-cu12==9.10.2.21`; the lines are in `AGENTS.md`'s run step 2),
+   run once BY THE USER from a normal terminal, like (a) and (b). At run time
+   nothing is downloaded: a graphics-card decode loads their DLLs by ABSOLUTE
+   path from the venv's `site-packages\nvidia\cublas\bin` and
+   `…\cudnn\bin` (`install_layout.native_library_dirs`,
+   `transcription.preload_cuda_libraries`; NVIDIA's own `cudnn64_9.dll` is
+   never loaded — CTranslate2's shim of that name stays), never from a folder
+   an environment variable or `PATH` names, and every process pops the nine
+   GPU variables at its offline step (`benchmark.POPPED_GPU_VARIABLES`:
+   `CUDA_PATH`, `HIP_PATH`, the six cuDNN / cuBLAS logging variables, whose
+   files would otherwise be written, and `CUDA_CACHE_PATH`). The driver keeps
+   its compiled-kernel cache in `%APPDATA%\NVIDIA\ComputeCache` (kernels,
+   never audio or text — a named residue). Only the developer build's tools
+   decode on the card (`--device cuda`, flow 24); the app has no setting for
+   it yet.
 
 10. **Note pipeline (Phase 3A, in-process, zero network).** After transcription,
     `scribe-app` composes a draft note from the immutable transcript
@@ -1233,7 +1254,26 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     `ClinikoScribe/<clinic id>` (entries apart only because clinic ids are
     random per data folder; the self-test's `test` entry is common) and the
     DPAPI key descriptions — the same Windows user either way (threat model,
-    "Installation").
+    "Installation"). Since the gpu-decoding plan (D7, Task A.2) the developer
+    build's measurement tools — the validation harness, the transcription-guard
+    measurement, the kept-recordings replay — and the hardware benchmark's
+    command line (`python -m scribe_desktop.benchmark`; the Microphone panel's
+    run stays on the processor) take `--device cpu|cuda` (default `cpu`):
+    `cuda` decodes on the NVIDIA graphics card with the libraries of flow 9 (d)
+    preloaded first, and a card that cannot decode is REFUSED — by the tools
+    with a code (no device, a missing or refused library, a failed load or warm
+    decode), by the benchmark as a failed run — never replaced by the
+    processor, so a measurement is always what it says. The three measurement
+    tools' reports name a graphics-card model as `<model>@cuda` (a label in
+    the existing model string — no new field: the harness's run-information
+    line, the guard measurement's run table, the replay's header and its new
+    model column); their processor reports are unchanged. The benchmark
+    instead prints the device in a column of its own (`BenchmarkResult.device`,
+    carried in the worker's JSON on stdout; nothing is stored): its table gains a `device` column after the
+    model's, filled on every row, only when at least one result was decoded
+    off the processor — a processor-only table, the Microphone panel's
+    included, is unchanged. The app itself, either channel, still decodes on
+    the processor only.
 
 25. **Shadow mode (pilot plan D1–D5, D13; BUILT 2026-10-04; in-process, zero
     network).** The Status tab's "Shadow mode (pilot)" box writes

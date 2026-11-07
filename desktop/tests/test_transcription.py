@@ -22,11 +22,16 @@ import logging
 import math
 import struct
 import sys
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from conftest import (
+    REAL_CUDA_DEVICE_COUNT,
+    REAL_LOAD_LIBRARY,
+    REAL_PRELOAD_CUDA_LIBRARIES,
     forbid_network_io,
     on_real_ml_root,
     real_ml_models_root,
@@ -64,11 +69,18 @@ from scribe_desktop.speech import (
 )
 from scribe_desktop.transcription import (
     CLINICAL_INITIAL_PROMPT,
+    COMPUTE_DEVICES,
+    COMPUTE_TYPES,
+    CUBLAS_LIBRARIES,
+    CUDNN_LIBRARIES,
     DEFAULT_WHISPER_MODEL,
     FALLBACK_WHISPER_MODEL,
+    MODEL_LABEL_RE,
     SPEAKER_1,
     SPEAKER_2,
+    WARM_DECODE_SECONDS,
     WHISPER_PREPROCESSOR_FILE,
+    ComputeDeviceError,
     TranscriptDocument,
     TranscriptionModelError,
     TranscriptSegment,
@@ -84,6 +96,7 @@ from scribe_desktop.transcription import (
     is_number_token,
     label_speakers,
     mark_words,
+    model_label,
     pack_transcription_windows,
     read_transcript,
     recover_session_transcription,
@@ -1645,6 +1658,418 @@ class TestProviderMelFilters:
 
     def test_a_matching_count_returns_none(self) -> None:
         assert check_mel_filters(_MelWhisperModel(), Path("whisper") / "x") is None
+
+
+# --- gpu-decoding plan D2 / D3 / D8: the device ---------------------------------------
+
+_NINE_LIBRARIES = [
+    "cublasLt64_12.dll",
+    "cublas64_12.dll",
+    "cudnn_graph64_9.dll",
+    "cudnn_engines_precompiled64_9.dll",
+    "cudnn_engines_runtime_compiled64_9.dll",
+    "cudnn_heuristic64_9.dll",
+    "cudnn_ops64_9.dll",
+    "cudnn_cnn64_9.dll",
+    "cudnn_adv64_9.dll",
+]
+
+
+class TestComputeDevice:
+    """D3 / D8: the device table, the label and its printing shape, and the
+    typed error."""
+
+    def test_the_tables(self) -> None:
+        assert COMPUTE_DEVICES == ("cpu", "cuda")
+        assert COMPUTE_TYPES == {"cpu": "int8", "cuda": "int8_float16"}
+        assert WARM_DECODE_SECONDS == 1
+        assert [*CUBLAS_LIBRARIES, *CUDNN_LIBRARIES] == _NINE_LIBRARIES
+
+    def test_the_label_appends_the_device_off_the_processor(self) -> None:
+        assert model_label("medium", "cpu") == "medium"
+        assert model_label("large-v3", "cuda") == "large-v3@cuda"
+
+    @pytest.mark.parametrize(
+        "label",
+        ["medium", "small", "large-v3", "medium@cuda", "large-v3@cuda", "distil-small.en@cuda",
+         "x" * 64, "x" * 64 + "@cuda"],
+    )
+    def test_the_label_shape_admits(self, label: str) -> None:
+        assert MODEL_LABEL_RE.fullmatch(label)
+
+    @pytest.mark.parametrize(
+        "label",
+        ["", "@cuda", "medium@cpu", "medium@gpu", "medium@CUDA", "medium@cuda@cuda",
+         "medium @cuda", "-medium", "x" * 65, "x" * 65 + "@cuda", "Jane Citizen"],
+    )
+    def test_the_label_shape_refuses(self, label: str) -> None:
+        assert not MODEL_LABEL_RE.fullmatch(label)
+
+    def test_the_input_shape_is_not_widened_and_the_label_shape_is_shared(self) -> None:
+        """D8: ``--model`` input stays ``_MODEL_NAME_RE``; the printing
+        shape is one object, the replay tool's too."""
+        from scribe_desktop import replay_kept, transcription
+
+        assert not transcription._MODEL_NAME_RE.fullmatch("medium@cuda")
+        assert transcription.MODEL_LABEL_RE is not transcription._MODEL_NAME_RE
+        assert replay_kept.MODEL_LABEL_RE is transcription.MODEL_LABEL_RE
+        assert "MODEL_LABEL_RE: Final" not in Path(replay_kept.__file__).read_text(encoding="utf-8")
+
+    def test_the_error_carries_the_device_and_a_code_only(self) -> None:
+        error = ComputeDeviceError("cuda", "RuntimeError")
+        assert isinstance(error, TranscriptionModelError)
+        assert str(error) == "cuda decoding is not usable (RuntimeError)"
+        assert (error.device, error.error_code) == ("cuda", "RuntimeError")
+
+
+class TestTheGpuSeamsArePinned:
+    """C12: the conftest pins the graphics-card seams for the whole run, so
+    no test reads this computer's card or its NVIDIA wheels."""
+
+    def test_no_card_no_preload_no_loader(self) -> None:
+        from scribe_desktop import transcription
+
+        assert transcription.cuda_device_count() == 0
+        assert transcription.cuda_device_count is not REAL_CUDA_DEVICE_COUNT
+        assert transcription.preload_cuda_libraries("cuda") is None
+        assert transcription.preload_cuda_libraries is not REAL_PRELOAD_CUDA_LIBRARIES
+        with pytest.raises(AssertionError, match="C12"):
+            transcription._load_library(Path("cublas64_12.dll"))
+        assert transcription._load_library is not REAL_LOAD_LIBRARY
+
+
+class TestPreloadCudaLibraries:
+    """D2: the REAL preload over the test's own folders, with the device
+    count and the loader faked — a no-op on the processor; on cuda every
+    library by absolute path in dependency order, once; anything missing or
+    refused a ``ComputeDeviceError`` before any load or model."""
+
+    def _seams(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        *,
+        count: object = 1,
+        skip: tuple[str, ...] = (),
+        fail_at: int | None = None,
+    ) -> tuple[list[Path], tuple[Path, Path]]:
+        from scribe_desktop import transcription
+
+        cublas = tmp_path / "nvidia" / "cublas" / "bin"
+        cudnn = tmp_path / "nvidia" / "cudnn" / "bin"
+        for folder, names in (
+            (cublas, (*CUBLAS_LIBRARIES, "nvblas64_12.dll")),
+            (cudnn, (*CUDNN_LIBRARIES, "cudnn64_9.dll")),
+        ):
+            folder.mkdir(parents=True)
+            for name in names:
+                if name not in skip:
+                    (folder / name).write_bytes(b"MZ")
+
+        def device_count() -> int:
+            if isinstance(count, BaseException):
+                raise count
+            assert isinstance(count, int)
+            return count
+
+        loaded: list[Path] = []
+
+        def load(path: Path) -> object:
+            if fail_at is not None and len(loaded) == fail_at:
+                raise OSError(126, "The specified module could not be found")
+            loaded.append(path)
+            return object()
+
+        monkeypatch.setattr(transcription, "_CUDA_PRELOAD", transcription._CudaPreload())
+        monkeypatch.setattr(transcription, "cuda_device_count", device_count)
+        monkeypatch.setattr(transcription, "_load_library", load)
+        monkeypatch.setattr(install_layout, "native_library_dirs", lambda: (cublas, cudnn))
+        return loaded, (cublas, cudnn)
+
+    def test_the_processor_is_a_no_op(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        loaded, _ = self._seams(monkeypatch, tmp_path, count=AssertionError("counted"))
+        assert REAL_PRELOAD_CUDA_LIBRARIES("cpu") is None
+        assert loaded == []
+
+    def test_cuda_loads_the_nine_by_absolute_path_in_order_once(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from scribe_desktop import transcription
+
+        loaded, (cublas, cudnn) = self._seams(monkeypatch, tmp_path)
+        REAL_PRELOAD_CUDA_LIBRARIES("cuda")
+        assert [path.name for path in loaded] == _NINE_LIBRARIES
+        assert loaded[:2] == [cublas / name for name in _NINE_LIBRARIES[:2]]
+        assert loaded[2:] == [cudnn / name for name in _NINE_LIBRARIES[2:]]
+        assert all(path.is_absolute() for path in loaded)
+        # NVIDIA's own cudnn64_9.dll (ctranslate2's shim stays) and nvblas
+        # are never loaded.
+        assert not {"cudnn64_9.dll", "nvblas64_12.dll"} & {path.name for path in loaded}
+        assert transcription._CUDA_PRELOAD.done is True
+        assert len(transcription._CUDA_PRELOAD.handles) == 9
+        # Idempotent: the device is not counted and nothing loads again.
+        monkeypatch.setattr(transcription, "cuda_device_count", lambda: pytest.fail("counted"))
+        REAL_PRELOAD_CUDA_LIBRARIES("cuda")
+        assert len(loaded) == 9
+
+    def test_no_device_is_refused_before_any_load(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        loaded, _ = self._seams(monkeypatch, tmp_path, count=0)
+        with pytest.raises(ComputeDeviceError) as exc:
+            REAL_PRELOAD_CUDA_LIBRARIES("cuda")
+        assert (exc.value.device, exc.value.error_code) == ("cuda", "no_device")
+        assert loaded == []
+
+    def test_a_count_that_fails_is_refused_by_type(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        loaded, _ = self._seams(
+            monkeypatch, tmp_path, count=RuntimeError(r"C:\somewhere\ctranslate2.dll")
+        )
+        with pytest.raises(ComputeDeviceError) as exc:
+            REAL_PRELOAD_CUDA_LIBRARIES("cuda")
+        assert exc.value.error_code == "RuntimeError"
+        assert "somewhere" not in str(exc.value)
+        assert loaded == []
+
+    @pytest.mark.parametrize("missing", _NINE_LIBRARIES)
+    def test_any_missing_library_is_refused_before_any_load(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, missing: str
+    ) -> None:
+        loaded, _ = self._seams(monkeypatch, tmp_path, skip=(missing,))
+        with pytest.raises(ComputeDeviceError) as exc:
+            REAL_PRELOAD_CUDA_LIBRARIES("cuda")
+        assert exc.value.error_code == "library_missing"
+        assert loaded == []
+
+    def test_a_library_the_loader_refuses_is_refused_and_retried_later(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from scribe_desktop import transcription
+
+        loaded, _ = self._seams(monkeypatch, tmp_path, fail_at=2)
+        with pytest.raises(ComputeDeviceError) as exc:
+            REAL_PRELOAD_CUDA_LIBRARIES("cuda")
+        assert exc.value.error_code == "OSError"
+        assert "module could not be found" not in str(exc.value)
+        assert [path.name for path in loaded] == _NINE_LIBRARIES[:2]
+        assert transcription._CUDA_PRELOAD.done is False
+        # Not done, so the next call tries again and, once every library
+        # loads, is done.
+        retried: list[Path] = []
+        monkeypatch.setattr(transcription, "_load_library", lambda path: retried.append(path))
+        REAL_PRELOAD_CUDA_LIBRARIES("cuda")
+        assert [path.name for path in retried] == _NINE_LIBRARIES
+        assert transcription._CUDA_PRELOAD.done is True
+
+    def test_a_network_folder_is_refused_untouched(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        loaded, _ = self._seams(monkeypatch, tmp_path)
+        monkeypatch.setattr(
+            install_layout,
+            "native_library_dirs",
+            lambda: (Path(r"\\h\s\nvidia\cublas\bin"), Path(r"\\h\s\nvidia\cudnn\bin")),
+        )
+        forbid_network_io(monkeypatch)
+        with pytest.raises(ComputeDeviceError) as exc:
+            REAL_PRELOAD_CUDA_LIBRARIES("cuda")
+        assert exc.value.error_code == "unc_path"
+        assert loaded == []
+
+    def test_an_unknown_device_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        loaded, _ = self._seams(monkeypatch, tmp_path)
+        with pytest.raises(ValueError, match="unknown compute device"):
+            REAL_PRELOAD_CUDA_LIBRARIES("gpu")  # type: ignore[arg-type]
+        assert loaded == []
+
+    def test_the_offline_env_is_asserted_first(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.benchmark import OfflineEnvError
+
+        loaded, _ = self._seams(monkeypatch, tmp_path, count=AssertionError("counted"))
+        monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+        with pytest.raises(OfflineEnvError):
+            REAL_PRELOAD_CUDA_LIBRARIES("cuda")
+        assert loaded == []
+
+
+class _CudaWhisperModel:
+    """Stands in for faster_whisper.WhisperModel (D3): records each load's
+    keyword arguments, each ``transcribe`` call (its sample count, peak and
+    keywords), whether each call's segment generator was consumed to the
+    end, and each ``unload_model``. ``fail`` is where it raises: ``"load"``,
+    ``"iteration"`` (the generator's first step — faster-whisper decodes
+    nothing before it is iterated) or ``None``; ``n_mels`` is the model's
+    mel count (its feature extractor builds 80)."""
+
+    fail: str | None = None
+    n_mels = 80
+    loads: list[dict[str, object]] = []
+    calls: list[dict[str, object]] = []
+    consumed: list[bool] = []
+    unloads = 0
+
+    def __init__(self, path: str, **kwargs: object) -> None:
+        cls = type(self)
+        cls.loads.append(dict(kwargs))
+        if cls.fail == "load":
+            raise RuntimeError("CUDA driver version is insufficient for CUDA runtime version")
+        _mel_attributes(self, 80, cls.n_mels)
+        self.model.unload_model = self._unload  # type: ignore[attr-defined]
+
+    def _unload(self) -> None:
+        type(self).unloads += 1
+
+    def transcribe(self, audio: Any, **kwargs: object) -> tuple[Iterator[object], None]:
+        cls = type(self)
+        cls.calls.append({"samples": len(audio), "peak": float(abs(audio).max()), **kwargs})
+        index = len(cls.consumed)
+        cls.consumed.append(False)
+
+        def segments() -> Iterator[object]:
+            if cls.fail == "iteration":
+                raise RuntimeError("Library cublas64_12.dll is not found or cannot be loaded")
+            yield from ()
+            cls.consumed[index] = True
+
+        return segments(), None
+
+
+class TestProviderDevice:
+    """D3: the provider loads exactly the device asked for; on cuda the
+    preload comes first and one warm decode is consumed before it is handed
+    out; a load or warm-decode failure leaves no model and raises
+    ``ComputeDeviceError``; the processor's path makes no warm decode."""
+
+    def _install(
+        self, monkeypatch: pytest.MonkeyPatch, *, fail: str | None = None, n_mels: int = 80
+    ) -> list[str]:
+        pytest.importorskip("numpy")  # provider's _numpy() is real
+        import types
+
+        from scribe_desktop import transcription
+
+        fake = types.ModuleType("faster_whisper")
+        fake.WhisperModel = _CudaWhisperModel  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "faster_whisper", fake)
+        monkeypatch.setattr(_CudaWhisperModel, "fail", fail)
+        monkeypatch.setattr(_CudaWhisperModel, "n_mels", n_mels)
+        monkeypatch.setattr(_CudaWhisperModel, "loads", [])
+        monkeypatch.setattr(_CudaWhisperModel, "calls", [])
+        monkeypatch.setattr(_CudaWhisperModel, "consumed", [])
+        monkeypatch.setattr(_CudaWhisperModel, "unloads", 0)
+        preloads: list[str] = []
+        monkeypatch.setattr(transcription, "preload_cuda_libraries", preloads.append)
+        return preloads
+
+    def test_cuda_preloads_loads_exactly_and_consumes_one_warm_decode(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        preloads = self._install(monkeypatch)
+        provider = WhisperSpeechProvider(model_dir=_fake_snapshot("fake-model"), device="cuda")
+        assert preloads == ["cuda"]
+        assert _CudaWhisperModel.loads == [
+            {"device": "cuda", "compute_type": "int8_float16", "local_files_only": True}
+        ]
+        (warm,) = _CudaWhisperModel.calls
+        assert warm["samples"] == SAMPLE_RATE and warm["peak"] == 0.0  # one second of silence
+        # transcribe_segment's own arguments.
+        assert warm["initial_prompt"] == CLINICAL_INITIAL_PROMPT
+        assert warm["language"] == "en" and warm["beam_size"] == 5
+        assert warm["word_timestamps"] is True and warm["condition_on_previous_text"] is False
+        assert _CudaWhisperModel.consumed == [True]
+        assert _CudaWhisperModel.unloads == 0
+        assert (provider.device, provider.model_name) == ("cuda", "fake-model")
+        assert provider.label == "fake-model@cuda"
+        assert provider.transcribe_segment(b"\x00\x00" * 160, SAMPLE_RATE) == []
+        assert len(_CudaWhisperModel.calls) == 2
+
+    def test_the_processor_preloads_nothing_and_makes_no_warm_decode(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        preloads = self._install(monkeypatch)
+        provider = WhisperSpeechProvider(model_dir=_fake_snapshot("fake-model"))
+        assert preloads == ["cpu"]  # the call is made; on the processor it is a no-op
+        assert _CudaWhisperModel.loads == [
+            {"device": "cpu", "compute_type": "int8", "local_files_only": True}
+        ]
+        assert _CudaWhisperModel.calls == []
+        assert (provider.device, provider.label) == ("cpu", "fake-model")
+
+    def test_a_warm_decode_failing_during_iteration_unloads_and_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._install(monkeypatch, fail="iteration")
+        provider = WhisperSpeechProvider.__new__(WhisperSpeechProvider)
+        with pytest.raises(ComputeDeviceError) as exc:
+            provider.__init__(model_dir=_fake_snapshot("fake-model"), device="cuda")
+        assert (exc.value.device, exc.value.error_code) == ("cuda", "RuntimeError")
+        assert "cublas" not in str(exc.value)  # never the library's message
+        # The call returned; the failure came while its generator was iterated.
+        assert len(_CudaWhisperModel.calls) == 1 and _CudaWhisperModel.consumed == [False]
+        assert _CudaWhisperModel.unloads == 1
+        assert provider._model is None
+
+    def test_a_load_failure_raises_with_no_model(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._install(monkeypatch, fail="load")
+        provider = WhisperSpeechProvider.__new__(WhisperSpeechProvider)
+        with pytest.raises(ComputeDeviceError) as exc:
+            provider.__init__(model_dir=_fake_snapshot("fake-model"), device="cuda")
+        assert (exc.value.device, exc.value.error_code) == ("cuda", "RuntimeError")
+        assert "insufficient" not in str(exc.value)
+        assert _CudaWhisperModel.calls == [] and _CudaWhisperModel.unloads == 0
+        assert provider._model is None
+
+    def test_a_processor_load_failure_is_still_a_model_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._install(monkeypatch, fail="load")
+        with pytest.raises(TranscriptionModelError) as exc:
+            WhisperSpeechProvider(model_dir=_fake_snapshot("fake-model"))
+        assert not isinstance(exc.value, ComputeDeviceError)
+
+    def test_a_mel_mismatch_on_cuda_unloads_and_stays_a_model_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._install(monkeypatch, n_mels=128)
+        provider = WhisperSpeechProvider.__new__(WhisperSpeechProvider)
+        with pytest.raises(TranscriptionModelError, match="preprocessor_config.json") as exc:
+            provider.__init__(model_dir=_fake_snapshot("fake-model"), device="cuda")
+        assert not isinstance(exc.value, ComputeDeviceError)
+        assert _CudaWhisperModel.calls == []  # no warm decode on a refused model
+        assert _CudaWhisperModel.unloads == 1
+        assert provider._model is None
+
+    def test_a_failed_preload_stops_before_any_load(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from scribe_desktop import transcription
+
+        self._install(monkeypatch)
+
+        def refused(device: str) -> None:
+            raise ComputeDeviceError(device, "library_missing")
+
+        monkeypatch.setattr(transcription, "preload_cuda_libraries", refused)
+        with pytest.raises(ComputeDeviceError, match="library_missing"):
+            WhisperSpeechProvider(model_dir=_fake_snapshot("fake-model"), device="cuda")
+        assert _CudaWhisperModel.loads == []
+
+    def test_an_unknown_device_is_refused_before_anything(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        preloads = self._install(monkeypatch)
+        with pytest.raises(ValueError, match="unknown compute device"):
+            WhisperSpeechProvider(
+                model_dir=_fake_snapshot("fake-model"),
+                device="gpu",  # type: ignore[arg-type]
+            )
+        assert preloads == [] and _CudaWhisperModel.loads == []
 
 
 class _DecodingWhisperModel:

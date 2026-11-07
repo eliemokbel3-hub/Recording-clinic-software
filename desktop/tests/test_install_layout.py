@@ -282,6 +282,45 @@ class TestModelsRoot:
             install_layout.models_root()
 
 
+class TestNativeLibraryDirs:
+    """gpu-decoding plan D2: the folders the NVIDIA libraries are preloaded
+    from — cuBLAS's ``bin`` then cuDNN's — in both branches, never from an
+    environment variable or ``PATH``. Paths only: nothing is read."""
+
+    @pytest.fixture(autouse=True)
+    def _hostile_variables(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        for name in ("CUDA_PATH", "CUDNN_PATH", "PATH"):
+            monkeypatch.setenv(name, str(tmp_path / "elsewhere" / name))
+
+    def test_a_source_run_reads_the_wheels_in_site_packages(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        site = tmp_path / "venv" / "Lib" / "site-packages"
+        monkeypatch.setattr(install_layout, "site_packages", lambda: site)
+        assert install_layout.native_library_dirs() == (
+            site / "nvidia" / "cublas" / "bin",
+            site / "nvidia" / "cudnn" / "bin",
+        )
+
+    def test_a_packaged_build_reads_its_internal_folder(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Outside any install root, and not refused: a build audit runs the
+        # bundle where it was built.
+        _frozen_at(monkeypatch, tmp_path / "dist" / "scribe" / "scribe-app.exe")
+        monkeypatch.setattr(install_layout, "site_packages", lambda: pytest.fail("site read"))
+        internal = _real(tmp_path) / "dist" / "scribe" / "_internal" / "nvidia"
+        assert install_layout.native_library_dirs() == (
+            internal / "cublas" / "bin",
+            internal / "cudnn" / "bin",
+        )
+
+    def test_the_default_site_packages_is_the_interpreters_purelib(self) -> None:
+        import sysconfig
+
+        assert install_layout.site_packages() == Path(sysconfig.get_path("purelib"))
+
+
 # --- Task 1.2: every data-folder builder ---------------------------------------------
 
 

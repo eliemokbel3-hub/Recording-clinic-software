@@ -190,7 +190,23 @@ remains an accepted residual.
    polling).** The ML stack (silero-VAD ONNX, faster-whisper/CTranslate2)
    loads only explicit local paths with `local_files_only=True`;
    `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, `HF_HUB_DISABLE_TELEMETRY=1`
-   are set AND asserted at startup and before every ML import; the
+   are set AND asserted at startup and before every ML import; the refused
+   overrides (`benchmark.FORBIDDEN_NATIVE_OVERRIDES`,
+   `FORBIDDEN_TLS_OVERRIDES`) are deleted and refused by name; since the
+   gpu-decoding plan (D2, Task A.2) the nine GPU variables of
+   `benchmark.POPPED_GPU_VARIABLES` — `CUDA_PATH`, `HIP_PATH`, the six
+   cuDNN / cuBLAS logging variables and `CUDA_CACHE_PATH` — are POPPED at the
+   same step (never refused: they are ordinary on a graphics-card host), and
+   the build audit's offline self-check proves them gone. A graphics-card
+   decode (developer tooling only until a setting exists: the tools' and the
+   benchmark's `--device cuda`) loads the NVIDIA cuBLAS / cuDNN libraries by
+   ABSOLUTE path from the wheels' own folders before any CUDA model exists
+   (`transcription.preload_cuda_libraries`), never from a folder an
+   environment variable or `PATH` names; named residues: the driver's
+   compiled-kernel cache under `%APPDATA%\NVIDIA\ComputeCache` (kernels, never
+   audio), CTranslate2's CUDA context and the preloaded libraries resident
+   for the life of the process, and the loader's own redirection (side-by-side
+   manifests, a same-named module loaded first by path). The
    real-model tests run entirely under the enforced-offline env, and the
    Phase-2 completion gate (plan Step 13) adds a test proving transcription
    succeeds with network stubbed to fail plus socket polling during capture
@@ -1795,10 +1811,20 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     `benchmark.apply_offline_env` deletes it at app startup and
     `assert_offline_env` — the first thing `LocalLanguageModel` runs —
     refuses while it is present, naming the variable and never reading its
-    value as a path (`benchmark.FORBIDDEN_NATIVE_OVERRIDES`); `CUDA_PATH` /
-    `HIP_PATH` are left alone (the runtime only ADDS them as DLL search
-    directories, and the CPU wheel's bundled library has no CUDA/HIP
-    dependency) — named as residue, not defended.
+    value as a path (`benchmark.FORBIDDEN_NATIVE_OVERRIDES`). `CUDA_PATH` /
+    `HIP_PATH` are POPPED, not refused, since the gpu-decoding plan (D2, Task
+    A.2; ordinary variables on a graphics-card host): the runtime ADDS
+    `%CUDA_PATH%\bin` and `\lib` as DLL search folders when it is imported,
+    which beside graphics-card decoding would let a folder they name supply a
+    CUDA library to a later decode — so `benchmark.apply_offline_env` pops them
+    with the six cuDNN / cuBLAS logging variables and `CUDA_CACHE_PATH`
+    (`benchmark.POPPED_GPU_VARIABLES`, nine in all), `app.run_offline_self_check`
+    checks each is gone, and the release audit runs it with all nine set
+    (`build-release.HOSTILE_ENV`). The first line is the preload: a
+    graphics-card decode loads its NVIDIA libraries by ABSOLUTE path first
+    (`transcription.preload_cuda_libraries`), and a later by-name load returns
+    the module already loaded. The CPU wheel's own library has no CUDA/HIP
+    dependency.
     THE MODEL. `scribe_desktop/language_model.py` pins `LANGUAGE_MODEL_NAME =
     "Qwen3-4B-Instruct-2507-Q4_K_M"`, `LANGUAGE_MODEL_SIZE_BYTES =
     2_497_281_120` (2.33 GiB) and `LANGUAGE_MODEL_SHA256`, recorded from the

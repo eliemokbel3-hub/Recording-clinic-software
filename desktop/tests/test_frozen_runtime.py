@@ -91,6 +91,8 @@ class TestWorkerArgv:
             *_TAIL,
             "--audio-seconds",
             "53.2",
+            "--device",
+            "cpu",
         ]
 
     def test_a_packaged_build_spawns_its_own_exe_with_the_flag(
@@ -103,8 +105,32 @@ class TestWorkerArgv:
             *_TAIL,
             "--audio-seconds",
             "53.2",
+            "--device",
+            "cpu",
         ]
         assert benchmark.WORKER_FLAG == "--benchmark-worker"
+
+    @pytest.mark.parametrize("frozen", [False, True])
+    def test_the_device_is_written_last_and_a_packaged_build_admits_cuda(
+        self, monkeypatch: pytest.MonkeyPatch, frozen: bool
+    ) -> None:
+        """gpu-decoding plan D7: the frozen build runs the graphics-card
+        benchmark through this single-model worker, so its shape names the
+        device."""
+        use_frozen(monkeypatch, frozen)
+        argv = benchmark.worker_argv("medium", Path(r"C:\m"), Path(r"C:\t\s.wav"), 53.2,
+                                     device="cuda")
+        assert argv[-4:] == ["--audio-seconds", "53.2", "--device", "cuda"]
+        if frozen:
+            assert benchmark.is_worker_argv(argv)
+
+    def test_the_worker_devices_are_the_providers(self) -> None:
+        from scribe_desktop import transcription
+
+        assert benchmark.BENCHMARK_DEVICES == transcription.COMPUTE_DEVICES == ("cpu", "cuda")
+        assert benchmark._WORKER_OPTIONS == (
+            "--single", "--models-root", "--audio", "--audio-seconds", "--device"
+        )
 
     @pytest.mark.parametrize("frozen", [False, True])
     def test_run_all_spawns_the_worker_argv_with_the_worker_env(
@@ -134,6 +160,10 @@ class TestWorkerDispatch:
     def test_the_exact_frozen_shape_is_the_worker(self, monkeypatch: pytest.MonkeyPatch) -> None:
         use_frozen(monkeypatch, True)
         assert benchmark.is_worker_argv(_worker())
+        for device in ("cpu", "cuda"):
+            assert benchmark.is_worker_argv(
+                ["x", "--benchmark-worker", *_TAIL, "--audio-seconds", "1", "--device", device]
+            )
 
     @pytest.mark.parametrize(
         "argv",
@@ -141,33 +171,42 @@ class TestWorkerDispatch:
             ["scribe-app.exe"],
             ["scribe-app.exe", "--benchmark-worker"],
             # the dev shape is not the frozen worker
-            [sys.executable, "-m", "scribe_desktop.benchmark", *_TAIL, "--audio-seconds", "1"],
+            [sys.executable, "-m", "scribe_desktop.benchmark", *_TAIL, "--audio-seconds", "1",
+             "--device", "cpu"],
             # an extra argument
-            ["x", "--benchmark-worker", *_TAIL, "--audio-seconds", "1", "--models"],
+            ["x", "--benchmark-worker", *_TAIL, "--audio-seconds", "1", "--device", "cpu",
+             "--models"],
             # a missing option
-            ["x", "--benchmark-worker", *_TAIL],
+            ["x", "--benchmark-worker", *_TAIL, "--device", "cpu"],
+            # gpu-decoding plan D7: the device missing (the shape before it)
+            ["x", "--benchmark-worker", *_TAIL, "--audio-seconds", "1"],
             # reordered options
             ["x", "--benchmark-worker", "--models-root", r"C:\m", "--single", "medium",
-             "--audio", "a", "--audio-seconds", "1"],
+             "--audio", "a", "--audio-seconds", "1", "--device", "cpu"],
+            ["x", "--benchmark-worker", *_TAIL, "--device", "cpu", "--audio-seconds", "1"],
             # a repeated option in place of another
             ["x", "--benchmark-worker", "--single", "a", "--single", "b", "--audio", "a",
-             "--audio-seconds", "1"],
+             "--audio-seconds", "1", "--device", "cpu"],
             # a value that is itself an option, or empty
             ["x", "--benchmark-worker", "--single", "--models", "--models-root", r"C:\m",
-             "--audio", "a", "--audio-seconds", "1"],
+             "--audio", "a", "--audio-seconds", "1", "--device", "cpu"],
             ["x", "--benchmark-worker", "--single", "", "--models-root", r"C:\m",
-             "--audio", "a", "--audio-seconds", "1"],
+             "--audio", "a", "--audio-seconds", "1", "--device", "cpu"],
+            ["x", "--benchmark-worker", *_TAIL, "--audio-seconds", "1", "--device", "--cpu"],
             # the flag anywhere but first
-            ["x", *_TAIL, "--benchmark-worker", "--audio-seconds", "1"],
+            ["x", *_TAIL, "--benchmark-worker", "--audio-seconds", "1", "--device", "cpu"],
             # round 24: seconds the worker's parser would refuse (exit 2)
-            ["x", "--benchmark-worker", *_TAIL, "--audio-seconds", "abc"],
+            ["x", "--benchmark-worker", *_TAIL, "--audio-seconds", "abc", "--device", "cpu"],
+            # gpu-decoding plan D7: a device the worker's parser would refuse
+            ["x", "--benchmark-worker", *_TAIL, "--audio-seconds", "1", "--device", "gpu"],
+            ["x", "--benchmark-worker", *_TAIL, "--audio-seconds", "1", "--device", "CUDA"],
             # round 27 PR-MED-021: a network value of any path option
             ["x", "--benchmark-worker", "--single", "medium", "--models-root", r"\\h\s",
-             "--audio", r"C:\t\s.wav", "--audio-seconds", "1"],
+             "--audio", r"C:\t\s.wav", "--audio-seconds", "1", "--device", "cpu"],
             ["x", "--benchmark-worker", "--single", "medium", "--models-root", r"C:\m",
-             "--audio", "//h/s/a.wav", "--audio-seconds", "1"],
+             "--audio", "//h/s/a.wav", "--audio-seconds", "1", "--device", "cpu"],
             ["x", "--benchmark-worker", "--single", r"\/h/s/medium", "--models-root", r"C:\m",
-             "--audio", r"C:\t\s.wav", "--audio-seconds", "1"],
+             "--audio", r"C:\t\s.wav", "--audio-seconds", "1", "--device", "cpu"],
         ],
     )
     def test_anything_else_is_not_the_worker(self, argv: list[str]) -> None:
@@ -195,7 +234,7 @@ class TestWorkerDispatch:
         given: list[list[str]] = []
         monkeypatch.setattr(benchmark, "main", lambda argv: given.append(argv) or 7)
         assert benchmark.run_worker(_worker()) == 7
-        assert given == [[*_TAIL, "--audio-seconds", "53.2"]]
+        assert given == [[*_TAIL, "--audio-seconds", "53.2", "--device", "cpu"]]
         assert benchmark.run_worker([*_worker(), "--extra"]) is None
         assert len(given) == 1
 
@@ -294,11 +333,38 @@ class TestOfflineSelfCheck:
         test process is restored afterwards."""
         for name in benchmark.OFFLINE_ENV:
             monkeypatch.setenv(name, os.environ.get(name, "1"))
-        for name in ("SSLKEYLOGFILE", "LLAMA_CPP_LIB_PATH"):
+        for name in ("SSLKEYLOGFILE", "LLAMA_CPP_LIB_PATH", *benchmark.POPPED_GPU_VARIABLES):
             monkeypatch.delenv(name, raising=False)
 
     def _absent(self, name: str) -> None:
         return None
+
+    def test_it_pops_every_gpu_variable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """gpu-decoding plan D2: set wrong, as the audit sets them, every
+        popped GPU variable is gone after the check — which then passes."""
+        from scribe_desktop import app as app_module
+
+        for name in benchmark.POPPED_GPU_VARIABLES:
+            monkeypatch.setenv(name, r"C:\nowhere")
+        assert app_module.run_offline_self_check(_SELF_CHECK, self._absent) == 0
+        assert [n for n in benchmark.POPPED_GPU_VARIABLES if n in os.environ] == []
+
+    @pytest.mark.parametrize("name", ["CUDA_PATH", "CUDA_CACHE_PATH", "CUBLASLT_LOG_FILE"])
+    def test_a_popped_gpu_variable_still_present_is_exit_1(
+        self, monkeypatch: pytest.MonkeyPatch, name: str
+    ) -> None:
+        """The check itself proves the pop: an apply that leaves a popped
+        variable in place fails it, though ``assert_offline_env`` passes."""
+        from scribe_desktop import app as app_module
+
+        def sets_but_does_not_pop() -> None:
+            for key, value in benchmark.OFFLINE_ENV.items():
+                os.environ[key] = value
+
+        monkeypatch.setattr(app_module, "apply_offline_env", sets_but_does_not_pop)
+        monkeypatch.setenv(name, r"C:\nowhere")
+        benchmark.assert_offline_env()  # popped, never refused
+        assert app_module.run_offline_self_check(_SELF_CHECK, self._absent) == 1
 
     def test_it_applies_the_offline_environment_over_hostile_values(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1412,6 +1478,463 @@ def test_every_app_child_proves_the_production_channel() -> None:
         assert "install_layout.is_frozen = lambda: False" in source, name
     for name in _DEV_HOST_CHILDREN:
         assert "install_layout.channel = lambda" not in children[name], name
+
+
+# gpu-decoding plan C12: the graphics-card seams as the conftest pins them.
+_GPU_SEAM_PINS = (
+    "transcription.cuda_device_count = lambda: 0",
+    "transcription.preload_cuda_libraries = lambda device: None",
+)
+
+
+def test_every_app_child_pins_the_graphics_card_seams() -> None:
+    """gpu-decoding plan C12, over the integration module's ``*_CHILD``
+    constants: every app child pins the CUDA device count to 0 and the
+    NVIDIA-library preload to a no-op, as the conftest pins the parent, so
+    no child reads this computer's card or its NVIDIA wheels; the dev host
+    child imports no transcription code. Every OTHER Python child — the
+    function-built one, and those in other modules — is held by the
+    inventory below (``test_every_python_child_in_the_tests_folder_is_inventoried``)."""
+    children = _child_sources()
+    for name in set(children) - _DEV_HOST_CHILDREN:
+        for pin in _GPU_SEAM_PINS:
+            assert pin in children[name], (name, pin)
+    for name in _DEV_HOST_CHILDREN:
+        assert "transcription" not in children[name], name
+
+
+# gpu-decoding plan C12 (peer round 10 PR-MED-014): every Python child ANY test
+# starts, class-closed by an inventory over the whole tests folder. Three exact
+# counts per module (relative path): its ``sys.executable`` references, its
+# process-launch calls and its seam-pin lines (each of ``_GPU_SEAM_PINS``). A
+# child that runs scribe_desktop code pins both seams in its own source, so a
+# module's pin count is its number of such child SOURCES; every other child is
+# a named exception below. The guard cannot tell a new child from a moved
+# reference, so ANY change to a count fails until this inventory is updated
+# with the child classified: pinned, or an exception with its reason.
+_SYS_EXECUTABLE_REFERENCES: dict[str, int] = {
+    # Not launches: a fake process tree's interpreter name; ``worker_argv``'s
+    # expected argv[0] (here and below, every benchmark spawn is faked); the
+    # value ``app.main`` passes its start-up checks.
+    "speaker_fakes.py": 1,
+    "test_benchmark.py": 1,
+    "test_exclusions.py": 1,
+    "test_frozen_runtime.py": 4,
+    # One pinned child each: the note modules' import check, the guard
+    # measurement's and the harness's no-runtime-at-import checks (each module
+    # already imports ``transcription``, so the pin changes no module set they
+    # print), the hotkey, session-lock and suspend dispatch windows, and the
+    # single-instance mutex holder (``scribe_desktop.app``).
+    "test_consultation_boundary.py": 1,
+    "test_guard_eval.py": 1,
+    "test_hands_free.py": 1,
+    "test_status_and_app.py": 1,
+    "test_system_pause.py": 1,
+    "test_ui_pause_and_unreviewed.py": 1,
+    "test_validation_harness.py": 1,
+    # The no-sockets proofs: ``LAUNCHER`` (the dev native host's entry point —
+    # an exception: the host relays bytes and imports no transcription code),
+    # the function-built app child, the pipe app child, the app-server child,
+    # the dev host relay child (an exception, as ``LAUNCHER``), ``_spawn_child``
+    # (the six ``_write_child`` scripts) and the stubbed-network child.
+    "test_integration_no_sockets.py": 7,
+    # Exceptions, no scribe_desktop code: the held-out-set runner and a pytest
+    # run over a project generated in the test's temporary folder (its own
+    # ``pytest.ini`` and test module — never this folder's conftest; the
+    # runner and its plugin import only the standard library and pytest), and
+    # the low-integrity pipe probes (stdlib and ``ctypes`` only).
+    "test_lint_held_out_set.py": 2,
+    "test_pipe_server.py": 1,
+}
+_PROCESS_LAUNCHES: dict[str, int] = {
+    "test_consultation_boundary.py": 1,
+    "test_guard_eval.py": 1,
+    "test_hands_free.py": 1,
+    "test_integration_no_sockets.py": 7,
+    "test_lint_held_out_set.py": 2,
+    "test_pipe_server.py": 1,
+    "test_status_and_app.py": 1,
+    "test_system_pause.py": 1,
+    "test_ui_pause_and_unreviewed.py": 1,
+    "test_validation_harness.py": 1,
+}
+# The pinned child sources per module: the seven single children above, and
+# in the integration module the nine pinned ``*_CHILD`` constants (all but the
+# dev host relay) plus the function-built app child.
+_GPU_PINNED_CHILD_SOURCES: dict[str, int] = {
+    "test_consultation_boundary.py": 1,
+    "test_guard_eval.py": 1,
+    "test_hands_free.py": 1,
+    "test_integration_no_sockets.py": 10,
+    "test_status_and_app.py": 1,
+    "test_system_pause.py": 1,
+    "test_ui_pause_and_unreviewed.py": 1,
+    "test_validation_harness.py": 1,
+}
+_SUBPROCESS_CALLS = frozenset(
+    {"run", "Popen", "call", "check_call", "check_output", "getoutput", "getstatusoutput"}
+)
+_OS_LAUNCH_CALLS = frozenset({"system", "startfile", "popen", "posix_spawn", "posix_spawnp"})
+
+
+def _test_modules() -> dict[str, ast.Module]:
+    return {
+        path.relative_to(TESTS).as_posix(): ast.parse(path.read_text(encoding="utf-8-sig"))
+        for path in sorted(TESTS.rglob("*.py"))
+    }
+
+
+def _base_name(node: ast.expr) -> str | None:
+    """The last name of an attribute's owner: ``subprocess`` for
+    ``subprocess.run`` and for ``benchmark.subprocess.run`` alike."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+def _is_sys_executable(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "executable"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "sys"
+    )
+
+
+def _is_process_launch(node: ast.AST) -> bool:
+    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+        return False
+    owner, name = _base_name(node.func.value), node.func.attr
+    if owner == "subprocess":
+        return name in _SUBPROCESS_CALLS
+    if owner == "win32process":
+        return name.startswith("CreateProcess")
+    if owner == "os":
+        return name in _OS_LAUNCH_CALLS or name.startswith(("spawn", "exec"))
+    return False
+
+
+def _counts(predicate: Callable[[ast.AST], bool]) -> dict[str, int]:
+    found: dict[str, int] = {}
+    for name, tree in _test_modules().items():
+        count = sum(1 for node in ast.walk(tree) if predicate(node))
+        if count:
+            found[name] = count
+    return found
+
+
+def _imports_executable(tree: ast.Module) -> bool:
+    """``from sys import executable`` (or ``import sys as …``) would name the
+    interpreter without the ``sys.executable`` spelling the inventory counts."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "sys":
+            return True
+        if isinstance(node, ast.Import) and any(
+            alias.name == "sys" and alias.asname not in (None, "sys") for alias in node.names
+        ):
+            return True
+    return False
+
+
+def test_every_python_child_in_the_tests_folder_is_inventoried() -> None:
+    """gpu-decoding plan C12 (peer round 10 PR-MED-014), class-closed over the
+    WHOLE tests folder, not only the integration module's constants.
+
+    Passes: every module's ``sys.executable`` references, process launches
+    and seam-pin lines are exactly the inventory's — each scribe_desktop child
+    pinned in its own source, each other child a named exception.
+
+    Fails: a new ``sys.executable`` child anywhere — at module level or built
+    inside a test function — or a new launch call (``subprocess``,
+    ``win32process.CreateProcess*``, ``os.system`` / ``spawn*`` / ``exec*``),
+    with or without pins, until it is classified here; a child that loses a
+    pin; and an interpreter named through ``from sys import executable`` or an
+    aliased ``sys``.
+
+    The honest limit of every check here: a launch spelled through an alias
+    (``sp = subprocess``), through ``ctypes`` (``CreateProcessW``) or
+    ``multiprocessing``, code built from a string and run with ``exec`` /
+    ``compile``, or a module reached dynamically (its name held in a
+    variable, ``sys.modules.get``, ``getattr`` on a module; Round 16
+    PR-MED-016), is not seen — the reviewer's to catch."""
+    modules = _test_modules()
+    assert [name for name, tree in modules.items() if _imports_executable(tree)] == []
+    assert _counts(_is_sys_executable) == _SYS_EXECUTABLE_REFERENCES
+    assert _counts(_is_process_launch) == _PROCESS_LAUNCHES
+    for pin in _GPU_SEAM_PINS:
+        pins = {
+            name: count
+            for name in modules
+            if name != "test_frozen_runtime.py"  # ``_GPU_SEAM_PINS`` itself
+            and (count := (TESTS / name).read_text(encoding="utf-8-sig").count(pin))
+        }
+        assert pins == _GPU_PINNED_CHILD_SOURCES, pin
+
+
+def test_the_shared_child_helpers_run_only_classified_sources() -> None:
+    """PR-MED-014's helper-shaped children, which reuse one launch site, so
+    the counts above would not see a new one. These read each helper in its
+    own module only; that no other module imports a launch helper is
+    ``test_no_module_imports_another_modules_launch_helper`` (PR-MED-015).
+
+    Passes: the integration module writes child scripts only from module-level
+    ``*_CHILD`` constants (which
+    ``test_every_app_child_pins_the_graphics_card_seams`` checks) — three
+    directly and the rest through ``_write_child`` — the pipe probes run only
+    ``_LOW_CONTROL`` / ``_LOW_PROBE`` (no scribe_desktop code), and the
+    held-out-set runner's module names no scribe_desktop code at all.
+
+    Fails: a ``_write_child`` call with a source built in a function, any
+    other script file the integration module writes (for ``_spawn_child`` or
+    a launch), a new low-integrity child, or scribe_desktop code in a
+    generated lint project."""
+    modules = _test_modules()
+
+    def calls(module: str, helper: str) -> list[ast.Call]:
+        return [
+            node
+            for node in ast.walk(modules[module])
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == helper
+        ]
+
+    written = calls("test_integration_no_sockets.py", "_write_child")
+    assert len(written) == 7
+    children = _child_sources()
+    for call in written:
+        source = call.args[2]
+        assert isinstance(source, ast.Name) and source.id in children, ast.dump(source)
+        assert source.id not in _DEV_HOST_CHILDREN
+    # Every child script the module writes is a ``*_CHILD`` constant: the
+    # three written directly, and ``_write_child``'s own ``prelude + code``
+    # (its ``code`` the constant checked above). A script built in a test and
+    # written for ``_spawn_child`` fails here.
+    files = [
+        node
+        for node in ast.walk(modules["test_integration_no_sockets.py"])
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in ("write_text", "write_bytes")
+    ]
+    assert len(files) == 4 and all(node.args for node in files)
+    assert sorted(ast.unparse(node.args[0]) for node in files) == [
+        "_APP_SERVER_CHILD", "_HOST_RELAY_CHILD", "_PIPE_APP_CHILD", "prelude + code"
+    ]
+
+    probes = [call.args[0] for call in calls("test_pipe_server.py", "_run_low_integrity")]
+    names = sorted(probe.id for probe in probes if isinstance(probe, ast.Name))
+    assert len(probes) == 2 and names == ["_LOW_CONTROL", "_LOW_PROBE"]
+    probe_sources: dict[str, str] = {}
+    for node in modules["test_pipe_server.py"].body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+            if isinstance(target, ast.Name) and target.id in names:
+                probe_sources[target.id] = ast.unparse(node.value)
+    assert sorted(probe_sources) == names
+    for name, source in probe_sources.items():
+        assert "scribe_desktop" not in source, name
+
+    lint = (TESTS / "test_lint_held_out_set.py").read_text(encoding="utf-8")
+    assert "scribe_desktop" not in lint
+
+
+# Peer round 14 PR-MED-015: the checks above read each launch helper only in
+# its own module, so a launch helper must stay there. The integration module
+# is private as a whole (every function there writes or spawns children for
+# its tests); elsewhere a LAUNCH HELPER is any top-level function or class
+# holding a process-launch call (``_is_process_launch``), and no other module
+# may import one — by name, through ``*``, or by importing its module whole.
+_WHOLLY_PRIVATE_MODULES = frozenset({"test_integration_no_sockets"})
+_DYNAMIC_IMPORTS = frozenset(
+    {
+        "import_module",
+        "__import__",
+        "spec_from_file_location",
+        "SourceFileLoader",
+        "load_module",
+        "load_source",
+        "run_module",
+        "run_path",
+    }
+)
+
+
+def _launch_helpers(tree: ast.Module) -> frozenset[str]:
+    return frozenset(
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        and any(_is_process_launch(inner) for inner in ast.walk(node))
+    )
+
+
+def _private_names(modules: dict[str, ast.Module]) -> dict[str, frozenset[str] | None]:
+    """Each module whose launch helpers others may not import, by module
+    name: ``None`` for a wholly private module, else its helpers' names."""
+    private: dict[str, frozenset[str] | None] = {}
+    for path, tree in modules.items():
+        stem = path.rsplit("/", 1)[-1].removesuffix(".py")
+        helpers = _launch_helpers(tree)
+        if stem in _WHOLLY_PRIVATE_MODULES:
+            private[stem] = None
+        elif helpers:
+            private[stem] = helpers
+    return private
+
+
+def _last_part(name: str | None) -> str | None:
+    """``tests.test_x`` → ``test_x``: a module however its package is spelled."""
+    return name.rsplit(".", 1)[-1] if name else None
+
+
+def _helper_imports(source: str, private: dict[str, frozenset[str] | None]) -> list[str]:
+    """Every way ``source`` reaches a private module's launch helpers: an
+    ``import`` of the module (aliased or dotted), a ``from`` import of a
+    helper, of ``*`` or of anything from a wholly private module, a ``from
+    <package> import <module>``, and a dynamic import (``importlib`` /
+    ``__import__`` / a file spec / ``runpy``) or a ``sys.modules`` lookup
+    whose string names the module."""
+
+    def names_private(node: ast.AST) -> bool:
+        return any(
+            isinstance(inner, ast.Constant)
+            and isinstance(inner.value, str)
+            and any(module in inner.value for module in private)
+            for inner in ast.walk(node)
+        )
+
+    found: list[str] = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            found += [
+                f"import {alias.name}"
+                for alias in node.names
+                if _last_part(alias.name) in private
+            ]
+        elif isinstance(node, ast.ImportFrom):
+            module = _last_part(node.module)
+            for alias in node.names:
+                reached = alias.name in private  # ``from tests import test_x``
+                if module is not None and module in private:
+                    helpers = private[module]
+                    reached = reached or helpers is None or alias.name == "*"
+                    reached = reached or (helpers is not None and alias.name in helpers)
+                if reached:
+                    found.append(f"from {node.module} import {alias.name}")
+        elif isinstance(node, ast.Call):
+            callee = node.func
+            name = (
+                callee.id
+                if isinstance(callee, ast.Name)
+                else callee.attr if isinstance(callee, ast.Attribute) else None
+            )
+            arguments = [*node.args, *(keyword.value for keyword in node.keywords)]
+            if name in _DYNAMIC_IMPORTS and any(names_private(arg) for arg in arguments):
+                found.append(f"{name}()")
+        elif (
+            isinstance(node, ast.Subscript)
+            and ast.unparse(node.value) == "sys.modules"
+            and names_private(node.slice)
+        ):
+            found.append("sys.modules[]")
+    return found
+
+
+def test_no_module_imports_another_modules_launch_helper() -> None:
+    """Peer round 14 PR-MED-015: the helper checks above walk only the
+    helper's own module, so a helper imported elsewhere would launch an
+    unclassified child unseen.
+
+    Passes: no module under ``desktop/tests`` imports
+    ``test_integration_no_sockets`` or anything from it, nor any other
+    module's launch helper (today ``test_pipe_server._run_low_integrity`` and
+    ``test_lint_held_out_set._run`` among them); ``from test_pipe_server
+    import Recorder`` and ``from test_system_pause import
+    FakeSystemRegistrar`` stay allowed (no launch in either).
+
+    Fails: any of the import shapes ``_helper_imports`` names, in any module
+    but the helper's own (``test_the_import_scan_sees_each_shape``)."""
+    modules = _test_modules()
+    private = _private_names(modules)
+    assert private["test_integration_no_sockets"] is None
+    assert private["test_pipe_server"] == {"_run_low_integrity"}
+    assert "_run" in (private["test_lint_held_out_set"] or ())
+    assert all(module.startswith("test_") for module in private)
+    offences = {}
+    for path in modules:
+        stem = path.rsplit("/", 1)[-1].removesuffix(".py")
+        others = {module: names for module, names in private.items() if module != stem}
+        found = _helper_imports((TESTS / path).read_text(encoding="utf-8-sig"), others)
+        if found:
+            offences[path] = found
+    assert offences == {}
+
+
+_SCAN_PRIVATE: dict[str, frozenset[str] | None] = {
+    "test_integration_no_sockets": None,
+    "test_pipe_server": frozenset({"_run_low_integrity"}),
+}
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import test_integration_no_sockets\n",
+        "import test_integration_no_sockets as sockets\n",
+        "import tests.test_integration_no_sockets\n",
+        "from test_integration_no_sockets import _spawn_child\n",
+        "from test_integration_no_sockets import _write_child as write\n",
+        "from test_integration_no_sockets import LAUNCHER\n",
+        "from test_integration_no_sockets import *\n",
+        "from tests.test_integration_no_sockets import _spawn_child\n",
+        "from tests import test_integration_no_sockets\n",
+        "from . import test_integration_no_sockets\n",
+        "import importlib\nimportlib.import_module('test_integration_no_sockets')\n",
+        "from importlib import import_module\nimport_module('tests.test_integration_no_sockets')\n",
+        "__import__('test_integration_no_sockets')\n",
+        "import importlib.util\n"
+        "spec = importlib.util.spec_from_file_location(\n"
+        "    'm', TESTS / 'test_integration_no_sockets.py'\n"
+        ")\n",
+        "import runpy\nrunpy.run_path(str(TESTS / 'test_integration_no_sockets.py'))\n",
+        "import sys\nhelpers = sys.modules['test_integration_no_sockets']\n",
+        "from test_pipe_server import _run_low_integrity\n",
+        "from test_pipe_server import _run_low_integrity as run\n",
+        "from test_pipe_server import *\n",
+        "import test_pipe_server\n",
+        "def test_x():\n    from test_integration_no_sockets import _spawn_child\n",
+    ],
+)
+def test_the_import_scan_sees_each_shape(source: str) -> None:
+    assert _helper_imports(source, _SCAN_PRIVATE), source
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from test_pipe_server import Recorder\n",
+        "import test_integration_no_sockets_extra\n",
+        "text = (TESTS / 'test_integration_no_sockets.py').read_text(encoding='utf-8')\n",
+        '"""See ``test_integration_no_sockets.py``."""\n',
+        "import importlib\nimportlib.import_module('scribe_desktop.benchmark')\n",
+    ],
+)
+def test_the_import_scan_passes_what_reaches_no_helper(source: str) -> None:
+    assert _helper_imports(source, _SCAN_PRIVATE) == []
+
+
+def test_a_launch_helper_is_a_top_level_def_holding_a_launch() -> None:
+    tree = ast.parse(
+        "import subprocess, sys\n"
+        "def _spawn(code):\n    return subprocess.Popen([sys.executable, '-c', code])\n"
+        "class TestChild:\n    def test_it(self):\n        subprocess.run(['x'])\n"
+        "def _quiet():\n    return 1\n"
+        "class Recorder:\n    pass\n"
+    )
+    assert _launch_helpers(tree) == {"_spawn", "TestChild"}
 
 
 _REAL_MODEL_PROBES = frozenset(
