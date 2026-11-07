@@ -146,3 +146,11 @@ A plan-record script wrote a path through an ordinary Python string, and a backs
 ## A primed example sentence is a hallucination template; a primed cue routes its echo (2026-10-12)
 During shadow use of 0.3.0 Whisper invented a short line with a number over background sound, shaped by the vocabulary primer's example sentence ("Pain seven out of ten."), and the shipped cue "out of ten" routed that echo straight into the note (invented-text guard plan).
 - **Rule:** the primer (`transcription.CLINICAL_INITIAL_PROMPT`) holds vocabulary only — no sentence, no number token, no shipped routing cue phrase; `TestClinicalPrompt` pins all three. A phrase that is also a cue stays out even if it seems worth priming: it is ordinary English, which needs no priming. But the primer also shapes SPELLING: without the example sentence the recogniser writes "2 out of 10", and cue matching never canonicalises, so the shipped cue "out of ten" stopped routing pain scores (validation run 4's diagnosis; the plan's Phase 6 shipped "out of 10" beside it). After any primer change, re-run the validation set before trusting routing.
+
+## A report written by PowerShell's `>` is UTF-16 (2026-11-07)
+Run 8's six harness reports, redirected with `>` in the practitioner's PowerShell, came out UTF-16: Git Bash's text tools read them as binary until decoded (validation-run8 P.1).
+- **Rule:** decode before reading or comparing (`iconv -f UTF-16 -t UTF-8 report.md > report.utf8.md`), and record the hashes of the bytes as written. In a command for the practitioner, prefer `| Out-File -Encoding utf8` when a later tool must read the file.
+
+## A scoped executor cannot read a folder outside the repository (2026-11-07)
+Under `perms=scoped`, the executor's file tools are confined to the checkout, so it could not read the composer's re-transcription in `C:\run8-p3\` (validation-run8 P.3, leg px2).
+- **Rule:** the composer copies the files byte for byte into a git-ignored folder under `.cursor/loops/` and names that path in the next leg's prompt. It deletes the copy after the commit, recording the deletion in the plan's custody line. Synthetic content only (C1 still applies).
