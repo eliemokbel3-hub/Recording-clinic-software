@@ -99,7 +99,13 @@ set up and build it, and make releases; the installed app needs none of them.
   also on `measure-transcription-guard.py`) measures with that installed
   Whisper model instead of the shipped one: the report names it, it is never
   a fallback, and a name not shaped as a model folder name is refused without
-  being echoed. Developer
+  being echoed. `--device cpu|cuda` (the gpu-decoding plan's Task A.2; also on
+  `measure-transcription-guard.py`, `replay-kept-recordings.py` and the
+  benchmark's command line; default `cpu`) decodes on the NVIDIA graphics card
+  with its libraries preloaded first: the three measurement tools' reports
+  name `<model>@cuda` and the benchmark prints a separate `device` column;
+  a card that cannot decode is refused (by the benchmark, as a failed run),
+  never replaced by the processor. Developer
   build only, from a normal terminal; see `docs/testing/validation-harness.md`.
 - `replay-kept-recordings.py <past_sessions folder> [--only <session id> ...]
   [--enrolment <wav>] [--model <name>]` (development-recordings plan Phase 4) —
