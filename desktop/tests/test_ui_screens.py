@@ -5305,7 +5305,7 @@ class TestNoteWriteButton:
         on its own line — never Save's message."""
         screen, emitted, _reads = self._screen()
         self._save(screen)
-        screen._style_job = object()
+        screen._style_slot.job = object()
         screen._update_controls()
         rendering = models.rendering_in_flight_line(screen._note_style)
         assert not screen.write_button.isEnabled()
@@ -5314,7 +5314,7 @@ class TestNoteWriteButton:
         screen.write_label.setText("")
         screen._on_write_clicked()
         assert screen.write_label.text() == rendering and emitted == []
-        screen._style_job = None
+        screen._style_slot.job = None
         screen._update_controls()
         assert screen.write_button.isEnabled()
         screen.deleteLater()

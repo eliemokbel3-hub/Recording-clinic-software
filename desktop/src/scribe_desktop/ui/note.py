@@ -519,6 +519,80 @@ class _NotePanel(QPlainTextEdit):
         menu.deleteLater()
 
 
+class _JobSlot:
+    """One background job of the Note tab (note-content-design plan D8,
+    Task C.2 — the prose stage's lifecycle, extracted unchanged): at most one
+    CURRENT job and its abort flag. A job that reported, or was orphaned by
+    `clear()`, moves to the screen's shared `orphaned` list — and the screen
+    stays busy — until its `finished` signal reaches the screen's one
+    `dispose` (which clears it from whichever slot still holds it)."""
+
+    def __init__(
+        self,
+        parent: QWidget,
+        orphaned: list[TaskThread],
+        dispose: Callable[[TaskThread], None],
+    ) -> None:
+        self._parent = parent
+        self._orphaned = orphaned
+        self._dispose = dispose
+        self.job: TaskThread | None = None
+        self.abort: threading.Event | None = None
+
+    def start(
+        self,
+        work: Callable[[threading.Event], object],
+        on_done: Callable[[TaskThread, object], None],
+        on_failed: Callable[[TaskThread, object], None],
+    ) -> None:
+        """Run ``work`` off the GUI thread as this slot's current job."""
+        # Phase H round 24 MED-002: the job's abort flag. `orphan` (so
+        # `clear()` — Abandon, Cancel, Complete, Discard, a replacement
+        # review) sets it, and the work consults it before EACH model call:
+        # an orphaned job stops after the call in progress instead of handing
+        # the rest of a note whose review has ended — and whose session key
+        # may already be gone — to the model.
+        abort = threading.Event()
+        job = TaskThread(lambda: work(abort), self._parent)
+        self.abort = abort
+        job.succeeded.connect(lambda result, job=job: on_done(job, result))
+        job.failed.connect(lambda message, job=job: on_failed(job, message))
+        # Disposal rides the thread's OWN `finished` signal (codex round 22
+        # PR-MED-036): Qt emits it after `run` has returned, queued to this
+        # thread, so the object is deleted only once the thread has provably
+        # ended — never on the strength of a timed join.
+        job.finished.connect(lambda job=job: self._dispose(job))
+        self.job = job
+        job.start()
+
+    def release(self, job: TaskThread) -> bool:
+        """A job just REPORTED (its result or failure): stop treating it as
+        the current job. True when it was; False for an orphan (the review
+        it belonged to has ended). The thread object stays in the orphaned
+        list — and `is_busy` stays True — until its `finished` signal
+        disposes it."""
+        current = job is self.job
+        if current:
+            self.job = None
+            self.abort = None
+            self._orphaned.append(job)
+        return current
+
+    def orphan(self) -> None:
+        """`clear()`: a running job cannot be joined on the GUI thread (the
+        model may be mid-generation for seconds); keep its thread object
+        alive until it reports, then drop its result."""
+        job = self.job
+        if job is None:
+            return
+        abort = self.abort
+        if abort is not None:
+            abort.set()  # MED-002: at most the model call in progress remains
+        self.abort = None
+        self.job = None
+        self._orphaned.append(job)
+
+
 class NoteScreen(QWidget):
     """The Note tab. Driven by ``begin_review`` and its callbacks; all view
     logic lives in ``ui.models`` so this widget stays thin and its state is
@@ -617,9 +691,9 @@ class NoteScreen(QWidget):
         # and its result is dropped.
         self._prose_stage_provider = prose_stage_provider
         self._prose_stage: models.ProseStage | None = None
-        self._style_job: TaskThread | None = None
-        self._style_job_abort: threading.Event | None = None
         self._orphaned_jobs: list[TaskThread] = []
+        self._style_slot = _JobSlot(self, self._orphaned_jobs, self._dispose)
+        self._job_slots: tuple[_JobSlot, ...] = (self._style_slot,)
         # D2: the input digest of the note a review first showed, while its
         # FIRST prose rendering is still to land (None otherwise). That
         # rendering replaces the kept generated body only when nothing was
@@ -950,7 +1024,7 @@ class NoteScreen(QWidget):
         # generated note; a prose job started for it may replace it.
         note = self._note
         if note is not None:
-            if self._style_job is not None:
+            if self._style_slot.job is not None:
                 self._first_render_digest = note_input_digest(note)
             self.generated_shown.emit(models.generated_body(note))
 
@@ -973,7 +1047,7 @@ class NoteScreen(QWidget):
         self._write_in_flight = False
         self._write_line = None
         self._write_status_cache = None
-        self._orphan_style_job()
+        self._style_slot.orphan()
         self._first_render_digest = None
         self._prose_stage = None
         self.style_label.setText("")
@@ -2133,7 +2207,7 @@ class NoteScreen(QWidget):
         populated section already has a rendering bound to its current
         texts. Sets the in-flight line; `_update_controls` reads the job."""
         stage, note = self._prose_stage, self._note
-        if stage is None or note is None or self._style_job is not None:
+        if stage is None or note is None or self._style_slot.job is not None:
             return
         if not models.sections_to_render(note):
             return
@@ -2141,77 +2215,47 @@ class NoteScreen(QWidget):
         # it afterwards (the session screen's holder pattern, PR rounds
         # 18/PR6): the thread object is a child of this widget, so anything
         # the closure retained would live as long as the tab does — past
-        # `clear()`, past the review (round 20 MED-001).
+        # `clear()`, past the review (round 20 MED-001). The provider
+        # consults the slot's abort flag before EACH section's model call.
         holder = [note]
-        # Phase H round 24 MED-002: the job's abort flag. `_orphan_style_job`
-        # (so `clear()` — Abandon, Cancel, Complete, Discard, a replacement
-        # review) sets it, and the provider consults it before EACH section's
-        # model call: an orphaned job stops after the call in progress
-        # instead of handing the rest of a note whose review has ended — and
-        # whose session key may already be gone — to the model.
-        abort = threading.Event()
-        job = TaskThread(lambda: stage(holder.pop(), abort=abort.is_set), self)
-        self._style_job_abort = abort
-        job.succeeded.connect(lambda result, job=job: self._on_style_done(job, result))
-        job.failed.connect(lambda message, job=job: self._on_style_failed(job, message))
-        # Disposal rides the thread's OWN `finished` signal (codex round 22
-        # PR-MED-036): Qt emits it after `run` has returned, queued to this
-        # thread, so the object is deleted only once the thread has provably
-        # ended — never on the strength of a timed join.
-        job.finished.connect(lambda job=job: self._dispose_style_job(job))
-        self._style_job = job
         self.style_label.setText(models.rendering_in_flight_line(self._note_style))
-        job.start()
+        self._style_slot.start(
+            lambda abort: stage(holder.pop(), abort=abort.is_set),
+            self._on_style_done,
+            self._on_style_failed,
+        )
 
     def _release_style_job(self, job: TaskThread) -> bool:
         """A job just REPORTED (its result or failure): stop treating it as
         the current job. True when it was; False for an orphan (the review
-        it belonged to has ended). The thread object stays in
-        `_orphaned_jobs` — and `is_busy` stays True — until its `finished`
-        signal disposes it (`_dispose_style_job`)."""
-        current = job is self._style_job
-        if current:
-            self._style_job = None
-            self._style_job_abort = None
-            self._orphaned_jobs.append(job)
-        return current
+        it belonged to has ended). See `_JobSlot.release`."""
+        return self._style_slot.release(job)
 
-    def _dispose_style_job(self, job: TaskThread) -> None:
-        """The thread has ENDED (its `finished` signal): drop the last
-        reference — the closure holds nothing (the holder was popped), the
-        result was delivered by signal — and delete the object. Bounded
-        join first only as a formality: `finished` fires after `run`
+    def _dispose(self, job: TaskThread) -> None:
+        """The thread of a job in ANY slot has ENDED (its `finished` signal):
+        drop the last reference — the closure holds nothing (the holder was
+        popped), the result was delivered by signal — and delete the object.
+        Bounded join first only as a formality: `finished` fires after `run`
         returned."""
         job.finish()
         if not job.isFinished():
             # `finished` is emitted just before the thread ends; a join that
             # timed out leaves the object orphaned (and the tab busy) rather
             # than deleting a thread that is still running.
-            if job is not self._style_job and job not in self._orphaned_jobs:
+            held = any(job is slot.job for slot in self._job_slots)
+            if not held and job not in self._orphaned_jobs:
                 self._orphaned_jobs.append(job)
             return
-        if job is self._style_job:
-            self._style_job = None
+        for slot in self._job_slots:
+            if job is slot.job:
+                slot.job = None
+                slot.abort = None
         if job in self._orphaned_jobs:
             self._orphaned_jobs.remove(job)
         job.setParent(None)
         job.deleteLater()
         self._update_controls()
         self._emit_state()
-
-    def _orphan_style_job(self) -> None:
-        """`clear()`: a running job cannot be joined on the GUI thread (the
-        model may be mid-generation for seconds); keep its thread object
-        alive until it reports, then drop its result."""
-        job = self._style_job
-        if job is None:
-            return
-        abort = self._style_job_abort
-        if abort is not None:
-            abort.set()  # MED-002: at most the section call in progress remains
-        self._style_job_abort = None
-        self._style_job = None
-        self._orphaned_jobs.append(job)
 
     def _on_style_done(self, job: TaskThread, result: object) -> None:
         current = self._release_style_job(job)
@@ -2271,7 +2315,7 @@ class NoteScreen(QWidget):
     def rendering_in_flight(self) -> bool:
         """True while a prose rendering job runs for the review (Save is
         disabled meanwhile — a Save must never persist unseen wording)."""
-        return self._style_job is not None
+        return self._style_slot.job is not None
 
     def _refresh_proposal_states(self) -> None:
         for proposal_id, label in self._state_labels.items():
@@ -2340,7 +2384,7 @@ class NoteScreen(QWidget):
                 "warning before saving."
             )
             return
-        if self._style_job is not None:
+        if self._style_slot.job is not None:
             # Click-time re-check (fail closed): the note under the button
             # would be the pre-rendering one, never shown with its prose.
             self.message_label.setText(models.SAVE_WHILE_RENDERING_MESSAGE)
@@ -2673,10 +2717,10 @@ class NoteScreen(QWidget):
             self.write_button.setToolTip("")
             self.write_label.setText("")
             return
-        busy = self._write_in_flight or self._style_job is not None
+        busy = self._write_in_flight or self._style_slot.job is not None
         self.write_button.setEnabled(control.ready and not busy)
         standing = None if control.ready else control.line
-        if standing is None and not self._write_in_flight and self._style_job is not None:
+        if standing is None and not self._write_in_flight and self._style_slot.job is not None:
             # A rendering in flight says what is waiting on it (design system).
             standing = models.rendering_in_flight_line(self._note_style)
         self.write_button.setToolTip(standing or "")
@@ -2706,7 +2750,7 @@ class NoteScreen(QWidget):
             self._update_controls()
             self.write_label.setText(control.line or "")
             return
-        if self._style_job is not None:
+        if self._style_slot.job is not None:
             self.write_label.setText(models.rendering_in_flight_line(self._note_style))
             return
         self.write_requested.emit(binding.session_id)
@@ -2775,7 +2819,7 @@ class NoteScreen(QWidget):
             and state.unacknowledged_reviews == 0
             # Task 4.4 (codex PR-MED-015): never while a rendering is in
             # flight — Save snapshots `_note`, which must be what is shown.
-            and self._style_job is None
+            and self._style_slot.job is None
         )
         self.save_button.setEnabled(save_ready)
         # D5: the button SAYS how many pre-filled lines this Save confirms —
@@ -2828,7 +2872,7 @@ class NoteScreen(QWidget):
         reviewing = self._draft is not None and not self._note_saved
         return (
             reviewing
-            or self._style_job is not None
+            or self._style_slot.job is not None
             or bool(self._orphaned_jobs)
             or self._write_in_flight
         )
