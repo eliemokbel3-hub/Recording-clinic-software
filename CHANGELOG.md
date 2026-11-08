@@ -5,6 +5,13 @@ All notable changes to this project will be documented here.
 ## [Unreleased]
 
 ### Added
+- A governed clinical register for the prose writing styles (`.cursor/plans/plan-note-content-design.md` Phase R, 2026-11-08 → 2026-11-09; on `main`, not yet a build of record; the version stays 0.3.5 until the plan's release). Added:
+  - the practitioner-ratified lexicon of by-definition clinical equivalents, `config_defaults/clinical_equivalents.json` (93 entries, such as "six weeks" = "6/52"), loaded by `note_config.CLINICAL_EQUIVALENTS`, which refuses a malformed file, a repeated term or a repeated JSON key as a broken install;
+  - Check 5 folds the lexicon on both sides (`note_check.canonicalise`), so prose may use the clinical form of a phrase without being refused, and no entry may hold a side, a negation, a medication or a number outside a duration;
+  - prompt `narrative-v7`: a "Shorthand:" line listing the entries whose phrases occur in the section, a "Speaker:" frame (Pt / patient) for a section with another voice, and own voice's data rule first. A week count directly before ago, earlier, later, before, after or prior is not offered as shorthand, because the model dropped that word;
+  - `scripts/measure-prose-fixtures.py` over 12 fixtures and the scoring sheet `docs/testing/prose-register-scoring.md`.
+
+  Measured: both styles pass all 12 fixtures within D5's time limits; the 50 synthetic scripts under `--prose` give prose 159 passed / 4 failed / 0 errored, the same as the v2 prompt.
 - Decoding on the graphics card, measured: no change (`.cursor/plans/plan-gpu-decoding.md`, 2026-11-07; developer tooling, no build of record, no version change). Added:
   - `--device cpu|cuda` on `scripts/run-validation.py`, `scripts/measure-transcription-guard.py`, `scripts/replay-kept-recordings.py` and the benchmark's command line (`9e9f9d3`). `cuda` decodes on the NVIDIA graphics card with its two libraries preloaded by absolute path, and a card that cannot decode is refused (by the benchmark, as a failed run), never replaced by the processor. The three measurement tools' reports name `<model>@cuda` and the benchmark prints a separate `device` column (only when a result is on the card); processor reports are unchanged;
   - the two NVIDIA libraries as a third, optional setup-time network step for the developer build (AGENTS.md Local Run Steps step 2).

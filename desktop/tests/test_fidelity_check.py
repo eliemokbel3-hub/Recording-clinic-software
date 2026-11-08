@@ -13,22 +13,30 @@ classifiers (the same functions the learning filters use), the structural
 pins (no polarity token is a connective; the warning code is registered as
 review), and — pinned deliberately so the docstring cannot drift — the NAMED
 RESIDUE: the rules see tokens, not attachment or order, and Check 5 is a
-gate, not a certificate.
+gate, not a certificate. Since the note-content-design plan's Task R.2: the
+clinical register's fold (both ways, an interrupted input phrase, durations,
+the multiplicity rules reached through it), the speaker frame (rule (b)
+only, per section) and the first-person swap (R.0), each by keyword.
 """
 
 from __future__ import annotations
+
+import inspect
+from collections.abc import Callable
 
 import pytest
 
 from scribe_desktop import note_check as nc
 from scribe_desktop.note import NOTE_WARNING_SEVERITY, NoteSectionKey
 from scribe_desktop.note_check import (
+    FIRST_PERSON_TOKENS,
+    SPEAKER_FRAME_TOKENS,
     FidelityVerdict,
     fidelity_verdict,
     fidelity_verdicts,
     fidelity_warnings,
 )
-from scribe_desktop.note_config import PROSE_CONNECTIVES
+from scribe_desktop.note_config import CLINICAL_EQUIVALENTS, PROSE_CONNECTIVES
 
 INPUTS = ("Patient reports neck pain for three days", "No radiation into the arm")
 FAITHFUL = "The patient reports neck pain for three days, with no radiation into the arm."
@@ -370,3 +378,186 @@ class TestGateNotCertificate:
     def test_a_reversed_comparison_passes(self) -> None:
         inputs = ("Pain worse than stiffness",)
         assert fidelity_verdict(inputs, "Stiffness worse than pain").passed
+
+
+# ---------------------------------------------------------------------------
+# Note-content-design plan Task R.2 (D2; R.0 decided (a) 2026-11-08): the
+# clinical register folds both sides before the four rules, which run
+# unchanged; the speaker frame is admitted in rule (b) only, and under it the
+# first person is glue in rule (a). Every new parameter is keyword-only with a
+# default, so every call above (positional, no register, no frame) stands.
+# ---------------------------------------------------------------------------
+
+
+def _register(inputs: tuple[str, ...], prose: str, *, frame: bool = False) -> FidelityVerdict:
+    return fidelity_verdict(inputs, prose, register=CLINICAL_EQUIVALENTS, speaker_frame=frame)
+
+
+class TestTheRegisterFold:
+    def test_a_term_for_its_phrase_passes_only_under_the_register(self) -> None:
+        inputs = ("Lower back pain for three weeks",)
+        assert _register(inputs, "LBP for 3/52").passed
+        assert fidelity_verdict(inputs, "LBP for 3/52") == _failed("missing_fact")
+
+    def test_a_phrase_for_its_term_passes_only_under_the_register(self) -> None:
+        inputs = ("LBP for 3/52",)
+        assert _register(inputs, "Lower back pain for three weeks").passed
+        assert fidelity_verdict(inputs, "Lower back pain for three weeks") == (
+            _failed("missing_fact")
+        )
+
+    def test_two_phrases_of_one_entry_are_one_fact(self) -> None:
+        assert _register(("Low back pain",), "Lower back pain").passed
+        assert _register(("Pain on both sides",), "Pain on B/L").passed
+        assert _register(("Range of movement reduced",), "ROM reduced").passed
+
+    def test_an_interrupted_input_phrase_meets_a_prose_term_as_a_set(self) -> None:
+        # The fold expands a prose `LBP` to {lower, back, pain}, which the
+        # spoken words hold as a set; a non-glue word between them (the
+        # polarity-bearing `in`) must still appear in the prose.
+        assert _register(("Pain across my lower back",), "Pt reports LBP", frame=True).passed
+        assert _register(("Pain in my lower back",), "Pt reports LBP", frame=True) == (
+            _failed("missing_fact")
+        )
+        assert _register(("Pain in my lower back",), "Pt reports LBP in", frame=True).passed
+
+    def test_a_changed_duration_is_a_missing_fact(self) -> None:
+        inputs = ("Pain for three weeks",)
+        assert _register(inputs, "Pain for 2/52") == _failed("missing_fact")
+        # Days are not an entry (weeks only): a prose 3/7 loses both tokens.
+        assert _register(inputs, "Pain for 3/7") == _failed("missing_fact")
+
+    def test_a_range_of_weeks_is_not_an_entry(self) -> None:
+        # "two to three weeks" folds to two, to, 3, weeks; a prose 2-3/52 is
+        # one unknown token, so `two` is missing.
+        assert _register(("Pain for two to three weeks",), "Pain for 2-3/52") == (
+            _failed("missing_fact")
+        )
+
+    def test_an_input_date_is_never_a_duration(self) -> None:
+        assert _register(("Review 3/9",), "Review 3 weeks") == _failed("missing_fact")
+
+    def test_a_duplicated_duration_reaches_the_protected_rule(self) -> None:
+        # Every token present on both sides: only the count of `3` differs.
+        assert _register(("Pain for three weeks",), "Pain for 3/52, 3/52") == (
+            _failed("protected")
+        )
+
+    def test_a_duplicated_negation_reaches_the_polarity_rule(self) -> None:
+        assert _register(("No LBP",), "No LBP, no") == _failed("polarity")
+
+    def test_an_ordinary_word_is_never_folded_into_a_diagnosis(self) -> None:
+        # D1: `AS` is not a register term (its folded form is `as`), so an
+        # invented expansion over an everyday "as" is still added content.
+        inputs = ("Symptoms as bad as before",)
+        assert _register(inputs, "Ankylosing spondylitis symptoms as bad as before") == (
+            _failed("added_content")
+        )
+
+
+class TestTheSpeakerFrame:
+    def test_the_frame_passes_only_with_the_flag(self) -> None:
+        inputs = ("Neck pain for two weeks",)
+        for prose in ("Pt reports neck pain for 2/52", "The patient reports neck pain for 2/52"):
+            assert _register(inputs, prose, frame=True).passed
+            assert _register(inputs, prose) == _failed("added_content")
+
+    def test_the_frame_needs_no_register(self) -> None:
+        assert fidelity_verdict(("Neck pain",), "Pt reports neck pain", speaker_frame=True).passed
+
+    def test_the_representative_line_passes_under_the_swap(self) -> None:
+        inputs = ("I've had this pain in my lower back for about three weeks",)
+        prose = "Pt reports pain in lower back for about 3/52"
+        assert _register(inputs, prose, frame=True).passed
+        assert _register(inputs, prose) == _failed("missing_fact")
+
+    def test_a_spoken_patient_is_a_fact_the_frame_cannot_drop(self) -> None:
+        inputs = ("I'm not a patient person",)
+        assert _register(inputs, "Pt reports not a person", frame=True) == (
+            _failed("missing_fact")
+        )
+        assert _register(inputs, "Pt reports not a patient person", frame=True).passed
+
+    def test_a_spoken_pt_reused_as_the_frame_is_the_named_residue(self) -> None:
+        # Token, not attachment: the folded `pt` is on both sides.
+        inputs = ("PT twice a week",)
+        assert _register(inputs, "Pt reports twice a week", frame=True).passed
+        assert _register(inputs, "Reports twice a week", frame=True) == _failed("missing_fact")
+
+    def test_pt_denies_over_no_is_a_missing_fact(self) -> None:
+        # `no` is gone before rule (c) is reached.
+        assert _register(("No locking",), "Pt denies locking", frame=True) == (
+            _failed("missing_fact")
+        )
+
+    def test_equal_token_sets_with_a_different_negation_count_reach_polarity(self) -> None:
+        inputs = ("No locking", "No LBP")
+        assert _register(inputs, "Pt reports no locking or LBP", frame=True) == (
+            _failed("polarity")
+        )
+
+    def test_the_swap_set_is_pinned_exactly(self) -> None:
+        assert frozenset(
+            {"i", "i've", "i'm", "me", "my", "mine", "we", "we've", "our"}
+        ) == FIRST_PERSON_TOKENS
+        assert frozenset({"pt", "patient"}) == SPEAKER_FRAME_TOKENS
+        assert FIRST_PERSON_TOKENS.isdisjoint(nc._PROSE_CONNECTIVE_SET)
+        assert SPEAKER_FRAME_TOKENS.isdisjoint(nc._PROSE_CONNECTIVE_SET)
+        assert FIRST_PERSON_TOKENS.isdisjoint(nc._POLARITY_BEARING_TOKENS)
+
+    @pytest.mark.parametrize("token", sorted(FIRST_PERSON_TOKENS))
+    def test_each_first_person_token_is_droppable_under_the_flag_only(self, token: str) -> None:
+        inputs = (f"{token} have neck pain",)
+        assert _register(inputs, "Pt reports neck pain", frame=True).passed
+        assert _register(inputs, "Pt reports neck pain") == _failed("missing_fact")
+
+    @pytest.mark.parametrize("token", ["i'd", "i'll", "we'd", "we'll"])
+    def test_a_modal_contraction_stays_a_fact_under_the_flag(self, token: str) -> None:
+        # codex PR-MED-011: their would / will is polarity-bearing.
+        assert token not in FIRST_PERSON_TOKENS
+        inputs = (f"{token} book a review",)
+        assert _register(inputs, "Pt reports book a review", frame=True) == (
+            _failed("missing_fact")
+        )
+        assert _register(inputs, f"Pt reports {token} book a review", frame=True).passed
+
+    def test_the_frame_never_adds_the_first_person(self) -> None:
+        assert _register(("Neck pain",), "My neck pain", frame=True) == _failed("added_content")
+
+
+class TestTheSectionArguments:
+    INPUTS: dict[NoteSectionKey, tuple[str, ...]] = {
+        "presenting_complaint": ("Neck pain for two weeks",),
+        "assessment": ("Cervical stiffness",),
+    }
+    PROSE: dict[NoteSectionKey, str] = {
+        "presenting_complaint": "Pt reports neck pain for 2/52",
+        "assessment": "Pt reports Cx stiffness",
+    }
+
+    def test_the_frame_is_per_section_and_the_register_reaches_every_section(self) -> None:
+        frame: dict[NoteSectionKey, bool] = {"presenting_complaint": True}
+        verdicts = fidelity_verdicts(
+            self.INPUTS, self.PROSE, register=CLINICAL_EQUIVALENTS, speaker_frame=frame
+        )
+        assert verdicts["presenting_complaint"].passed
+        assert verdicts["assessment"] == _failed("added_content")
+        warnings = fidelity_warnings(
+            self.INPUTS, self.PROSE, register=CLINICAL_EQUIVALENTS, speaker_frame=frame
+        )
+        assert [w.section_key for w in warnings] == ["assessment"]
+
+    def test_the_defaults_are_no_register_and_no_frame(self) -> None:
+        verdicts = fidelity_verdicts(self.INPUTS, self.PROSE)
+        assert verdicts["presenting_complaint"] == _failed("missing_fact")
+        assert verdicts["assessment"] == _failed("missing_fact")
+        assert len(fidelity_warnings(self.INPUTS, self.PROSE)) == 2
+
+    @pytest.mark.parametrize("function", [fidelity_verdict, fidelity_verdicts, fidelity_warnings])
+    def test_every_new_parameter_is_keyword_only_with_a_default(
+        self, function: Callable[..., object]
+    ) -> None:
+        parameters = inspect.signature(function).parameters
+        for name in ("register", "speaker_frame"):
+            assert parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
+        assert parameters["register"].default is None

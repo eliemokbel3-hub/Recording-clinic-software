@@ -52,7 +52,7 @@ from scribe_desktop.note_config import (
     TemplateProfile,
     TemplateTarget,
 )
-from scribe_desktop.transcription import SPEAKER_1
+from scribe_desktop.transcription import SPEAKER_1, SPEAKER_2
 from scribe_desktop.ui import models
 from test_prose_style import FIXTURE_NOTES
 from test_prose_style import _note as prose_fixture_note
@@ -202,7 +202,7 @@ def _rendering(
 ) -> StyleRendering:
     if input_digest is None:
         source = {s.section_key: s for s in _sections()}[section]
-        input_digest = section_input_digest(source)
+        input_digest = section_input_digest(source, None)  # the fixture has no clinician
     return StyleRendering(
         section_key=section,
         prose_text=prose_text,
@@ -386,7 +386,7 @@ class TestCheckMarks:
         rendering = StyleRendering(
             section_key="treatment_performed",
             prose_text="An ice pack and two sessions a week.",
-            input_digest=section_input_digest(treatment),
+            input_digest=section_input_digest(treatment, None),
             verdict="passed",
         )
         return _note(
@@ -523,7 +523,7 @@ class TestUnsureMark:
         rendering = StyleRendering(
             section_key="treatment_performed",
             prose_text="An ice pack and two sessions a week.",
-            input_digest=section_input_digest(treatment),
+            input_digest=section_input_digest(treatment, None),
             verdict="passed",
         )
         note = _note(
@@ -589,13 +589,55 @@ class TestSectionInputDigest:
         )
 
     def test_order_and_content_both_change_the_digest(self) -> None:
-        first = section_input_digest(self._section("one line here", "another line here"))
-        reordered = section_input_digest(self._section("another line here", "one line here"))
-        shorter = section_input_digest(self._section("one line here"))
+        first = section_input_digest(self._section("one line here", "another line here"), None)
+        reordered = section_input_digest(
+            self._section("another line here", "one line here"), None
+        )
+        shorter = section_input_digest(self._section("one line here"), None)
         assert first != reordered
         assert first != shorter
         assert reordered != shorter
-        assert first == section_input_digest(self._section("one line here", "another line here"))
+        assert first == section_input_digest(
+            self._section("one line here", "another line here"), None
+        )
+
+    def test_the_speaker_flag_is_folded_in_and_false_is_unchanged(self) -> None:
+        """Note-content-design D3 (codex PR-MED-001 / -009): the digest a
+        rendering is stamped with carries the section's `other_voice` flag,
+        so the same texts with and without another speaker's line bind
+        different renderings; False is the digest as it always was."""
+        texts = ("one line here", "another line here")
+        plain = note_module.input_texts_digest(texts)
+        assert plain == note_module.text_digest("\n".join(texts))
+        assert note_module.input_texts_digest(texts, other_voice=False) == plain
+        framed = note_module.input_texts_digest(texts, other_voice=True)
+        assert framed != plain
+        patient = GeneratedSection(
+            section_key="presenting_complaint",
+            note_assertions=(_quoted("q0", "presenting_complaint", 0, texts[0], SPEAKER_2),),
+        )
+        assert section_input_digest(patient, SPEAKER_1) == note_module.input_texts_digest(
+            texts[:1], other_voice=True
+        )
+        assert section_input_digest(patient, None) == note_module.input_texts_digest(texts[:1])
+
+    def test_other_voice_counts_another_speakers_transcript_line_only(self) -> None:
+        other_voice = note_module.section_other_voice
+
+        def section(*assertions: NoteAssertion) -> GeneratedSection:
+            return GeneratedSection(section_key="presenting_complaint", note_assertions=assertions)
+
+        patient = _quoted("q0", "presenting_complaint", 0, PATIENT_SYMPTOM, SPEAKER_2)
+        clinician = _quoted("q1", "presenting_complaint", 1, "Worse at night", SPEAKER_1)
+        assert other_voice(section(patient), SPEAKER_1)
+        assert other_voice(section(clinician, patient), SPEAKER_1)  # a mixed section
+        assert not other_voice(section(clinician), SPEAKER_1)
+        assert not other_voice(section(patient), None)  # no confirmed clinician
+        assert not other_voice(section(patient.model_copy(update={"speaker": None})), SPEAKER_1)
+        # A typed (clinician-provenance) line carrying another speaker is never
+        # counted: the flag is over transcript lines only.
+        typed = _typed(section="presenting_complaint").model_copy(update={"speaker": SPEAKER_2})
+        assert not other_voice(section(typed), SPEAKER_1)
 
 
 # ---------------------------------------------------------------------------
@@ -687,7 +729,7 @@ def _with_prose_renderings(note: GeneratedNote) -> GeneratedNote:
     renderings = []
     populated = [section for section in note.note_sections if section.note_assertions]
     for position, section in enumerate(populated[:-1]):
-        digest = section_input_digest(section)
+        digest = section_input_digest(section, note.clinician_speaker)
         if position % 2 == 0:
             texts = "; ".join(assertion.text for assertion in section.note_assertions)
             renderings.append(
@@ -729,7 +771,9 @@ def _pinned_notes() -> list[GeneratedNote]:
 class TestRenderNoteUnchangedByTheSectionRenderer:
     def test_every_style_matches_the_pre_task_renderer_for_every_pinned_note(self) -> None:
         notes = _pinned_notes()
-        assert len(notes) == 12
+        # The twelve prose fixtures (two with a confirmed clinician since the
+        # note-content-design plan's Task R.5) and this module's two notes.
+        assert len(notes) == 14
         checked = 0
         for base in notes:
             for note in (base, _with_prose_renderings(base)):
@@ -738,7 +782,7 @@ class TestRenderNoteUnchangedByTheSectionRenderer:
                         f"note {checked} style {style}"
                     )
                     checked += 1
-        assert checked == 12 * 2 * len(models.NOTE_STYLES)
+        assert checked == 14 * 2 * len(models.NOTE_STYLES)
         assert set(models.NOTE_STYLES) == {"verbatim", "clean", "own_voice", "narrative"}
 
     def test_the_pinned_prose_legs_really_carry_a_usable_rendering(self) -> None:

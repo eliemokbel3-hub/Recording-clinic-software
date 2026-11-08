@@ -582,3 +582,175 @@ class TestFallbackReasons:
             assert not screen.rendering_in_flight and stage.calls == 0
             assert screen.style_label.text() == ""
             screen.deleteLater()
+
+
+# ---------------------------------------------------------------------------
+# Note-content-design Tasks R.3 / R.4 (D2, D3): the register wired ONCE in
+# ``build_prose_stage``, and the flag-aware digest on every binding path — a
+# rendering judged with the speaker frame binds only while its section still
+# holds another speaker's line (codex PR-MED-001, PR-MED-009).
+# ---------------------------------------------------------------------------
+
+
+def _section_holding(note: GeneratedNote, assertion_id: str) -> Any:
+    return next(
+        section
+        for section in note.note_sections
+        if any(a.assertion_id == assertion_id for a in section.note_assertions)
+    )
+
+
+def _framed_note() -> GeneratedNote:
+    from test_prose_style import Spoken
+    from test_prose_style import _note as prose_note
+
+    return prose_note({"presenting_complaint": [Spoken("I've had pain across my lower back")]})
+
+
+def _stage_over(mock: MockLanguageModel) -> models.ProseStage:
+    stage = models.build_prose_stage(
+        "narrative", model_factory=lambda: mock, cache=None, available=lambda: True
+    )
+    assert stage is not None
+    return stage
+
+
+class TestTheRegisterThroughTheStage:
+    def test_the_stage_folds_through_the_register(self) -> None:
+        from scribe_desktop.prose_style import ProseInput, ProseStyleProvider
+        from test_prose_style import _note as prose_note
+
+        note = prose_note({"presenting_complaint": ["Lower back pain for three weeks"]})
+        shorthand = MockLanguageModel(responder=lambda _system, _user: "LBP for 3/52")
+        result = _stage_over(shorthand)(note)
+        assert (result.passed, result.failed, result.errored) == (1, 0, 0)
+        # The same completion through a provider with no register is refused:
+        # the stage passes it BECAUSE the builder wires the register.
+        bare = ProseStyleProvider(shorthand, style="narrative").render(ProseInput.from_note(note))
+        assert bare.failed_sections == ("presenting_complaint",)
+
+    def test_an_arriving_result_binds_only_when_stamped_with_the_flag(self) -> None:
+        from dataclasses import replace
+
+        from scribe_desktop.note import StyleRendering, input_texts_digest
+
+        note = _framed_note()
+        section = note.note_sections[0]
+        mock = MockLanguageModel(responder=lambda _system, _user: "Pt reports LBP")
+        result = _stage_over(mock)(note)
+        assert result.passed == 1
+        bound = models.bind_stage_result(note, result)
+        assert usable_rendering(bound, bound.note_sections[0]) is not None
+        unflagged = StyleRendering(
+            section_key="presenting_complaint",
+            prose_text="Pt reports LBP",
+            input_digest=input_texts_digest([a.text for a in section.note_assertions]),
+            verdict="passed",
+        )
+        forged = models.bind_stage_result(note, replace(result, renderings=(unflagged,)))
+        assert usable_rendering(forged, forged.note_sections[0]) is None
+        assert models.sections_to_render(forged) == {"presenting_complaint"}
+
+    def test_a_carried_rendering_does_not_survive_a_change_of_speaker(self) -> None:
+        note = _framed_note()
+        mock = MockLanguageModel(responder=lambda _system, _user: "Pt reports LBP")
+        rendered = models.bind_stage_result(note, _stage_over(mock)(note))
+        # The same words, now the confirmed clinician's own line: the flag
+        # flips under the SAME texts, so the carried rendering is dropped.
+        [line] = note.note_sections[0].note_assertions
+        own = line.model_copy(update={"speaker": note.clinician_speaker})
+        reattributed = note.model_copy(
+            update={
+                "note_sections": (
+                    note.note_sections[0].model_copy(update={"note_assertions": (own,)}),
+                    *note.note_sections[1:],
+                )
+            }
+        )
+        carried = models.carry_renderings(reattributed, rendered)
+        assert usable_rendering(carried, carried.note_sections[0]) is None
+        assert models.sections_to_render(carried) == {"presenting_complaint"}
+        # And back again ("Undo"): a rendering made for the clinician's line
+        # never binds to the patient's.
+        echo = _stage_over(MockLanguageModel())
+        as_clinician = models.bind_stage_result(carried, echo(carried))
+        assert usable_rendering(as_clinician, as_clinician.note_sections[0]) is not None
+        undone = models.carry_renderings(note, as_clinician)
+        assert usable_rendering(undone, undone.note_sections[0]) is None
+
+    def test_the_status_tab_benchmark_goes_through_the_builder(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop.ui import hardware_check
+
+        real = models.build_prose_stage
+        built: list[str] = []
+
+        def recording(style: Any, **kwargs: Any) -> Any:
+            built.append(style)
+            return real(style, **kwargs)
+
+        monkeypatch.setattr(models, "build_prose_stage", recording)
+        mock = MockLanguageModel()
+        got = hardware_check.run_prose_benchmark(
+            available=lambda: True, model_factory=lambda: mock, cache=models._LanguageModelCache()
+        )
+        assert got.skipped is None
+        assert built == ["narrative"]
+
+    def test_the_harness_stage_is_the_builders(self) -> None:
+        import inspect
+
+        from scribe_desktop import validation
+
+        assert validation.build_prose_stage is models.build_prose_stage
+        source = inspect.getsource(validation.main)
+        assert 'build_prose_stage("narrative") if args.prose else None' in source
+
+    def test_a_same_text_replacement_of_the_patient_line_and_its_undo_re_render(
+        self, qapp: Any
+    ) -> None:
+        """`ui/note.py`'s line editor (`edit_line`, `undo_line`): replacing the
+        patient's only line with the clinician's own typed wording keeps the
+        section's TEXTS but drops its other-voice flag, so the carried
+        rendering is invalidated and the section re-rendered without the
+        Speaker line; Undo flips it back and re-renders with it."""
+        from scribe_desktop.language_model import prompt_lines
+        from scribe_desktop.note import section_other_voice
+        from scribe_desktop.prose_style import SPEAKER_LINE
+        from test_ui_screens import _routed_line
+
+        stage = _Stage()
+        stage.release.set()
+        screen, _record = _screen(stage.provider)
+        _ratify(screen)
+        _settled(qapp, screen)
+        line = _routed_line(screen, 0)  # the patient's "My left knee is sore when I walk"
+        note = screen._note
+        section = _section_holding(note, line.assertion_id)
+        assert section_other_voice(section, note.clinician_speaker)
+        first = bound_rendering(note, section)
+        assert first is not None
+        assert any(SPEAKER_LINE in user.splitlines() for _s, user, _t in stage.mock.calls)
+        text = next(a.text for a in section.note_assertions if a.assertion_id == line.assertion_id)
+        asked = len(stage.mock.calls)
+        assert screen.edit_line(line.assertion_id, text) is True
+        _settled(qapp, screen)
+        edited = screen._note
+        [typed] = screen.typed_lines()
+        edited_section = _section_holding(edited, typed.assertion_id)
+        assert not section_other_voice(edited_section, edited.clinician_speaker)
+        second = bound_rendering(edited, edited_section)
+        assert second is not None and second.input_digest != first.input_digest
+        reasked = stage.mock.calls[asked:]
+        assert reasked and text in prompt_lines(reasked[-1][1])
+        assert SPEAKER_LINE not in reasked[-1][1].splitlines()
+        asked = len(stage.mock.calls)
+        assert screen.undo_line(typed.assertion_id) is True
+        _settled(qapp, screen)
+        restored = _section_holding(screen._note, line.assertion_id)
+        third = bound_rendering(screen._note, restored)
+        assert third is not None and third.input_digest == first.input_digest
+        assert len(stage.mock.calls) > asked
+        assert SPEAKER_LINE in stage.mock.calls[-1][1].splitlines()
+        screen.deleteLater()

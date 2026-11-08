@@ -209,6 +209,9 @@ DEFAULT_NOTE_STYLE: Final[NoteStyle] = "clean"
 # admits auto-extracted shorthand, and Check 5's connective allow-list.
 CLINICAL_ABBREVIATIONS_FILENAME: Final = "clinical_abbreviations.json"
 PROSE_CONNECTIVES_FILENAME: Final = "prose_connectives.json"
+# The clinical register's lexicon (note-content-design plan D1): shipped
+# package data like the two vocabularies above, never a user file.
+CLINICAL_EQUIVALENTS_FILENAME: Final = "clinical_equivalents.json"
 
 # Shipped defaults travel INSIDE the package (Task 3.3): package data under
 # ``scribe_desktop/config_defaults/`` (``note._DEFAULTS_RESOURCE_DIR``, the
@@ -1550,6 +1553,296 @@ _refuse_vocabulary_overlap(CLINICAL_ABBREVIATIONS, PROSE_CONNECTIVES)
 # The abbreviations as a set for the refusal filter's rule (a) (Task 3.7):
 # exact, case-preserving membership.
 _CLINICAL_ABBREVIATION_SET: Final[frozenset[str]] = frozenset(CLINICAL_ABBREVIATIONS)
+
+
+# ---------------------------------------------------------------------------
+# The clinical register's lexicon (note-content-design plan D1, Task R.1) —
+# ``config_defaults/clinical_equivalents.json``, schema 1: one entry per
+# MEANING, a ``term`` (one token) and its ``phrases`` (1–4 tokens each,
+# already in ``content_tokens`` form), typed by a class. Check 5 folds both
+# sides of a prose section through ``note_check.canonicalise``, so a
+# by-definition equivalent ("lower back pain" / "LBP", "three weeks" /
+# "3/52") is one fact to the gate. CASE, stated once for the register: the
+# term keeps its display case (the prompt shows "LBP"), and EVERY comparison
+# — the fold, the connective, abbreviation and ordinary-word overlaps — is
+# on the lower-cased form, because the one tokenisation lower-cases. The
+# STRUCTURAL invariants refuse here at import (a malformed or ambiguous list
+# is a broken install, like the two vocabularies above); the SEMANTIC ones —
+# polarity, laterality, medication, number / date, ordinary word, filler and
+# the exclusion list — refuse at ``note_check`` import, where those
+# classifiers live (``note_check`` imports this module, so they cannot be
+# read back here). Widening the list is the practitioner's dated decision
+# and a ``PROMPT_VERSION`` bump (C2); narrowing it is routine.
+# ---------------------------------------------------------------------------
+
+EquivalenceClass = Literal["anatomy", "symptom", "measure", "side_neutral", "duration"]
+EQUIVALENCE_CLASSES: Final[frozenset[str]] = frozenset(
+    {"anatomy", "symptom", "measure", "side_neutral", "duration"}
+)
+CLINICAL_EQUIVALENTS_SCHEMA_VERSION: Final = 1
+MAX_EQUIVALENT_PHRASE_TOKENS: Final = 4
+# D1: no term equals a shipped abbreviation of a DIFFERENT meaning — the two
+# whose meaning is a side, compared folded.
+_SIDE_ABBREVIATIONS: Final[frozenset[str]] = frozenset({"l", "r"})
+# A week count, ``n/52`` (D1: weeks only; beyond twelve weeks is months).
+_DURATION_TERM_RE: Final = re.compile(r"([1-9]\d?)/52")
+_MAX_DURATION_WEEKS: Final = 12
+_EQUIVALENTS_KEYS: Final = frozenset(
+    {"schema_version", "equivalents", "exclusions", "ordinary_words"}
+)
+_EQUIVALENT_ENTRY_KEYS: Final = frozenset({"term", "phrases", "class"})
+
+
+class ClinicalEquivalent(NamedTuple):
+    """One meaning: the display-case ``term`` and its ``phrases`` as token
+    tuples, the FIRST being the canonical one."""
+
+    term: str
+    phrases: tuple[tuple[str, ...], ...]
+    equivalence_class: EquivalenceClass
+
+    @property
+    def canonical(self) -> tuple[str, ...]:
+        """What every match of this entry folds to (D2): the first phrase's
+        tokens, never the bare term — so an interrupted spoken phrase still
+        meets a prose term as a token SET, and a term that is also an
+        everyday word can never hide inside its own fold."""
+        return self.phrases[0]
+
+
+class ClinicalRegister(NamedTuple):
+    """The parsed lexicon: the entries, the two ratified word sets, and the
+    longest-match table ``note_check.canonicalise`` reads (every phrase and
+    every folded term, each owned by exactly one entry)."""
+
+    entries: tuple[ClinicalEquivalent, ...]
+    exclusions: frozenset[str]
+    ordinary_words: frozenset[str]
+    lookup: Mapping[tuple[str, ...], ClinicalEquivalent]
+    longest: int
+
+
+def _clinical_register(
+    entries: Sequence[ClinicalEquivalent],
+    *,
+    exclusions: Collection[str],
+    ordinary_words: Collection[str],
+) -> ClinicalRegister:
+    """Build the register and its match table — no invariant is checked here
+    (``_parse_clinical_equivalents`` checks the structural ones first; a
+    test builds a register directly to drive ``note_check``'s semantic
+    refusals one by one)."""
+    lookup: dict[tuple[str, ...], ClinicalEquivalent] = {}
+    for entry in entries:
+        lookup.setdefault((entry.term.lower(),), entry)
+        for phrase in entry.phrases:
+            lookup.setdefault(phrase, entry)
+    return ClinicalRegister(
+        entries=tuple(entries),
+        exclusions=frozenset(exclusions),
+        ordinary_words=frozenset(ordinary_words),
+        lookup=lookup,
+        longest=max((len(key) for key in lookup), default=0),
+    )
+
+
+def _parse_equivalent_word_list(
+    payload: Mapping[str, object], *, filename: str, key: str
+) -> tuple[str, ...]:
+    """The exclusion list and the ordinary-word set: the shipped-vocabulary
+    rule (lower-case, one word, no duplicate, non-empty), and each word one
+    normalised content token (so ``canonicalise``'s tokens can meet it)."""
+    words = _parse_shipped_vocabulary(payload, filename=filename, key=key, lower_case=True)
+    for position, word in enumerate(words, start=1):
+        if content_tokens(word) != (word,):
+            raise RuntimeError(
+                f"shipped {filename} is malformed (broken install): {key} entry {position} "
+                "is not one normalised word"
+            )
+    return words
+
+
+def _parse_clinical_equivalents(
+    payload: object,
+    *,
+    filename: str,
+    abbreviations: Sequence[str],
+    connectives: Sequence[str],
+) -> ClinicalRegister:
+    """The lexicon's shape and STRUCTURAL invariants (D1), over an already
+    decoded payload so a test can drive every refusal without touching the
+    packaged file. Each refusal is a ``RuntimeError`` naming a broken
+    install and the term (vocabulary, never clinical text)."""
+
+    def broken(detail: str) -> RuntimeError:
+        return RuntimeError(f"shipped {filename} is malformed (broken install): {detail}")
+
+    if not isinstance(payload, dict) or set(payload) != _EQUIVALENTS_KEYS:
+        raise broken(f"the top-level keys must be exactly {sorted(_EQUIVALENTS_KEYS)}")
+    version = payload["schema_version"]
+    if type(version) is not int or version != CLINICAL_EQUIVALENTS_SCHEMA_VERSION:
+        raise broken(f"schema_version must be {CLINICAL_EQUIVALENTS_SCHEMA_VERSION}")
+    exclusions = _parse_equivalent_word_list(payload, filename=filename, key="exclusions")
+    ordinary_words = _parse_equivalent_word_list(
+        payload, filename=filename, key="ordinary_words"
+    )
+    raw_entries = payload["equivalents"]
+    if not isinstance(raw_entries, list) or not raw_entries:
+        raise broken("the equivalents list is missing or empty")
+
+    connective_set = frozenset(connectives)
+    shipped_by_fold: dict[str, set[str]] = {}
+    for abbreviation in abbreviations:
+        shipped_by_fold.setdefault(abbreviation.lower(), set()).add(abbreviation)
+
+    entries: list[ClinicalEquivalent] = []
+    for position, raw in enumerate(raw_entries, start=1):
+        if not isinstance(raw, dict) or set(raw) != _EQUIVALENT_ENTRY_KEYS:
+            raise broken(f"entry {position} must have exactly the keys term, phrases, class")
+        term, raw_phrases, klass = raw["term"], raw["phrases"], raw["class"]
+        if not isinstance(term, str):
+            raise broken(f"entry {position}'s term is not a string")
+        try:
+            _one_word(term)
+        except ValueError as exc:
+            raise broken(f"entry {position}'s term: {exc}") from exc
+        folded = term.lower()
+        if content_tokens(term) != (folded,):
+            raise broken(f"term {term!r} is not one normalised word")
+        # A string before the set lookup (Phase R review round 7 LOW-001): an
+        # unhashable value (a list, an object) would otherwise raise TypeError,
+        # not this module's broken-install refusal.
+        if not isinstance(raw["class"], str) or klass not in EQUIVALENCE_CLASSES:
+            raise broken(f"term {term!r} has no known class")
+        if not isinstance(raw_phrases, list) or not raw_phrases:
+            raise broken(f"term {term!r} has no phrases")
+        phrases: list[tuple[str, ...]] = []
+        for raw_phrase in raw_phrases:
+            if not isinstance(raw_phrase, str):
+                raise broken(f"term {term!r} has a phrase that is not a string")
+            try:
+                _no_control_chars(raw_phrase)
+            except ValueError as exc:
+                raise broken(f"term {term!r} has a phrase: {exc}") from exc
+            tokens = content_tokens(raw_phrase)
+            if not 1 <= len(tokens) <= MAX_EQUIVALENT_PHRASE_TOKENS:
+                raise broken(
+                    f"term {term!r} has a phrase of {len(tokens)} tokens "
+                    f"(1 to {MAX_EQUIVALENT_PHRASE_TOKENS})"
+                )
+            if raw_phrase != " ".join(tokens):
+                raise broken(f"term {term!r} has a phrase not in content-token form")
+            if tokens in phrases:
+                raise broken(f"term {term!r} repeats a phrase")
+            if len(tokens) == 1 and (
+                tokens[0] in connective_set or tokens[0] in {"patient", "pain"}
+            ):
+                raise broken(f"term {term!r} has a one-word phrase that is {tokens[0]!r}")
+            phrases.append(tokens)
+        if folded in connective_set:
+            raise broken(f"term {term!r} folds to a connective")
+        if folded in _SIDE_ABBREVIATIONS:
+            raise broken(f"term {term!r} folds to a side abbreviation")
+        twins = shipped_by_fold.get(folded, set())
+        if twins and term not in twins:
+            raise broken(
+                f"term {term!r} is a case twin of the shipped abbreviation "
+                f"{sorted(twins)} (a different meaning)"
+            )
+        duration = _DURATION_TERM_RE.fullmatch(term)
+        if (klass == "duration") != (duration is not None):
+            raise broken(f"term {term!r}: a week count is the duration class and only it")
+        if duration is not None:
+            weeks = int(duration.group(1))
+            unit = "week" if weeks == 1 else "weeks"
+            if weeks > _MAX_DURATION_WEEKS:
+                raise broken(f"term {term!r} is beyond {_MAX_DURATION_WEEKS} weeks")
+            if phrases[0] != (str(weeks), unit):
+                raise broken(f"term {term!r}'s first phrase must be '{weeks} {unit}'")
+            if any(phrase[-1] != unit for phrase in phrases):
+                raise broken(f"term {term!r} has a phrase not ending in {unit!r}")
+        entries.append(ClinicalEquivalent(term, tuple(phrases), klass))
+
+    # A term is ONE entry (codex round 8 PR-LOW-015): the ownership map below
+    # compares owners by term, so two entries spelling the same term — the
+    # same entry repeated, or a second definition — would otherwise pass it.
+    seen_terms: set[str] = set()
+    for entry in entries:
+        if entry.term.lower() in seen_terms:
+            raise broken(f"term {entry.term!r} is in two entries")
+        seen_terms.add(entry.term.lower())
+    # 1:1 by meaning: every match key — a phrase, or a folded term — is owned
+    # by exactly ONE entry, so a phrase is never in two entries, a term never
+    # in two, and a phrase never another entry's term.
+    owners: dict[tuple[str, ...], str] = {}
+    for entry in entries:
+        for key in {(entry.term.lower(),), *entry.phrases}:
+            owner = owners.setdefault(key, entry.term)
+            if owner != entry.term:
+                raise broken(
+                    f"{' '.join(key)!r} belongs to both {owner!r} and {entry.term!r}"
+                )
+    # No phrase is a strict prefix of ANOTHER entry's phrase, so the longest
+    # match is unambiguous.
+    for entry in entries:
+        for other in entries:
+            if other is entry:
+                continue
+            for phrase in entry.phrases:
+                for longer in other.phrases:
+                    if len(phrase) < len(longer) and longer[: len(phrase)] == phrase:
+                        raise broken(
+                            f"a phrase of {entry.term!r} is a prefix of a phrase of "
+                            f"{other.term!r}"
+                        )
+    return _clinical_register(entries, exclusions=exclusions, ordinary_words=ordinary_words)
+
+
+def _refuse_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """``json``'s object hook for the lexicon: two equal keys in one object
+    are refused, where ``json`` alone keeps the last silently (codex round 8
+    PR-LOW-016 — ``"class": [], "class": "anatomy"`` would pass as anatomy)."""
+    decoded: dict[str, object] = {}
+    for key, value in pairs:
+        if key in decoded:
+            raise ValueError(f"the key {key!r} is repeated in one object")
+        decoded[key] = value
+    return decoded
+
+
+def _decode_clinical_equivalents(data: bytes) -> object:
+    """The lexicon file's bytes decoded, a repeated object key or a nesting
+    too deep to decode refused as a broken install (the test seam for the
+    decode step; ``_parse_clinical_equivalents`` checks the shape)."""
+    try:
+        return json.loads(data, object_pairs_hook=_refuse_duplicate_keys)
+    except (ValueError, RecursionError) as exc:
+        raise RuntimeError(
+            f"shipped {CLINICAL_EQUIVALENTS_FILENAME} unreadable (broken install): {exc}"
+        ) from exc
+
+
+def _load_clinical_equivalents() -> ClinicalRegister:
+    resource = (
+        resources.files("scribe_desktop") / _DEFAULTS_RESOURCE_DIR / CLINICAL_EQUIVALENTS_FILENAME
+    )
+    try:
+        data = resource.read_bytes()
+    except OSError as exc:
+        raise RuntimeError(
+            f"shipped {CLINICAL_EQUIVALENTS_FILENAME} unreadable (broken install): {exc}"
+        ) from exc
+    return _parse_clinical_equivalents(
+        _decode_clinical_equivalents(data),
+        filename=CLINICAL_EQUIVALENTS_FILENAME,
+        abbreviations=CLINICAL_ABBREVIATIONS,
+        connectives=PROSE_CONNECTIVES,
+    )
+
+
+# The shipped register; ``note_check`` refuses its semantic invariants at
+# import and folds Check 5 through it.
+CLINICAL_EQUIVALENTS: Final[ClinicalRegister] = _load_clinical_equivalents()
 
 
 # ---------------------------------------------------------------------------

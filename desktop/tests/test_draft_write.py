@@ -235,13 +235,13 @@ class TestRenderTargets:
         into lines, blank lines kept, so the composition renderer -> grouper
         -> answer never raises on validated note data."""
         section = _section("diagnosis", "Left\r\nshoulder\rstrain\nsuspected")
+        note = _note(sections=(section,))
         rendering = StyleRendering(
             section_key="diagnosis",
             prose_text="First.\r\nSecond.\rThird.\n\nFourth.",
-            input_digest=section_input_digest(section),
+            input_digest=section_input_digest(section, note.clinician_speaker),
             verdict="passed",
         )
-        note = _note(sections=(section,))
         prose = note.model_copy(update={"style_renderings": (rendering,)})
         clean = draft_write.render_targets(note, _template_a(), "clean")["diagnosis"][1]
         assert clean == ["Left", "shoulder", "strain", "suspected"]
@@ -303,7 +303,7 @@ class TestRenderTargets:
         rendering = StyleRendering(
             section_key="treatment_performed",
             prose_text="An ice pack was advised.",
-            input_digest=section_input_digest(treatment),
+            input_digest=section_input_digest(treatment, note.clinician_speaker),
             verdict="passed",
         )
         prose = note.model_copy(update={"style_renderings": (rendering,)})
@@ -1214,7 +1214,7 @@ class TestPrepareWrite:
         rendering = StyleRendering(
             section_key="diagnosis",
             prose_text="A left shoulder strain.",
-            input_digest=section_input_digest(diagnosis),
+            input_digest=section_input_digest(diagnosis, note.clinician_speaker),
             verdict="passed",
         )
         narrative = note.model_copy(update={"style": "narrative", "style_renderings": (rendering,)})

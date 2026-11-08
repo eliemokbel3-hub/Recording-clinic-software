@@ -426,6 +426,12 @@ class TestTheAudit:
         [
             ("scribe-host.exe", "scribe-host.exe is missing"),
             ("_internal/scribe_desktop/config_defaults/section_cues.json", "section_cues.json"),
+            # Note-content-design Task R.1: the glob audit admits (and so
+            # requires) the clinical register's shipped lexicon.
+            (
+                "_internal/scribe_desktop/config_defaults/clinical_equivalents.json",
+                "clinical_equivalents.json",
+            ),
             ("_internal/llama_cpp/lib/lib.dll", "no native library in _internal/llama_cpp/lib"),
         ],
     )

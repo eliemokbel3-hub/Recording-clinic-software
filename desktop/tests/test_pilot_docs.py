@@ -20,6 +20,20 @@ REPO = Path(__file__).resolve().parents[2]
 PILOT = REPO / "docs" / "pilot"
 TEMPLATE = PILOT / "pilot-log-template.md"
 REGISTER = PILOT / "findings-register.md"
+# Note-content-design plan Task R.7 (D5 (ii)): the register's scoring sheet
+# lives under ``docs/testing`` (codex PR-LOW-002), so it is checked by its own
+# path, not through the pilot folder's list.
+REGISTER_SHEET = REPO / "docs" / "testing" / "prose-register-scoring.md"
+REGISTER_SHEET_COLUMNS = (
+    "Date",
+    "Style",
+    "Notes",
+    "Sections read",
+    "Invented or wrong shorthand",
+    "Reads as clinician-written",
+    "Shown clean",
+    "Frames used",
+)
 
 # A session id (``session_store.SESSION_ID_PATTERN``), a clinic id or any
 # other long hexadecimal run, and a long digit run (a Cliniko id).
@@ -219,6 +233,35 @@ class TestPilotDocuments:
                         path.name,
                         column,
                     )
+
+
+class TestProseRegisterSheet:
+    """Note-content-design plan Task R.7: the sheet exists at its
+    ``docs/testing`` path, names its rubric and pass line, and its one table
+    is the fixed column list holding counts only — a style name, a date or a
+    whole number in each cell, never prose (D5 (ii): text-free)."""
+
+    def test_the_sheet_names_its_rubric_and_its_pass_line(self) -> None:
+        assert REGISTER_SHEET.is_file()
+        text = REGISTER_SHEET.read_text(encoding="utf-8")
+        assert "Rubric `register-v1`, dated 2026-11-08." in text
+        assert "**Invented or wrong shorthand is 0 in both styles**" in text
+        assert "scripts\\measure-prose-fixtures.py --verbose" in text
+        assert _ID_SHAPED.findall(text) == []
+        assert re.search(rb"\r(?!\n)", REGISTER_SHEET.read_bytes()) is None
+
+    def test_the_table_is_the_fixed_columns_and_counts_only(self) -> None:
+        (table,) = _tables(REGISTER_SHEET)
+        assert tuple(table[0]) == REGISTER_SHEET_COLUMNS
+        for column in table[0]:
+            lowered = column.casefold()
+            assert not [word for word in _FORBIDDEN_COLUMN_WORDS if word in lowered], column
+        assert [row[1] for row in table[1:]] == ["narrative", "own_voice"]
+        for row in table[1:]:
+            assert len(row) == len(REGISTER_SHEET_COLUMNS), row[1]
+            assert re.fullmatch(r"(?:20[0-9]{2}-[01][0-9]-[0-3][0-9])?", row[0]), row[1]
+            for cell in row[2:]:
+                assert re.fullmatch(r"[0-9]*", cell), (row[1], "a cell holds more than a count")
 
 
 class TestPilotLogTemplate:

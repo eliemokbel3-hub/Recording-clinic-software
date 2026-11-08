@@ -13,6 +13,8 @@ live in `test_note_matrix.py` (Task 5.5).
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -49,6 +51,7 @@ from scribe_desktop.note import (
     NoteSpan,
     SourceCoords,
     compose_draft,
+    content_tokens,
     finalise_note,
     line_marks,
     reconstruct_span_text,
@@ -60,19 +63,27 @@ from scribe_desktop.note import (
 )
 from scribe_desktop.note_check import (
     HEDGE_PHRASES,
+    REGISTER_EXCLUSIONS,
+    REGISTER_ORDINARY_WORDS,
     CheckTargetMismatchError,
     NoteCheckError,
     _is_high_risk_token,
     _omission_flag_token,
+    canonicalise,
     check_note,
     clinician_line_omissions,
     contradiction_warnings,
     omission_warnings,
     provenance_warnings,
     reconstruction_warnings,
+    register_matches,
 )
 from scribe_desktop.note_config import (
+    CLINICAL_ABBREVIATIONS,
+    CLINICAL_EQUIVALENTS,
     AutofillRule,
+    ClinicalEquivalent,
+    EquivalenceClass,
     NoteConfig,
     NoteConfigInvalidError,
     PrefillSeedAssertion,
@@ -80,6 +91,7 @@ from scribe_desktop.note_config import (
     SectionMapping,
     TemplateProfile,
     TemplateTarget,
+    _clinical_register,
     build_note_request,
     load_note_config,
     next_patient_boundary,
@@ -2965,3 +2977,317 @@ class TestCheckNote:
         source = Path(note_check_module.__file__).read_text(encoding="utf-8")
         assert "import logging" not in source
         assert "print(" not in source
+
+
+# ---------------------------------------------------------------------------
+# Note-content-design plan Task R.1 (D1, D2): the clinical register's fold and
+# its SEMANTIC invariants, which refuse at `note_check` import (the
+# STRUCTURAL ones refuse in `note_config` — `test_vocabularies_and_settings`).
+# ---------------------------------------------------------------------------
+
+# The two word sets as ratified on Task 0.1 (decided (a) 2026-11-08), pinned
+# EXACTLY: a word removed from either is a gate change, never a quiet edit.
+_RATIFIED_EXCLUSIONS = frozenset(
+    {
+        "sore", "ache", "tight", "stiff", "dull", "sharp", "numb", "swelling",
+        "aches", "aching", "burning", "heavy", "numbness", "shooting", "soreness",
+        "stabbing", "stiffness", "swollen", "throbbing", "tightness", "tingling",
+        "weak", "weakness",
+    }
+)
+_RATIFIED_ORDINARY_WORDS = frozenset(
+    {
+        "a", "i", "am", "an", "as", "at", "be", "by", "do", "go", "he", "hi", "if", "in",
+        "is", "it", "me", "my", "no", "of", "oh", "ok", "on", "or", "so", "to", "up", "us",
+        "we", "all", "and", "any", "but", "can", "for", "had", "has", "her", "him", "his",
+        "how", "its", "may", "not", "now", "off", "our", "out", "see", "she", "the", "too",
+        "was", "who", "why", "yes", "you", "yeah",
+        "add", "ant", "art", "flex", "glut", "hams", "met", "mob", "nags", "pa", "post",
+        "prom", "quads", "rot", "snags", "sob", "sup", "ta", "tens", "traps", "wad",
+        "ev", "hep", "hr", "lat", "med", "ot", "tp",
+    }
+)
+# Every shipped abbreviation whose folded form is an everyday word — D1's 23
+# and the 7 Task 0.1's audit found — each a regression case below.
+_ORDINARY_WORD_ABBREVIATIONS = (
+    "AS", "US", "SOB", "MET", "Post", "Traps", "Add", "Ant", "ART", "Flex", "Glut",
+    "Hams", "Mob", "NAGS", "PA", "PROM", "Quads", "Rot", "SNAGS", "Sup", "TA", "TENS",
+    "WAD",
+    "Ev", "HEP", "HR", "Lat", "Med", "OT", "TP",
+)
+
+
+def _fold(text: str) -> tuple[str, ...]:
+    return canonicalise(content_tokens(text))[0]
+
+
+def _matched_terms(text: str) -> list[str]:
+    return [match.entry.term for match in canonicalise(content_tokens(text))[1]]
+
+
+def _equivalent(
+    term: str, *phrases: str, klass: EquivalenceClass = "anatomy"
+) -> ClinicalEquivalent:
+    return ClinicalEquivalent(term, tuple(content_tokens(p) for p in phrases), klass)
+
+
+def _refuse(*entries: ClinicalEquivalent) -> None:
+    note_check_module._refuse_register_overlap(
+        _clinical_register(
+            entries, exclusions=REGISTER_EXCLUSIONS, ordinary_words=REGISTER_ORDINARY_WORDS
+        )
+    )
+
+
+class TestCanonicalise:
+    def test_a_term_and_its_phrases_expand_to_one_canonical_token_set(self) -> None:
+        canonical = ("lower", "back", "pain")
+        assert _fold("LBP") == _fold("lower back pain") == _fold("low back pain") == canonical
+        # The expansion, never the bare abbreviation.
+        assert "lbp" not in _fold("LBP")
+
+    def test_the_longest_match_wins(self) -> None:
+        # "straight leg raise" (SLR) sits inside "active straight leg raise"
+        # (ASLR); "range of motion" (ROM) inside "active range of motion".
+        assert _matched_terms("active straight leg raise") == ["ASLR"]
+        assert _matched_terms("straight leg raise") == ["SLR"]
+        assert _matched_terms("active range of movement") == ["AROM"]
+        assert _fold("AROM") == ("active", "range", "of", "motion")
+
+    def test_each_line_folds_alone_so_a_match_never_spans_two_lines(self) -> None:
+        assert register_matches(["lower back", "pain on sitting"]) == ()
+        [match] = register_matches(["lower back pain on sitting"])
+        assert match.entry.term == "LBP" and match.matched == ("lower", "back", "pain")
+
+    def test_an_interrupted_spoken_phrase_holds_a_prose_terms_expansion_as_a_set(self) -> None:
+        spoken = _fold("pain in my lower back")
+        assert spoken == ("pain", "in", "my", "lower", "back")  # nothing matched
+        assert set(_fold("LBP")) <= set(spoken)
+
+    def test_a_week_count_folds_to_its_numeral_on_both_sides(self) -> None:
+        # The raw `3/52` is date-SHAPED at the token classifier (the `3/5`
+        # prefix); once folded it never reaches rule (d) — `3` is a number.
+        assert note_check_module._protected_class("3/52") == "date"
+        assert _fold("3/52") == _fold("three weeks") == _fold("3 weeks") == ("3", "weeks")
+        assert note_check_module._protected_class("3") == "number"
+        assert _fold("1/52") == _fold("one week") == ("1", "week")
+
+    def test_every_duration_entry_expands_exactly(self) -> None:
+        words = (
+            "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+            "eleven", "twelve",
+        )
+        durations = [e for e in CLINICAL_EQUIVALENTS.entries if e.equivalence_class == "duration"]
+        assert [e.term for e in durations] == [f"{n}/52" for n in range(1, 13)]
+        for n, (entry, word) in enumerate(zip(durations, words, strict=True), start=1):
+            unit = "week" if n == 1 else "weeks"
+            assert entry.phrases == ((str(n), unit), (word, unit))
+            assert entry.canonical == (str(n), unit)
+            assert _fold(entry.term) == _fold(f"{word} {unit}") == (str(n), unit)
+
+    def test_days_and_months_are_not_entries(self) -> None:
+        assert canonicalise(("3/7",)) == (("3/7",), ())
+        assert canonicalise(("3/12",)) == (("3/12",), ())
+        # "a week" is not a duration phrase: "three times a week" stays as said.
+        assert _fold("three times a week") == ("three", "times", "a", "week")
+
+    def test_a_range_of_weeks_folds_only_its_last_count(self) -> None:
+        assert _fold("two to three weeks") == ("two", "to", "3", "weeks")
+
+    def test_case_is_folded_and_the_display_case_is_kept(self) -> None:
+        assert _fold("Lbp") == _fold("LBP") == _fold("lbp")
+        assert _fold("CX") == ("cervical",)
+        assert _matched_terms("lower back pain") == ["LBP"]  # the display term
+        # The fold reads the ONE tokenisation's output (lower case): a raw
+        # upper-case token is not a key.
+        assert canonicalise(("LBP",)) == (("LBP",), ())
+
+    def test_the_straddle_edge(self) -> None:
+        # The fold sees tokens, not punctuation: within ONE line a phrase may
+        # straddle a comma ("low back, pain on sitting" folds "low back pain").
+        # Pinned as the named edge: it folds identically on both sides of
+        # Check 5 (the same text either side), and never across two lines.
+        straddled = _fold("low back, pain on sitting")
+        assert straddled == ("lower", "back", "pain", "on", "sitting")
+        assert straddled == _fold("low back pain on sitting")
+        assert _matched_terms("low back, pain on sitting") == ["LBP"]
+        assert register_matches(["low back", "pain on sitting"]) == ()
+
+    def test_the_matched_terms_are_returned_in_order(self) -> None:
+        folded, matches = canonicalise(
+            content_tokens("Lower back pain for three weeks, SLR positive, LBP")
+        )
+        assert folded == (
+            "lower", "back", "pain", "for", "3", "weeks", "straight", "leg", "raise",
+            "positive", "lower", "back", "pain",
+        )
+        assert [(m.entry.term, m.matched) for m in matches] == [
+            ("LBP", ("lower", "back", "pain")),
+            ("3/52", ("three", "weeks")),
+            ("SLR", ("slr",)),
+            ("LBP", ("lbp",)),
+        ]
+
+    def test_register_matches_is_the_distinct_matches_over_lines(self) -> None:
+        matches = register_matches(["Three weeks of LBP", "three weeks", "No match here"])
+        assert [(m.entry.term, m.matched) for m in matches] == [
+            ("3/52", ("three", "weeks")),
+            ("LBP", ("lbp",)),
+        ]
+
+    def test_an_empty_input_folds_to_nothing(self) -> None:
+        assert canonicalise(()) == ((), ())
+        assert register_matches([]) == ()
+
+
+class TestRegisterSemanticInvariants:
+    def test_the_shipped_register_passes(self) -> None:
+        note_check_module._refuse_register_overlap(CLINICAL_EQUIVALENTS)
+
+    def test_the_two_ratified_sets_are_pinned_exactly(self) -> None:
+        assert REGISTER_EXCLUSIONS == _RATIFIED_EXCLUSIONS
+        assert len(REGISTER_EXCLUSIONS) == 23
+        assert REGISTER_ORDINARY_WORDS == _RATIFIED_ORDINARY_WORDS
+        assert len(REGISTER_ORDINARY_WORDS) == 86
+
+    def test_no_shipped_term_folds_to_an_ordinary_word(self) -> None:
+        for entry in CLINICAL_EQUIVALENTS.entries:
+            assert entry.term.lower() not in REGISTER_ORDINARY_WORDS, entry.term
+
+    @pytest.mark.parametrize("term", _ORDINARY_WORD_ABBREVIATIONS)
+    def test_an_ordinary_word_abbreviation_is_refused_as_a_term(self, term: str) -> None:
+        assert term in CLINICAL_ABBREVIATIONS
+        assert term.lower() in REGISTER_ORDINARY_WORDS
+        with pytest.raises(RuntimeError, match="broken install.*ordinary word"):
+            _refuse(_equivalent(term, "ankylosing spondylitis"))
+
+    def test_a_connective_term_is_refused_as_an_ordinary_word(self) -> None:
+        with pytest.raises(RuntimeError, match="ordinary word"):
+            _refuse(_equivalent("Via", "venous access"))
+
+    def test_a_filler_term_is_refused(self) -> None:
+        with pytest.raises(RuntimeError, match="filler"):
+            _refuse(_equivalent("Er", "emergency room"))
+
+    def test_a_speaker_frame_term_is_refused(self) -> None:
+        with pytest.raises(RuntimeError, match="speaker-frame"):
+            _refuse(_equivalent("PT", "physiotherapy"))
+
+    @pytest.mark.parametrize(
+        "entry",
+        [
+            _equivalent("NAD", "nothing abnormal detected", "no abnormality detected"),
+            _equivalent("O/E", "on examination"),
+            _equivalent("Nwx", "doesn't weight bear"),
+            _equivalent("Nil", "nil"),
+            _equivalent("PRX", "pain after exercise"),
+        ],
+        ids=["negation", "polarity-bearing", "contraction", "nil", "after"],
+    )
+    def test_a_polarity_token_is_refused(self, entry: ClinicalEquivalent) -> None:
+        with pytest.raises(RuntimeError, match="polarity"):
+            _refuse(entry)
+
+    def test_a_laterality_token_is_refused(self) -> None:
+        with pytest.raises(RuntimeError, match="laterality"):
+            _refuse(_equivalent("LKP", "left knee pain"))
+
+    @pytest.mark.parametrize("phrase", ["paracetamol", "atorvastatin", "mg dose"])
+    def test_a_medication_token_is_refused(self, phrase: str) -> None:
+        with pytest.raises(RuntimeError, match="medication"):
+            _refuse(_equivalent("Medx", phrase))
+
+    @pytest.mark.parametrize(
+        "entry",
+        [
+            _equivalent("TDS", "three times daily", klass="measure"),
+            _equivalent("Mar", "march", klass="measure"),
+            _equivalent("3/7", "three days", klass="measure"),
+        ],
+        ids=["number", "month", "date-shaped-term"],
+    )
+    def test_a_number_or_date_outside_the_duration_class_is_refused(
+        self, entry: ClinicalEquivalent
+    ) -> None:
+        with pytest.raises(RuntimeError, match="number or date"):
+            _refuse(entry)
+
+    def test_the_duration_class_alone_is_exempt_from_the_number_rule(self) -> None:
+        _refuse(_equivalent("3/52", "3 weeks", "three weeks", klass="duration"))
+
+    @pytest.mark.parametrize("word", sorted(_RATIFIED_EXCLUSIONS))
+    def test_an_excluded_word_is_refused(self, word: str) -> None:
+        with pytest.raises(RuntimeError, match="excluded word"):
+            _refuse(_equivalent("Xq", word))
+
+    def test_a_first_person_phrase_token_is_refused(self) -> None:
+        # The swap (Task R.0) runs on FOLDED tokens: a phrase holding the
+        # first person would hide it from rule (a).
+        with pytest.raises(RuntimeError, match="first-person"):
+            _refuse(_equivalent("MB", "my back"))
+
+
+class TestRegisterImportCycle:
+    """Codex PR-MED-005: the structural invariants live in `note_config`, the
+    semantic ones in `note_check` (which imports `note_config`) — so each
+    module imports alone in a fresh interpreter with no cycle and no
+    refusal; and (codex round 8 PR-LOW-017) the import-time refusal itself is
+    pinned: a structurally valid but semantically forbidden register put in
+    `note_config`'s place before `note_check` is first imported fails that
+    import by name. Every child pins the graphics-card seams in ONE shared
+    source line (gpu-decoding plan C12; the inventory in
+    `test_frozen_runtime.py` counts one child here) — after `note_config`'s
+    import, which already loaded ``transcription``, so the pin changes
+    nothing the import proves."""
+
+    GPU_PIN = (
+        "import scribe_desktop.transcription as transcription; "
+        "transcription.cuda_device_count = lambda: 0; "
+        "transcription.preload_cuda_libraries = lambda device: None"
+    )
+
+    @staticmethod
+    def _child(*lines: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-c", "\n".join(lines)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+
+    @pytest.mark.parametrize("module", ["note_config", "note_check"])
+    def test_the_module_imports_alone(self, module: str) -> None:
+        result = self._child(f"import scribe_desktop.{module}", self.GPU_PIN)
+        assert result.returncode == 0, result.stderr[-2000:]
+
+    def test_a_forbidden_register_fails_note_checks_import_by_name(self) -> None:
+        """No seam is added to the production path: the child imports
+        `note_config` (the shipped file, structurally valid), replaces its
+        module attribute `CLINICAL_EQUIVALENTS` with the shipped register
+        plus one entry holding a laterality token (`_clinical_register`
+        builds without checking — the structural loader is not involved),
+        then imports `note_check`, whose own `from … import
+        CLINICAL_EQUIVALENTS` reads the replaced attribute. Removing the
+        import-time `_refuse_register_overlap(CLINICAL_EQUIVALENTS)` call
+        would let that import succeed."""
+        result = self._child(
+            "import sys",
+            "import scribe_desktop.note_config as note_config",
+            self.GPU_PIN,
+            "assert 'scribe_desktop.note_check' not in sys.modules, 'too late to inject'",
+            "from scribe_desktop.note import content_tokens",
+            "shipped = note_config.CLINICAL_EQUIVALENTS",
+            "forbidden = note_config.ClinicalEquivalent("
+            "'LKP', (content_tokens('left knee pain'),), 'symptom')",
+            "note_config.CLINICAL_EQUIVALENTS = note_config._clinical_register("
+            "(*shipped.entries, forbidden), exclusions=shipped.exclusions, "
+            "ordinary_words=shipped.ordinary_words)",
+            "import scribe_desktop.note_check",
+        )
+        assert result.returncode != 0
+        assert "too late to inject" not in result.stderr
+        assert (
+            "shipped clinical equivalent 'LKP' is refused (broken install): "
+            "it holds a laterality token"
+        ) in result.stderr

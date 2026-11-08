@@ -604,7 +604,7 @@ class TestRowStore:
             template_profile="clinic-a",
             note_style="clean",
             language_model_id="qwen3-4b",
-            prompt_version="narrative-v2",
+            prompt_version="narrative-v7",
             note_provenance="known",
         )
         assert log.record_completion(sid, facts, deletion="completed_without_note")
@@ -617,7 +617,7 @@ class TestRowStore:
         assert (row.models.transcription_model, row.models.note_style) == ("small", "clean")
         assert (row.models.language_model_id, row.models.prompt_version) == (
             "qwen3-4b",
-            "narrative-v2",
+            "narrative-v7",
         )
         assert row.models.generated_provider == "unknown"  # Task 2.1 fills it
 

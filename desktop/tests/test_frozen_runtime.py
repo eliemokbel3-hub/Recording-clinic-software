@@ -1523,11 +1523,15 @@ _SYS_EXECUTABLE_REFERENCES: dict[str, int] = {
     # One pinned child each: the note modules' import check, the guard
     # measurement's and the harness's no-runtime-at-import checks (each module
     # already imports ``transcription``, so the pin changes no module set they
-    # print), the hotkey, session-lock and suspend dispatch windows, and the
-    # single-instance mutex holder (``scribe_desktop.app``).
+    # print), the hotkey, session-lock and suspend dispatch windows, the
+    # single-instance mutex holder (``scribe_desktop.app``), and the clinical
+    # register's import checks (note-content-design Task R.1, and codex round
+    # 8 PR-LOW-017's forbidden-register import: one launch and one pinned
+    # source line shared by every case).
     "test_consultation_boundary.py": 1,
     "test_guard_eval.py": 1,
     "test_hands_free.py": 1,
+    "test_note_check.py": 1,
     "test_status_and_app.py": 1,
     "test_system_pause.py": 1,
     "test_ui_pause_and_unreviewed.py": 1,
@@ -1552,13 +1556,14 @@ _PROCESS_LAUNCHES: dict[str, int] = {
     "test_hands_free.py": 1,
     "test_integration_no_sockets.py": 7,
     "test_lint_held_out_set.py": 2,
+    "test_note_check.py": 1,
     "test_pipe_server.py": 1,
     "test_status_and_app.py": 1,
     "test_system_pause.py": 1,
     "test_ui_pause_and_unreviewed.py": 1,
     "test_validation_harness.py": 1,
 }
-# The pinned child sources per module: the seven single children above, and
+# The pinned child sources per module: the eight single children above, and
 # in the integration module the nine pinned ``*_CHILD`` constants (all but the
 # dev host relay) plus the function-built app child.
 _GPU_PINNED_CHILD_SOURCES: dict[str, int] = {
@@ -1566,6 +1571,7 @@ _GPU_PINNED_CHILD_SOURCES: dict[str, int] = {
     "test_guard_eval.py": 1,
     "test_hands_free.py": 1,
     "test_integration_no_sockets.py": 10,
+    "test_note_check.py": 1,
     "test_status_and_app.py": 1,
     "test_system_pause.py": 1,
     "test_ui_pause_and_unreviewed.py": 1,

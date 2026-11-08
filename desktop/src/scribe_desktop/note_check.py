@@ -200,7 +200,14 @@ What each check claims — and, recorded with equal care, what it does NOT:
   places and pass, and a rephrase that keeps every token but reverses a
   comparison passes; the practitioner's reading is the control for all of
   these, and the laterality-parser lesson (rounds 48–58) is why no binding
-  parser is attempted here.
+  parser is attempted here. Since the note-content-design plan (D2) the
+  prose stage passes the shipped clinical register: both sides are FOLDED
+  through ``canonicalise`` (a by-definition equivalent — "lower back pain" /
+  ``LBP``, "three weeks" / ``3/52`` — becomes its entry's canonical tokens)
+  before the four rules run unchanged, and a section holding a line not
+  spoken by the confirmed clinician may add the speaker frame (``Pt`` /
+  ``patient``) in rule (b) and drop the first person in rule (a) — the
+  token-not-attachment residue above covers the frame too.
 - **Check 6, ``next_patient_warnings``** (validation-pass plan D5) — one
   ``possible_next_patient`` review warning, role-free, when the transcript
   runs into a possible next patient: ``note_config.next_patient_boundary``,
@@ -241,7 +248,10 @@ from scribe_desktop.note import (
     # Package-private by name, shared deliberately (the note.py convention):
     # the mock's negation vocabulary IS the checker's negation vocabulary —
     # two sets would let the instrument express a class the checker cannot
-    # see, exactly the drift Task 1.2 pinned tokenisation against.
+    # see, exactly the drift Task 1.2 pinned tokenisation against. The
+    # tokenisation's own filler set is shared the same way: the clinical
+    # register refuses a term that is a filler (note-content-design D1).
+    _FILLER_TOKENS,
     _NEGATIONS,
     CANONICAL_SECTION_KEYS,
     CLINICIAN_OWNED_SECTIONS,
@@ -279,8 +289,11 @@ from scribe_desktop.note_config import (
     # token the filters refuse and a token the fidelity gate protects are
     # one class, never two drifting spellings of it.
     _TERMINAL_PUNCT,
+    CLINICAL_EQUIVALENTS,
     PROSE_CONNECTIVES,
     AutofillRule,
+    ClinicalEquivalent,
+    ClinicalRegister,
     NoteConfig,
     _canonical_config,
     _is_date_shaped,
@@ -1820,7 +1833,139 @@ def _protected_counts(tokens: Iterable[str]) -> Counter[str]:
     return Counter(token for token in tokens if _protected_class(token) is not None)
 
 
-def fidelity_verdict(inputs: Sequence[str], prose: str) -> FidelityVerdict:
+# ---------------------------------------------------------------------------
+# The clinical register (note-content-design plan D1, D2; Tasks R.0–R.2):
+# Check 5 folds BOTH sides through ``canonicalise`` before rules (a)–(d),
+# which run unchanged, so a by-definition equivalent from the shipped lexicon
+# (``note_config.CLINICAL_EQUIVALENTS``) is the same fact on either side; the
+# speaker frame is admitted in rule (b) only, and only for a section flagged
+# as holding a line not spoken by the confirmed clinician.
+# ---------------------------------------------------------------------------
+
+# The frame a patient-spoken section's prose may open with ("Pt reports",
+# "The patient reports" — the reporting verbs and articles are connectives
+# already). Admitted as ADDED tokens only: a spoken `patient` or `pt` in an
+# input line is a fact rule (a) still requires.
+SPEAKER_FRAME_TOKENS: Final[frozenset[str]] = frozenset({"pt", "patient"})
+# Task R.0, decided (a) "the swap" by the practitioner on 2026-11-08 (a gate
+# widening under C2): under the frame, these first-person tokens are glue in
+# rule (a) — "I've had pain in my lower back" may become "Pt reports pain in
+# lower back". The frame replaces the first person and nothing else: the
+# modal contractions (i'd, i'll, we'd, we'll) are NOT here, because their
+# would / will is polarity-bearing and must not become recorded fact.
+FIRST_PERSON_TOKENS: Final[frozenset[str]] = frozenset(
+    {"i", "i've", "i'm", "me", "my", "mine", "we", "we've", "our"}
+)
+# The two ratified word sets (Task 0.1, decided (a) 2026-11-08), read from the
+# shipped file and pinned exactly by test: no term may fold to an ORDINARY
+# word (the fold is symmetric, so `AS` → `as` would let an invented
+# "ankylosing spondylitis" pass over "as bad as before"), and no entry may
+# hold an EXCLUDED word (a degree, quality or sensation word: "sore" never
+# becomes "pain", "swelling" never "effusion").
+REGISTER_ORDINARY_WORDS: Final[frozenset[str]] = CLINICAL_EQUIVALENTS.ordinary_words
+REGISTER_EXCLUSIONS: Final[frozenset[str]] = CLINICAL_EQUIVALENTS.exclusions
+
+
+class RegisterMatch(NamedTuple):
+    """One fold ``canonicalise`` made: the entry, and the tokens it matched
+    (one of its phrases, or its folded term)."""
+
+    entry: ClinicalEquivalent
+    matched: tuple[str, ...]
+
+
+def _register_refusal(entry: ClinicalEquivalent, register: ClinicalRegister) -> str | None:
+    """Why ``entry`` breaks a SEMANTIC invariant (D1), or None."""
+    term = entry.term.lower()
+    if term in register.ordinary_words or term in _PROSE_CONNECTIVE_SET:
+        return "its term folds to an ordinary word"
+    if term in _FILLER_TOKENS:
+        return "its term is a filler"
+    if term in SPEAKER_FRAME_TOKENS:
+        return "its term is a speaker-frame token"
+    phrase_tokens = [token for phrase in entry.phrases for token in phrase]
+    for token in (term, *phrase_tokens):
+        if _polarity_mark(token) is not None or token in _POLARITY_BEARING_TOKENS:
+            return "it holds a polarity token"
+        protected = _protected_class(token)
+        if protected in ("laterality", "medication"):
+            return f"it holds a {protected} token"
+        if protected in ("number", "date") and entry.equivalence_class != "duration":
+            return "it holds a number or date outside the duration class"
+        if token in register.exclusions:
+            return "it holds an excluded word"
+    if any(token in FIRST_PERSON_TOKENS for token in phrase_tokens):
+        return "a phrase holds a first-person token"
+    return None
+
+
+def _refuse_register_overlap(register: ClinicalRegister) -> None:
+    """The register's SEMANTIC invariants, refused at import (the pattern of
+    ``note_config``'s connective overlap refusal): a broken install, never a
+    runtime state. The message names the term — vocabulary, not clinical
+    text."""
+    for entry in register.entries:
+        reason = _register_refusal(entry, register)
+        if reason is not None:
+            raise RuntimeError(
+                f"shipped clinical equivalent {entry.term!r} is refused (broken install): "
+                f"{reason}"
+            )
+
+
+_refuse_register_overlap(CLINICAL_EQUIVALENTS)
+
+
+def canonicalise(
+    tokens: Sequence[str], register: ClinicalRegister = CLINICAL_EQUIVALENTS
+) -> tuple[tuple[str, ...], tuple[RegisterMatch, ...]]:
+    """THE register fold (D2): ``tokens`` (``note.content_tokens`` output)
+    read left to right, the LONGEST phrase or folded term at each position
+    replaced by its entry's canonical tokens (``LBP`` and "lower back pain"
+    both → lower, back, pain; "3/52" and "three weeks" both → 3, weeks), every
+    other token kept as it is. Returns the folded tokens and the matches in
+    order. The fold sees tokens, not punctuation, so within one text a match
+    may straddle a comma; callers fold each input line alone, so it never
+    straddles two lines."""
+    folded: list[str] = []
+    matches: list[RegisterMatch] = []
+    position = 0
+    while position < len(tokens):
+        for width in range(min(register.longest, len(tokens) - position), 0, -1):
+            window = tuple(tokens[position : position + width])
+            entry = register.lookup.get(window)
+            if entry is not None:
+                folded.extend(entry.canonical)
+                matches.append(RegisterMatch(entry, window))
+                position += width
+                break
+        else:
+            folded.append(tokens[position])
+            position += 1
+    return tuple(folded), tuple(matches)
+
+
+def register_matches(
+    texts: Sequence[str], register: ClinicalRegister = CLINICAL_EQUIVALENTS
+) -> tuple[RegisterMatch, ...]:
+    """The distinct matches over ``texts``, each folded alone, in order — the
+    SAME matcher Check 5 folds with (one matcher, D2)."""
+    found = (m for text in texts for m in canonicalise(content_tokens(text), register)[1])
+    return tuple(dict.fromkeys(found))
+
+
+def _fold(text: str, register: ClinicalRegister | None) -> tuple[str, ...]:
+    tokens = content_tokens(text)
+    return tokens if register is None else canonicalise(tokens, register)[0]
+
+
+def fidelity_verdict(
+    inputs: Sequence[str],
+    prose: str,
+    *,
+    register: ClinicalRegister | None = None,
+    speaker_frame: bool = False,
+) -> FidelityVerdict:
     """Check 5 for ONE section: ``inputs`` are the section's confirmed
     assertion texts exactly as confirmed, ``prose`` the language model's
     rendering of them. Rules (a)–(d) in order (module docstring); the first
@@ -1828,23 +1973,34 @@ def fidelity_verdict(inputs: Sequence[str], prose: str) -> FidelityVerdict:
     (``missing_fact`` — a rendering must show something, and a ``passed``
     ``StyleRendering`` may not be blank; round 20 LOW-002); prose over NO
     inputs fails (b) unless it is connectives alone — a fabricated section
-    never passes."""
-    input_tokens = [token for text in inputs for token in content_tokens(text)]
-    prose_tokens = list(content_tokens(prose))
+    never passes.
+
+    ``register`` (None = off) folds each input line alone and the prose as
+    one text through ``canonicalise`` before any rule runs (D2), so the
+    rules — and every polarity and protected count — see folded tokens.
+    ``speaker_frame`` (the section holds a line not spoken by the confirmed
+    clinician) admits ``SPEAKER_FRAME_TOKENS`` as added tokens in rule (b)
+    and makes ``FIRST_PERSON_TOKENS`` droppable in rule (a) (Task R.0);
+    nothing else changes."""
+    input_tokens = [token for text in inputs for token in _fold(text, register)]
+    prose_tokens = list(_fold(prose, register))
     if not prose_tokens:
         return FidelityVerdict(False, "missing_fact")
     input_set = frozenset(input_tokens)
     prose_set = frozenset(prose_tokens)
+    droppable = _PROSE_CONNECTIVE_SET
+    addable = _PROSE_CONNECTIVE_SET
+    if speaker_frame:
+        droppable = droppable | FIRST_PERSON_TOKENS
+        addable = addable | SPEAKER_FRAME_TOKENS
     # Rule (a) over the FACT-BEARING input tokens: a token on the connective
     # allow-list is glue on both sides (it may be added, so it may be dropped
     # or re-tensed — "reports" → "reported", "for" dropped). No polarity or
     # protected token is a connective (pinned by test), so rules (c) and (d)
     # still see every one of those.
-    if any(token not in prose_set and token not in _PROSE_CONNECTIVE_SET for token in input_set):
+    if any(token not in prose_set and token not in droppable for token in input_set):
         return FidelityVerdict(False, "missing_fact")
-    if any(
-        token not in input_set and token not in _PROSE_CONNECTIVE_SET for token in prose_set
-    ):
+    if any(token not in input_set and token not in addable for token in prose_set):
         return FidelityVerdict(False, "added_content")
     if _polarity_counts(input_tokens) != _polarity_counts(prose_tokens):
         return FidelityVerdict(False, "polarity")
@@ -1856,30 +2012,47 @@ def fidelity_verdict(inputs: Sequence[str], prose: str) -> FidelityVerdict:
 def fidelity_verdicts(
     section_inputs: Mapping[NoteSectionKey, Sequence[str]],
     section_prose: Mapping[NoteSectionKey, str],
+    *,
+    register: ClinicalRegister | None = None,
+    speaker_frame: Mapping[NoteSectionKey, bool] | None = None,
 ) -> dict[NoteSectionKey, FidelityVerdict]:
     """``fidelity_verdict`` per section that HAS prose, in canonical order. A
     section with inputs and no prose is not judged here — it has nothing to
     show and the prose stage keeps ``clean`` for it with its own reason; a
-    section with prose and no inputs is judged against an empty input."""
+    section with prose and no inputs is judged against an empty input.
+    ``register`` folds every section; ``speaker_frame`` names the sections
+    whose prose may carry the frame (absent = no frame, fail-closed)."""
+    frames = speaker_frame or {}
     verdicts: dict[NoteSectionKey, FidelityVerdict] = {}
     for key in CANONICAL_SECTION_KEYS:
         if key not in section_prose:
             continue
-        verdicts[key] = fidelity_verdict(section_inputs.get(key, ()), section_prose[key])
+        verdicts[key] = fidelity_verdict(
+            section_inputs.get(key, ()),
+            section_prose[key],
+            register=register,
+            speaker_frame=frames.get(key, False),
+        )
     return verdicts
 
 
 def fidelity_warnings(
     section_inputs: Mapping[NoteSectionKey, Sequence[str]],
     section_prose: Mapping[NoteSectionKey, str],
+    *,
+    register: ClinicalRegister | None = None,
+    speaker_frame: Mapping[NoteSectionKey, bool] | None = None,
 ) -> tuple[NoteWarning, ...]:
     """Check 5 as warnings: ONE ``style_fallback`` review warning per section
     whose prose failed ``fidelity_verdict`` (codes and section keys only —
     no token, no text). The prose stage reads the same verdicts to keep
     ``clean`` for that section (D6, C8)."""
+    verdicts = fidelity_verdicts(
+        section_inputs, section_prose, register=register, speaker_frame=speaker_frame
+    )
     return tuple(
         NoteWarning(note_warning_code="style_fallback", severity="review", section_key=key)
-        for key, verdict in fidelity_verdicts(section_inputs, section_prose).items()
+        for key, verdict in verdicts.items()
         if not verdict.passed
     )
 
@@ -1966,11 +2139,17 @@ def check_note(
 
 
 __all__ = [
+    "FIRST_PERSON_TOKENS",
     "HEDGE_PHRASES",
+    "REGISTER_EXCLUSIONS",
+    "REGISTER_ORDINARY_WORDS",
+    "SPEAKER_FRAME_TOKENS",
     "CheckTargetMismatchError",
     "FidelityRule",
     "FidelityVerdict",
     "NoteCheckError",
+    "RegisterMatch",
+    "canonicalise",
     "check_note",
     "clinician_line_omissions",
     "contradiction_warnings",
@@ -1981,4 +2160,5 @@ __all__ = [
     "omission_warnings",
     "provenance_warnings",
     "reconstruction_warnings",
+    "register_matches",
 ]

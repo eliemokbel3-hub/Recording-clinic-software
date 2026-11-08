@@ -1072,35 +1072,68 @@ def line_marks_by_assertion(
     return marks
 
 
-def input_texts_digest(texts: Sequence[str]) -> str:
+# The tag that separates a patient-framed section's digest from a plain one
+# (note-content-design D3): the NUL never occurs in a transcript or typed line.
+_OTHER_VOICE_DIGEST_TAG: Final = "other_voice\x00"
+
+
+def input_texts_digest(texts: Sequence[str], *, other_voice: bool = False) -> str:
     """The digest ``section_input_digest`` is built on, over the texts
     themselves: the exact texts, in order, joined by newlines. The prose
     stage (Phase 4) stamps this on the ``StyleRendering`` it produces from
     exactly those texts, so the two sides of the binding share ONE
-    implementation."""
-    return text_digest("\n".join(texts))
+    implementation. ``other_voice`` (note-content-design D3, codex PR-MED-001
+    / -009) folds the section's speaker flag in — the flag that admits the
+    speaker frame in Check 5 — so a rendering judged WITH the frame never
+    binds to the same texts once no line of the section is another
+    speaker's (an edit that keeps a patient line's wording but makes it the
+    clinician's own typed line), nor the reverse. False keeps the digest
+    exactly what it was before the flag existed."""
+    digest = text_digest("\n".join(texts))
+    return text_digest(_OTHER_VOICE_DIGEST_TAG + digest) if other_voice else digest
 
 
-def section_input_digest(section: GeneratedSection) -> str:
+def section_other_voice(section: GeneratedSection, clinician_speaker: str | None) -> bool:
+    """True when a TRANSCRIPT-provenance line of the section was spoken by
+    someone other than the confirmed clinician (note-content-design D2): the
+    one derivation of the prose stage's speaker frame and of the digest's
+    flag. Fail-closed: no confirmed clinician, a typed or config line (which
+    carries a speaker too) or a line with no speaker never counts."""
+    if clinician_speaker is None:
+        return False
+    return any(
+        assertion.note_span.provenance == "transcript"
+        and assertion.speaker is not None
+        and not spoken_by_confirmed_clinician(assertion.speaker, clinician_speaker)
+        for assertion in section.note_assertions
+    )
+
+
+def section_input_digest(section: GeneratedSection, clinician_speaker: str | None) -> str:
     """THE binding between a section's confirmed assertion texts and a prose
     rendering (D7): ``input_texts_digest`` over the section's texts in
-    order. Phase 4's prose stage stamps this on each ``StyleRendering``
-    it produces; ``usable_rendering`` recomputes it before any prose is
-    shown, so an edit to any line of the section (a different text, an
-    added or removed line, a re-ordering) invalidates the rendering."""
-    return input_texts_digest([assertion.text for assertion in section.note_assertions])
+    order, with its ``section_other_voice`` flag under ``clinician_speaker``
+    (the note's). Phase 4's prose stage stamps this on each
+    ``StyleRendering`` it produces; ``usable_rendering`` recomputes it before
+    any prose is shown, so an edit to any line of the section (a different
+    text, an added or removed line, a re-ordering, a line that changes whose
+    it is) invalidates the rendering."""
+    return input_texts_digest(
+        [assertion.text for assertion in section.note_assertions],
+        other_voice=section_other_voice(section, clinician_speaker),
+    )
 
 
 def bound_rendering(note: GeneratedNote, section: GeneratedSection) -> StyleRendering | None:
     """The section's rendering — ``passed`` OR ``failed`` — when the note
-    carries one whose ``input_digest`` is ``section_input_digest(section)``
-    now; None otherwise. The prose stage asks this to know which sections
-    still need the model (a bound ``failed`` verdict is an answer too: the
-    same lines are never asked twice in one review)."""
+    carries one whose ``input_digest`` is ``section_input_digest(section,
+    note.clinician_speaker)`` now; None otherwise. The prose stage asks this
+    to know which sections still need the model (a bound ``failed`` verdict
+    is an answer too: the same lines are never asked twice in one review)."""
     for rendering in note.style_renderings:
         if rendering.section_key != section.section_key:
             continue
-        if rendering.input_digest != section_input_digest(section):
+        if rendering.input_digest != section_input_digest(section, note.clinician_speaker):
             return None
         return rendering
     return None
@@ -1109,7 +1142,8 @@ def bound_rendering(note: GeneratedNote, section: GeneratedSection) -> StyleRend
 def usable_rendering(note: GeneratedNote, section: GeneratedSection) -> StyleRendering | None:
     """The section's prose rendering, or None when the note carries none for
     it, the verdict is ``failed`` (no prose — C4) or its ``input_digest``
-    differs from ``section_input_digest(section)`` (stale — D7)."""
+    differs from ``section_input_digest(section, note.clinician_speaker)``
+    (stale — D7)."""
     rendering = bound_rendering(note, section)
     if rendering is None or rendering.verdict != "passed":
         return None
@@ -1122,7 +1156,7 @@ def note_input_digest(note: GeneratedNote) -> str:
     rendering job can be bound to the note it was started for and a result
     for a note that has since changed is recognised (Phase 4, D7)."""
     parts = [
-        f"{section.section_key}\n{section_input_digest(section)}"
+        f"{section.section_key}\n{section_input_digest(section, note.clinician_speaker)}"
         for section in note.note_sections
         if section.note_assertions
     ]
@@ -1149,7 +1183,9 @@ def attach_style_renderings(
     chosen: dict[NoteSectionKey, StyleRendering] = {}
     for rendering in renderings:
         section = sections.get(rendering.section_key)
-        if section is None or rendering.input_digest != section_input_digest(section):
+        if section is None or rendering.input_digest != section_input_digest(
+            section, note.clinician_speaker
+        ):
             continue
         chosen[rendering.section_key] = rendering
     kept = tuple(chosen[key] for key in CANONICAL_SECTION_KEYS if key in chosen)
@@ -3289,6 +3325,7 @@ __all__ = [
     "section_admits_utterance",
     "section_input_digest",
     "section_marks_line",
+    "section_other_voice",
     "segment_hedged",
     "speaker_role",
     "spoken_by_confirmed_clinician",

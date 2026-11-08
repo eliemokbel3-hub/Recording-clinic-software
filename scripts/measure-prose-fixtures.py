@@ -1,8 +1,14 @@
-"""Measure the REAL language model against the ten Phase 4 fixture notes.
+"""Measure the REAL language model against the Phase 4 fixture notes.
 
 Task 4.3 of the note-learning-and-styles plan records, per prose style, the
-Check 5 pass rate over the ten fixture notes (acceptance >= 9/10) and the CPU
-seconds per section on the practitioner's machine. The suite measures those
+Check 5 pass rate over the fixture notes (acceptance >= 9/10 over the first
+ten) and the CPU seconds per section on the practitioner's machine; since the
+note-content-design plan's Task R.5 there are twelve (``FIXTURE_COUNT``: the
+last two hold patient-spoken first-person lines under a confirmed clinician),
+rendered through the shipped clinical register exactly as the app's stage
+(``ui/models.build_prose_stage``) renders them, and every section reports its
+verdict and whether the prose used the speaker frame ("Pt" / "patient" in the
+prose of a patient-spoken section — ``frame_used``). The suite measures those
 fixtures under ``MockLanguageModel`` (the parser + prompt contract); THIS
 script is the real-model measurement — it loads the pinned GGUF exactly as
 the app does (``apply_offline_env`` then ``LocalLanguageModel``), renders
@@ -51,8 +57,10 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     try:
-        import test_prose_style as fixtures  # the ten notes + the note/profile builders
+        import test_prose_style as fixtures  # the fixture notes + the note/profile builders
         from scribe_desktop import note_check, prose_style
+        from scribe_desktop.note import content_tokens
+        from scribe_desktop.note_config import CLINICAL_EQUIVALENTS
         from scribe_desktop.benchmark import apply_offline_env
         from scribe_desktop.language_model import LanguageModelError, LocalLanguageModel
     except ImportError as exc:
@@ -93,15 +101,26 @@ def main(argv: list[str] | None = None) -> int:
         def count_tokens(self, text):  # PR-MED-046: the provider's prompt budget
             return self._inner.count_tokens(text)
 
+    def folded(texts):
+        return {
+            token
+            for text in texts
+            for token in note_check.canonicalise(content_tokens(text), CLINICAL_EQUIVALENTS)[0]
+        }
+
     recorder = RecordingModel(model)
     for style in ([args.style] if args.style else ["narrative", "own_voice"]):
         passed = 0
+        frames_used = 0
         section_seconds: list[float] = []  # PR-LOW-041: one entry per SECTION
         notes = []
         for index, sections in enumerate(fixtures.FIXTURE_NOTES):
             note = fixtures._note(sections, style=style)
             kwargs = {"profile": fixtures._style_profile()} if style == "own_voice" else {}
-            provider = prose_style.ProseStyleProvider(recorder, style=style, **kwargs)
+            # Task R.4 (D3): the register the app's stage wires, here too.
+            provider = prose_style.ProseStyleProvider(
+                recorder, style=style, register=CLINICAL_EQUIVALENTS, **kwargs
+            )
             prose_input = prose_style.ProseInput.from_note(note)
             recorder.calls.clear()
             started = time.time()
@@ -110,6 +129,44 @@ def main(argv: list[str] | None = None) -> int:
             ok = fixtures._all_passed(result, note)
             passed += int(ok)
             section_seconds.extend(o.seconds for o in result.outcomes)
+            # One recorded call per section, in the provider's order (a
+            # section whose call raised, or that was too long to ask, has no
+            # recording and is listed from its outcome alone).
+            completions = iter(recorder.calls)
+            detail = []
+            for outcome in result.outcomes:
+                key = outcome.section_key
+                lines = list(prose_input.texts(key) or ())
+                framed = key in prose_input.other_voice
+                item = {
+                    "section": key,
+                    "verdict": "passed" if outcome.passed else (outcome.rule or outcome.failure),
+                    "framed": framed,
+                    "frame_used": False,
+                    "seconds": round(outcome.seconds, 1),
+                }
+                if outcome.failure in ("model_error", "too_long"):
+                    item["error"] = outcome.detail
+                else:
+                    _system, _user, completion = next(completions)
+                    prose = prose_style.parse_section_prose(completion, key)
+                    added = folded([prose]) - folded(lines)
+                    item["frame_used"] = framed and bool(
+                        added & note_check.SPEAKER_FRAME_TOKENS
+                    )
+                    if args.verbose:
+                        item["inputs"] = lines
+                        item["prose"] = prose
+                        item["check5"] = str(
+                            note_check.fidelity_verdict(
+                                lines,
+                                prose,
+                                register=CLINICAL_EQUIVALENTS,
+                                speaker_frame=framed,
+                            )
+                        )
+                frames_used += int(item["frame_used"])
+                detail.append(item)
             entry: dict = {
                 "note": index,
                 "passed": ok,
@@ -120,30 +177,13 @@ def main(argv: list[str] | None = None) -> int:
                     for o in result.outcomes
                     if not o.passed
                 ],
+                "sections": detail,
             }
-            if args.verbose:
-                # One recorded call per section, in the provider's order (a
-                # section whose call raised has no recording and is listed
-                # from its outcome alone).
-                detail = []
-                completions = iter(recorder.calls)
-                for outcome in result.outcomes:
-                    lines = list(prose_input.texts(outcome.section_key) or ())
-                    item = {"section": outcome.section_key, "inputs": lines,
-                            "seconds": round(outcome.seconds, 1)}
-                    if outcome.failure == "model_error":
-                        item["error"] = outcome.detail
-                    else:
-                        _system, _user, completion = next(completions)
-                        prose = prose_style.parse_section_prose(completion, outcome.section_key)
-                        item["prose"] = prose
-                        item["verdict"] = str(note_check.fidelity_verdict(lines, prose))
-                    detail.append(item)
-                entry["sections"] = detail
             notes.append(entry)
         note_walls = [n["wall_seconds"] for n in notes]
         report["styles"][style] = {
             "pass_rate": f"{passed}/{len(fixtures.FIXTURE_NOTES)}",
+            "frames_used": frames_used,
             "seconds_per_section_mean": round(sum(section_seconds) / len(section_seconds), 1),
             "seconds_per_section_max": round(max(section_seconds), 1),
             "seconds_per_note_min": min(note_walls),
@@ -153,6 +193,7 @@ def main(argv: list[str] | None = None) -> int:
         summary = report["styles"][style]
         print(
             f"{style}: {summary['pass_rate']} passed; "
+            f"{summary['frames_used']} sections used the speaker frame; "
             f"{summary['seconds_per_section_mean']} s/section mean, "
             f"{summary['seconds_per_section_max']} max; "
             f"{summary['seconds_per_note_min']}-{summary['seconds_per_note_max']} s per note",

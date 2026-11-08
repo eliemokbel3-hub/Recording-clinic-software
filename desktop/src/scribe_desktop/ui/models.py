@@ -107,6 +107,7 @@ from scribe_desktop.note_config import (
     # ``_no_control_chars`` is package-private by name, shared deliberately
     # (the note.py convention): ONE config-text validator, applied here to
     # typed wording that may become config.
+    CLINICAL_EQUIVALENTS,
     DEFAULT_NOTE_STYLE,
     LearnedRuleEntry,
     NoteConfig,
@@ -4023,7 +4024,12 @@ def build_prose_stage(
                         label=label, reason=STYLE_CONSENT_STALE_REASON
                     )
                 )
-        provider = ProseStyleProvider(model, style=prose_style, profile=profile)
+        # Note-content-design D3: the register is wired ONCE, here — always on
+        # for the two prose styles, so every stage caller (the Note tab, the
+        # Status-tab benchmark, the harness) inherits it with no change.
+        provider = ProseStyleProvider(
+            model, style=prose_style, profile=profile, register=CLINICAL_EQUIVALENTS
+        )
         result = provider.render(
             ProseInput.from_note(note), only=sections_to_render(note), abort=abort
         )
