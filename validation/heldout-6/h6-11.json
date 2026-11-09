@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h6-11",
+  "appointment_type": "initial",
+  "axes": ["small_talk", "laterality", "negation", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Morning. Tell me about the wrist."},
+    {"role": "patient", "text": "I came off my bike three weeks ago and landed on my left hand."},
+    {"role": "clinician", "text": "Did you have any scans at the hospital?"},
+    {"role": "patient", "text": "They said no break, and I came out in a splint."},
+    {"role": "clinician", "text": "Let me have a look. Welcome to the club, by the way, half my patients this month are cyclists."},
+    {"role": "receptionist", "text": "Sorry to interrupt, your two o'clock has rung to say they're running late."},
+    {"role": "clinician", "text": "Thanks, Jo, no problem."},
+    {"role": "clinician", "text": "Bending the wrist back is about half the other side."},
+    {"role": "clinician", "text": "There's tenderness in the hollow at the base of your thumb, and with a fall like yours that needs ruling out as a small fracture."},
+    {"role": "clinician", "text": "I'd like you to see a GP today and ask about a repeat X-ray, and keep the splint on until then."},
+    {"role": "patient", "text": "Will do. Hello again, splint, I suppose."},
+    {"role": "clinician", "text": "Come in tomorrow if they can't fit you in, and say hello to the front desk on the way out."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["three", "weeks", "ago"], "line": 1, "material": true},
+    {"kind": "laterality", "tokens": ["landed", "on", "my", "left", "hand"], "line": 1, "material": true},
+    {"kind": "negation", "tokens": ["no", "break"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["came", "out", "in", "a", "splint"], "line": 3, "material": false},
+    {"kind": "absent", "tokens": ["half", "my", "patients", "this", "month", "are", "cyclists"], "line": 4, "material": false},
+    {"kind": "absent", "tokens": ["your", "two", "o'clock", "has", "rung"], "line": 5, "material": false},
+    {"kind": "present", "tokens": ["bending", "the", "wrist", "back", "is", "about", "half", "the", "other", "side"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["tenderness", "in", "the", "hollow", "at", "the", "base", "of", "your", "thumb"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["see", "a", "gp", "today"], "line": 9, "material": true},
+    {"kind": "present", "tokens": ["keep", "the", "splint", "on", "until", "then"], "line": 9, "material": true},
+    {"kind": "present", "tokens": ["come", "in", "tomorrow", "if", "they", "can't", "fit", "you", "in"], "line": 11, "material": false}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "receptionist": 1}}
+}

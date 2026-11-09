@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h6-16",
+  "appointment_type": "acute",
+  "axes": ["laterality", "numbers", "contradictory", "small_talk", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Right, sit yourself on the couch. Twisted it at netball, you said?"},
+    {"role": "patient", "text": "Yeah, I landed and turned and my knee went the other way. It swelled up within the hour."},
+    {"role": "clinician", "text": "Which knee is it?"},
+    {"role": "patient", "text": "The left. It's locked twice since, it just won't straighten for a bit."},
+    {"role": "clinician", "text": "How many days ago was this?"},
+    {"role": "patient", "text": "Eight days ago."},
+    {"role": "patient", "text": "Um, nine, it was the Saturday before last."},
+    {"role": "clinician", "text": "Let me have a look. There's fluid in the joint and it's tender along the inner joint line."},
+    {"role": "clinician", "text": "With the locking, I want you seen by the knee clinic, so I'll write to them today."},
+    {"role": "clinician", "text": "Until then, crutches if it gives way, and no netball or twisting at all."},
+    {"role": "patient", "text": "Gutted, but okay."},
+    {"role": "clinician", "text": "I'll ring you once I hear back. Take care of it."},
+    {"role": "patient", "text": "Thanks, bye."},
+    {"role": "clinician", "text": "Ah, Mr Patel, hello. How was Portugal?"},
+    {"role": "next_patient", "text": "Hot. Too hot. The flight did my lower back no favours, it's been aching right across since."},
+    {"role": "clinician", "text": "Come and tell me all about it."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["swelled", "up", "within", "the", "hour"], "line": 1, "material": true},
+    {"kind": "laterality", "tokens": ["the", "left"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["locked", "twice", "since"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["eight", "days", "ago"], "line": 5, "material": false},
+    {"kind": "present", "tokens": ["nine"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["saturday", "before", "last"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["fluid", "in", "the", "joint"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["tender", "along", "the", "inner", "joint", "line"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["seen", "by", "the", "knee", "clinic"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["crutches", "if", "it", "gives", "way"], "line": 9, "material": true},
+    {"kind": "present", "tokens": ["no", "netball", "or", "twisting", "at", "all"], "line": 9, "material": true},
+    {"kind": "absent", "tokens": ["how", "was", "portugal"], "line": 13, "material": false},
+    {"kind": "absent", "tokens": ["did", "my", "lower", "back"], "line": 14, "material": true},
+    {"kind": "absent", "tokens": ["aching", "right", "across"], "line": 14, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

@@ -703,6 +703,22 @@ REFERENCE_TAIL_STARTS: Final[Mapping[str, int | None]] = {
     "h5-12": 16,
     "h5-14": 9,
     "h5-17": 15,
+    "h6-01": 19,
+    "h6-02": None,
+    "h6-03": 11,
+    "h6-04": None,
+    "h6-05": None,
+    "h6-06": 9,
+    "h6-07": None,
+    "h6-10": 9,
+    "h6-11": None,
+    "h6-12": None,
+    "h6-13": 13,
+    "h6-16": 14,
+    "h6-17": None,
+    "h6-19": 9,
+    "h6-20": None,
+    "h6-22": 9,
 }
 NEXT_PATIENT_AXIS: Final = "end_and_new_patient"
 

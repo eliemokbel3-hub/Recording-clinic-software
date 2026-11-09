@@ -766,6 +766,16 @@ class TestHeldOutScripts:
         lints vacuously; its cases are written, so its scripts must exist."""
         assert len(held_out_set("heldout").script_paths()) == 22
 
+    def test_the_blind_held_out_set_is_present(self) -> None:
+        """TEMPORARY — added at note-content-design Task F.2 (D11) when
+        ``heldout-6`` was authored, removed at Task P.5, which ends the blind
+        rule (as heldout-5's was, validation-run8 Task 0.5 to P.3). With the
+        ``heldout-6`` folder absent every per-set lint passes vacuously and
+        CI's step names ``heldout-5``'s log instead, so from its authoring its
+        scripts must exist. Reads file names only — no script is opened; the
+        20–25 bound is the size lint's."""
+        assert held_out_set("heldout-6").script_paths(), "heldout-6 has no scripts"
+
     @pytest.mark.parametrize("held_out", HELD_OUT_SETS, ids=_set_name)
     def test_every_held_out_script_is_synthetic_with_material_facts(
         self, held_out: HeldOutSet, record_property: RecordProperty

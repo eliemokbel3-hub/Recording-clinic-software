@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h6-19",
+  "appointment_type": "follow_up",
+  "axes": ["laterality", "numbers", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Good afternoon. How has the jaw been since last time?"},
+    {"role": "patient", "text": "The clicking on the right is quieter, and I can fit three fingers in my mouth now."},
+    {"role": "clinician", "text": "That's a good gain. Have you kept the gum chewing to a minimum?"},
+    {"role": "patient", "text": "Mostly. I still clench when I'm stressed at work, my partner says I grind at night too."},
+    {"role": "clinician", "text": "Rest your tongue on the roof of your mouth behind your top teeth, lips together, teeth apart, whenever you notice clenching."},
+    {"role": "clinician", "text": "I'd also like you to ask your dentist about a night guard."},
+    {"role": "clinician", "text": "Thank you, that concludes today's session. Please book a follow up in four weeks at reception."},
+    {"role": "patient", "text": "Thank you, goodbye."},
+    {"role": "clinician", "text": "Good afternoon. Ms Lindqvist, please do come through and take a seat."},
+    {"role": "next_patient", "text": "Thank you. I've had pins and needles in both hands for a fortnight, mostly at night."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["clicking", "on", "the", "right", "is", "quieter"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["three", "fingers"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["clench", "when", "i'm", "stressed", "at", "work"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["grind", "at", "night"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["rest", "your", "tongue", "on", "the", "roof", "of", "your", "mouth"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["teeth", "apart"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["ask", "your", "dentist", "about", "a", "night", "guard"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["in", "four", "weeks"], "line": 6, "material": true},
+    {"kind": "absent", "tokens": ["pins", "and", "needles", "in", "both", "hands"], "line": 9, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

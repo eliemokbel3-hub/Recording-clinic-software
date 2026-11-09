@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h6-13",
+  "appointment_type": "post_operative",
+  "axes": ["numbers", "small_talk", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Hello, come on in. How's the shoulder six weeks after the repair?"},
+    {"role": "patient", "text": "Sore at night still, but the sling's off as of Monday."},
+    {"role": "clinician", "text": "Are you still on the painkillers from the hospital?"},
+    {"role": "patient", "text": "Just the odd one."},
+    {"role": "clinician", "text": "Your letter from the hospital says tramadol 50 milligrams up to four times a day, only at night if you can manage it."},
+    {"role": "clinician", "text": "Let me have a look at how far it goes up."},
+    {"role": "clinician", "text": "With me lifting it, the arm goes up to about 120 degrees, and you're not to lift it yourself yet."},
+    {"role": "clinician", "text": "Lean on the kitchen worktop and let the arm hang and swing in small circles, a minute each way, three times a day."},
+    {"role": "clinician", "text": "You can sleep on your back propped up, with a pillow tucked under that elbow."},
+    {"role": "patient", "text": "Lovely. Oh, how did your boy get on with his driving test?"},
+    {"role": "clinician", "text": "Passed first time, would you believe. Right, see you in a fortnight."},
+    {"role": "patient", "text": "Bye now."},
+    {"role": "clinician", "text": "Morning, Mrs Hughes, come and sit down. Been busy at the allotment?"},
+    {"role": "next_patient", "text": "Not as busy as I'd like, my right knee's been swelling up every time I kneel."},
+    {"role": "clinician", "text": "Oh no, let's get your shoe off then."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["sore", "at", "night", "still"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["sling's", "off", "as", "of", "monday"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["just", "the", "odd", "one"], "line": 3, "material": false},
+    {"kind": "dose", "tokens": ["tramadol", "50", "milligrams", "up", "to", "four", "times", "a", "day"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["only", "at", "night"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["about", "120", "degrees"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["not", "to", "lift", "it", "yourself", "yet"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["let", "the", "arm", "hang", "and", "swing", "in", "small", "circles"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["a", "minute", "each", "way"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["three", "times", "a", "day"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["with", "a", "pillow", "tucked", "under", "that", "elbow"], "line": 8, "material": true},
+    {"kind": "absent", "tokens": ["driving", "test"], "line": 9, "material": false},
+    {"kind": "present", "tokens": ["see", "you", "in", "a", "fortnight"], "line": 10, "material": true},
+    {"kind": "absent", "tokens": ["busy", "at", "the", "allotment"], "line": 12, "material": false},
+    {"kind": "absent", "tokens": ["right", "knee's", "been", "swelling", "up"], "line": 13, "material": true},
+    {"kind": "absent", "tokens": ["every", "time", "i", "kneel"], "line": 13, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

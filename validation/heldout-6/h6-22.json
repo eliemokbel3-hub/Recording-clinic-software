@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h6-22",
+  "appointment_type": "post_operative",
+  "axes": ["noise", "laterality", "contradictory", "numbers", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Hello, it's eight weeks since the plate went in, isn't it?"},
+    {"role": "patient", "text": "That's right. The scar on my right wrist is healing well."},
+    {"role": "patient", "text": "Sorry, left wrist, I'm right handed, that's why I keep saying it."},
+    {"role": "clinician", "text": "Let me have a look. Turning your palm up is still stiff, about half of the other side."},
+    {"role": "patient", "text": "It's my grip that's the worst, I can't open a jar."},
+    {"role": "clinician", "text": "Squeeze the putty ball for five minutes three times a day, and turn your palm up and down holding a hammer near the head."},
+    {"role": "clinician", "text": "No lifting anything heavier than a kettle until your next X-ray."},
+    {"role": "patient", "text": "Right you are."},
+    {"role": "clinician", "text": "Off you go then, mind how you go. Next one's Alan, isn't it? Come in, Alan."},
+    {"role": "next_patient", "text": "Hello. My heel's been agony since I started the new boots."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["is", "healing", "well"], "line": 1, "material": true},
+    {"kind": "laterality", "tokens": ["left", "wrist"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["turning", "your", "palm", "up", "is", "still", "stiff"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["about", "half", "of", "the", "other", "side"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["i", "can't", "open", "a", "jar"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["squeeze", "the", "putty", "ball", "for", "five", "minutes", "three", "times", "a", "day"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["holding", "a", "hammer", "near", "the", "head"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["no", "lifting", "anything", "heavier", "than", "a", "kettle"], "line": 6, "material": true},
+    {"kind": "absent", "tokens": ["heel's", "been", "agony"], "line": 9, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}, "snr_db": 15}
+}

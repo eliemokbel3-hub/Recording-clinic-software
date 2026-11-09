@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h6-17",
+  "appointment_type": "discharge",
+  "axes": ["end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Last one, then. How's the ankle on uneven ground?"},
+    {"role": "patient", "text": "I did the coastal path last weekend and it held up fine."},
+    {"role": "clinician", "text": "Hop test is equal both sides now, so you're good to go back to football."},
+    {"role": "clinician", "text": "Wear the lace-up brace for matches, at least until the end of the season."},
+    {"role": "clinician", "text": "Keep up the balance work on a cushion while you brush your teeth, that's your insurance."},
+    {"role": "patient", "text": "I will. Thanks for putting up with me."},
+    {"role": "clinician", "text": "It's been a pleasure. All the best."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["coastal", "path"], "line": 1, "material": false},
+    {"kind": "present", "tokens": ["it", "held", "up", "fine"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["hop", "test", "is", "equal", "both", "sides"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["back", "to", "football"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["at", "least", "until", "the", "end", "of", "the", "season"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["balance", "work", "on", "a", "cushion"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["while", "you", "brush", "your", "teeth"], "line": 4, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

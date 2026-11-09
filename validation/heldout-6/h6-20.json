@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h6-20",
+  "appointment_type": "chronic",
+  "axes": ["uncertain", "laterality", "numbers", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Come in, both of you. How are the knees?"},
+    {"role": "patient", "text": "The right one's the bad one, it's swollen most evenings."},
+    {"role": "partner", "text": "He's been coming in with a limp from the garden most days, though I'm not always there to see it."},
+    {"role": "clinician", "text": "And the tablets, what's he taking at the moment?"},
+    {"role": "partner", "text": "The paracetamol, and the gel."},
+    {"role": "clinician", "text": "Let me have a look. Can you straighten it right out?"},
+    {"role": "clinician", "text": "It doesn't quite go straight, there's warmth over the right knee, and it creaks when it bends."},
+    {"role": "clinician", "text": "I'd like to add something. You're going to take naproxen 500 milligrams twice a day with food, for two weeks, and come off it sooner if your stomach complains."},
+    {"role": "clinician", "text": "On a good day, cycle on the exercise bike for ten minutes with no resistance."},
+    {"role": "patient", "text": "I can manage that."},
+    {"role": "partner", "text": "I'll make sure he does."},
+    {"role": "clinician", "text": "Lovely, I'll see you both in a month."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["the", "right", "one's", "the", "bad", "one"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["swollen", "most", "evenings"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["coming", "in", "with", "a", "limp", "from", "the", "garden", "most", "days"], "line": 2, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["the", "paracetamol", "and", "the", "gel"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["doesn't", "quite", "go", "straight"], "line": 6, "material": true},
+    {"kind": "laterality", "tokens": ["warmth", "over", "the", "right", "knee"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["creaks", "when", "it", "bends"], "line": 6, "material": true},
+    {"kind": "dose", "tokens": ["naproxen", "500", "milligrams", "twice", "a", "day"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["come", "off", "it", "sooner", "if", "your", "stomach", "complains"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["cycle", "on", "the", "exercise", "bike", "for", "ten", "minutes"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["no", "resistance"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["in", "a", "month"], "line": 11, "material": false}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "partner": 1}}
+}

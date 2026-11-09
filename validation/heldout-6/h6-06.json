@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h6-06",
+  "appointment_type": "follow_up",
+  "axes": ["small_talk", "numbers", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Now then, how's that shoulder doing?"},
+    {"role": "patient", "text": "Much better since last time, I can reach the top cupboard again."},
+    {"role": "clinician", "text": "Grand. Lift your arm up sideways for me."},
+    {"role": "clinician", "text": "You're getting to about 150 degrees now without that catch at the top."},
+    {"role": "clinician", "text": "We'll add a resistance band, so pull it out to the side with your elbow tucked in, three sets of 12, every other day."},
+    {"role": "patient", "text": "Will do. It still aches if I lie on it at night, mind."},
+    {"role": "clinician", "text": "That'll be the last thing to settle. Right, ta-ra then, love, see you in a fortnight."},
+    {"role": "patient", "text": "Ta-ra, thanks pet."},
+    {"role": "clinician", "text": "Ey up, Derek, come in, sit yourself down. Did you watch the match?"},
+    {"role": "next_patient", "text": "Don't talk to me about the match. My hip's been giving way on the stairs all week."},
+    {"role": "clinician", "text": "Oh dear, right, let's hear about it."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["reach", "the", "top", "cupboard", "again"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["about", "150", "degrees"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["elbow", "tucked", "in"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["three", "sets", "of", "12"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["every", "other", "day"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["aches", "if", "i", "lie", "on", "it", "at", "night"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["see", "you", "in", "a", "fortnight"], "line": 6, "material": true},
+    {"kind": "absent", "tokens": ["did", "you", "watch", "the", "match"], "line": 8, "material": false},
+    {"kind": "absent", "tokens": ["hip's", "been", "giving", "way", "on", "the", "stairs"], "line": 9, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

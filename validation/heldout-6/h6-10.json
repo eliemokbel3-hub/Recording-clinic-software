@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h6-10",
+  "appointment_type": "follow_up",
+  "axes": ["noise", "numbers", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "How's the heel been since last time?"},
+    {"role": "patient", "text": "Since last time the first steps out of bed are a lot kinder."},
+    {"role": "clinician", "text": "Good. Still wearing the trainers with the arch support?"},
+    {"role": "patient", "text": "Every day, even round the house."},
+    {"role": "clinician", "text": "Stand on the bottom step and let your heels drop slowly, ten of those, twice a day."},
+    {"role": "clinician", "text": "And roll a frozen water bottle under the arch for five minutes each evening."},
+    {"role": "clinician", "text": "That's us. Same again in three weeks."},
+    {"role": "patient", "text": "Champion."},
+    {"role": "clinician", "text": "Next, please."},
+    {"role": "next_patient", "text": "Hi. My shoulder's locked up since my fall on the ice."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["first", "steps", "out", "of", "bed", "are", "a", "lot", "kinder"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["every", "day", "even", "round", "the", "house"], "line": 3, "material": false},
+    {"kind": "present", "tokens": ["let", "your", "heels", "drop", "slowly"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["ten", "of", "those", "twice", "a", "day"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["roll", "a", "frozen", "water", "bottle", "under", "the", "arch"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["five", "minutes", "each", "evening"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["in", "three", "weeks"], "line": 6, "material": true},
+    {"kind": "absent", "tokens": ["shoulder's", "locked", "up"], "line": 9, "material": true},
+    {"kind": "absent", "tokens": ["fall", "on", "the", "ice"], "line": 9, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}, "snr_db": 20}
+}
