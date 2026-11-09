@@ -170,6 +170,9 @@ _PREDICTED_BOUNDARY_DIVERGENCES_BY_SET: Final[
         # segment, one later than the spec's (D2 rule 4 admits it, as h2-14).
         "h5-14": (8, 9),
     },
+    # Note-content-design Task F.2: blind until run 9 (C12); its entries are
+    # written in its Task P.5.
+    "heldout-6": {},
 }
 _PREDICTED_BOUNDARY_DIVERGENCES: Final = by_case(_PREDICTED_BOUNDARY_DIVERGENCES_BY_SET)
 
@@ -480,6 +483,7 @@ class TestHeldOutBoundaries:
             "heldout-3": 6,
             "heldout-4": 4,
             "heldout-5": 5,
+            "heldout-6": 0,
         }
 
     def test_the_widened_lists_changed_these_predictions_and_no_expectation(

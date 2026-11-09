@@ -95,7 +95,10 @@ set up and build it, and make releases; the installed app needs none of them.
   rule of validation run 8, the validation-run8 plan's D1 — keeps rule v4's six
   sets and ceilings, counts only the silent R1 facts under R1's ceiling on
   `heldout-5` with the misheard ones under a review mark reported beside it,
-  and prints four verdicts). `--model <name>` (the larger-model plan's D8;
+  and prints four verdicts; rule v6 — `validation/rules/rule-v6.json`, the
+  rule of validation run 9, the note-content-design plan's D11 — keeps rule
+  v5's predicates and ceilings and adds a seventh set, `heldout-6`, the gate
+  set beside `scripts`, with `heldout-5` reported). `--model <name>` (the larger-model plan's D8;
   also on `measure-transcription-guard.py`) measures with that installed
   Whisper model instead of the shipped one: the report names it, it is never
   a fallback, and a name not shaped as a model folder name is refused without
@@ -162,12 +165,17 @@ set up and build it, and make releases; the installed app needs none of them.
 - `lint-held-out-set.py <set-folder> [--log-dir DIR] [--timeout SECONDS]
   [--verbose]` (validation-run6 plan Task 0.17, C12) — runs the desktop test
   suite while a blind held-out set is in the tree (the blind set is
-  `validation/heldout-5` — in the fixture's table since the larger-model
-  plan's Task 0.1 (d), its scripts authored in the validation-run8 plan's
-  Task 0.5 and blind until that plan's Task P.3;
+  `validation/heldout-6` — in the fixture's table since the
+  note-content-design plan's Task F.2, its scripts authored in that task and
+  blind until that plan's Task P.5; `validation/heldout-5` until its cases
+  were written after run 8 (in the table since the larger-model plan's Task
+  0.1 (d), authored in the validation-run8 plan's Task 0.5),
   `validation/heldout-4` until its cases were written after run 7, and
-  `validation/heldout-3` until its cases were written after run 6). The set
-  folder must exist (a missing one is refused,
+  `validation/heldout-3` until its cases were written after run 6):
+
+      .venv\Scripts\python.exe scripts\lint-held-out-set.py validation\heldout-6
+
+  The set folder must exist (a missing one is refused,
   `refused set-missing`) and only names the log — the child lints every set
   in the fixture's table. The suite runs
   in a child pytest whose output goes only to a log under
@@ -177,9 +185,9 @@ set up and build it, and make releases; the installed app needs none of them.
   only: test node ids with their outcome, problem codes from a closed
   grammar, the counts, `FAIL <code>` for a run that cannot be trusted, and
   the exit code. While any script of a set whose cases are not written (an
-  `h5-` script) is in the tree, run pytest only this way (the conftest
+  `h6-` script) is in the tree, run pytest only this way (the conftest
   refuses a bare run); with no such script in the tree (as before
-  `validation/heldout-5` was authored, and again once its cases are written)
+  `validation/heldout-6` is authored, and again once its cases are written)
   a bare run goes ahead.
 - `probe-cliniko.py` (Cliniko workflow safeguards plan Task 1.3, run at Task
   P.1) — read-only feasibility check of one clinic through the app's own Cliniko

@@ -2580,8 +2580,9 @@ def rule_v2_counterpart(rule: PassRule, set_name: str) -> RuleV2Counterpart:
     """Whether ``rule`` without its R1 exemption gives rule v2's verdict on
     ``set_name`` (D4): ``same`` when the top-level fields and the set's row
     equal ``RULE_V2_RATIFIED``'s but for ``gate``; ``no_row`` when rule v2
-    holds no row for the set (``heldout-4``, ``heldout-5``); ``differs`` otherwise — a
-    top-level threshold or the set's row (the report names both causes). A
+    holds no row for the set (``heldout-4``, ``heldout-5``, ``heldout-6``);
+    ``differs`` otherwise — a top-level threshold or the set's row (the report
+    names both causes). A
     schema-4 row's ``r1_marked_reported`` false counts marked R1 as rule v2
     does, so it equals rule v2's None; true is a substantive difference
     (validation-run8 plan D1, peer round 1 PR-MED-002)."""
@@ -4316,8 +4317,9 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "the set this folder was built from, one the rule names (scripts, heldout, "
-            "heldout-2, heldout-3, heldout-4, heldout-5): required with a schema-2 or "
-            "later rule, whose row for it holds the ceilings; not taken with a schema-1 rule"
+            "heldout-2, heldout-3, heldout-4, heldout-5, heldout-6): required with a "
+            "schema-2 or later rule, whose row for it holds the ceilings; not taken with a "
+            "schema-1 rule"
         ),
     )
     parser.add_argument(

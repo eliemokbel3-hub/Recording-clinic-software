@@ -78,8 +78,16 @@ until after run 8; it is ``tails_by_role`` and ``routed_material`` with
 ``heldout-4``'s bounds (its brief is ``heldout-4``'s). Its folder was absent
 until validation-run8 plan Task 0.5 authored it (2026-11-06); from then until
 its cases the suite ran only through ``scripts/lint-held-out-set.py``. Its
-cases were written in validation-run8 plan Task P.3 (2026-11-07), so no set
-is blind now.
+cases were written in validation-run8 plan Task P.3 (2026-11-07).
+
+Note-content-design plan Task F.2 (D11, C12): ``validation/heldout-6`` with
+``h6-``, the blind set of run 9, is in the table with ``cases_written=False``
+until after run 9; its brief is ``heldout-2``'s, so it is ``tails_by_role``
+(the brief's next patient has the ``next_patient`` role) but NOT
+``routed_material`` (the brief has no routed rule for material facts), with
+the brief's 20 to 25 scripts and no facts-per-script bound. Its folder is
+absent until Task F.2 authors it; from then the suite runs only through
+``scripts/lint-held-out-set.py``. Its cases are written in Task P.5.
 """
 
 from __future__ import annotations
@@ -1130,6 +1138,10 @@ HELDOUT_5_CASES: Final[tuple[HeldOutCase, ...]] = (
     ),
 )
 
+# Note-content-design Task F.2 (D11, C12): ``heldout-6`` is blind until run 9 —
+# no case is written before its Task P.5.
+HELDOUT_6_CASES: Final[tuple[HeldOutCase, ...]] = ()
+
 
 @dataclass(frozen=True)
 class HeldOutSet:
@@ -1203,6 +1215,18 @@ HELD_OUT_SETS: Final[tuple[HeldOutSet, ...]] = (
         routed_material=True,
         script_count=(20, 25),
         facts_per_script=(3, 6),
+    ),
+    # Note-content-design Task F.2 (D11): the blind set of run 9, its brief
+    # heldout-2's (so its material facts are not routed and it has no
+    # facts-per-script bound); authored in Task F.2, never read before run 9
+    # (C12); its ``h6-NN`` cases written in Task P.5, after run 9.
+    HeldOutSet(
+        "heldout-6",
+        "h6-",
+        HELDOUT_6_CASES,
+        cases_written=False,
+        tails_by_role=True,
+        script_count=(20, 25),
     ),
 )
 NEXT_PATIENT_ROLE: Final = "next_patient"

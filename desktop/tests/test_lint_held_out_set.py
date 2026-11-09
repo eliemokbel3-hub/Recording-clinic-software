@@ -84,17 +84,20 @@ class TestGrammar:
             "heldout-4:size-out-of-bounds:19",
             "h5-01:fact-unrouted",
             "heldout-5:size-out-of-bounds:19",
+            "h6-01:fact-unrouted",
+            "heldout-6:size-out-of-bounds:19",
         ],
     )
     def test_a_grammar_entry_is_valid(self, entry: str) -> None:
         assert plugin.valid_problems([entry]) == [entry]
 
-    def test_no_sixth_set_id_is_in_the_grammar(self) -> None:
+    def test_no_seventh_set_id_is_in_the_grammar(self) -> None:
         # Validation-run7 Task 0.5: h4- joined the grammar; larger-model Task
-        # 0.1 (d): h5- joined it; h6- is not in it.
-        assert plugin.valid_problems(["h6-01:fact-unrouted"]) is None
-        assert plugin.safe_node_id("tests/t.py::test_a[h6-01]", 3) == "tests/t.py::test_a[#3]"
-        assert plugin.safe_node_id("tests/t.py::test_a[h5-01]", 3) == "tests/t.py::test_a[h5-01]"
+        # 0.1 (d): h5- joined it; note-content-design Task F.2: h6- joined it;
+        # h7- is not in it.
+        assert plugin.valid_problems(["h7-01:fact-unrouted"]) is None
+        assert plugin.safe_node_id("tests/t.py::test_a[h7-01]", 3) == "tests/t.py::test_a[#3]"
+        assert plugin.safe_node_id("tests/t.py::test_a[h6-01]", 3) == "tests/t.py::test_a[h6-01]"
 
     @pytest.mark.parametrize(
         "value",
@@ -452,12 +455,13 @@ class TestBlindRunGuard:
         assert not lint_runner_active(manager(SimpleNamespace(RUNNER_GUARD=checked)))
         assert lint_runner_active(manager(SimpleNamespace(RUNNER_GUARD=checked), checked))
 
-    def test_no_set_is_blind_since_heldout_5_s_cases(self) -> None:
+    def test_heldout_6_is_the_one_blind_set(self) -> None:
         # Validation-run8 plan Task P.3 (2026-11-07): heldout-5's cases were
         # written after run 8, as heldout-4's were after run 7 (validation-run7
-        # Task P.4) and heldout-3's after run 6, so no set is blind; a new blind
-        # set is a pin change.
-        assert [s.name for s in HELD_OUT_SETS if not s.cases_written] == []
+        # Task P.4) and heldout-3's after run 6. Note-content-design Task F.2
+        # (D11): heldout-6 is blind until its Task P.5, after run 9; any other
+        # blind set is a pin change.
+        assert [s.name for s in HELD_OUT_SETS if not s.cases_written] == ["heldout-6"]
 
 
 class TestRunnerChecks:

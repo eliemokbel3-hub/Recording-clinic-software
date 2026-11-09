@@ -1517,12 +1517,13 @@ class TestRunValidationMain:
             assert "Margaret" not in out
             assert "heldout-7" not in out
 
-    def test_the_set_help_names_rule_v5s_sets(self) -> None:
+    def test_the_set_help_names_rule_v6s_sets(self) -> None:
         """Validation-run7 review round 18 LOW-001: the ``--set`` help names
         the sets as a literal, so it is pinned to the newest rule's rows —
-        ``rule-v5.json``'s since validation-run8 D1 — so a renamed or added
-        set fails here, not in a stale help line; the help says which
-        schemas take it."""
+        ``rule-v5.json``'s since validation-run8 D1, ``rule-v6.json``'s since
+        note-content-design Task F.2 — so a renamed or added set fails here,
+        not in a stale help line; the help says which schemas take it. Rule
+        v5's six sets are the first six, in its order."""
         (action,) = [a for a in validation._parser()._actions if a.dest == "set_name"]
         assert action.help is not None
         listed = re.search(r"\(([^)]*)\)", action.help)
@@ -1534,8 +1535,10 @@ class TestRunValidationMain:
             "heldout-3",
             "heldout-4",
             "heldout-5",
+            "heldout-6",
         ]
-        assert listed.group(1).split(", ") == list(_repository_rule_v5().sets or {})
+        assert listed.group(1).split(", ") == list(_repository_rule_v6().sets or {})
+        assert listed.group(1).split(", ")[:-1] == list(_repository_rule_v5().sets or {})
         assert "required with a schema-2 or later rule" in action.help
         assert "schema-3" not in action.help
 

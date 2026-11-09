@@ -62,23 +62,21 @@ jobs:
         working-directory: desktop
         run: python -m mypy
       # While a blind held-out set is in the tree the conftest refuses a plain
-      # pytest (validation-run6 plan C12). No set is blind now: heldout-5,
-      # the blind set of run 8 (authored in validation-run8 plan Task 0.5), is
-      # seen since that plan's Task P.3, as heldout-4 (run 7's) is since
-      # validation-run7 Task P.4. The suite still runs through the runner,
-      # which works with no set blind: it keeps pytest's output in a log on
-      # the runner and prints only node ids and counts, so no held-out text
-      # reaches this public log; the log is not uploaded. The argument only
-      # names the log (the child lints every set in the fixture's table), and
-      # the runner refuses a missing folder: until heldout-5's scripts landed
-      # its folder was absent — git keeps no empty folder — so the log was
-      # named after heldout-4 instead; that fallback no longer fires while
-      # heldout-5 is in the tree.
+      # pytest (validation-run6 plan C12). The blind set is heldout-6, the
+      # gate set of run 9 (note-content-design plan Task F.2); heldout-5, the
+      # blind set of run 8, is seen since validation-run8 Task P.3, as
+      # heldout-4 (run 7's) is since validation-run7 Task P.4. The runner
+      # keeps pytest's output in a log on the runner and prints only node ids
+      # and counts, so no held-out text reaches this public log; the log is
+      # not uploaded. The argument only names the log (the child lints every
+      # set in the fixture's table), and the runner refuses a missing folder:
+      # until heldout-6's scripts land (Task F.2) its folder is absent — git
+      # keeps no empty folder — so the log is named after heldout-5 instead.
       - name: Pytest (through the blind held-out runner)
         shell: pwsh
         run: |
-          $folder = "validation/heldout-5"
-          if (-not (Test-Path -LiteralPath $folder -PathType Container)) { $folder = "validation/heldout-4" }
+          $folder = "validation/heldout-6"
+          if (-not (Test-Path -LiteralPath $folder -PathType Container)) { $folder = "validation/heldout-5" }
           python scripts/lint-held-out-set.py $folder
     # Windows-only marks (DPAPI, SAPI, launcher tests) run for real on this
     # matrix — windows-latest keeps sys.platform == "win32" legs exercised.

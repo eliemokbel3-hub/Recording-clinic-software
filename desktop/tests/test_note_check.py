@@ -2681,6 +2681,7 @@ class TestCheck1HedgeMark:
             "heldout-3": 7,
             "heldout-4": 6,
             "heldout-5": 10,
+            "heldout-6": 0,
         }
         heldout = {c.case_id for c in held_out_set("heldout").all_cases()}
         assert set(_UNSURE_PREDICTIONS_BEFORE_RUN6_0_9) <= heldout
@@ -2781,6 +2782,9 @@ _PREDICTED_UNSURE_DIVERGENCES_BY_SET: dict[
         "h5-20": ((3,), ()),  # its hedge is outside the frozen list
         "h5-22": ((2,), ()),  # its hedge is outside the frozen list
     },
+    # Note-content-design Task F.2: blind until run 9 (C12); its entries are
+    # written in its Task P.5.
+    "heldout-6": {},
 }
 _PREDICTED_UNSURE_DIVERGENCES = by_case(_PREDICTED_UNSURE_DIVERGENCES_BY_SET)
 
