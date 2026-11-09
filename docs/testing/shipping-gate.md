@@ -138,3 +138,9 @@ Composition record (filled once, in the commit above; `met` or `not met` only):
 | A three-speaker consultation | |
 
 Addendum initialled by the practitioner before the first attempt: EM (date 2026-10-09).
+
+## Addendum — version 0.3.6 (note-content-design plan, D5 / D6, 2026-11-09)
+
+A statement of what 0.3.6 does, not a rubric change: rubric v1, its thresholds, its scoring point and the two addenda above are unchanged. **The gate stays under `clean`.** The clinical register 0.3.6 adds is part of the two PROSE styles only (`narrative`, `own_voice`), which the gate already does not use; Clean clinical renders exactly as before. The register is measured by its own instrument, separate from this gate: the sheet `docs/testing/prose-register-scoring.md` (rubric `register-v1`), on which the practitioner reads the fixture notes' prose — invented lines, no patient — and records counts only. A score on that sheet never counts toward Task 9.1, and a C slot here never counts toward that sheet.
+
+Section suggestions run under every writing style, `clean` included, so on 0.3.6 a gate consultation's chooser may mark a left-out line `[suggested: <title>]` with a pre-selected section. A suggestion is not a proposal (the app's proposals are its config's lines: a proposal the config did not pre-fill is confirmed or declined in its own row, and a pre-filled one arrives with no confirm row and is ratified by Save, as the 2026-09-25 clarification above says) and adds nothing to the note by itself: a marked line left out is scored exactly as any left-out line. A suggested line the practitioner ADDS before the scoring point is scored exactly as any line added with **Add line to section** is under rubric v1 — the mark is review apparatus, as the check marks are (the 2026-10-12 clarification). The pilot log's "App version" column names the version each eligible score was made on.

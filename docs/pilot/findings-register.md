@@ -18,7 +18,8 @@ content**: no name, no date of birth, nothing that was said or written in a note
 no Cliniko id and no session id. Describe what the app did in terms of the app —
 its category, the part of the app and the control — never the patient. An
 encounter is named only by a synthetic id (`syn-01` …, or a held-out `hld-01` …,
-`h2-01` …, `h3-01` …, `h4-01` … or `h5-01` …); a real consultation —
+`h2-01` …, `h3-01` …, `h4-01` …, `h5-01` … or — once validation run 9 has
+been run — `h6-01` …); a real consultation —
 shadow, reviewed, everyday, or a kept recording measured in the smoke — is `—`,
 and its own detail stays in Cliniko and in your off-repository pilot log.
 
@@ -31,11 +32,13 @@ and its own detail stays in Cliniko and in your off-repository pilot log.
 - **Clinic** — `1`, `2`, or `—` (validation).
 - **Stage** — `validation`, `smoke` (a kept recording's measurement in the
   clinic 1 smoke), `shadow`, `reviewed`, `everyday` or `other`.
-- **Encounter** — a synthetic id (`syn-NN`; or, from the five held-out sets,
+- **Encounter** — a synthetic id (`syn-NN`; or, from the held-out sets,
   `hld-NN` (`heldout`), `h2-NN` (`heldout-2`), `h3-NN` (`heldout-3`), `h4-NN`
   (`heldout-4`, the blind set of validation run 7 — its rows were entered after
-  that run) or `h5-NN` (`heldout-5`, the blind set of validation run 8 — its
-  rows were entered after that run)), or `—`.
+  that run), `h5-NN` (`heldout-5`, the blind set of validation run 8 — its
+  rows were entered after that run) or `h6-NN` (`heldout-6`, the blind set of
+  validation run 9 — its rows are entered after that run; the note-content-design
+  plan admits the id at its Task F.2, before the set is authored)), or `—`.
 - **Severity** — `high`, `medium` or `low` (below).
 - **Category** — one of:
   - the rubric's R4 kinds: `wrong-side`, `wrong-dose`, `negation-flipped`,

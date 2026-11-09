@@ -3226,6 +3226,13 @@ class TestRegisterSemanticInvariants:
         with pytest.raises(RuntimeError, match="first-person"):
             _refuse(_equivalent("MB", "my back"))
 
+    def test_a_first_person_term_is_refused(self) -> None:
+        # Review round 19 SEC-010: `mine` is first person but not an
+        # ordinary word of the ratified set, so only this rule refuses it.
+        assert "mine" not in REGISTER_ORDINARY_WORDS
+        with pytest.raises(RuntimeError, match="first-person"):
+            _refuse(_equivalent("Mine", "mineral deposit"))
+
 
 class TestRegisterImportCycle:
     """Codex PR-MED-005: the structural invariants live in `note_config`, the

@@ -115,6 +115,26 @@ PROMPT_LINES_END: Final = "END OF CONFIRMED LINES"
 # the non-thinking release; defensive).
 PROMPT_FRAMING_TOKENS: Final = 64
 THINK_BLOCK_RE: Final = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+# Its pair: a ``<think>`` still open once the closed blocks are stripped
+# refuses the whole completion, in both stages' parsers (note-content-design
+# review round 18 SIMP-001: one copy, beside the regex it must agree with).
+OPEN_THINK_TAG: Final = "<think>"
+CLOSE_THINK_TAG: Final = "</think>"
+
+
+def strip_think_blocks(raw: str) -> str | None:
+    """``raw`` with every closed ``<think>…</think>`` block removed, or None
+    when either tag is still left — an unclosed block, a nested one (the
+    lazy strip leaves its outer tail) or one opened before the completion
+    began (a lone ``</think>``, a thinking template's shape): the reasoning
+    would otherwise be read as the answer. Both stages' parsers refuse the
+    whole completion on None (note-content-design review round 19
+    SEC-001)."""
+    text = THINK_BLOCK_RE.sub("", raw)
+    lowered = text.lower()
+    if OPEN_THINK_TAG in lowered or CLOSE_THINK_TAG in lowered:
+        return None
+    return text
 
 
 class LanguageModelError(RuntimeError):
@@ -489,6 +509,7 @@ class MockLanguageModel:
 
 
 __all__ = [
+    "CLOSE_THINK_TAG",
     "LANGUAGE_MODEL_CONTEXT_TOKENS",
     "LANGUAGE_MODEL_FILENAME",
     "LANGUAGE_MODEL_ID",
@@ -504,6 +525,7 @@ __all__ = [
     "LANGUAGE_RUNTIME_WHEEL_INDEX",
     "LANGUAGE_RUNTIME_WHEEL_SHA256",
     "LANGUAGE_RUNTIME_WHEEL_URL",
+    "OPEN_THINK_TAG",
     "PROMPT_FRAMING_TOKENS",
     "PROMPT_LINES_END",
     "PROMPT_LINES_HEADER",
@@ -517,4 +539,5 @@ __all__ = [
     "language_model_file_available",
     "language_runtime_importable",
     "prompt_lines",
+    "strip_think_blocks",
 ]

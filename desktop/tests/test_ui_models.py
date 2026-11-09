@@ -3025,12 +3025,22 @@ class TestSuggestedSections:
         assert models.SUGGESTION_NONE_LINE == "No suggestions."
         absent = models.suggestion_model_absent_line()
         assert absent == f"Suggested sections {models.language_model_absent_reason()}."
+        # D8 as amended 2026-11-09 (review round 19 Q1 (b)): the two new stops.
+        assert models.SUGGESTION_SAVED_LINE == (
+            "Suggested sections: stopped because the note was saved."
+        )
+        assert models.SUGGESTION_DELETE_LINE == (
+            "Suggested sections: stopped because the note is being deleted."
+        )
         for line in (
             models.SUGGESTION_NOTHING_LINE,
             models.SUGGESTION_NONE_LINE,
             models.suggestion_in_flight_line(2),
             models.SUGGESTION_LOAD_FAILED_LINE.format(reason="x"),
             absent,
+            models.SUGGESTION_STOPPED_LINE,
+            models.SUGGESTION_SAVED_LINE,
+            models.SUGGESTION_DELETE_LINE,
         ):
             assert line.isascii() and "{" not in line and "\n" not in line
 

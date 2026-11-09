@@ -19,8 +19,16 @@ note leaves out, wider doubt marks and a shorter next-patient mark) and on 2026-
 2026-10-27 for version 0.3.5 (more goodbyes and greetings recognised, and a line split
 into pieces counted once) and in 2026-11, after validation run 7 and the larger-model
 measurement, with no new version (misheard numbers, units and abbreviations, and what
-the review is relied on for once shadow mode is off) — each in the clinician review
-guide only;
+the review is relied on for once shadow mode is off) and on 2026-11-09 for version 0.3.6
+(clinical shorthand in the prose writing styles, from a fixed list the practitioner
+approved on 2026-11-08; a suggested heading for a line the note left out, added only by
+the practitioner; and that a suggested line may be the next patient's — these lines
+awaiting the practitioner's approval) — each in the clinician review guide only. The
+patient documents are unchanged for 0.3.6: the transcript is still processed only on
+the practitioner's computer, nothing is sent to any cloud or online AI service, and no
+model is trained on it (since 0.3.6 the program's language model on that computer also
+reads the transcript to suggest headings; **[Reviewer: confirm the patient information's
+"processed on your practitioner's computer" wording covers this.]**);
 where a document and the app disagree, the app's behaviour is what happens, and the
 document must be corrected.
 

@@ -159,7 +159,8 @@ view patterns · tokens · microcopy.
   chooser after its transcript number (`<n>. [flagged] <speaker>: …`), on a line-editor
   row before its section (`[flagged] <section> - …`) — because the closed chooser cuts a
   label's end and its open list elides the middle (the 2026-10-11 live smoke). The chooser
-  keeps transcript order; a "Show flagged lines only" tick, never pre-ticked and cleared
+  keeps transcript order; a "Show flagged lines only" tick (since 0.3.6 "Show flagged or
+  suggested lines only", below), never pre-ticked and cleared
   with the note, lists the flagged lines alone; one count line under it says "N flagged
   lines are not in the note (a line you said, or a side, negation, number, dose, name or
   medication someone said)." ("1 flagged line is …" for one; this wording since 0.3.4,
@@ -167,7 +168,9 @@ view patterns · tokens · microcopy.
   transcript number each flagged line the chooser cannot offer (typed over, or only partly
   in the note — "Line 7 is replaced or partly in the note - see its row below."), and with
   the tick on and nothing offered flagged it says "No line in the list is flagged -
-  untick 'Show flagged lines only' to see every line." (`ui/models.py`
+  untick 'Show flagged lines only' to see every line." (since 0.3.6 "No line in the list
+  is flagged or suggested - untick 'Show flagged or suggested lines only' to see every
+  line.") (`ui/models.py`
   `FLAGGED_LINE_MARK` / `OMISSION_CODES` / `flagged_count_line` /
   `FLAGGED_FILTER_EMPTY_LINE`; note-routing-omissions plan D4). Since 0.3.5 a line the
   recogniser split into pieces, each but the last ending mid-sentence, draws ONE "A line you said is not
@@ -185,6 +188,41 @@ view patterns · tokens · microcopy.
   on a long line (the 0.3.3 install smoke); since 0.3.4 both front marks are short fixed
   tokens and the 60-character cut applies to the line's words only, after the marks
   (validation-run6 plan D3).
+- **A suggestion is a verbatim transcript line plus a section key — a mark, never text
+  (since 0.3.6).** For the lines the note leaves out before any possible next patient, the
+  local language model may suggest a section (note-content-design plan D6–D9). A
+  suggestion the line's own ownership rule allows shows as a third front mark on the
+  existing Line chooser, after any `[flagged]` and `[next patient?]` and before the
+  speaker (`<n>. [flagged] [suggested: History of presenting complaint] <speaker>: …`; the
+  section's title; the 60-character cut still applies to the words only). Choosing a
+  marked line in the chooser pre-selects its suggested section — only when the chosen
+  line CHANGED, so a re-finalise that keeps the same line keeps the section the clinician
+  had picked — and **Add line to section** adds it exactly as any hand-add does (the line's
+  own words; Undo removes it and the mark returns). Nothing is added without that click,
+  there is no Confirm button or suggestions box, and no model wording is ever shown. The
+  filter tick is "Show flagged or suggested lines only" (one tick, one condition: flagged
+  or suggested), and the count line adds "K lines have a suggested section (M not
+  assessed)." ("1 line has …"; the bracket only when some lines were not assessed). One
+  status line under the style line says what the job is doing — "Suggesting sections for
+  N left-out lines..." while it runs (or waits behind a rendering), "Nothing to suggest."
+  when no line was left out, "No suggestions." (or "No suggestions (M not assessed).") when
+  none could be marked, the model-absent or load-failed reason ("Suggested sections …"),
+  "Suggested sections: the suggestion job failed (<type>)." and "Suggested sections:
+  stopped because the window was asked to close." — and is hidden once a line carries a
+  mark or was left not assessed (the count line says it). A pending suggestion never
+  disables Save, and a running one never holds Complete or Discard at all. Once it is
+  stopped (by Save, Delete note and complete or any other exit) it still finishes the
+  one step it is in, and until then a window close or opening another recording's review
+  waits: one window in flight — or, when it was stopped while the language model was
+  still loading for the first time, the rest of that load (codex round 20 PR-LOW-331).
+  Since 2026-11-09 (D8's amendment, review round 19 Q1 (b)) a
+  running suggestion stops when the note is saved — the chooser and Add are closed then —
+  ("Suggested sections: stopped because the note was saved.") and when **Delete note and
+  complete** is pressed, before anything is deleted ("Suggested sections: stopped because
+  the note is being deleted.", seen only if the deletion fails and the review stays)
+  (`ui/models.py` `SUGGESTED_LINE_MARK` / `FLAGGED_FILTER_LABEL`
+  / `suggestion_count_clause` / `SUGGESTION_*_LINE`; `ui/note.py` `suggestion_label`).
+  The shared tick also changed two review-row hints (below).
 - **The next patient's lines are removed only by the clinician, from the Transcript
   tab (since 0.3.3).** When a live recording's transcript shows a possible next
   patient, the "Generate note" group shows the plain-text line "A possible next patient
@@ -418,7 +456,8 @@ view patterns · tokens · microcopy.
   content (validation-pass plan D5). Since 0.3.4 it also holds Check 4's second code,
   `clinician_line_omitted` ("A line you said is not in the note"; its hint: "Check the
   transcript beside the note, tick 'Show flagged lines only' to find it, add it with Add
-  line to section if it belongs, then acknowledge."), an omission like the first
+  line to section if it belongs, then acknowledge." — since 0.3.6 naming the tick 'Show
+  flagged or suggested lines only'), an omission like the first
   (validation-run6 plan D1). The button's tooltip names every code of the set
   from the same mapping, so the two cannot drift apart: "Acknowledges every review
   warning except those that each need their own Acknowledge: something said that is not
@@ -450,7 +489,13 @@ view patterns · tokens · microcopy.
   clinical (`ui/note.py` `style_label`;
   `ui/models.py` `RENDERING_IN_FLIGHT_LINE` / `RENDERING_DONE_LINE` /
   `LANGUAGE_MODEL_LOAD_FAILED_LINE` / `STYLE_PROFILE_MISSING_LINE` /
-  `SAVE_WHILE_RENDERING_MESSAGE`; note-learning plan Task 4.4, C8).
+  `SAVE_WHILE_RENDERING_MESSAGE`; note-learning plan Task 4.4, C8). Since 0.3.6 a prose
+  section may write in the clinical register — the shipped, practitioner-ratified
+  shorthand for a phrase that was said ("LBP" for "lower back pain", "3/52" for "three
+  weeks") and, where a line in the section is not the confirmed clinician's, an opening
+  "Pt reports" or "The patient reports" — with no new mark, count or switch on screen: the
+  fidelity check folds the shorthand and the frame and refuses anything else as before
+  (note-content-design plan D1–D4). Clean clinical, the default, stays prose-free.
 - **Live transcript is an append-only display under a header.** While recording, the
   Transcript tab shows the header `Live — updates while recording` and appends each
   transcribed window's lines (timestamps and `[word?]` marks, no speaker — attribution
@@ -869,7 +914,9 @@ provenance tags, pre-filled marks or "[includes …]" lines reach the chart.
   0.3.1). Its sibling for a whole line the clinician said names the line, never its
   words: "A line you said is not in the note" / "Check the transcript beside the note,
   tick 'Show flagged lines only' to find it, add it with Add line to section if it
-  belongs, then acknowledge." (`WARNING_COPY["clinician_line_omitted"]`, 0.3.4).
+  belongs, then acknowledge." (`WARNING_COPY["clinician_line_omitted"]`, 0.3.4). Since
+  0.3.6 both hints name the widened tick, 'Show flagged or suggested lines only', and say
+  nothing else new.
 - The draft write's lines (`ui/models.py` `WRITE_LINES`, the ONE source; no id,
   patient or practitioner name, answer text or key is ever formatted into one). Each
   refusal gives its next step, and offers Copy where copying the note is the way

@@ -5,6 +5,7 @@ invariants."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from importlib import resources
@@ -14,6 +15,7 @@ import pytest
 from pydantic import ValidationError
 
 import scribe_desktop.note_config as note_config_module
+from scribe_desktop.note import _decode_shipped_json
 from scribe_desktop.note_config import (
     CLINICAL_ABBREVIATIONS,
     CLINICAL_ABBREVIATIONS_FILENAME,
@@ -34,6 +36,7 @@ from scribe_desktop.note_config import (
     load_practitioner_settings,
     save_practitioner_settings,
 )
+from scribe_desktop.prose_style import PROMPT_VERSION
 from scribe_desktop.session_store import StoreWriteError
 from scribe_desktop.transcription import is_number_token
 
@@ -83,6 +86,34 @@ def test_an_upper_case_entry_is_accepted_when_the_list_is_case_preserving() -> N
 
 def test_a_good_list_round_trips_to_a_tuple_in_order() -> None:
     assert _parse(_vocabulary_payload(["the", "and", "of"])) == ("the", "and", "of")
+
+
+def test_a_repeated_key_in_a_packaged_vocabulary_is_refused_at_decode() -> None:
+    """Note-content-design Step H (carried from codex round 8 PR-LOW-016): the
+    vocabulary loader decodes through the one shipped-file decode step, so a
+    repeated list key is refused where plain `json` keeps the last silently."""
+    raw = '{"schema_version": 1, "connectives": ["and"], "connectives": ["the"]}'
+    assert json.loads(raw) is not None  # plain `json` accepts it silently
+    with pytest.raises(RuntimeError, match="broken install.*repeated"):
+        _decode_shipped_json(raw.encode(), PROSE_CONNECTIVES_FILENAME)
+
+
+@pytest.mark.parametrize(
+    ("filename", "key", "lower_case", "constant"),
+    [
+        (CLINICAL_ABBREVIATIONS_FILENAME, "abbreviations", False, CLINICAL_ABBREVIATIONS),
+        (PROSE_CONNECTIVES_FILENAME, "connectives", True, PROSE_CONNECTIVES),
+    ],
+    ids=["abbreviations", "connectives"],
+)
+def test_the_packaged_vocabularies_decode_through_the_shipped_decode_step(
+    filename: str, key: str, lower_case: bool, constant: tuple[str, ...]
+) -> None:
+    data = (resources.files("scribe_desktop") / "config_defaults" / filename).read_bytes()
+    decoded = _decode_shipped_json(data, filename)
+    assert decoded == json.loads(data)
+    parsed = _parse_shipped_vocabulary(decoded, filename=filename, key=key, lower_case=lower_case)
+    assert parsed == constant
 
 
 def _packaged_payload(filename: str) -> dict[str, object]:
@@ -300,6 +331,16 @@ _BROKEN_EQUIVALENTS_PAYLOADS = [
         _equivalents_payload(_entry("3/52", "3 weeks", "3 wks", klass="duration")),
         id="duration-phrase-unit",
     ),
+    # Note-content-design review round 16 C-3: a later phrase's count, and a phrase that is not
+    # exactly a count and the unit.
+    pytest.param(
+        _equivalents_payload(_entry("3/52", "3 weeks", "13 weeks", klass="duration")),
+        id="duration-later-phrase-count",
+    ),
+    pytest.param(
+        _equivalents_payload(_entry("3/52", "3 weeks", "a few weeks", klass="duration")),
+        id="duration-phrase-not-a-count",
+    ),
     pytest.param(
         _equivalents_payload(_LBP, _entry("Xq", "lower back pain")), id="phrase-in-two-entries"
     ),
@@ -394,6 +435,23 @@ class TestShippedClinicalEquivalents:
         assert sum(len(entry.phrases) for entry in entries) == 138
         assert len(CLINICAL_EQUIVALENTS.exclusions) == 23
         assert len(CLINICAL_EQUIVALENTS.ordinary_words) == 86
+
+    def test_the_lexicon_content_moves_only_with_the_prompt_version(self) -> None:
+        """Note-content-design review round 16 LOW-011 (carried to round 18):
+        ANY change to the shipped lexicon is a ``PROMPT_VERSION`` bump with
+        R.5 repeated (D1, C2), so the audit's prompt version names the list a
+        note's prose passed under. The file's git blob id (what
+        ``git diff --raw --abbrev=40 <empty tree> HEAD -- <file>`` prints) is
+        pinned beside the version: an edit that keeps every count above still
+        fails here until both move together, in one dated decision."""
+        resource = resources.files("scribe_desktop") / "config_defaults"
+        data = (resource / CLINICAL_EQUIVALENTS_FILENAME).read_bytes()
+        data = data.replace(b"\r\n", b"\n")  # git stores the blob with LF endings
+        blob_id = hashlib.sha1(b"blob %d\0" % len(data) + data, usedforsecurity=False).hexdigest()
+        assert (PROMPT_VERSION, blob_id) == (
+            "narrative-v7",
+            "2d9139dd9e1f541170ed7484d1f1347d236dcc31",
+        ), "the lexicon changed: bump PROMPT_VERSION, repeat R.5, then move this pin"
 
     def test_terms_keep_their_display_case(self) -> None:
         terms = {entry.term for entry in CLINICAL_EQUIVALENTS.entries}

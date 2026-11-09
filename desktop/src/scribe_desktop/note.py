@@ -1584,15 +1584,40 @@ def _parse_shipped_section_cues(
     return tuple(loaded)
 
 
+def _refuse_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """``json``'s object hook for every shipped defaults file: two equal keys
+    in one object are refused, where ``json`` alone keeps the last silently
+    (codex round 8 PR-LOW-016 — ``"class": [], "class": "anatomy"`` would pass
+    as anatomy; note-content-design Step H carried it to the older loaders)."""
+    decoded: dict[str, object] = {}
+    for key, value in pairs:
+        if key in decoded:
+            raise ValueError(f"the key {key!r} is repeated in one object")
+        decoded[key] = value
+    return decoded
+
+
+def _decode_shipped_json(data: bytes, filename: str) -> object:
+    """A shipped defaults file's bytes decoded, a repeated object key or a
+    nesting too deep to decode refused as a broken install (the test seam for
+    the decode step; each file's own parser checks the shape). Shared with
+    ``note_config``'s shipped loaders, which cannot live here the other way
+    round (``note_config`` imports this module)."""
+    try:
+        return json.loads(data, object_pairs_hook=_refuse_duplicate_keys)
+    except (ValueError, RecursionError) as exc:
+        raise RuntimeError(f"shipped {filename} unreadable (broken install): {exc}") from exc
+
+
 def _load_shipped_section_cues() -> tuple[tuple[NoteSectionKey, tuple[str, ...]], ...]:
     resource = resources.files("scribe_desktop") / _DEFAULTS_RESOURCE_DIR / SECTION_CUES_FILENAME
     try:
-        payload = json.loads(resource.read_bytes())
-    except (OSError, ValueError) as exc:
+        data = resource.read_bytes()
+    except OSError as exc:
         raise RuntimeError(
             f"shipped {SECTION_CUES_FILENAME} unreadable (broken install): {exc}"
         ) from exc
-    return _parse_shipped_section_cues(payload)
+    return _parse_shipped_section_cues(_decode_shipped_json(data, SECTION_CUES_FILENAME))
 
 
 _RAW_SECTION_CUES: Final[tuple[tuple[NoteSectionKey, tuple[str, ...]], ...]] = (

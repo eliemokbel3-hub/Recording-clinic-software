@@ -1,4 +1,4 @@
-# Data-Flow Map (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot, kept recordings, invented-text guard, validation pass, validation runs 6 and 7)
+# Data-Flow Map (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot, kept recordings, invented-text guard, validation pass, validation runs 6 and 7, note content design)
 
 Every place data lives or moves in the implemented system. Since Phase 2 the
 desktop app carries **clinical data**: consultation audio, transcripts, and —
@@ -54,7 +54,8 @@ and a source checkout uses the same layout under `ClinikoScribe-dev`. The
 installed app has been in clinical use on this computer since its Phase P
 install, 2026-10-03 (0.1.2 since 2026-10-04; `docs/release/pilot-builds.md`). The note pipeline (flows 10–11) is in-process
 and adds no network surface and no new logging channel, and so is the prose
-rendering the language model does (flow 17). Since the pilot plan (PLAN.md
+rendering the language model does (flow 17), and — since 0.3.6 — the
+section suggestions it makes from transcript lines (flow 29). Since the pilot plan (PLAN.md
 Phase 7's pilot half) a recording started while "Shadow mode (pilot)" is
 ticked is a SHADOW recording, whose note never leaves the app by Copy or by
 the draft write (flow 25), and the developer build carries an offline
@@ -785,6 +786,24 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     FINALISED note, grouped by section — never the transcript and never a
     pending proposal, refused BY TYPE (`prose_style.ProseInput.from_note`
     takes a `GeneratedNote`; a `TranscriptDocument` or a `NoteDraft` raises).
+    (Narrowed 2026-11-09 for 0.3.6: "never the transcript" is true of THIS
+    stage, and means the transcript DOCUMENT — a transcript-provenance
+    confirmed line is a verbatim quote of it, written into the prompt
+    unchanged (the threat model's surface 17, "THE PROSE PROMPT IS NOT MADE
+    PROMPT-SAFE"; codex round 20 PR-LOW-330). The same resident model is
+    also given UNCONFIRMED transcript lines by the section suggestions, flow
+    29, whose answer is read back as line numbers and section keys only.)
+    Since 0.3.6 (prompt `narrative-v7`, the
+    note-content-design plan's Phase R) the input also carries one flag per
+    section, `ProseInput.other_voice` (a transcript line of the section not
+    spoken by the confirmed clinician; a flag, never a speaker label), and
+    each section's user text adds, after its lines, a "Shorthand:" line —
+    the shipped lexicon's entries whose phrases occur in the section (a week
+    count directly before ago, earlier, later, before, after or prior is not
+    offered), from the PACKAGE's `config_defaults/clinical_equivalents.json`,
+    nothing read from the data folder — and "Speaker: patient-spoken" for a
+    flagged section; Check 5 folds both sides through that lexicon and admits
+    the frame (`Pt`, `patient`) for a flagged section only.
     The Note tab starts ONE stage job per finalisation on its `TaskThread`
     (`ui/note.py` `_start_style_stage`; `ui/models.build_prose_stage`): the
     model is built once per process on that worker thread from the LOCAL file
@@ -807,9 +826,13 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     per-session key (flow 10) — so a rendering has exactly the note's custody,
     lifetime and deletion, and Copy shows the same bytes. In memory only, with
     the lifetimes stated exactly (codex round 22 PR-MED-034): one section's
-    prompt and completion for that `complete` call, at whose end the runtime's
-    inference state — token buffers and KV cache — is cleared
-    (`LocalLanguageModel._clear_inference_state`); every section's parsed
+    prompt and completion in the runtime for that `complete` call, at whose
+    end the runtime's inference state — token buffers and KV cache — is
+    cleared (`LocalLanguageModel._clear_inference_state`), and as strings in
+    the stage's own frame past that call (`ProseStyleProvider.render`'s
+    `system_text` / `user_text` and `raw`) until the next section's call
+    replaces them or `render` returns (note-content-design Step H codex round
+    20 PR-LOW-300; flow 29 states the same for the suggestions); every section's parsed
     prose, refused prose included, for the one `render` call that judges the
     batch (the refused text is dropped before the result is built); the loaded
     model stays resident for the life of the process (~2.5 GiB of process
@@ -1357,7 +1380,19 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       names each line the exemption excuses by id, line number and segment
       index only; under a schema-4 rule (rule v5, validation-run8 plan D1) it
       also prints the verdict with marked R1 counted and names each marked R1
-      fact by id and fact index only. It reads no voice profile, and writes no audit row, no
+      fact by id and fact index only (rule v6, the note-content-design plan's
+      D11 for run 9, is schema 4 too — rule v5's predicates and ceilings with
+      `heldout-6` its blind gate set — and is read the same way; its file is
+      written at that plan's Task F.1). With `--prose` it also runs the
+      narrative prose stage over each finalised note (flow 17, the Note tab's
+      own stage and lexicon) and keeps its section counts only; with
+      `--suggestions confirm-all` (since 0.3.6, the metric amendment of
+      2026-11-09) it builds each encounter's suggestion input as the Note tab
+      does and sends its pre-boundary transcript lines to the local language
+      model (flow 29: one call per window, no abort, no yield), adds every
+      suggestion the chooser's ownership rule accepts before the one
+      finalisation, and keeps counts only — never a model answer, a line or a
+      section key in the report. It reads no voice profile, and writes no audit row, no
       Past-sessions entry and nothing into either data folder. A run stopped
       with Ctrl+C prints no report and no traceback — one fixed line naming
       the temporary folder and the `scribe-speaker-eval-*` prefix for a
@@ -1502,6 +1537,73 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     `guard_eval.py` opens no file itself and logs nothing. Its tables were
     decision 0.4's evidence (the plan's Task 3.1).
 
+29. **Section suggestions: transcript lines → the local language model →
+    line numbers and section keys (note-content-design plan D6–D9, C1, C7,
+    C13; BUILT 2026-11-09, version 0.3.6; in-process, in memory only, zero
+    network).** At the end of each review's `begin_review` — or once a
+    writing-style job in flight has reported — under any writing style, the
+    Note tab builds ONE input from the draft's request
+    (`note_config.build_note_request`, cut at the next-patient boundary):
+    `note_suggest.SuggestionInput.from_request`, every pre-boundary line with
+    words, the lines the note leaves out ASKED and the lines it holds as
+    context with their section key, each under a role label (`clinician` /
+    `other`, or `speaker N`), its text made prompt-safe (control characters
+    spaced, angle-bracket runs split); a line spelling a list marker is
+    withheld. Nothing asked, or the model or runtime absent: no job, no
+    load, no call. Otherwise the job runs on a worker thread
+    (`ui/models.build_suggestion_stage`: the prose stage's ONE resident model,
+    built once from the LOCAL file as in flow 17), window by window — 40
+    lines a window, one token count per attempt, an overflowing window
+    halved, one `complete` call per window from ONE call site
+    (`note_suggest.run_suggestion_stage`), the runtime's inference state
+    cleared after each call, ONE 240 s cap over the job's own clock, a wait
+    before each window while a prose job is pending. The completion is read
+    by `note_suggest.parse_suggestions` as `<n> <key>` / `<n> none` lines for
+    THAT window's asked numbers only; nothing else is taken from it (nothing
+    at all when it echoes a list marker or leaves a `<think>` or `</think>`
+    once the closed blocks are stripped), and the
+    completion stays in the stage's own frame only until the next window
+    replaces it or the job returns. What crosses back to the GUI thread is
+    a `SuggestionStageResult`: segment indices, section keys and counts. The
+    Note tab keeps the (segment, key) pairs beside the draft and shows each
+    one the chooser's ownership rule accepts (`ui/models.eligible_utterances`)
+    as a `[suggested: <title>]` mark and a pre-selected section on the Line
+    chooser; a line enters the note only by the clinician's Add, as any
+    hand-add does (the verbatim transcript line, flow 10's custody from
+    there). In memory only, with the lifetimes stated exactly: the input —
+    the pre-boundary transcript lines, most of the consultation — in the
+    job's frame for the job; one window's prompt and completion in the
+    runtime for its `complete` call (its inference state cleared at the
+    call's end), and as strings in the stage's frame past that call —
+    through the next window's yield wait — until the next window replaces
+    them or the job returns; the pairs beside
+    the draft until the review ends (`clear()`) or the window closes. Every
+    exit of the review aborts the job (no further window runs) and orphans
+    it — and since the plan's D8 amendment of 2026-11-09 (review round 19
+    Q1 (b)) so does Save, once the note is saved, and Delete note and
+    complete BEFORE it destroys the key; Complete and Discard are refused
+    until Save, so the job has always been told to stop before a key goes.
+    A window already in flight cannot be stopped: when the key is destroyed
+    before it returns (Complete or Discard after Save, Delete note and
+    complete), the orphan's
+    frame keeps the whole input, and the runtime one window of it, until its
+    ONE in-flight window returns — about 36 s by the plan's Task C.0
+    estimate, about 48 s at the speed drift Phase R saw; an estimate, not a
+    bound, since the model call has no time limit — after the key is gone
+    (a job orphaned while the model is still LOADING on its thread — the
+    first review of a run under `clean` — keeps the input until the load
+    ends, then stops before any call; review round 19 SEC-006), and its
+    result is then dropped (the threat model's
+    "Phase 3B (coverage)" residue (s1); the retention schedule's "In-memory
+    suggestion state"). Nothing here is written to any file — no store, no
+    record, no log — nothing reaches Copy, the Cliniko write, the audit row
+    or Past sessions but a line the clinician added; `asked_lines` and
+    `suggestion_text` are registered tripwire markers, and no socket is
+    opened — pinned by the suggestion legs of
+    `desktop/tests/test_integration_no_sockets.py`. The validation harness's
+    `--suggestions confirm-all` makes the same call over synthetic sets
+    (flow 26).
+
 ## Explicit non-flows
 
 - No application-generated plaintext clinical content at rest — the
@@ -1634,11 +1736,17 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
   default, and unlinks exactly the listed paths through
   `sample_notes.delete_sample_files` (a directory is refused, never walked;
   `TestDeleteSampleFiles::test_exactly_the_listed_paths_go`).
-- No transcript text to the language model (note-learning-and-styles plan, D6,
-  D8; BUILT, Phase 4). The prose stage's ONLY input is
+- No transcript text to the language model FROM THE PROSE STAGE
+  (note-learning-and-styles plan, D6, D8; BUILT, Phase 4; narrowed 2026-11-09
+  for 0.3.6 — until then it read "No transcript text to the language model":
+  since the note-content-design plan the section suggestions give the model
+  pre-boundary transcript lines through ONE other call site and read its
+  answer back as line numbers and section keys only, flow 29). The prose stage's ONLY input is
   `prose_style.ProseInput.from_note`, which takes a FINALISED `GeneratedNote`
   and refuses a `TranscriptDocument` or a `NoteDraft` BY TYPE — so neither
-  transcript text nor a pending proposal can reach the model — and
+  the unconfirmed transcript nor a pending proposal can reach the model (a
+  CONFIRMED transcript-provenance line does, a verbatim quote of the
+  transcript; codex round 20 PR-LOW-330) — and
   `build_section_prompt` takes text LINES only (a section title, the confirmed
   lines, the fixed narrative instruction, and for Own voice the style
   profile's measures, shorthand and exemplars as conditioning). Flow 17.

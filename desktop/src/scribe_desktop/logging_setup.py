@@ -229,6 +229,14 @@ _PAYLOAD_SIGNATURES: Final[tuple[str, ...]] = (
     '"suggestion_text"',
     "'suggestion_text'",
     "suggestion_text=",
+    # Note-content-design review round 19 SEC-007: the Note tab's chooser
+    # entry (``ui.models.UtteranceChoice``, which Phase C extended with
+    # ``suggested``) and its edit row (``ui.models.EditableLine``) carry a
+    # transcript line's first words in ``label``; ``allowed_sections`` is the
+    # one distinctive field both hold, so a rendering of either is dropped.
+    '"allowed_sections"',
+    "'allowed_sections'",
+    "allowed_sections=",
     # Cliniko workflow safeguards plan Task 3.1 (D3): an ``EncounterContext``
     # carries ``patient_id`` and ``treatment_note_id``, a
     # ``ConsentAttestation`` always renders ``treatment_note_id`` (None when

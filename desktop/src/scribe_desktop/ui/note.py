@@ -2363,11 +2363,13 @@ class NoteScreen(QWidget):
         `_on_style_failed` pass through, so a suggestion job armed behind
         this style job is consumed here — made DUE, and started by
         `_start_due_suggestion` at the end of the handler, after the
-        handler's own decision to re-render (which sets `_prose_pending`
-        again first, so the new prose job never waits a whole window)."""
+        handler's own decision to re-render. `_prose_pending` is NOT cleared
+        here (note-content-design review round 16 A-1): a re-render starts later in the same
+        handler, and a waiting suggestion worker that saw the flag clear in
+        between could start a whole window first — `_start_due_suggestion`
+        clears it once no style job holds the slot."""
         current = self._style_slot.release(job)
         if current:
-            self._prose_pending.clear()
             if self._suggest_after_style:
                 self._suggest_after_style = False
                 self._suggest_due = True
@@ -2394,6 +2396,13 @@ class NoteScreen(QWidget):
                 slot.abort = None
         if job in self._orphaned_jobs:
             self._orphaned_jobs.remove(job)
+        if self._style_slot.job is None:
+            # Note-content-design review round 16 A-6: the backstop for the
+            # yield flag — `finished`
+            # is delivered after the job's own handler, so a style job whose
+            # handler never reached `_start_due_suggestion` (or that never
+            # reported) cannot leave a suggestion worker waiting for good.
+            self._prose_pending.clear()
         job.setParent(None)
         job.deleteLater()
         self._update_controls()
@@ -2537,7 +2546,12 @@ class NoteScreen(QWidget):
         self._start_suggestion_job()
 
     def _start_due_suggestion(self) -> None:
-        """Start the suggestion job a style job's release made due (D8)."""
+        """Start the suggestion job a style job's release made due (D8) —
+        the last step of every style handler, so it is also where the yield
+        flag is cleared, once the handler has decided not to re-render (no
+        style job holds the slot; note-content-design review round 16 A-1)."""
+        if self._style_slot.job is None:
+            self._prose_pending.clear()
         if self._suggest_due:
             self._suggest_due = False
             self._start_suggestion_job()
@@ -2634,16 +2648,37 @@ class NoteScreen(QWidget):
         windows never run, a yield wait breaks), and `is_busy` stays True
         only until its in-flight window returns (destroying a running
         QThread would abort the process). The review itself is untouched;
-        the line says why no suggestions will come."""
+        the line says why no suggestions will come.
+
+        Note-content-design review round 16 A-3: a review still open and unsaved refuses the
+        close on its own (`is_busy`'s `reviewing`), so nothing is aborted
+        then — the close cannot be accepted, and the review keeps its
+        suggestions; D8's step is for the review that no longer holds it.
+        Since D8's amendment (review round 19 Q1 (b)) Save itself stops the
+        job, so after Save this finds nothing live: it stays as the close
+        guard's backstop."""
+        if self._draft is not None and not self._note_saved:
+            return
+        self._stop_suggestions(models.SUGGESTION_STOPPED_LINE)
+
+    def _stop_suggestions(self, line: str) -> None:
+        """D8 as amended 2026-11-09 (the practitioner's decision on review
+        round 19 Q1 (b)): abort and orphan the suggestion job through the
+        slot's own `orphan` — the path `clear()` takes — and drop an armed
+        job's input, leaving the review itself untouched; `line` says why no
+        suggestions will come (only when a job was running or armed). The
+        orphan then counts as busy until its in-flight window returns. Called
+        by the close guard's `prepare_close`, by `save` once the note is
+        saved (the chooser and Add are closed from then on, so nothing the
+        job could suggest can be used), and by `abandon` BEFORE its callback
+        destroys the session key."""
         live = self._suggest_slot.job is not None or self._suggest_after_style or self._suggest_due
         self._suggest_slot.orphan()
         self._suggest_input = None
         self._suggest_after_style = False
         self._suggest_due = False
         if live:
-            self._suggest_outcome = models.SuggestionStageOutcome(
-                None, models.SUGGESTION_STOPPED_LINE
-            )
+            self._suggest_outcome = models.SuggestionStageOutcome(None, line)
             self._refresh_suggestion_line()
 
     def _refresh_proposal_states(self) -> None:
@@ -2726,6 +2761,10 @@ class NoteScreen(QWidget):
             self.message_label.setText(f"Save failed: {models.custody_refusal_text(exc)}")
             return
         self._note_saved = True
+        # D8 as amended (review round 19 Q1 (b)): Save released the lease, so
+        # Complete and Discard — refused while it is held — can now destroy
+        # the key; the job is told to stop first, in this same call.
+        self._stop_suggestions(models.SUGGESTION_SAVED_LINE)
         self.message_label.setText(
             "Note saved. Acknowledge any review warnings, then Complete on the "
             "Transcript screen."
@@ -2861,6 +2900,10 @@ class NoteScreen(QWidget):
         Every blocking state reaches this: it needs no clean note."""
         if self._on_abandon is None:
             return
+        # D8 as amended (review round 19 Q1 (b)): the callback completes the
+        # session and destroys its key, so the suggestion job is told to stop
+        # BEFORE it (a failed completion keeps the review, without them).
+        self._stop_suggestions(models.SUGGESTION_DELETE_LINE)
         try:
             self._on_abandon()
         except Exception as exc:  # noqa: BLE001

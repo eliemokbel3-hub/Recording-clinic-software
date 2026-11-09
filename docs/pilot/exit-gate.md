@@ -40,6 +40,15 @@ beside it — an open item becomes a finding and is resolved or controlled first
       a clean committed checkout, with the practitioner's own cue file; its
       totals, voices, commit and models-manifest hash are recorded under Task
       P.3.
+
+      *Dated 2026-11-09 (note-content-design plan D11), for the
+      practitioner's approval together with the proposal above — not a line
+      to tick, and it changes nothing until that proposal is approved:* if it
+      is approved, "rule v5 from run 8" reads "rule v5 for run 8; rule v6 from
+      run 9", rule v6 being rule v5's predicates and ceilings with the fresh
+      blind `heldout-6` as the gate set beside the 50 and `heldout-5`
+      reported, and run 9 run with the prose stage and every suggested section
+      accepted.
 - [ ] **Clinic 1 smoke records exist** (pilot plan Tasks P.2 and P.4, the
       clinic 1 smoke plan's Phase P): the shipping-gate scoring table and its decision line
       (Phase 3A Task 9.1), the speaker numbers over the frozen measured set

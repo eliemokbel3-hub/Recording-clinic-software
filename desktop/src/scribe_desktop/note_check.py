@@ -1894,8 +1894,10 @@ def _register_refusal(entry: ClinicalEquivalent, register: ClinicalRegister) -> 
             return "it holds a number or date outside the duration class"
         if token in register.exclusions:
             return "it holds an excluded word"
-    if any(token in FIRST_PERSON_TOKENS for token in phrase_tokens):
-        return "a phrase holds a first-person token"
+    # Review round 19 SEC-010: the term too — `ordinary_words` covers only
+    # part of the first person (`mine`, `i've`, `i'm`, `we've` are not in it).
+    if any(token in FIRST_PERSON_TOKENS for token in (term, *phrase_tokens)):
+        return "it holds a first-person token"
     return None
 
 

@@ -32,7 +32,7 @@ What the model sees (D6), by construction:
   reading of the shown prose before Save is the control for that shape.
 
 What comes back: ``parse_section_prose`` reduces one completion to one
-section's prose (a ``<think>`` block stripped, an unclosed one refused, a
+section's prose (a closed ``<think>`` block stripped, a tag left over refused, a
 leading title line or markdown heading dropped, an echoed marker refused,
 whitespace collapsed, ``MAX_SECTION_PROSE_CHARS`` bounded; anything unusable
 is the empty string); ``note_check.fidelity_verdicts`` then judges every
@@ -70,9 +70,9 @@ from scribe_desktop.language_model import (
     PROMPT_FRAMING_TOKENS,
     PROMPT_LINES_END,
     PROMPT_LINES_HEADER,
-    THINK_BLOCK_RE,
     LanguageModel,
     LanguageModelError,
+    strip_think_blocks,
 )
 from scribe_desktop.note import (
     MAX_SECTION_PROSE_CHARS,
@@ -236,9 +236,11 @@ _USER_INSTRUCTION: Final = (
     "Rewrite these lines as one short paragraph. Output only the paragraph."
 )
 
-# The ``<think>`` block regex is ``language_model.THINK_BLOCK_RE`` (shared with
-# the section suggestions since note-content-design C.1).
-_OPEN_THINK: Final = "<think>"
+# The ``<think>`` block strip and its refusal are
+# ``language_model.strip_think_blocks`` (shared with the section suggestions:
+# the regex since note-content-design C.1, the tag since review round 18
+# SIMP-001, the one helper — refusing a left ``</think>`` too — since round 19
+# SEC-001).
 
 
 class ProseStyleError(ValueError):
@@ -527,13 +529,13 @@ def build_section_prompt(
     texts = _text_lines(lines)
     if style not in PROSE_STYLES:
         raise ProseStyleError(f"not a prose style: {style!r}")
+    # The one instruction choice, shared with the budget (``conditioning_allowance``).
+    system_text = style_instruction(style)
     if style == "own_voice":
         if profile is None:
             raise ProseStyleError("the own-voice style needs a learned style profile")
         block = conditioning if conditioning is not None else _style_conditioning(profile)
-        system_text = f"{OWN_VOICE_INSTRUCTION}\n{block}"
-    else:
-        system_text = NARRATIVE_INSTRUCTION
+        system_text = f"{system_text}\n{block}"
     return system_text, _user_text(
         section_key, texts, register=register, other_voice=other_voice
     )
@@ -549,15 +551,16 @@ def output_token_budget(lines: Sequence[str]) -> int:
 
 def parse_section_prose(raw: str, section_key: NoteSectionKey) -> str:
     """One completion as one section's prose, or ``""`` when nothing usable
-    came back — an unclosed ``<think>``, an echoed prompt marker, an empty
+    came back — a ``<think>`` or ``</think>`` left once the closed blocks are
+    stripped (``strip_think_blocks``), an echoed prompt marker, an empty
     or over-long body. A closed ``<think>…</think>`` block is stripped (the
     pinned model is the non-thinking release; this is defensive), a leading
     line that is just the section's title (with or without a colon) or a
     markdown heading is dropped, and whitespace is collapsed to single
     spaces. The empty string is judged by Check 5 like any prose: it fails
     ``missing_fact``, so "nothing usable" and "unfaithful" are one path."""
-    text = THINK_BLOCK_RE.sub("", raw)
-    if _OPEN_THINK in text.lower():
+    text = strip_think_blocks(raw)
+    if text is None:
         return ""
     if PROMPT_LINES_HEADER in text or PROMPT_LINES_END in text:
         return ""
@@ -753,6 +756,13 @@ class ProseStyleProvider:
                     section_key, texts, style=self._style, profile=self._profile,
                     conditioning=conditioning, register=self._register, other_voice=framed,
                 )
+                # Note-content-design review round 18 (round 16 MED-002's
+                # sibling): the budget's token counts take the model's lock
+                # and may wait on it — an exit meanwhile makes no call, and
+                # this section, like every later one, gets no outcome.
+                if abort is not None and abort():
+                    del inputs[section_key], frames[section_key]
+                    break
                 raw = self._model.complete(
                     system_text=system_text,
                     user_text=user_text,

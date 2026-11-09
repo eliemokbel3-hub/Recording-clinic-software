@@ -62,6 +62,7 @@ from scribe_desktop.note import (
     ProposalResolution,
     SourceCoords,
     SpeakerRolePreselection,
+    _decode_shipped_json,
     _parse_shipped_section_cues,
     admissible_sections,
     any_cue_matches,
@@ -1028,6 +1029,31 @@ class TestShippedSectionCues:
     def test_the_packaged_file_parses_to_the_module_constant(self) -> None:
         resource = resources.files("scribe_desktop") / "config_defaults" / SECTION_CUES_FILENAME
         assert _parse_shipped_section_cues(json.loads(resource.read_bytes())) == _RAW_SECTION_CUES
+
+    def test_the_packaged_file_decodes_through_the_shipped_decode_step(self) -> None:
+        resource = resources.files("scribe_desktop") / "config_defaults" / SECTION_CUES_FILENAME
+        data = resource.read_bytes()
+        decoded = _decode_shipped_json(data, SECTION_CUES_FILENAME)
+        assert decoded == json.loads(data)
+        assert _parse_shipped_section_cues(decoded) == _RAW_SECTION_CUES
+
+    def test_a_repeated_key_is_refused_at_decode(self) -> None:
+        """Note-content-design Step H (carried from codex round 8 PR-LOW-016):
+        plain `json` keeps the LAST of two equal keys, so a section repeated
+        in the file would import as complete with its first list silently lost."""
+        raw = (
+            '{"schema_version": 1, "section_cues": {"consent": ["a phrase"], '
+            '"consent": ["another phrase"]}}'
+        )
+        assert json.loads(raw) is not None  # plain `json` accepts it silently
+        with pytest.raises(RuntimeError, match="broken install.*repeated"):
+            _decode_shipped_json(raw.encode(), SECTION_CUES_FILENAME)
+
+    def test_undecodable_bytes_and_deep_nesting_are_the_named_refusal(self) -> None:
+        with pytest.raises(RuntimeError, match="broken install"):
+            _decode_shipped_json(b"\x80 not json", SECTION_CUES_FILENAME)
+        with pytest.raises(RuntimeError, match="broken install"):
+            _decode_shipped_json(b"[" * 1_000_000, SECTION_CUES_FILENAME)
 
     def test_seventeen_sections_and_ninety_nine_phrases_in_canonical_order(self) -> None:
         # 98 → 99 with "out of 10" (invented-text guard plan Task 6.1).

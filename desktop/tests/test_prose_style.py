@@ -527,6 +527,23 @@ class TestAbort:
         result = provider.render(ProseInput.from_note(note), abort=lambda: True)
         assert mock.calls == [] and result.outcomes == () and result.warnings == ()
 
+    def test_a_flag_set_during_the_token_counts_makes_no_call(self) -> None:
+        """Note-content-design review round 18 (round 16 MED-002's sibling):
+        the budget's token counts take the model's lock and may wait on it —
+        an exit meanwhile makes no call, and that section gets no outcome."""
+        note = _note(self.SECTIONS)
+        stop = {"value": False}
+
+        class _AbortingCounts(MockLanguageModel):
+            def count_tokens(self, text: str) -> int:
+                stop["value"] = True  # the review ended while this count waited
+                return super().count_tokens(text)
+
+        mock = _AbortingCounts()
+        provider = ProseStyleProvider(mock, style="narrative")
+        result = provider.render(ProseInput.from_note(note), abort=lambda: stop["value"])
+        assert mock.calls == [] and result.outcomes == () and result.warnings == ()
+
 
 class TestPromptBudget:
     """Phase H round 28 SEC-004 → codex round 30 PR-MED-046: every prompt is
@@ -719,6 +736,18 @@ class TestParseSectionProse:
 
     def test_an_unclosed_think_block_is_refused(self) -> None:
         assert parse_section_prose("<think>still thinking\nNeck pain", "management_plan") == ""
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "<think><think>a</think>still thinking</think>\nNeck pain",  # nested
+            "still thinking</think>\nNeck pain",  # opened before the completion
+        ],
+    )
+    def test_a_left_close_tag_is_refused(self, raw: str) -> None:
+        """Review round 19 SEC-001: the reasoning outside a stripped block is
+        refused, not read as the prose."""
+        assert parse_section_prose(raw, "management_plan") == ""
 
     def test_an_echoed_marker_is_refused(self) -> None:
         raw = f"{lm_module.PROMPT_LINES_HEADER}\n- Neck pain\n{lm_module.PROMPT_LINES_END}"

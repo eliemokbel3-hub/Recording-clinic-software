@@ -18,8 +18,12 @@ Pinned here, at the screen:
 - the exit policy: Save is allowed while the job runs; a live job is not
   ``is_busy``; ``clear()`` / Cancel / Delete mid-run cancel the remaining
   windows of a multi-window job, the orphan is busy only until its
-  in-flight window returns, then disposed; ``prepare_close`` after Save —
-  inside a window and inside a yield wait — aborts and orphans the job;
+  in-flight window returns, then disposed; since D8's amendment of
+  2026-11-09 (review round 19 Q1 (b)) a SAVED note stops the job in the
+  same call — inside a window and inside a yield wait — and a refused Save
+  does not; Delete note and complete stops it BEFORE its callback (which
+  destroys the key), a refused one keeping the review without it; and
+  ``prepare_close`` after Save finds it already stopped;
 - every fallback names itself on the line (the model absent, a job that
   raised — by its type name only, a job whose every suggestion the
   ownership rule refused — review round 10 LOW-001).
@@ -32,9 +36,11 @@ test loads the real model or touches the real clipboard.
 Through the REAL ``MainWindow`` (``TestThroughTheWindow``; its stage the same
 fake, its presence seam present): Complete, Discard, Cancel and Delete
 mid-run; the Recovery tab's open-review refused only through the orphan's
-in-flight window; a window close right after Save, inside a window and
-inside a yield wait, refused once with the guard's own line and accepted
-once the window returns. The window's presence seam is asked BEFORE a job
+in-flight window; a window close right after Save (the job already stopped
+by Save, inside a window and inside a yield wait), refused once with the
+guard's own line and accepted once the window returns; Complete and Discard
+after Save (round 19 Q1 (b)) reaching their key-destroying callback only
+after the job was told to stop. The window's presence seam is asked BEFORE a job
 starts, so with the model absent no thread runs at all (every other window
 test). Through the window's REAL ``ChromeBridge`` (stage-2 leg x7): Chrome's
 Discard never reaches a note under review — it is refused at QUEUED, the
@@ -48,7 +54,6 @@ from __future__ import annotations
 import re
 import secrets
 import threading
-import time
 from collections.abc import Callable, Iterator
 from typing import Any
 
@@ -65,10 +70,10 @@ from scribe_desktop.ui import models
 from test_ui_screens import (
     _NOTE_TURNS,
     FakeController,
-    _acknowledge_everything,
     _main_window,
     _note_config,
     _note_document,
+    _process_until,
 )
 
 # Two invented patient lines no cue routes, after the fixture's four (its
@@ -92,16 +97,6 @@ def qapp() -> Any:
 
     app = QApplication.instance() or QApplication([])
     yield app
-
-
-def _process_until(qapp: Any, predicate: Callable[[], bool], timeout: float = 10.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        qapp.processEvents()
-        if predicate():
-            return True
-        time.sleep(0.01)
-    return False
 
 
 class _Held:
@@ -434,6 +429,83 @@ class TestTheYield:
         assert suggestions.windows == asked
         assert screen._suggest_outcome.result.windows_run == asked
 
+    def test_the_next_review_never_waits_on_an_orphaned_prose_job(
+        self, qapp: Any, held: _Held
+    ) -> None:
+        """Note-content-design review round 16 A-5: an exit orphans a running prose job, whose late
+        report is no longer current; `clear()` itself drops the yield flag, so
+        the NEXT review's suggestion job runs at once rather than waiting on a
+        prose job that no longer belongs to any review."""
+        from test_ui_prose_stage import _Stage
+
+        stage = _Stage()
+        held.events.append(stage.release)
+        suggestions = _Suggestions(held)
+        screen, _record = _screen(
+            held, suggestions, result=_result(_WIDE_TURNS), prose=stage.provider, style="narrative"
+        )
+        assert _process_until(qapp, lambda: stage.calls == 1)  # held, flag set
+        assert screen._prose_pending.is_set()
+        screen.cancel_review()  # the prose job is orphaned, still held
+        assert screen._orphaned_jobs and not screen._prose_pending.is_set()
+        # The next review has no renderable section: no prose job of its own.
+        screen.begin_review(
+            _result(_BLAND_TURNS),
+            copy_enabled=False,
+            on_save=lambda _note: None,
+            on_abandon=lambda: None,
+            on_cancel=lambda: None,
+            template_profile_id="clinic-a",
+            mode=SessionMode.NORMAL,
+        )
+        assert not screen.rendering_in_flight
+        _landed(qapp, screen)  # while the orphaned prose job is still held
+        assert suggestions.asked[-1] == 2
+        stage.release.set()
+
+    def test_a_re_render_keeps_the_yield_flag_set_across_the_hand_off(
+        self, qapp: Any, held: _Held
+    ) -> None:
+        """Note-content-design review round 16 A-1: a prose job that reports after the content
+        changed under it starts the re-render in the same handler. The yield
+        flag stays set across that hand-off — never cleared and set again —
+        or a waiting suggestion worker could start a whole window first."""
+        from test_ui_prose_stage import _Stage
+
+        stage = _Stage()
+        held.events.append(stage.release)
+        suggestions = _Suggestions(held, window_segments=1)
+        screen, _record = _screen(
+            held, suggestions, result=_result(_WIDE_TURNS), prose=stage.provider, style="narrative"
+        )
+        assert _process_until(qapp, lambda: stage.calls == 1)  # job 1 is held
+        pending = screen._prose_pending
+        assert pending.is_set()
+        calls: list[str] = []
+        real_set, real_clear = pending.set, pending.clear
+
+        def record_set() -> None:
+            calls.append("set")
+            real_set()
+
+        def record_clear() -> None:
+            calls.append("clear")
+            real_clear()
+
+        pending.set = record_set
+        pending.clear = record_clear
+        patient_line = next(
+            seg for seg, label in _chooser(screen).items() if seg != _ICE and "speaker_1" in label
+        )
+        assert screen.add_line(patient_line, "history_presenting_complaint")  # content changes
+        stage.release.set()  # job 1 reports a stale digest: the handler re-renders
+        assert _process_until(qapp, lambda: stage.calls == 2 and not screen.rendering_in_flight)
+        _landed(qapp, screen)
+        # Job 2 was started (set) with no clear before it; the one clear came
+        # only once no style job held the slot.
+        assert calls[:2] == ["set", "clear"]
+        assert not pending.is_set()
+
 
 class TestTheMarks:
     def test_a_changed_segment_pre_selects_and_add_clears_the_omission(
@@ -603,46 +675,69 @@ class TestTheExitPolicy:
         if exit_name == "abandon":
             assert record["abandoned"] == [True]
 
-    def test_save_is_allowed_and_a_live_job_is_not_busy(self, qapp: Any, held: _Held) -> None:
+    def test_save_is_allowed_and_then_stops_the_job(self, qapp: Any, held: _Held) -> None:
+        """D8 as amended 2026-11-09 (review round 19 Q1 (b)): Save is never
+        held by the job, and once the note IS saved — the chooser and Add
+        closed — the job is aborted and orphaned in the same call: the
+        remaining windows never run, the orphan is busy only until its
+        in-flight window returns, and its late result is dropped."""
         suggestions = _Suggestions(held, window_segments=1, hold=True)
         screen, record = _screen(held, suggestions, result=_result(_WIDE_TURNS))
         assert _process_until(qapp, lambda: suggestions.windows == 1)
         _ratify_all(screen)
         assert screen.suggestion_in_flight
         assert screen.save_button.isEnabled()
+        abort = screen._suggest_slot.abort
+        assert abort is not None and not abort.is_set()
+        live_at_save: list[bool] = []
+        real_save = screen._on_save
+
+        def on_save(note: Any) -> None:
+            live_at_save.append(screen.suggestion_in_flight and not abort.is_set())
+            real_save(note)
+
+        screen._on_save = on_save
         screen.save()
         assert len(record["saved"]) == 1
-        assert screen.suggestion_in_flight and not screen.is_busy
+        assert live_at_save == [True]  # stopped only once the save went through
+        assert abort.is_set()
+        assert not screen.suggestion_in_flight
+        assert screen.is_busy  # the orphan's in-flight window
+        assert screen.suggestion_label.text() == models.SUGGESTION_SAVED_LINE
         suggestions.release.set()
-        _landed(qapp, screen)
-        # PR-LOW-050: the result lands before the thread's `finished` disposes
-        # it — wait for the disposal itself, then the screen is not busy.
         assert _process_until(qapp, lambda: not screen._orphaned_jobs)
         assert not screen.is_busy
-        assert suggestions.windows == suggestions.asked[0]
+        assert suggestions.windows == 1  # the remaining windows never ran
+        assert screen._suggest_outcome.result is None  # the late result dropped
+        assert screen.suggestion_label.text() == models.SUGGESTION_SAVED_LINE
 
-    def test_prepare_close_after_save_inside_a_window(self, qapp: Any, held: _Held) -> None:
+    def test_a_failed_save_keeps_the_job_running(self, qapp: Any, held: _Held) -> None:
+        """Review round 19 Q1 (b): the stop follows a SAVED note only — a
+        refused Save keeps the review open, and its suggestions with it."""
         suggestions = _Suggestions(held, window_segments=1, hold=True)
         screen, record = _screen(held, suggestions, result=_result(_WIDE_TURNS))
         assert _process_until(qapp, lambda: suggestions.windows == 1)
         _ratify_all(screen)
+
+        def refused(_note: Any) -> None:
+            raise RuntimeError("the disk is full")
+
+        screen._on_save = refused
         screen.save()
-        assert record["saved"] and not screen.is_busy
-        screen.prepare_close()
-        assert not screen.suggestion_in_flight
-        assert screen.is_busy  # the orphan's in-flight window holds the close
-        assert screen.suggestion_label.text() == models.SUGGESTION_STOPPED_LINE
+        assert not screen._note_saved and record["saved"] == []
+        assert screen.suggestion_in_flight and not screen._orphaned_jobs
+        assert screen.suggestion_label.text() != models.SUGGESTION_SAVED_LINE
         suggestions.release.set()
-        assert _process_until(qapp, lambda: not screen.is_busy)
-        assert suggestions.windows == 1
+        _landed(qapp, screen)
+        assert suggestions.windows == suggestions.asked[0]
+        assert screen._suggest_outcome.result is not None
+        assert screen._suggest_outcome.result.reason == "completed"
 
-    def test_prepare_close_after_save_inside_a_yield_wait(self, qapp: Any, held: _Held) -> None:
+    def test_save_inside_a_yield_wait_breaks_the_wait(self, qapp: Any, held: _Held) -> None:
         suggestions = _Suggestions(held, window_segments=1, hold=True)
         screen, record = _screen(held, suggestions, result=_result(_WIDE_TURNS))
         assert _process_until(qapp, lambda: suggestions.windows == 1)
         _ratify_all(screen)
-        screen.save()
-        assert record["saved"]
         waiting = _watch_yield_wait(screen)  # window 1 is held: the worker is in it
         screen._prose_pending.set()  # as a pending prose job would
         suggestions.release.set()  # window 1 returns into the yield wait
@@ -650,11 +745,99 @@ class TestTheExitPolicy:
         # never before it (the timeout is a failure bound only).
         assert _process_until(qapp, waiting.is_set)
         assert suggestions.windows == 1
-        assert screen.suggestion_in_flight and not screen.is_busy
-        screen.prepare_close()
-        assert _process_until(qapp, lambda: not screen.is_busy, timeout=3.0)
+        assert screen.suggestion_in_flight and screen.save_button.isEnabled()
+        screen.save()
+        assert record["saved"]
+        # Round 16 A-4's shape: aborted and orphaned — not merely left waiting.
+        assert not screen.suggestion_in_flight
+        assert screen.suggestion_label.text() == models.SUGGESTION_SAVED_LINE
+        assert _process_until(qapp, lambda: not screen._orphaned_jobs, timeout=3.0)
+        assert not screen.is_busy
         assert suggestions.windows == 1
         screen._prose_pending.clear()
+
+    def test_prepare_close_after_save_finds_the_job_already_stopped(
+        self, qapp: Any, held: _Held
+    ) -> None:
+        """The close guard's step stays as a backstop: after Save it finds
+        nothing live, so it neither orphans a second time nor changes the
+        line; the close waits only for the orphan Save made."""
+        suggestions = _Suggestions(held, window_segments=1, hold=True)
+        screen, record = _screen(held, suggestions, result=_result(_WIDE_TURNS))
+        assert _process_until(qapp, lambda: suggestions.windows == 1)
+        _ratify_all(screen)
+        screen.save()
+        assert record["saved"]
+        orphans = list(screen._orphaned_jobs)
+        assert len(orphans) == 1
+        screen.prepare_close()
+        assert screen._orphaned_jobs == orphans and screen.is_busy
+        assert screen.suggestion_label.text() == models.SUGGESTION_SAVED_LINE
+        suggestions.release.set()
+        assert _process_until(qapp, lambda: not screen.is_busy)
+        assert suggestions.windows == 1
+
+    def test_delete_stops_the_job_before_its_callback(self, qapp: Any, held: _Held) -> None:
+        """Review round 19 Q1 (b), the custody order: Delete note and complete's
+        callback completes the session and destroys its key, so the job is
+        aborted and orphaned BEFORE the callback runs."""
+        suggestions = _Suggestions(held, window_segments=1, hold=True)
+        screen, record = _screen(held, suggestions, result=_result(_WIDE_TURNS))
+        assert _process_until(qapp, lambda: suggestions.windows == 1)
+        abort = screen._suggest_slot.abort
+        assert abort is not None and not abort.is_set()
+        seen: list[tuple[bool, bool]] = []
+
+        def on_abandon() -> None:
+            seen.append((abort.is_set(), screen._suggest_slot.job is None))
+            record["abandoned"].append(True)
+
+        screen._on_abandon = on_abandon
+        screen.abandon()
+        assert seen == [(True, True)]  # told to stop before the key could go
+        assert record["abandoned"] == [True]
+        assert screen.current_note() is None
+        suggestions.release.set()
+        assert _process_until(qapp, lambda: not screen._orphaned_jobs)
+        assert suggestions.windows == 1
+
+    def test_a_failed_delete_keeps_the_review_without_the_job(
+        self, qapp: Any, held: _Held
+    ) -> None:
+        suggestions = _Suggestions(held, window_segments=1, hold=True)
+        screen, _record = _screen(held, suggestions, result=_result(_WIDE_TURNS))
+        assert _process_until(qapp, lambda: suggestions.windows == 1)
+
+        def refused() -> None:
+            raise RuntimeError("the completion failed")
+
+        screen._on_abandon = refused
+        screen.abandon()
+        assert screen.current_note() is not None  # the review is kept
+        assert not screen.suggestion_in_flight
+        assert screen.suggestion_label.text() == models.SUGGESTION_DELETE_LINE
+        suggestions.release.set()
+        assert _process_until(qapp, lambda: not screen._orphaned_jobs)
+        assert suggestions.windows == 1
+
+    def test_prepare_close_during_an_unsaved_review_leaves_the_job_running(
+        self, qapp: Any, held: _Held
+    ) -> None:
+        """Note-content-design review round 16 A-3: an unsaved review refuses the close on its own,
+        so the close guard's `prepare_close` aborts nothing — the review keeps
+        its suggestions."""
+        suggestions = _Suggestions(held, window_segments=1, hold=True)
+        screen, _record = _screen(held, suggestions, result=_result(_WIDE_TURNS))
+        assert _process_until(qapp, lambda: suggestions.windows == 1)
+        assert screen.is_busy  # the review itself holds the close
+        screen.prepare_close()
+        assert screen.suggestion_in_flight and not screen._orphaned_jobs
+        assert screen.suggestion_label.text() != models.SUGGESTION_STOPPED_LINE
+        suggestions.release.set()
+        _landed(qapp, screen)
+        assert suggestions.windows == suggestions.asked[0]
+        assert screen._suggest_outcome.result is not None
+        assert screen._suggest_outcome.result.reason == "completed"
 
     def test_prepare_close_with_no_job_changes_nothing(self, qapp: Any, held: _Held) -> None:
         suggestions = _Suggestions(held)
@@ -785,11 +968,7 @@ def _fake_note_write(monkeypatch: Any) -> None:
 
 def _save_through_window(window: Any) -> None:
     note_screen = window.note_screen
-    for proposal in note_screen._draft.note_proposals:
-        note_screen.confirm_proposal(proposal.proposal_id)
-    _acknowledge_everything(note_screen)
-    for code in {w.note_warning_code for w in note_screen._note.note_warnings}:
-        note_screen._acknowledge(code)
+    _ratify_all(note_screen)
     assert note_screen.save_button.isEnabled()
     note_screen.save()
     assert note_screen._note_saved, note_screen.message_label.text()
@@ -905,13 +1084,15 @@ class TestThroughTheWindow:
         window = _window_review(qapp, tmp_path, monkeypatch, held, stage)
         note_screen = window.note_screen
         _save_through_window(window)
-        assert note_screen.suggestion_in_flight and not note_screen.is_busy
-        # The close guard calls `prepare_close` first: the job is aborted and
-        # orphaned, and the close refused ONCE with the guard's own message.
+        # D8 as amended (review round 19 Q1 (b)): Save already aborted and
+        # orphaned the job; the close guard's `prepare_close` finds nothing
+        # live, and the close is refused ONCE with the guard's own message.
+        assert not note_screen.suggestion_in_flight and note_screen.is_busy
+        assert note_screen.suggestion_label.text() == models.SUGGESTION_SAVED_LINE
         assert not _close(window)
         assert window.statusBar().currentMessage().startswith(_WORK_IN_PROGRESS)
         assert not note_screen.suggestion_in_flight and note_screen.is_busy
-        assert note_screen.suggestion_label.text() == models.SUGGESTION_STOPPED_LINE
+        assert note_screen.suggestion_label.text() == models.SUGGESTION_SAVED_LINE
         stage.release.set()
         assert _process_until(qapp, lambda: not note_screen.is_busy)
         assert stage.windows == 1
@@ -928,22 +1109,60 @@ class TestThroughTheWindow:
         stage = _Suggestions(held, window_segments=1, hold=True)
         window = _window_review(qapp, tmp_path, monkeypatch, held, stage)
         note_screen = window.note_screen
-        _save_through_window(window)
+        _ratify_all(note_screen)  # before the watch: the save below changes nothing else
         waiting = _watch_yield_wait(note_screen)  # window 1 is held: the worker is in it
         note_screen._prose_pending.set()  # as a pending prose job would
         stage.release.set()  # window 1 returns into the yield wait
-        # PR-LOW-086: the close's abort lands INSIDE the screen's real yield
-        # wait, never before it (the timeout is a failure bound only).
+        # PR-LOW-086: Save's abort lands INSIDE the screen's real yield wait,
+        # never before it (the timeout is a failure bound only).
         assert _process_until(qapp, waiting.is_set)
         assert stage.windows == 1
-        assert note_screen.suggestion_in_flight and not note_screen.is_busy
-        assert not _close(window)  # the abort breaks the wait; the orphan is not yet gone
+        assert note_screen.suggestion_in_flight
+        _save_through_window(window)  # review round 19 Q1 (b): Save aborts the job
+        assert not note_screen.suggestion_in_flight and note_screen.is_busy
+        assert not _close(window)  # the abort broke the wait; the orphan is not yet gone
         assert window.statusBar().currentMessage().startswith(_WORK_IN_PROGRESS)
         assert _process_until(qapp, lambda: not note_screen.is_busy, timeout=3.0)
         assert stage.windows == 1
         note_screen._prose_pending.clear()
         assert _close(window) or _close(window)
         assert not window.statusBar().currentMessage().startswith(_WORK_IN_PROGRESS)
+
+    @pytest.mark.parametrize("action", ["complete", "discard"])
+    def test_complete_and_discard_after_save_find_the_job_told_to_stop(
+        self, qapp: Any, tmp_path: Any, monkeypatch: Any, held: _Held, action: str
+    ) -> None:
+        """Review round 19 Q1 (b), the custody order for the Transcript tab's
+        two key-destroying buttons: both are refused while the review holds
+        the generation lease (`SessionController._refuse_while_generating`),
+        which only Save, Delete or Cancel releases — and Save now aborts the
+        job in the same call. So at the moment the button's callback (the
+        controller's Complete or Discard, which destroys the session key)
+        runs, the job has already been told to stop."""
+        _fake_note_write(monkeypatch)
+        stage = _Suggestions(held, window_segments=1, hold=True)
+        window = _window_review(qapp, tmp_path, monkeypatch, held, stage)
+        note_screen = window.note_screen
+        transcript = window.transcript_screen
+        abort = note_screen._suggest_slot.abort
+        assert abort is not None and not abort.is_set()
+        _save_through_window(window)
+        attribute = "_on_complete" if action == "complete" else "_on_discard"
+        real = getattr(transcript, attribute)
+        seen: list[bool] = []
+
+        def spied() -> Any:
+            seen.append(abort.is_set())
+            return real()
+
+        setattr(transcript, attribute, spied)
+        getattr(transcript, f"on_{action}")()
+        assert seen == [True]  # told to stop before the key could go
+        assert (action,) in window._controller.calls
+        assert note_screen.current_note() is None
+        stage.release.set()
+        assert _process_until(qapp, lambda: not note_screen.is_busy)
+        assert stage.windows == 1  # the remaining windows never ran
 
     def test_a_chrome_discard_never_reaches_a_note_under_review(
         self, qapp: Any, tmp_path: Any, monkeypatch: Any, held: _Held
@@ -980,11 +1199,13 @@ class TestThroughTheWindow:
         `clear()` once a review is saved (Start is refused while the review
         holds the lease) is the NEXT Start — `start_linked` and the desktop's
         `on_start` share `SessionScreen._start`, whose `session_started`
-        reaches `MainWindow._on_session_started` (`main_window.py:1597`). That
-        Start orphans the job mid-window; a Chrome Discard of the NEW
-        recording then reaches only the Session tab (its `session_discarded`
-        clears the live view, `main_window.py:781`) — the Note tab is not
-        cleared again and the orphan still holds only its in-flight window."""
+        reaches `MainWindow._on_session_started` (`main_window.py:1597`). Save
+        already orphaned the job mid-window (review round 19 Q1 (b)), and that
+        Start clears the saved review without a second orphan; a Chrome
+        Discard of the NEW recording then reaches only the Session tab (its
+        `session_discarded` clears the live view, `main_window.py:781`) — the
+        Note tab is not cleared again and the orphan still holds only its
+        in-flight window."""
         _fake_note_write(monkeypatch)
         stage = _Suggestions(held, window_segments=1, hold=True)
         window = _window_review(qapp, tmp_path, monkeypatch, held, stage)
@@ -992,7 +1213,8 @@ class TestThroughTheWindow:
         note_screen = window.note_screen
         sender = _chrome_link(qapp, window)
         _save_through_window(window)
-        assert note_screen.suggestion_in_flight and not note_screen.is_busy
+        assert not note_screen.suggestion_in_flight and note_screen.is_busy
+        assert len(note_screen._orphaned_jobs) == 1
         session_screen = window.session_screen
         session_screen._device_provider = lambda: 7
         session_screen.consent_checkbox.setChecked(True)

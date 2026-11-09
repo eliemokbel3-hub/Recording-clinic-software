@@ -64,6 +64,40 @@ the repository's visibility may have changed. If no attestation can be made, the
 check above can never pass, and the build of record needs a decision — never an
 install without that check.
 
+## Rolling back below 0.3.6
+
+0.3.6 (the note-content-design build: the prose styles' clinical register and
+the section suggestions) has no build of record yet — its row above is added
+at that plan's Task H5, after hardening and the prediction freeze. This
+section applies from that build on.
+
+**Nothing at rest changes shape** (that plan's D3 and D12). 0.3.6 adds no
+persisted field, no schema version, no key in `practitioner_settings.json`
+and no file in the data folder: `encounter.enc`, `note.enc` with its prose
+renderings, `generated.enc`, `saved-provenance.enc`, `write.enc`, the audit
+row and every Past-sessions entry keep the shape 0.3.5 reads. The clinical
+lexicon (`clinical_equivalents.json`) is package data inside the install
+folder, never in the data folder, so it goes with the build. The audit row's
+`prompt_version` reads `narrative-v7` where 0.3.5 wrote `narrative-v2`; 0.3.5
+reads any such version token. So no recording needs finishing first for
+0.3.6's sake, and the model pack is unchanged (no model was added).
+
+**What an older build shows differently.** (1) A note saved under a prose
+style on 0.3.6 binds each section's prose to its lines AND to whether the
+section holds a line someone other than the confirmed clinician said (the
+speaker frame's flag, folded into the section's digest). 0.3.5 does not know
+that second part, so for each section of such a note that holds another
+voice's line it finds the prose stale and shows that section as Clean
+clinical — its confirmed lines, unchanged — in Past sessions and in "Copy
+saved note"; a section holding only the clinician's own lines shows its prose
+as saved, shorthand included. Nothing is lost: the confirmed lines are the
+note. The same happens the other way after an upgrade: a note saved in a
+prose style on 0.3.5 shows such a section as Clean clinical on 0.3.6. (2)
+0.3.5 makes no section suggestions: a left-out line is flagged as before, and
+the tick reads "Show flagged lines only". (3) A note 0.3.5 generates, or
+renders again, uses its own prompt and its own Check 5, with no shorthand and
+no "Pt reports" frame.
+
 ## Rolling back below 0.3.5
 
 0.3.5 (the validation-run7 build) was built of record on 2026-10-28, after

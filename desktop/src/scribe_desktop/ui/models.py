@@ -4248,6 +4248,14 @@ SUGGESTION_FAILED_LINE: Final = "Suggested sections: the suggestion job failed (
 SUGGESTION_STOPPED_LINE: Final = (
     "Suggested sections: stopped because the window was asked to close."
 )
+# Note-content-design D8 as amended 2026-11-09 (review round 19 Q1 (b)): the
+# job is also stopped once the note is saved (the chooser and Add are closed
+# from then on) and before Delete note and complete destroys the session key
+# (`NoteScreen._stop_suggestions`).
+SUGGESTION_SAVED_LINE: Final = "Suggested sections: stopped because the note was saved."
+SUGGESTION_DELETE_LINE: Final = (
+    "Suggested sections: stopped because the note is being deleted."
+)
 
 
 def suggestion_model_absent_line() -> str:
@@ -4946,11 +4954,13 @@ __all__ = [
     "style_stage_line",
     "with_retained_prose",
     "SUGGESTED_LINE_MARK",
+    "SUGGESTION_DELETE_LINE",
     "SUGGESTION_FAILED_LINE",
     "SUGGESTION_IN_FLIGHT_LINE",
     "SUGGESTION_LOAD_FAILED_LINE",
     "SUGGESTION_NONE_LINE",
     "SUGGESTION_NOTHING_LINE",
+    "SUGGESTION_SAVED_LINE",
     "SUGGESTION_STOPPED_LINE",
     "SuggestionStage",
     "SuggestionStageOutcome",

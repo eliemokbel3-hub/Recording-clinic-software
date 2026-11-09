@@ -17,7 +17,17 @@ reviews and finalises every note in Cliniko.
 
 - **Not clinical decision support.** It must not invent, suggest, or infer
   diagnoses, examination findings, treatments, advice, referrals,
-  investigations, or plans. Unsupported template fields stay blank.
+  investigations, or plans. Unsupported template fields stay blank. Since
+  0.3.6 the local language model may SUGGEST which heading a transcript line
+  the note left out belongs under — a filing aid shown as a mark on the
+  line, never text: the line is added only by the clinician, word for word
+  as it was transcribed (threat model, "Phase 3B (coverage)"); and the prose
+  writing styles may use a by-definition clinical shorthand for a phrase
+  that was said ("LBP" for "lower back pain"), designed never to add a
+  finding: Check 5 refuses most changes, and for the changes it is known
+  to pass (a sibling abbreviation swapped, a second meaning of a term) the
+  clinician's reading of every prose section before Save is the control
+  (surface 17, THE CLINICAL REGISTER, residues (r1)–(r8)).
 - **Not an autonomous writer.** No note is ever finalised automatically, and
   nothing is written to Cliniko without the clinician's click. The app's one
   write can only fill the CONTENT of an open draft treatment note: the request

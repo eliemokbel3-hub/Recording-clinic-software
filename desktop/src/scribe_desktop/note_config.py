@@ -172,6 +172,7 @@ from scribe_desktop.note import (
     NoteStyle,
     NoteWarning,
     _assemble_note_request,
+    _decode_shipped_json,
     content_tokens,
     digest_bytes,
     normalise_token,
@@ -1513,10 +1514,12 @@ def _parse_shipped_vocabulary(
 def _load_shipped_vocabulary(filename: str, key: str, *, lower_case: bool) -> tuple[str, ...]:
     resource = resources.files("scribe_desktop") / _DEFAULTS_RESOURCE_DIR / filename
     try:
-        payload = json.loads(resource.read_bytes())
-    except (OSError, ValueError) as exc:
+        data = resource.read_bytes()
+    except OSError as exc:
         raise RuntimeError(f"shipped {filename} unreadable (broken install): {exc}") from exc
-    return _parse_shipped_vocabulary(payload, filename=filename, key=key, lower_case=lower_case)
+    return _parse_shipped_vocabulary(
+        _decode_shipped_json(data, filename), filename=filename, key=key, lower_case=lower_case
+    )
 
 
 # Case-preserving: "Cx" and "ROM" are matched as written (Task 3.3 decides
@@ -1572,7 +1575,9 @@ _CLINICAL_ABBREVIATION_SET: Final[frozenset[str]] = frozenset(CLINICAL_ABBREVIAT
 # the exclusion list — refuse at ``note_check`` import, where those
 # classifiers live (``note_check`` imports this module, so they cannot be
 # read back here). Widening the list is the practitioner's dated decision
-# and a ``PROMPT_VERSION`` bump (C2); narrowing it is routine.
+# (C2); ANY change to the shipped list, a narrowing included, is a
+# ``PROMPT_VERSION`` bump with R.5 repeated (D1, C2; note-content-design review round 16 C-4),
+# so the audit's prompt version names the list a note's prose passed under.
 # ---------------------------------------------------------------------------
 
 EquivalenceClass = Literal["anatomy", "symptom", "measure", "side_neutral", "duration"]
@@ -1761,6 +1766,17 @@ def _parse_clinical_equivalents(
                 raise broken(f"term {term!r}'s first phrase must be '{weeks} {unit}'")
             if any(phrase[-1] != unit for phrase in phrases):
                 raise broken(f"term {term!r} has a phrase not ending in {unit!r}")
+            # Note-content-design review round 16 C-3: every phrase is a count
+            # and the unit, and a
+            # count written in digits is this term's own ("13 weeks" under
+            # 3/52 would fold to 3, weeks); a spelled count stays pinned by
+            # test (D1 keeps no cardinal table).
+            for phrase in phrases:
+                if len(phrase) != 2:
+                    raise broken(f"term {term!r} has a phrase that is not a count and {unit!r}")
+                count = phrase[0]
+                if count.isascii() and count.isdigit() and count != str(weeks):
+                    raise broken(f"term {term!r} has a phrase counting {count}, not {weeks}")
         entries.append(ClinicalEquivalent(term, tuple(phrases), klass))
 
     # A term is ONE entry (codex round 8 PR-LOW-015): the ownership map below
@@ -1798,28 +1814,12 @@ def _parse_clinical_equivalents(
     return _clinical_register(entries, exclusions=exclusions, ordinary_words=ordinary_words)
 
 
-def _refuse_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    """``json``'s object hook for the lexicon: two equal keys in one object
-    are refused, where ``json`` alone keeps the last silently (codex round 8
-    PR-LOW-016 — ``"class": [], "class": "anatomy"`` would pass as anatomy)."""
-    decoded: dict[str, object] = {}
-    for key, value in pairs:
-        if key in decoded:
-            raise ValueError(f"the key {key!r} is repeated in one object")
-        decoded[key] = value
-    return decoded
-
-
 def _decode_clinical_equivalents(data: bytes) -> object:
-    """The lexicon file's bytes decoded, a repeated object key or a nesting
-    too deep to decode refused as a broken install (the test seam for the
-    decode step; ``_parse_clinical_equivalents`` checks the shape)."""
-    try:
-        return json.loads(data, object_pairs_hook=_refuse_duplicate_keys)
-    except (ValueError, RecursionError) as exc:
-        raise RuntimeError(
-            f"shipped {CLINICAL_EQUIVALENTS_FILENAME} unreadable (broken install): {exc}"
-        ) from exc
+    """The lexicon file's bytes decoded through the one shipped-file decode
+    step (``note._decode_shipped_json``: a repeated object key or a nesting
+    too deep to decode refused as a broken install); the test seam for the
+    decode step; ``_parse_clinical_equivalents`` checks the shape."""
+    return _decode_shipped_json(data, CLINICAL_EQUIVALENTS_FILENAME)
 
 
 def _load_clinical_equivalents() -> ClinicalRegister:

@@ -67,7 +67,7 @@ set up and build it, and make releases; the installed app needs none of them.
   Markdown table for Task 2.3, never transcript text.
 - `build-validation-set.py <scripts-dir> <set-folder> [--only <id> ...]` and
   `run-validation.py <set-folder> --config <folder> --rule <file> [--set <name>]
-  [--model <name>]`
+  [--model <name>] [--prose] [--suggestions off|confirm-all]`
   (pilot plan Phase 2) — thin launchers for `scribe_desktop.validation_set` and
   `scribe_desktop.validation`. The first speaks each synthetic script with the
   installed Windows voices into `<id>.wav` + `<id>.txt` plus a copy of
@@ -105,7 +105,16 @@ set up and build it, and make releases; the installed app needs none of them.
   with its libraries preloaded first: the three measurement tools' reports
   name `<model>@cuda` and the benchmark prints a separate `device` column;
   a card that cannot decode is refused (by the benchmark, as a failed run),
-  never replaced by the processor. Developer
+  never replaced by the processor. `--prose` also runs the narrative prose
+  stage (since 0.3.6 in the clinical register) and reports its section counts
+  only; `--suggestions confirm-all` (the note-content-design plan's D10, the
+  metric amendment of 2026-11-09; default `off`, the report unchanged) asks the
+  local language model for a section for every left-out line before the
+  next-patient boundary, adds every
+  suggestion the chooser's ownership rule accepts before the note is
+  finalised, and prints six more count columns. Both need the language model
+  and are refused without it; validation run 9 uses both under rule v6
+  (written at that plan's Task F.1). Developer
   build only, from a normal terminal; see `docs/testing/validation-harness.md`.
 - `replay-kept-recordings.py <past_sessions folder> [--only <session id> ...]
   [--enrolment <wav>] [--model <name>]` (development-recordings plan Phase 4) —

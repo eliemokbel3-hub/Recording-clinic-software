@@ -16,7 +16,7 @@ practitioner on 2026-11-04; the longer goodbye-and-greeting list lines added 202
 the split-line line added 2026-10-27 for version 0.3.5, approved by the practitioner on
 2026-11-04; the misheard number, unit and abbreviation lines
 added after validation run 7 and the larger-model measurement, 2026-11, with no new
-version, approved by the practitioner on 2026-11-07, their counts refreshed with validation run 8's; the shadow-mode-off line added with them, awaiting the practitioner's approval). For the
+version, approved by the practitioner on 2026-11-07, their counts refreshed with validation run 8's; the shadow-mode-off line added with them, awaiting the practitioner's approval; the clinical-shorthand, suggested-section and suggested-next-patient lines and the renamed tick added 2026-11-09 for version 0.3.6, awaiting the practitioner's approval). For the
 practitioner, before saving a note and before finalising it in Cliniko.
 
 **Why this matters.** Ahpra's guidance on AI in healthcare ("Meeting your professional
@@ -158,9 +158,10 @@ where each line came from: the transcript, something you typed, or your own pre-
    Acknowledge, and it ignores words marked as possibly not speech. A whole line you said,
    with none of those words, that the note leaves out — advice, a plan, a safety-net line that none of your
    headings' phrases picked up — has its own review warning, "A line you said is not in
-   the note", also cleared only by its own Acknowledge. Tick **Show flagged lines only**
-   under **Edit the note** to find these lines (each is marked `[flagged]`), and add any
-   that belongs with **Add line to section**. From version 0.3.5, when the speech software
+   the note", also cleared only by its own Acknowledge. Tick **Show flagged or suggested
+   lines only** (called **Show flagged lines only** before version 0.3.6) under **Edit the
+   note** to find these lines (each is marked `[flagged]`), and add any that belongs with
+   **Add line to section**. From version 0.3.5, when the speech software
    split one line of yours into pieces at a comma (or a semicolon, colon or long dash), the
    warning counts that line once, however many pieces it has, and every piece is still
    marked `[flagged]`: add back each piece that belongs. A line split with no comma or
@@ -170,17 +171,60 @@ where each line came from: the transcript, something you typed, or your own pre-
    marked as possibly not speech, so still read the transcript through. The
    checks are a safety net, not a guarantee: they look for particular kinds of mismatch
    and cannot tell you the note is complete or correct.
-7. **Writing styles.** If you use a prose style (Narrative or Own voice), the app turns
+7. **Suggested headings (from version 0.3.6).** For the lines the note left out, the app
+   asks the language model on this computer which heading each one may belong under —
+   whatever writing style you use. After the note appears (for a long consultation this
+   can take a few minutes; the line under the note says "Suggesting sections for …"), a
+   line may be marked `[suggested: <heading>]` in the line list under **Edit the note**,
+   and the count line says how many are. Choosing that line picks its suggested heading
+   for you; nothing goes into the note until you press **Add line to section**, and then
+   only that line's own words from the transcript, as when you add any line — so the app
+   still only takes words from the transcript. A suggestion is a guess: check the heading
+   and the line against the transcript, and leave the line out if it does not belong. A
+   line someone else said is never suggested for your assessment, diagnosis, advice or
+   plan. A suggestion never stops you saving, and adding a suggested line of yours teaches
+   the app a phrase just as adding any line of yours does (when learning is on).
+   **A suggested line may be the next patient's.** The app holds suggestions back only
+   after a change of patient it has spotted (the lines marked `[next patient?]`); where it
+   spotted none, a line from the next patient can be suggested like any other line, with
+   no `[next patient?]` mark. In the program's own testing on invented consultations,
+   with every suggestion added, a next patient's line reached the note three times this
+   way, and twice a misheard line that had been left out reached it. Check the end of the
+   transcript before adding a suggested line near it, and read a suggested line's numbers
+   and names as carefully as any other. In a long consultation some lines may be counted
+   "not assessed": they stay as they were — left out, with any warning they already had.
+   Many left-out lines have no warning at all, so still read the whole transcript.
+8. **Writing styles.** If you use a prose style (Narrative or Own voice), the app turns
    your confirmed lines into sentences on this computer and checks each section against
    them; a section that fails the check is shown as plain lines instead, and you
    acknowledge it. Read the prose as carefully as the lines — the check is not a
-   certificate that the meaning survived.
-8. **Fill the gaps yourself.** Headings the app had nothing for stay empty. Beyond your
+   certificate that the meaning survived. From version 0.3.6 a prose section may use
+   clinical shorthand for a phrase that was said, but only from the fixed list you
+   approved on 2026-11-08 — an abbreviation for its usual words ("LBP" for "lower back
+   pain"), a clinical name for a body part ("patella" for "kneecap") or weeks written as
+   "3/52" — and, where someone other than you said a line in that section, it may open
+   "Pt reports" or "The patient reports" in place of their "I" or "my". Words for how
+   something feels ("sore", "tight", "swelling" and the like) are never swapped. The
+   check treats the shorthand and its words as the same, so it cannot tell you that the
+   shorthand fits, and it does not check who did what: "Pt reports" may be attached to a
+   line you said in the same section ("Pt tested the knee" for your "I tested the knee"),
+   or to a carer's, parent's or interpreter's words, and a week count written "3/52" may
+   have traded places with another number in the section. Because the check reads an
+   abbreviation as its separate words, it also cannot tell one shorthand from a close
+   relative using the same words: "UMN" and "LMN", or "FWB", "PWB" and "NWB", can swap
+   with the words around them ("LMN signs, upper limb" for "UMN signs, lower limb";
+   "PWB, full ROM" for "FWB, partial ROM") — read nerve-sign and weight-bearing
+   shorthand against the transcript every time. "Pt" or "patient" may also appear in
+   the middle of a sentence, not only at its start. And two abbreviations on the list
+   have another meaning: "Inv" means inversion here, never investigations, and "AP" means
+   anteroposterior, never assessment and plan. Clean clinical, the default, uses none
+   of this.
+9. **Fill the gaps yourself.** Headings the app had nothing for stay empty. Beyond your
    own proposals and pre-filled text, it never fills in examination findings, a
    diagnosis, treatment or advice that is not in the transcript — but words the speech
    software invented over background sound are in the transcript (step 2), so check
    every line, marked or not.
-9. **Save** only when the note is right. Save is what makes the note copyable and
+10. **Save** only when the note is right. Save is what makes the note copyable and
    writable to Cliniko.
 
 ## Writing it into Cliniko

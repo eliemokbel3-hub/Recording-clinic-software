@@ -66,9 +66,9 @@ from typing import Final, Literal
 from scribe_desktop.language_model import (
     LANGUAGE_MODEL_CONTEXT_TOKENS,
     PROMPT_FRAMING_TOKENS,
-    THINK_BLOCK_RE,
     LanguageModel,
     LanguageModelError,
+    strip_think_blocks,
 )
 from scribe_desktop.note import (
     CANONICAL_SECTION_KEYS,
@@ -266,15 +266,19 @@ def answer_token_budget(asked: int) -> int:
 def build_window_prompt(lines: Sequence[SuggestionLine]) -> tuple[str, dict[int, int]]:
     """The user text for one window and its asked numbers: window number →
     segment index (numbers count from 1 in window order, context lines
-    included)."""
+    included). Each line's words pass ``_prompt_safe`` again here, at the
+    prompt's one builder (review round 19 SEC-003): idempotent for a line
+    built by ``from_request``, and a line constructed any other way cannot
+    carry a newline or a whole chat-template marker into the prompt."""
     rows = [SUGGEST_LINES_HEADER]
     asked: dict[int, int] = {}
     for number, line in enumerate(lines, start=1):
+        words = _prompt_safe(line.suggestion_text)
         if line.placed is None:
             asked[number] = line.segment_index
-            rows.append(f"{number}? {line.speaker} {line.suggestion_text}")
+            rows.append(f"{number}? {line.speaker} {words}")
         else:
-            rows.append(f"{number} {line.speaker} [placed: {line.placed}] {line.suggestion_text}")
+            rows.append(f"{number} {line.speaker} [placed: {line.placed}] {words}")
     rows.append(SUGGEST_LINES_END)
     rows.append(_ANSWER_LINE)
     return "\n".join(rows), asked
@@ -282,7 +286,6 @@ def build_window_prompt(lines: Sequence[SuggestionLine]) -> tuple[str, dict[int,
 
 # D7's form, with the digits ASCII only (`\d` would admit any script's digits).
 _ANSWER_RE: Final = re.compile(r"^\s*([0-9]{1,4})\s*[.):-]?\s*([a-z_]+)\s*$")
-_OPEN_THINK: Final = "<think>"
 
 
 def parse_suggestions(
@@ -294,10 +297,11 @@ def parse_suggestions(
     number must be one of ``asked_numbers`` and the key a canonical key or
     ``none``; the FIRST valid answer per number wins; every other line is
     ignored. None — the whole completion refused, nothing taken from it —
-    when an unclosed ``<think>`` remains after a closed block is stripped, or
-    a list marker is echoed (the prose stage's marker-echo refusal)."""
-    text = THINK_BLOCK_RE.sub("", raw)
-    if _OPEN_THINK in text.lower():
+    when a ``<think>`` or ``</think>`` tag remains after the closed blocks
+    are stripped (``strip_think_blocks``), or a list marker is echoed (the
+    prose stage's marker-echo refusal)."""
+    text = strip_think_blocks(raw)
+    if text is None:
         return None
     if SUGGEST_LINES_HEADER in text or SUGGEST_LINES_END in text:
         return None
@@ -436,6 +440,12 @@ def run_suggestion_stage(
             # away) makes no call; they come again in the next window.
             consumed = len(window) or 1
             if asked:
+                # Note-content-design review round 16 A-2: the token counts
+                # above take the model's lock and may wait on it; an exit
+                # meanwhile sends no window.
+                if abort is not None and abort():
+                    reason = "aborted"
+                    break
                 windows_run += 1
                 raw = model.complete(
                     system_text=SUGGEST_INSTRUCTION,
