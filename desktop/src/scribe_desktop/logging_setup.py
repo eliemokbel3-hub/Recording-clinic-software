@@ -217,6 +217,18 @@ _PAYLOAD_SIGNATURES: Final[tuple[str, ...]] = (
     '"section_texts"',
     "'section_texts'",
     "section_texts=",
+    # Note-content-design plan D7 (C7; C9): the section-suggestion stage's
+    # input carries the pre-boundary transcript lines as
+    # ``note_suggest.SuggestionInput.asked_lines``, and each line its words
+    # as ``note_suggest.SuggestionLine.suggestion_text``; both names are
+    # distinctive so a rendering of the input, or of one line on its own,
+    # is dropped.
+    '"asked_lines"',
+    "'asked_lines'",
+    "asked_lines=",
+    '"suggestion_text"',
+    "'suggestion_text'",
+    "suggestion_text=",
     # Cliniko workflow safeguards plan Task 3.1 (D3): an ``EncounterContext``
     # carries ``patient_id`` and ``treatment_note_id``, a
     # ``ConsentAttestation`` always renders ``treatment_note_id`` (None when

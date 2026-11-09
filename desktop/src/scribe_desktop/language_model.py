@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import re
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -105,6 +106,15 @@ _SMOKE_USER_TEXT: Final = "Reply with the single word: ready"
 # one definition (the mock never imports the prose stage).
 PROMPT_LINES_HEADER: Final = "CONFIRMED LINES (one fact per line; rephrase only, add nothing):"
 PROMPT_LINES_END: Final = "END OF CONFIRMED LINES"
+
+# Shared by BOTH model stages — the prose styles and the section suggestions
+# (note-content-design D7, Task C.1: moved here from ``prose_style`` so
+# ``note_suggest`` imports no name from the prose stage). The chat template's
+# framing margin every prompt budget reserves (codex round 30 PR-MED-046),
+# and the ``<think>`` block stripped from a completion (the pinned model is
+# the non-thinking release; defensive).
+PROMPT_FRAMING_TOKENS: Final = 64
+THINK_BLOCK_RE: Final = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 
 
 class LanguageModelError(RuntimeError):
@@ -494,8 +504,10 @@ __all__ = [
     "LANGUAGE_RUNTIME_WHEEL_INDEX",
     "LANGUAGE_RUNTIME_WHEEL_SHA256",
     "LANGUAGE_RUNTIME_WHEEL_URL",
+    "PROMPT_FRAMING_TOKENS",
     "PROMPT_LINES_END",
     "PROMPT_LINES_HEADER",
+    "THINK_BLOCK_RE",
     "LanguageModel",
     "LanguageModelError",
     "LocalLanguageModel",

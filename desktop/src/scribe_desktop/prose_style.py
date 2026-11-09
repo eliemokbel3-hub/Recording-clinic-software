@@ -60,7 +60,6 @@ the result is built; nothing outlives the ``render`` call.
 
 from __future__ import annotations
 
-import re
 import time
 from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
@@ -68,8 +67,10 @@ from typing import Final, Literal
 
 from scribe_desktop.language_model import (
     LANGUAGE_MODEL_CONTEXT_TOKENS,
+    PROMPT_FRAMING_TOKENS,
     PROMPT_LINES_END,
     PROMPT_LINES_HEADER,
+    THINK_BLOCK_RE,
     LanguageModel,
     LanguageModelError,
 )
@@ -235,7 +236,8 @@ _USER_INSTRUCTION: Final = (
     "Rewrite these lines as one short paragraph. Output only the paragraph."
 )
 
-_THINK_BLOCK_RE: Final = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+# The ``<think>`` block regex is ``language_model.THINK_BLOCK_RE`` (shared with
+# the section suggestions since note-content-design C.1).
 _OPEN_THINK: Final = "<think>"
 
 
@@ -329,7 +331,8 @@ def _text_lines(lines: object) -> tuple[str, ...]:
 # first (from the end of the reviewed list), then shorthand. A section whose
 # instruction, lines and completion alone do not fit is refused BEFORE the
 # call with a named reason (`too_long`, C8) instead of raising in the runtime.
-PROMPT_FRAMING_TOKENS: Final = 64
+# The framing margin is `language_model.PROMPT_FRAMING_TOKENS` (64; shared
+# with the section suggestions since note-content-design C.1).
 SECTION_TOO_LONG_DETAIL: Final = "the section's lines are too long for the model's window"
 
 
@@ -553,7 +556,7 @@ def parse_section_prose(raw: str, section_key: NoteSectionKey) -> str:
     markdown heading is dropped, and whitespace is collapsed to single
     spaces. The empty string is judged by Check 5 like any prose: it fails
     ``missing_fact``, so "nothing usable" and "unfaithful" are one path."""
-    text = _THINK_BLOCK_RE.sub("", raw)
+    text = THINK_BLOCK_RE.sub("", raw)
     if _OPEN_THINK in text.lower():
         return ""
     if PROMPT_LINES_HEADER in text or PROMPT_LINES_END in text:

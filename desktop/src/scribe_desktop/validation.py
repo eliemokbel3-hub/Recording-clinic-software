@@ -37,7 +37,13 @@ synthetic ``conditions`` (the clinic 1 smoke retired the role-play set,
   1-5's reading), ``compose_draft`` with the extractive
   provider built from the explicit config folder, every proposal confirmed
   (``ui.note_review.build_resolutions``), ``finalise_note``, optionally the
-  narrative prose stage, then the metrics and the pass rule (data).
+  narrative prose stage, then the metrics and the pass rule (data). With
+  ``--suggestions confirm-all`` (note-content-design D10, metric amendment
+  2026-11-09) the local model's section suggestions for the left-out lines
+  are asked before that one finalisation, and every one the chooser's own
+  ownership rule accepts is added as a clinician who adds every suggested
+  line would (``SuggestionCounts``); ``off``, the default, is the run
+  unchanged. The reference reading never asks for suggestions.
 
 What this module enforces, and what it does not:
 
@@ -99,16 +105,20 @@ from scribe_desktop.enrolment import EnrolmentError
 from scribe_desktop.note import (
     NOTE_WARNING_SEVERITY,
     GeneratedNote,
+    NoteAssertion,
     NoteDraft,
     NoteModelProvider,
+    NoteSectionKey,
     ProposalResolution,
     compose_draft,
     content_tokens,
     covered_words,
     finalise_note,
+    manual_assertion_id,
     segment_hedged,
     spoken_by_confirmed_clinician,
     strip_token_punctuation,
+    whole_utterance_assertion,
     wholly_uncovered,
 )
 
@@ -143,11 +153,13 @@ from scribe_desktop.note_config import (
     NoteConfig,
     NoteConfigError,
     bind_template_profile,
+    build_note_request,
     is_learned_rule_id,
     load_note_config,
     next_patient_boundary,
 )
 from scribe_desktop.note_fill import detect_prefill_candidates
+from scribe_desktop.note_suggest import SuggestionInput
 from scribe_desktop.speaker_embedding import build_speaker_embedder, speaker_model_available
 from scribe_desktop.speaker_eval import (
     CLINICIAN_LABEL,
@@ -193,11 +205,15 @@ from scribe_desktop.transcription import (
 )
 from scribe_desktop.ui.models import (
     ProseStage,
+    SuggestionStage,
     build_prose_stage,
+    build_suggestion_stage,
+    eligible_utterances,
     extractive_provider_from_config,
     flagged_runs,
     language_model_available,
     next_patient_segment,
+    working_draft,
 )
 from scribe_desktop.ui.note_review import ProposalDecision, build_resolutions, prefilled_ids
 
@@ -1028,6 +1044,12 @@ class EncounterMetrics:
     unsupported_lines_excused_by_r1: tuple[tuple[int, int], ...] = ()
     segments_credited_by_run_only: int = 0
     facts_credited_by_run_only: int = 0
+    # Note-content-design D10 (metric amendment 2026-11-09): the fact
+    # indices of the material facts ``wrongly_present`` on a line a
+    # suggestion added — ANY carrying line counts (the inclusive rule);
+    # sorted, one per fact; empty unless ``encounter_metrics`` was given the
+    # suggested segments (``--suggestions confirm-all``). Read by no rule.
+    facts_wrongly_present_via_suggestion: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         for name in (
@@ -1070,6 +1092,22 @@ class EncounterMetrics:
             raise ValueError("facts must be FactOutcome results")
         if self.facts_credited_by_run_only > sum(1 for fact in self.facts if fact.material):
             raise ValueError("facts_credited_by_run_only exceeds the material facts")
+        via = self.facts_wrongly_present_via_suggestion
+        if not isinstance(via, tuple):
+            raise ValueError("facts_wrongly_present_via_suggestion must be a tuple of indices")
+        for index in via:
+            _require_count(index, "facts_wrongly_present_via_suggestion index")
+        if list(via) != sorted(set(via)):
+            raise ValueError("facts_wrongly_present_via_suggestion must be sorted, one per fact")
+        wrongly_present = {
+            fact.fact_index
+            for fact in self.facts
+            if fact.material and fact.verdict == "wrongly_present"
+        }
+        if not set(via) <= wrongly_present:
+            raise ValueError(
+                "facts_wrongly_present_via_suggestion names a fact not materially wrongly present"
+            )
 
     @property
     def material_wrong(self) -> int:
@@ -1893,6 +1931,7 @@ def encounter_metrics(
     script: EncounterScript,
     *,
     reference: ReferenceReading | None = None,
+    suggested_segments: frozenset[int] = frozenset(),
 ) -> EncounterMetrics:
     """Task 2.3's metric contract over one encounter (D8), exactly:
 
@@ -1988,6 +2027,14 @@ def encounter_metrics(
       R1 fact's own misrendering under a review mark, never an inserted word
       (``_excused_by_r1``); ``unsupported_lines_excused_by_r1`` names the
       excused lines, ``unsupported_clinical_lines`` stays the raw count.
+    - WRONGLY PRESENT VIA SUGGESTION (note-content-design D10, metric
+      amendment 2026-11-09; read by no rule): with ``suggested_segments`` —
+      the segments whose lines a suggestion added under ``--suggestions
+      confirm-all`` — a material fact ``wrongly_present`` is attributed to a
+      suggestion when, on some optimal alignment, one of its statement's
+      reference tokens is aligned to a transcript token carried by such a
+      line: ANY carrying line counts (the inclusive rule). The verdicts
+      themselves are unchanged.
     """
     canonical_reference = _reference(script)
     hypothesis = _canonical_hypothesis(document)
@@ -2114,6 +2161,18 @@ def encounter_metrics(
             # an empty span).
             flagged_by_line.append((ordinal, min(line)[0], structured))
         other_words.update(flagged - structured)
+    # D10: the canonical tokens a suggested line carries (one segment a
+    # line, so its segment is any of its words').
+    suggested_tokens = sorted(
+        {
+            j
+            for line in lines
+            if min(line)[0] in suggested_segments
+            for position in line
+            for j in by_word.get(position, ())
+        }
+    )
+    via_suggestion: list[int] = []
 
     next_patient_axis = NEXT_PATIENT_AXIS in script.axes
     facts: list[FactOutcome] = []
@@ -2230,6 +2289,18 @@ def encounter_metrics(
         facts.append(replace(outcome, residue_r1=r1, residue_r2=r2, residue_r3=r3))
         if r1:  # R1 holds only for a material fact
             r1_ranges.extend(statements)
+        if (
+            suggested_tokens
+            and outcome.material
+            and outcome.verdict == "wrongly_present"
+            and any(
+                alignment.diagonal(i, j)
+                for first, last in statements
+                for i in range(first, last + 1)
+                for j in suggested_tokens
+            )
+        ):
+            via_suggestion.append(index)
 
     # D4's second pass, once every fact's R1 is known: a line is excused when
     # EVERY flagged structured-claim word in it is an R1 fact's own
@@ -2268,6 +2339,7 @@ def encounter_metrics(
         unsupported_lines_excused_by_r1=excused,
         segments_credited_by_run_only=len(run_only_segments),
         facts_credited_by_run_only=run_only_facts,
+        facts_wrongly_present_via_suggestion=tuple(via_suggestion),
     )
 
 
@@ -2285,6 +2357,9 @@ RuleFailure = Literal[
     "uncertainty_not_surfaced",
     "word_error_rate",
     "prose_unavailable",
+    # Note-content-design D10: ``--suggestions confirm-all`` asked for and
+    # not measured (the prose stage's round 11 MED-007 precedent).
+    "suggestions_unavailable",
 ]
 
 
@@ -2598,6 +2673,61 @@ class ProseCounts:
             raise ValueError("unavailable must be a flag")
 
 
+# Note-content-design D10: the harness's declared suggestion policies —
+# ``off`` (the default: the run unchanged) or ``confirm-all`` (every
+# suggestion the chooser's ownership rule accepts is added).
+SuggestionPolicy = Literal["off", "confirm-all"]
+SUGGESTION_POLICIES: Final[tuple[str, ...]] = get_args(SuggestionPolicy)
+
+
+@dataclass(frozen=True)
+class SuggestionCounts:
+    """Note-content-design D10 (metric amendment 2026-11-09): one
+    encounter's section suggestions under ``--suggestions confirm-all`` —
+    counts and seconds only, no text and no section key. ``suggested_w`` and
+    ``suggested_u``: the lines a suggestion added (accepted through
+    ``ui.models.eligible_utterances``' own ownership rule), by the left-out
+    line's speaker — the confirmed clinician's (W) or anyone else's (U);
+    ``dropped``: the model's suggestions that rule refused (a section outside
+    the line's ``allowed_sections`` — the input holds no line in the note or
+    past the boundary, so nothing else is refused); ``not_assessed``: the
+    asked lines the stage did not assess (``lines_not_assessed``) — a line
+    of a window whose completion was used is assessed whatever its answer,
+    so a missing or malformed answer is counted neither here nor under
+    ``dropped`` (codex round 11 PR-LOW-074);
+    ``wrongly_present``: the material facts wrongly present on a line a
+    suggestion added (``EncounterMetrics.facts_wrongly_present_via_suggestion``,
+    the inclusive rule); ``model_seconds``: the stage's own clock;
+    ``unavailable``: the stage could not run (the model missing or failing
+    to load), so nothing was measured — never a clean zero (round 11
+    MED-007's rule for the prose stage)."""
+
+    suggested_w: int
+    suggested_u: int
+    dropped: int
+    not_assessed: int
+    wrongly_present: int
+    model_seconds: float
+    unavailable: bool = False
+
+    def __post_init__(self) -> None:
+        for name in ("suggested_w", "suggested_u", "dropped", "not_assessed", "wrongly_present"):
+            _require_count(getattr(self, name), name)
+        seconds = self.model_seconds
+        if not isinstance(seconds, float) or not math.isfinite(seconds) or seconds < 0:
+            raise ValueError("model_seconds must be a non-negative number of seconds")
+        if not isinstance(self.unavailable, bool):
+            raise ValueError("unavailable must be a flag")
+        # One added line can carry several facts, so ``wrongly_present`` is
+        # bounded by the facts, never by the lines; but it needs a line.
+        if self.wrongly_present and not (self.suggested_w or self.suggested_u):
+            raise ValueError("wrongly_present needs a line a suggestion added")
+        if self.unavailable and (
+            self.suggested_w or self.suggested_u or self.dropped or self.wrongly_present
+        ):
+            raise ValueError("an unavailable stage suggested nothing")
+
+
 @dataclass(frozen=True)
 class EncounterOutcome:
     """One encounter's result: its id (pattern-constrained), its status, the
@@ -2626,6 +2756,10 @@ class EncounterOutcome:
     # so the recorded reference-boundary check covers every next-patient
     # script the run read; None for an error outcome. No rule reads it.
     reference: ReferenceReading | None = None
+    # Note-content-design D10: the suggestion counts of a measured
+    # encounter under ``--suggestions confirm-all``; None under ``off`` and
+    # wherever no note was finalised. Only their ``unavailable`` fails one.
+    suggestions: SuggestionCounts | None = None
 
     def __post_init__(self) -> None:
         if not _ENCOUNTER_ID_RE.fullmatch(self.encounter_id):
@@ -2650,6 +2784,7 @@ class EncounterOutcome:
             ("metrics", EncounterMetrics),
             ("prose", ProseCounts),
             ("reference", ReferenceReading),
+            ("suggestions", SuggestionCounts),
         ):
             value = getattr(self, name)
             if value is not None and not isinstance(value, kind):
@@ -2701,6 +2836,9 @@ def _encounter_failures(
     if outcome.prose is not None and outcome.prose.unavailable:
         # Asked for (--prose) and not measured: the run did not do its job.
         failures.append("prose_unavailable")
+    if outcome.suggestions is not None and outcome.suggestions.unavailable:
+        # Likewise for --suggestions confirm-all (D10).
+        failures.append("suggestions_unavailable")
     return tuple(failures)
 
 
@@ -2957,7 +3095,9 @@ class HarnessInputs:
     the config's own cues), the optional prose stage and, since the metric
     amendment of 2026-10-23 (D11), the attribution policy with its enrolments
     — clinician voice slot -> the in-memory profile, never a store, never
-    rendered (``repr=False``)."""
+    rendered (``repr=False``). ``suggestion_stage`` (note-content-design D10):
+    the section-suggestion stage ``--suggestions confirm-all`` runs; None is
+    ``off``."""
 
     provider: SpeechProvider
     frame_probability: FrameProbabilityFn
@@ -2970,6 +3110,7 @@ class HarnessInputs:
     now: Callable[[], datetime] = _default_now
     attribution: Attribution = "enrolment"
     enrolments: Mapping[int, EnrolmentInputs] = field(default_factory=dict, repr=False)
+    suggestion_stage: SuggestionStage | None = None
 
 
 def read_label_track(labels: Path) -> LabelTrack:
@@ -2995,14 +3136,13 @@ def suspect_segment_count(document: TranscriptDocument) -> int:
     )
 
 
-def _compose_note(
+def _compose_draft(
     document: TranscriptDocument, clinician: str, inputs: HarnessInputs, now: datetime
-) -> GeneratedNote:
-    """The shipped pipeline from a transcript to a finalised note under D9's
-    declared policies (the earliest prefill region, every proposal
-    confirmed) — one path for the measured transcript and the reference."""
+) -> NoteDraft:
+    """``compose_draft`` under D9's declared region policy (the earliest
+    prefill region) — the one draft both paths below finalise."""
     config = inputs.config
-    draft = compose_draft(
+    return compose_draft(
         document,
         config,
         inputs.note_provider_factory(config),
@@ -3012,7 +3152,130 @@ def _compose_note(
         learned_rules=None,
         decided_at=now,
     )
-    return finalise_note(draft, confirm_all(draft, now), document, config, created_at=now)
+
+
+def _compose_note(
+    document: TranscriptDocument,
+    clinician: str,
+    inputs: HarnessInputs,
+    now: datetime,
+    *,
+    draft: NoteDraft | None = None,
+    additions: Sequence[NoteAssertion] = (),
+) -> GeneratedNote:
+    """The shipped pipeline from a transcript to a finalised note under D9's
+    declared policies (the earliest prefill region, every proposal
+    confirmed) — one path for the measured transcript and the reference.
+    ``draft`` and ``additions`` (note-content-design D10) are passed ONLY by
+    ``evaluate_encounter`` under ``--suggestions confirm-all``: the draft it
+    asked the suggestions from, and the lines they added, appended as the
+    Note tab's Add appends them (``ui.models.working_draft``) before the one
+    finalisation, the resolutions the draft's own (``NoteScreen._refinalise``'s
+    order). The reference reading calls this bare, so it never sees one."""
+    if draft is None:
+        draft = _compose_draft(document, clinician, inputs, now)
+    working = working_draft(draft, removed=(), additions=additions) if additions else draft
+    return finalise_note(
+        working, confirm_all(draft, now), document, inputs.config, created_at=now
+    )
+
+
+class _SuggestionPass(NamedTuple):
+    """What one encounter's suggestion pass hands back: the lines to add
+    (``m<segment>`` transcript assertions), the segments they quote, and the
+    counts ``SuggestionCounts`` takes before the metrics exist."""
+
+    additions: tuple[NoteAssertion, ...]
+    segments: frozenset[int]
+    by_clinician: int
+    by_other: int
+    dropped: int
+    not_assessed: int
+    seconds: float
+    unavailable: bool
+
+
+def suggestion_pass(
+    document: TranscriptDocument,
+    draft: NoteDraft,
+    clinician: str,
+    inputs: HarnessInputs,
+    stage: SuggestionStage,
+) -> _SuggestionPass:
+    """D10's ``confirm-all`` policy over one draft, built as the Note tab
+    builds its job (``NoteScreen._begin_suggestions``): the draft's request
+    (``build_note_request``, cut at the next-patient boundary), the lines the
+    draft quotes as placed context, the stage asked once with no abort and
+    no yield (nothing else runs). The model's suggestions are accepted only
+    through ``eligible_utterances`` — the chooser's own ownership rule, the
+    boundary and the in-note refusal — and each accepted one is added as
+    the Note tab's Add builds it (``whole_utterance_assertion`` under
+    ``manual_assertion_id``). No line left out: the stage is not asked. A
+    stage that returns no result (the model missing or failing to load) is
+    ``unavailable``. Besides ids, keys and counts, only the additions leave
+    this function: transcript assertions quoting their lines' words, which go
+    into the one finalisation and nowhere else (review round 10 LOW-003)."""
+    placed: dict[int, NoteSectionKey] = {}
+    for section in draft.note_sections:
+        for assertion in section.note_assertions:
+            coords = assertion.note_span.source_coords
+            if assertion.provenance == "transcript" and coords is not None:
+                placed.setdefault(coords.segment_index, section.section_key)
+    request = build_note_request(
+        document, inputs.config, draft.template_profile_id, clinician_speaker=clinician
+    )
+    suggestion_input = SuggestionInput.from_request(
+        request, in_note=placed, clinician_speaker=clinician
+    )
+    del request
+    if not suggestion_input.lines_asked:
+        return _SuggestionPass((), frozenset(), 0, 0, 0, 0, 0.0, False)
+    outcome = stage(suggestion_input)
+    del suggestion_input
+    result = outcome.result
+    if result is None:
+        return _SuggestionPass((), frozenset(), 0, 0, 0, 0, 0.0, True)
+    choices = eligible_utterances(
+        document,
+        clinician_speaker=clinician,
+        in_note=placed,
+        boundary=next_patient_boundary(document, inputs.config),
+        suggested=dict(result.suggestions),
+    )
+    additions: list[NoteAssertion] = []
+    added: set[int] = set()
+    by_clinician = by_other = 0
+    segments = document.transcript_segments
+    for choice in choices:
+        key = choice.suggested
+        if key is None:
+            continue
+        segment = segments[choice.segment_index]
+        line = whole_utterance_assertion(
+            manual_assertion_id(choice.segment_index),
+            key,
+            segment_index=choice.segment_index,
+            speaker=segment.speaker,
+            words=segment.transcript_words,
+        )
+        if line is None:
+            continue
+        additions.append(line)
+        added.add(choice.segment_index)
+        if spoken_by_confirmed_clinician(segment.speaker, clinician):
+            by_clinician += 1
+        else:
+            by_other += 1
+    return _SuggestionPass(
+        tuple(additions),
+        frozenset(added),
+        by_clinician,
+        by_other,
+        len(result.suggestions) - len(additions),
+        result.lines_not_assessed,
+        float(result.seconds),
+        False,
+    )
 
 
 def reference_reading(
@@ -3098,7 +3361,18 @@ def evaluate_encounter(
             reference=reference,
         )
     as_other, as_clinician = attribution_seconds(document, track, clinician)
-    note = _compose_note(document, clinician, inputs, now)
+    stage = inputs.suggestion_stage
+    suggested: _SuggestionPass | None = None
+    if stage is None:
+        note = _compose_note(document, clinician, inputs, now)
+    else:
+        # Note-content-design D10: the suggestions are asked from the draft
+        # and added before the ONE finalisation.
+        draft = _compose_draft(document, clinician, inputs, now)
+        suggested = suggestion_pass(document, draft, clinician, inputs, stage)
+        note = _compose_note(
+            document, clinician, inputs, now, draft=draft, additions=suggested.additions
+        )
     prose: ProseCounts | None = None
     if inputs.prose_stage is not None:
         result = inputs.prose_stage(note)
@@ -3109,7 +3383,26 @@ def evaluate_encounter(
         )
     # One alignment per encounter (review round 25): the metrics carry the
     # word errors ``word_errors`` would compute from the same inputs.
-    metrics = encounter_metrics(document, note, script, reference=reference)
+    metrics = encounter_metrics(
+        document,
+        note,
+        script,
+        reference=reference,
+        suggested_segments=suggested.segments if suggested is not None else frozenset(),
+    )
+    suggestions = (
+        None
+        if suggested is None
+        else SuggestionCounts(
+            suggested_w=suggested.by_clinician,
+            suggested_u=suggested.by_other,
+            dropped=suggested.dropped,
+            not_assessed=suggested.not_assessed,
+            wrongly_present=len(metrics.facts_wrongly_present_via_suggestion),
+            model_seconds=suggested.seconds,
+            unavailable=suggested.unavailable,
+        )
+    )
     return EncounterOutcome(
         encounter_id,
         "measured",
@@ -3121,6 +3414,7 @@ def evaluate_encounter(
         clinician_as_other_seconds=as_other,
         other_as_clinician_seconds=as_clinician,
         reference=reference,
+        suggestions=suggestions,
     )
 
 
@@ -3195,7 +3489,10 @@ def run_encounters(
 
 @dataclass(frozen=True)
 class RunInfo:
-    """What the report's header names: the models and the build."""
+    """What the report's header names: the models and the build — and,
+    since note-content-design D10, the suggestion policy, which switches the
+    header, the separator and every row's cells together (``off`` prints
+    the report as before it existed)."""
 
     whisper_model: str
     whisper_fallback: bool
@@ -3204,6 +3501,7 @@ class RunInfo:
     commit: str | None
     models_manifest_sha256: str | None
     attribution: Attribution = "enrolment"
+    suggestions: SuggestionPolicy = "off"
 
 
 def run_passed(
@@ -3262,6 +3560,67 @@ _ATTRIBUTION_TEXT: Final[dict[str, str]] = {
         "(--attribution clustering: runs 1-5's reading)"
     ),
 }
+
+
+# Note-content-design D10 (metric amendment 2026-11-09): the six columns
+# ``--suggestions confirm-all`` adds after "Prose p/f/e", and the sentence
+# the run-information line gains with them. Neither is printed under ``off``.
+SUGGESTION_COLUMNS: Final[tuple[str, ...]] = (
+    "Suggested W",
+    "Suggested U",
+    "Suggested dropped",
+    "Lines not assessed",
+    "Wrongly present via suggestion",
+    "Model seconds",
+)
+_SUGGESTION_TEXT: Final = (
+    " Suggestions `confirm-all`, metric amendment 2026-11-09 (note-content-design D10): "
+    "the local model's section for each left-out line before the next-patient boundary "
+    "is asked once, and every suggestion the chooser's own ownership rule accepts is "
+    "added before the one finalisation, as a clinician who adds every suggested line "
+    "would; Suggested W and Suggested U count those lines by speaker (the confirmed "
+    "clinician's, anyone else's), Suggested dropped the suggestions that rule refused, "
+    "Lines not assessed the asked lines the stage did not assess, Wrongly present via "
+    "suggestion the material facts wrongly present on any line a suggestion added (the "
+    "inclusive rule), Model seconds the stage's own clock. Where each line is placed in "
+    "its section is not measured; the fact verdicts are unchanged."
+)
+
+
+def _suggestion_cells(counts: SuggestionCounts | None) -> list[str]:
+    """One row's six suggestion cells (D10): ``-`` where nothing was
+    finalised, ``unavailable`` in each where the stage could not run."""
+    if counts is None:
+        return ["-"] * len(SUGGESTION_COLUMNS)
+    if counts.unavailable:
+        return ["unavailable"] * len(SUGGESTION_COLUMNS)
+    return [
+        str(counts.suggested_w),
+        str(counts.suggested_u),
+        str(counts.dropped),
+        str(counts.not_assessed),
+        str(counts.wrongly_present),
+        _seconds(counts.model_seconds),
+    ]
+
+
+def _suggestion_totals(outcomes: Sequence[EncounterOutcome]) -> list[str]:
+    """The six TOTAL cells over the measured suggestion counts (an
+    unavailable stage contributes nothing); each ``-`` when none measured."""
+    measured = [
+        o.suggestions
+        for o in outcomes
+        if o.suggestions is not None and not o.suggestions.unavailable
+    ]
+    any_measured = bool(measured)
+    return [
+        _count(sum(c.suggested_w for c in measured), any_measured),
+        _count(sum(c.suggested_u for c in measured), any_measured),
+        _count(sum(c.dropped for c in measured), any_measured),
+        _count(sum(c.not_assessed for c in measured), any_measured),
+        _count(sum(c.wrongly_present for c in measured), any_measured),
+        _seconds_total([c.model_seconds for c in measured]),
+    ]
 
 
 def _count(value: int, available: bool) -> str:
@@ -3469,6 +3828,12 @@ def render_report(
             "ceilings; the raw counts in the tables and the rule v1 verdict are unchanged. "
             "A cell or total nothing measured reads `-`; a measured zero reads 0."
         )
+    # Note-content-design D10: under ``confirm-all`` the run-information line,
+    # the header, the separator and every row gain the suggestions together.
+    suggesting = info.suggestions == "confirm-all"
+    suggestion_header = (
+        "".join(f"| {name} " for name in SUGGESTION_COLUMNS) if suggesting else ""
+    )
     lines = [
         *heading,
         "",
@@ -3484,7 +3849,9 @@ def render_report(
         "(the recogniser's alone: Surfaced (acoustic only)). Attribution "
         f"`{info.attribution}`, metric amendment 2026-10-23: "
         f"{_ATTRIBUTION_TEXT[info.attribution]}; the two seconds columns show the "
-        "attribution residue both ways (recorded, never failing)." + amendments,
+        "attribution residue both ways (recorded, never failing)."
+        + amendments
+        + (_SUGGESTION_TEXT if suggesting else ""),
         "",
         "| Encounter | Status | Segments | Ref words | WER | Spelling-normalised words "
         "| Unsupported clinical lines "
@@ -3494,8 +3861,8 @@ def render_report(
         "| Warned omissions | Uncertainty missed | Surfaced (acoustic only) "
         "| Hedge marks on unhedged segments | Ambiguous facts | Checker failures "
         "| Suspect segments | Clinician speech labelled other (s) "
-        "| Other speech labelled clinician (s) | Prose p/f/e | Rule |",
-        "|" + "---|" * 28,
+        "| Other speech labelled clinician (s) | Prose p/f/e " + suggestion_header + "| Rule |",
+        "|" + "---|" * (28 + (len(SUGGESTION_COLUMNS) if suggesting else 0)),
     ]
     totals = Counter[str]()
     # PR-LOW-016 (validation-run6 Task 4.3, under rule v2's report only — a
@@ -3584,6 +3951,9 @@ def render_report(
         if as_clinician is not None:
             as_clinician_total.append(as_clinician)
         cells[19:19] = [_seconds(as_other), _seconds(as_clinician)]
+        if suggesting:
+            # D10: after the prose cell, before the rule.
+            cells += _suggestion_cells(outcome.suggestions)
         status = outcome.status + (f" ({outcome.error_type})" if outcome.error_type else "")
         # PR-LOW-016: an error outcome made no transcript to count.
         segments = (
@@ -3621,7 +3991,9 @@ def render_report(
         f"| {_count(totals['other'], any_metrics)} | - | - | {note_totals} "
         f"| {_count(totals['suspect'], any_suspect)} "
         f"| {_seconds_total(as_other_total)} | {_seconds_total(as_clinician_total)} "
-        f"| - | {verdict} |"
+        "| - "
+        + "".join(f"| {cell} " for cell in (_suggestion_totals(outcomes) if suggesting else ()))
+        + f"| {verdict} |"
     )
 
     lines += ["", "### Checker warnings (code = count)", ""]
@@ -3975,6 +4347,17 @@ def _parser() -> argparse.ArgumentParser:
         help="also run the narrative prose stage and report its section counts",
     )
     parser.add_argument(
+        "--suggestions",
+        choices=SUGGESTION_POLICIES,
+        default="off",
+        help=(
+            "the local model's section suggestions for the left-out lines: `off` (default; "
+            "the run unchanged) or `confirm-all` (every suggestion the chooser accepts is "
+            "added before the note is finalised, and the report gains six suggestion "
+            "columns); needs the language model"
+        ),
+    )
+    parser.add_argument(
         "--attribution",
         choices=ATTRIBUTIONS,
         default="enrolment",
@@ -4013,7 +4396,9 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
     validation-run6 plan D17), an unusable config, a config carrying the app's learned
     content, a template
     profile that cannot be bound, then the models (by name, before any is
-    constructed; under ``enrolment`` attribution the speaker model too), an
+    constructed; under ``--prose`` or ``--suggestions confirm-all`` the
+    language model too, and under ``enrolment`` attribution the speaker
+    model), an
     unreadable set folder, an enrolment WAV the set's scripts need missing
     from ``<set>/enrolment/`` (D11), a ``--device cuda`` the graphics card
     cannot decode on (by its code — gpu-decoding plan D7; never a fall back
@@ -4151,6 +4536,13 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
             f"{install_layout.model_remedy('language-model')}"
         )
         return 2
+    suggestion_policy: SuggestionPolicy = args.suggestions
+    if suggestion_policy == "confirm-all" and not language_model_available():
+        print(
+            f"[refused] --suggestions confirm-all: the language model is not installed in "
+            f"{models}: {install_layout.model_remedy('language-model')}"
+        )
+        return 2
     attribution: Attribution = args.attribution
     if attribution == "enrolment" and not speaker_model_available():
         print(
@@ -4196,6 +4588,11 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
         # graphics card that cannot decode is a refusal, never the processor.
         provider = WhisperSpeechProvider(model_name=whisper, device=device)
         prose_stage = build_prose_stage("narrative") if args.prose else None
+        # Note-content-design D10: the prose stage's resident model and its
+        # one remembered load failure (the shared cache).
+        suggestion_stage = (
+            build_suggestion_stage() if suggestion_policy == "confirm-all" else None
+        )
     except KeyboardInterrupt:
         load_interrupted = True
     except ComputeDeviceError as exc:
@@ -4258,6 +4655,7 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
         prose_stage=prose_stage,
         attribution=attribution,
         enrolments=enrolments,
+        suggestion_stage=suggestion_stage,
     )
     custody: str | None = None
     interrupted = False
@@ -4289,6 +4687,7 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
         commit=read_commit(repo_root),
         models_manifest_sha256=models_manifest_sha256(repo_root),
         attribution=attribution,
+        suggestions=suggestion_policy,
     )
     print()
     print(render_report(outcomes, rule, info, errors=errors, set_name=set_name))
@@ -4315,6 +4714,8 @@ __all__ = [
     "RULE_SCHEMA_VERSION",
     "RULE_V2_RATIFIED",
     "SCRIPT_SCHEMA_VERSION",
+    "SUGGESTION_COLUMNS",
+    "SUGGESTION_POLICIES",
     "UNNAMED_ENCOUNTER",
     "Attribution",
     "CanonicalTokens",
@@ -4339,6 +4740,8 @@ __all__ = [
     "ScriptLine",
     "SetCeilings",
     "SpokenTurn",
+    "SuggestionCounts",
+    "SuggestionPolicy",
     "SyntheticConditions",
     "TranscriptAlignment",
     "ValidationHarnessError",
@@ -4379,6 +4782,7 @@ __all__ = [
     "run_passed",
     "run_passed_v1",
     "script_line_hedged",
+    "suggestion_pass",
     "suspect_segment_count",
     "transcript_wer",
     "v1_failures",

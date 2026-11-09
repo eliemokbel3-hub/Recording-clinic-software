@@ -1450,7 +1450,12 @@ def test_every_real_model_child_loads_from_the_dev_root() -> None:
         for name, source in children.items()
         if any(marker in source for marker in _REAL_MODEL_CONSTRUCTORS)
     }
-    assert real == {"_REAL_TRANSCRIBE_CHILD", "_REAL_PROSE_CHILD", "_STUBBED_NETWORK_CHILD"}
+    assert real == {
+        "_REAL_TRANSCRIBE_CHILD",
+        "_REAL_PROSE_CHILD",
+        "_REAL_SUGGESTION_CHILD",
+        "_STUBBED_NETWORK_CHILD",
+    }
     for name in real:
         source = children[name]
         assert _CHILD_PIN in source, name
@@ -1540,7 +1545,8 @@ _SYS_EXECUTABLE_REFERENCES: dict[str, int] = {
     # an exception: the host relays bytes and imports no transcription code),
     # the function-built app child, the pipe app child, the app-server child,
     # the dev host relay child (an exception, as ``LAUNCHER``), ``_spawn_child``
-    # (the six ``_write_child`` scripts) and the stubbed-network child.
+    # (the eight ``_write_child`` scripts — note-content-design Task C.5 added
+    # the two suggestion children) and the stubbed-network child.
     "test_integration_no_sockets.py": 7,
     # Exceptions, no scribe_desktop code: the held-out-set runner and a pytest
     # run over a project generated in the test's temporary folder (its own
@@ -1564,13 +1570,14 @@ _PROCESS_LAUNCHES: dict[str, int] = {
     "test_validation_harness.py": 1,
 }
 # The pinned child sources per module: the eight single children above, and
-# in the integration module the nine pinned ``*_CHILD`` constants (all but the
-# dev host relay) plus the function-built app child.
+# in the integration module the eleven pinned ``*_CHILD`` constants (all but
+# the dev host relay; the two suggestion children since note-content-design
+# Task C.5) plus the function-built app child.
 _GPU_PINNED_CHILD_SOURCES: dict[str, int] = {
     "test_consultation_boundary.py": 1,
     "test_guard_eval.py": 1,
     "test_hands_free.py": 1,
-    "test_integration_no_sockets.py": 10,
+    "test_integration_no_sockets.py": 12,
     "test_note_check.py": 1,
     "test_status_and_app.py": 1,
     "test_system_pause.py": 1,
@@ -1708,7 +1715,7 @@ def test_the_shared_child_helpers_run_only_classified_sources() -> None:
         ]
 
     written = calls("test_integration_no_sockets.py", "_write_child")
-    assert len(written) == 7
+    assert len(written) == 9
     children = _child_sources()
     for call in written:
         source = call.args[2]

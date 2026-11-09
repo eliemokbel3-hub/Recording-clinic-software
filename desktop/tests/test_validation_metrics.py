@@ -91,6 +91,7 @@ from scribe_desktop.validation import (
     ProseCounts,
     ReferenceReading,
     RuleError,
+    SuggestionCounts,
     WordErrors,
     class_breaches,
     class_counts,
@@ -4455,7 +4456,14 @@ _VALIDATED_STR_FIELDS = {
     ("EncounterMetrics", "checker_failures"),
     ("EncounterMetrics", "expected_warnings_absent"),
 }
-_RESULT_TYPES = (WordErrors, FactOutcome, EncounterMetrics, EncounterOutcome, ProseCounts)
+_RESULT_TYPES = (
+    WordErrors,
+    FactOutcome,
+    EncounterMetrics,
+    EncounterOutcome,
+    ProseCounts,
+    SuggestionCounts,
+)
 
 
 class TestTextFreeTypes:

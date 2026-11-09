@@ -3496,3 +3496,474 @@ class TestReport:
             EncounterOutcome("syn-001", "measured", **{name: value})
         assert getattr(EncounterOutcome("syn-001", "measured", **{name: 0.0}), name) == 0.0
         assert getattr(EncounterOutcome("syn-001", "error", "OSError"), name) is None
+
+
+# ---------------------------------------------------------------------------
+# Note-content-design Task C.6 (D10): --suggestions {off,confirm-all}
+# ---------------------------------------------------------------------------
+
+# Five invented lines: the clinician's finding (quoted by ``_QuoteFirst``), a
+# patient answer, a patient's small talk the note must not carry (an absent
+# fact), a patient remark, and the clinician's advice.
+_SUGGESTION_LINES: tuple[tuple[str, str], ...] = (
+    ("clinician", "On examination the left knee is tender."),
+    ("patient", "It hurts when I walk."),
+    ("patient", "My neighbour has a sore elbow."),
+    ("patient", "I sleep badly most nights."),
+    ("clinician", "Please rest the knee tonight."),
+)
+# What the fake model answers per asked segment: two patient lines to
+# patient-admissible sections (U), one patient line to a clinician-owned
+# section (dropped by the ownership rule), the clinician's advice (W).
+_SUGGESTED: dict[int, str] = {
+    1: "presenting_complaint",
+    2: "history_presenting_complaint",
+    3: "diagnosis",
+    4: "advice_home_exercise",
+}
+
+
+def _suggestion_script(tmp_path: Path) -> validation.EncounterScript:
+    data = {
+        "schema_version": 1,
+        "encounter_id": "syn-001",
+        "appointment_type": "follow_up",
+        "axes": ["laterality", "small_talk"],
+        "lines": [{"role": role, "text": text} for role, text in _SUGGESTION_LINES],
+        "facts": [
+            {"kind": "laterality", "tokens": ["left", "knee"], "line": 0, "material": True},
+            {"kind": "absent", "tokens": ["sore", "elbow"], "line": 2, "material": True},
+        ],
+    }
+    return load_script(_write_script(tmp_path, data))
+
+
+class _QuoteFirst:
+    """A fake note provider that quotes only the first utterance, so every
+    other line is left out (asked)."""
+
+    provider_name = "quote-first"
+
+    def generate_sections(self, request: NoteRequest) -> tuple[GeneratedSection, ...]:
+        first = request.transcript_utterances[0]
+        assertion = whole_utterance_assertion(
+            "q0000",
+            "presenting_complaint",
+            segment_index=first.segment_index,
+            speaker=first.speaker,
+            words=first.transcript_words,
+        )
+        assert assertion is not None
+        return (
+            GeneratedSection(section_key="presenting_complaint", note_assertions=(assertion,)),
+        )
+
+
+class _FakeSuggestionStage:
+    """The suggestion stage as the harness calls it: records each input's
+    asked segments and answers from ``answers`` for the asked ones only."""
+
+    def __init__(self, answers: dict[int, str], *, unavailable: bool = False) -> None:
+        self.answers = answers
+        self.unavailable = unavailable
+        self.asked: list[list[int]] = []
+
+    def __call__(self, suggestion_input: Any, /, **kwargs: Any) -> models.SuggestionStageOutcome:
+        from scribe_desktop.note_suggest import SuggestionStageResult
+
+        asked = [
+            line.segment_index for line in suggestion_input.asked_lines if line.placed is None
+        ]
+        self.asked.append(asked)
+        if self.unavailable:
+            return models.SuggestionStageOutcome(None, "the language model is not installed")
+        return models.SuggestionStageOutcome(
+            SuggestionStageResult(
+                model_id="fake",
+                prompt_version="suggest-v1",
+                suggestions=tuple((i, self.answers[i]) for i in asked if i in self.answers),
+                windows_run=1,
+                windows_failed=0,
+                lines_asked=len(asked),
+                lines_not_assessed=0,
+                lines_withheld=0,
+                seconds=2.5,
+                reason="completed",
+            )
+        )
+
+
+def _bare_metrics(**overrides: Any) -> validation.EncounterMetrics:
+    values: dict[str, Any] = {
+        "words": validation.WordErrors(4, 4, 0),
+        "spelling_normalised_words": 0,
+        "transcript_lines": 0,
+        "config_lines": 0,
+        "unsupported_clinical_lines": 0,
+        "other_unsupported_words": 0,
+        "checker_tally": (),
+        "checker_failures": (),
+        "checker_failure_count": 0,
+        "expected_warnings_absent": (),
+        "facts": (),
+    }
+    values.update(overrides)
+    return validation.EncounterMetrics(**values)
+
+
+def _measured(**overrides: Any) -> EncounterOutcome:
+    metrics = _bare_metrics()
+    values: dict[str, Any] = {
+        "segment_count": 1,
+        "words": metrics.words,
+        "metrics": metrics,
+        "suspect_segments": 0,
+        "clinician_as_other_seconds": 0.0,
+        "other_as_clinician_seconds": 0.0,
+    }
+    values.update(overrides)
+    return EncounterOutcome("syn-001", "measured", **values)
+
+
+class TestSuggestions:
+    """Task C.6 (D10): the declared ``confirm-all`` policy in ONE
+    finalisation, W / U by speaker, the inclusive segment-index attribution
+    of a wrongly-present fact, the reference path never asking, the report's
+    two shapes, and ``off`` printing the report as before."""
+
+    def test_the_command_line_names_the_two_policies(self) -> None:
+        (action,) = [a for a in validation._parser()._actions if a.dest == "suggestions"]
+        assert action.option_strings == ["--suggestions"]
+        assert tuple(action.choices or ()) == validation.SUGGESTION_POLICIES == (
+            "off",
+            "confirm-all",
+        )
+        assert action.default == "off"
+        assert action.help is not None
+        assert "`off` (default; the run unchanged)" in action.help
+        assert "`confirm-all` (every suggestion the chooser accepts is added" in action.help
+        assert "needs the language model" in action.help
+        assert validation.RunInfo("medium", False, "silero", None, None, None).suggestions == "off"
+        assert HarnessInputs.__dataclass_fields__["suggestion_stage"].default is None
+
+    def test_confirm_all_adds_the_accepted_suggestions_by_speaker(self, tmp_path: Path) -> None:
+        script = _suggestion_script(tmp_path)
+        document = validation.reference_document(script)
+        inputs = _inputs(tmp_path, note_provider_factory=lambda config: _QuoteFirst())
+        now = validation._default_now()
+        draft = validation._compose_draft(document, "clinician", inputs, now)
+        stage = _FakeSuggestionStage(_SUGGESTED)
+        suggested = validation.suggestion_pass(document, draft, "clinician", inputs, stage)
+        # The draft's quoted line is placed context; every other line asked.
+        assert stage.asked == [[1, 2, 3, 4]]
+        assert suggested.segments == frozenset({1, 2, 4})
+        assert [a.assertion_id for a in suggested.additions] == ["m0001", "m0002", "m0004"]
+        assert [a.section_key for a in suggested.additions] == [
+            "presenting_complaint",
+            "history_presenting_complaint",
+            "advice_home_exercise",
+        ]
+        # W by the confirmed clinician's line, U by anyone else's; the
+        # clinician-owned section on a patient line is dropped.
+        assert (suggested.by_clinician, suggested.by_other, suggested.dropped) == (1, 2, 1)
+        assert (suggested.not_assessed, suggested.seconds, suggested.unavailable) == (
+            0,
+            2.5,
+            False,
+        )
+
+    def test_the_additions_enter_the_one_finalisation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        script = _suggestion_script(tmp_path)
+        document = validation.reference_document(script)
+        inputs = _inputs(tmp_path, note_provider_factory=lambda config: _QuoteFirst())
+        now = validation._default_now()
+        draft = validation._compose_draft(document, "clinician", inputs, now)
+        suggested = validation.suggestion_pass(
+            document, draft, "clinician", inputs, _FakeSuggestionStage(_SUGGESTED)
+        )
+        calls: list[Any] = []
+        real = validation.finalise_note
+
+        def counted(*args: Any, **kwargs: Any) -> Any:
+            calls.append(args[0])
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(validation, "finalise_note", counted)
+        note = validation._compose_note(
+            document, "clinician", inputs, now, draft=draft, additions=suggested.additions
+        )
+        assert len(calls) == 1  # ONE finalisation, over the working draft
+        quoted = sorted(
+            assertion.note_span.source_coords.segment_index
+            for section in note.note_sections
+            for assertion in section.note_assertions
+            if assertion.note_span.source_coords is not None
+        )
+        assert quoted == [0, 1, 2, 4]
+        # The bare call is the draft alone (``off`` and the reference).
+        bare = validation._compose_note(document, "clinician", inputs, now)
+        assert len(calls) == 2
+        assert [
+            a.note_span.source_coords.segment_index
+            for s in bare.note_sections
+            for a in s.note_assertions
+            if a.note_span.source_coords is not None
+        ] == [0]
+
+    def test_a_wrongly_present_fact_is_attributed_by_segment_index(self, tmp_path: Path) -> None:
+        """The inclusive rule: the absent fact carried by a line a suggestion
+        added is counted; the same note scored with no suggested segments
+        counts nothing, and the verdicts do not change."""
+        script = _suggestion_script(tmp_path)
+        document = validation.reference_document(script)
+        inputs = _inputs(tmp_path, note_provider_factory=lambda config: _QuoteFirst())
+        now = validation._default_now()
+        draft = validation._compose_draft(document, "clinician", inputs, now)
+        suggested = validation.suggestion_pass(
+            document, draft, "clinician", inputs, _FakeSuggestionStage(_SUGGESTED)
+        )
+        note = validation._compose_note(
+            document, "clinician", inputs, now, draft=draft, additions=suggested.additions
+        )
+        scored = validation.encounter_metrics(
+            document, note, script, suggested_segments=suggested.segments
+        )
+        plain = validation.encounter_metrics(document, note, script)
+        assert [f.verdict for f in scored.facts] == ["correct", "wrongly_present"]
+        assert [f.verdict for f in plain.facts] == [f.verdict for f in scored.facts]
+        assert scored.facts_wrongly_present_via_suggestion == (1,)
+        assert plain.facts_wrongly_present_via_suggestion == ()
+        # A suggested segment that carries no fact attributes nothing.
+        other = validation.encounter_metrics(
+            document, note, script, suggested_segments=frozenset({4})
+        )
+        assert other.facts_wrongly_present_via_suggestion == ()
+
+    def test_a_wrongly_present_fact_on_the_providers_line_is_not_attributed(
+        self, tmp_path: Path
+    ) -> None:
+        script = _suggestion_script(tmp_path)
+        document = validation.reference_document(script)
+        inputs = _inputs(tmp_path)  # _QuoteEverything: the provider quotes line 2
+        now = validation._default_now()
+        note = validation._compose_note(document, "clinician", inputs, now)
+        metrics = validation.encounter_metrics(
+            document, note, script, suggested_segments=frozenset({1})
+        )
+        assert metrics.facts[1].verdict == "wrongly_present"
+        assert metrics.facts_wrongly_present_via_suggestion == ()
+
+    def test_no_left_out_line_asks_nothing(self, tmp_path: Path) -> None:
+        script = _suggestion_script(tmp_path)
+        document = validation.reference_document(script)
+        inputs = _inputs(tmp_path)  # every line quoted
+        now = validation._default_now()
+        draft = validation._compose_draft(document, "clinician", inputs, now)
+        stage = _FakeSuggestionStage(_SUGGESTED)
+        suggested = validation.suggestion_pass(document, draft, "clinician", inputs, stage)
+        assert stage.asked == []
+        assert suggested.additions == () and suggested.segments == frozenset()
+        assert (suggested.by_clinician, suggested.by_other, suggested.dropped) == (0, 0, 0)
+        assert not suggested.unavailable
+
+    def test_a_stage_that_could_not_run_is_unavailable(self, tmp_path: Path) -> None:
+        script = _suggestion_script(tmp_path)
+        document = validation.reference_document(script)
+        inputs = _inputs(tmp_path, note_provider_factory=lambda config: _QuoteFirst())
+        now = validation._default_now()
+        draft = validation._compose_draft(document, "clinician", inputs, now)
+        stage = _FakeSuggestionStage(_SUGGESTED, unavailable=True)
+        suggested = validation.suggestion_pass(document, draft, "clinician", inputs, stage)
+        assert suggested.unavailable and suggested.additions == ()
+        outcome = _measured(
+            suggestions=validation.SuggestionCounts(0, 0, 0, 0, 0, 0.0, unavailable=True)
+        )
+        assert validation.rule_failures(OPTION_A, outcome) == ("suggestions_unavailable",)
+
+    def test_the_reference_path_never_calls_the_stage(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def refuse(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("the reference reading asked for suggestions")
+
+        monkeypatch.setattr(validation, "suggestion_pass", refuse)
+        script = _suggestion_script(tmp_path)
+        inputs = _inputs(
+            tmp_path,
+            note_provider_factory=lambda config: _QuoteFirst(),
+            suggestion_stage=refuse,
+        )
+        reading = validation.reference_reading(script, inputs, validation._default_now())
+        assert reading.facts_right == frozenset({0})
+
+    @pytest.mark.parametrize(
+        ("overrides", "message"),
+        [
+            ({"suggested_w": -1}, "suggested_w must be a non-negative count"),
+            ({"suggested_u": True}, "suggested_u must be a non-negative count"),
+            ({"dropped": 1.5}, "dropped must be a non-negative count"),
+            ({"not_assessed": "2"}, "not_assessed must be a non-negative count"),
+            ({"model_seconds": math.nan}, "model_seconds must be a non-negative"),
+            ({"model_seconds": 3}, "model_seconds must be a non-negative"),
+            ({"model_seconds": -0.5}, "model_seconds must be a non-negative"),
+            ({"unavailable": 1}, "unavailable must be a flag"),
+            ({"wrongly_present": 1}, "wrongly_present needs a line a suggestion added"),
+            (
+                {"suggested_w": 1, "unavailable": True},
+                "an unavailable stage suggested nothing",
+            ),
+        ],
+    )
+    def test_the_counts_are_validated(self, overrides: dict[str, Any], message: str) -> None:
+        values: dict[str, Any] = {
+            "suggested_w": 0,
+            "suggested_u": 0,
+            "dropped": 0,
+            "not_assessed": 0,
+            "wrongly_present": 0,
+            "model_seconds": 0.0,
+        }
+        values.update(overrides)
+        with pytest.raises(ValueError, match=message):
+            validation.SuggestionCounts(**values)
+
+    def test_the_outcome_and_metrics_hold_only_validated_types(self) -> None:
+        with pytest.raises(ValueError, match="suggestions must be a SuggestionCounts"):
+            EncounterOutcome("syn-001", "error", "OSError", suggestions="said out loud")  # type: ignore[arg-type]
+        fact = validation.FactOutcome(
+            fact_index=0,
+            kind="absent",
+            material=True,
+            verdict="correctly_absent",
+            warned=False,
+            uncertainty_surfaced=None,
+            not_transcribed=False,
+            ambiguous=False,
+        )
+        with pytest.raises(ValueError, match="not materially wrongly present"):
+            _bare_metrics(facts=(fact,), facts_wrongly_present_via_suggestion=(0,))
+        with pytest.raises(ValueError, match="sorted, one per fact"):
+            _bare_metrics(facts_wrongly_present_via_suggestion=(1, 1))
+
+    def test_the_counts_hold_no_text(self) -> None:
+        """The text-free contract (`test_validation_metrics.py`'s
+        `_RESULT_TYPES` scan, applied to the new record): no field of
+        `SuggestionCounts` can hold a string."""
+        import dataclasses
+        import typing
+
+        hints = typing.get_type_hints(validation.SuggestionCounts, vars(validation))
+        for item in dataclasses.fields(validation.SuggestionCounts):
+            rendered = str(hints[item.name])
+            assert "str" not in rendered and "Literal" not in rendered, item.name
+
+    def _outcomes(self) -> list[EncounterOutcome]:
+        return [
+            _measured(suggestions=validation.SuggestionCounts(1, 2, 3, 4, 0, 12.5)),
+            EncounterOutcome("syn-002", "error", "OSError"),
+        ]
+
+    def test_off_prints_the_report_as_before(self) -> None:
+        """``off`` (the default) switches nothing: the same report with or
+        without suggestion counts on the outcomes, 28 cells, no suggestion
+        column and no suggestion sentence."""
+        from dataclasses import replace
+
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        explicit = validation.RunInfo(
+            "medium", False, "silero", None, None, None, suggestions="off"
+        )
+        outcomes = self._outcomes()
+        report = render_report(outcomes, OPTION_A, info)
+        assert report == render_report(outcomes, OPTION_A, explicit)
+        assert report == render_report(
+            [replace(o, suggestions=None) for o in outcomes], OPTION_A, info
+        )
+        table = [line for line in report.splitlines() if line.startswith("|")]
+        header, separator = table[:2]
+        assert header.endswith("| Prose p/f/e | Rule |")
+        assert separator == "|" + "---|" * 28
+        for row in table[:5]:
+            assert len(row.strip().strip("|").split("|")) == 28
+        assert not any(name in report for name in validation.SUGGESTION_COLUMNS)
+        assert "Suggestions `confirm-all`" not in report
+
+    def test_confirm_all_switches_header_separator_and_cells_together(self) -> None:
+        info = validation.RunInfo(
+            "medium", False, "silero", None, None, None, suggestions="confirm-all"
+        )
+        unavailable = EncounterOutcome(
+            "syn-003",
+            "measured",
+            segment_count=1,
+            words=validation.WordErrors(4, 4, 0),
+            metrics=_bare_metrics(),
+            suspect_segments=0,
+            clinician_as_other_seconds=0.0,
+            other_as_clinician_seconds=0.0,
+            suggestions=validation.SuggestionCounts(0, 0, 0, 0, 0, 0.0, unavailable=True),
+        )
+        report = render_report([*self._outcomes(), unavailable], OPTION_A, info)
+        assert (
+            "Suggestions `confirm-all`, metric amendment 2026-11-09 (note-content-design D10)"
+        ) in report
+        assert "Where each line is placed in its section is not measured" in report
+        table = [line for line in report.splitlines() if line.startswith("|")]
+        header, separator, measured, error, refused, total = table[:6]
+        assert header.endswith(
+            "| Prose p/f/e | Suggested W | Suggested U | Suggested dropped "
+            "| Lines not assessed | Wrongly present via suggestion | Model seconds | Rule |"
+        )
+        assert separator == "|" + "---|" * 34
+        for row in (header, separator, measured, error, refused, total):
+            assert len(row.strip().strip("|").split("|")) == 34
+        assert measured.endswith("| - | 1 | 2 | 3 | 4 | 0 | 12.5 | PASS |")
+        assert error.endswith("| - | - | - | - | - | - | - | FAIL: harness_error |")
+        assert refused.endswith(
+            "| - " + "| unavailable " * 6 + "| FAIL: suggestions_unavailable |"
+        )
+        # The unavailable stage contributes nothing to the totals.
+        assert total.endswith("| - | 1 | 2 | 3 | 4 | 0 | 12.5 | FAIL |")
+        nothing = render_report([EncounterOutcome("syn-002", "error", "OSError")], OPTION_A, info)
+        (nothing_total,) = [line for line in nothing.splitlines() if line.startswith("| TOTAL")]
+        assert nothing_total.endswith("| - " * 7 + "| FAIL |")
+
+    def test_confirm_all_without_the_language_model_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        use_channel(monkeypatch, "dev")
+        monkeypatch.setattr(validation, "SileroVad", _NeverBuilt)
+        monkeypatch.setattr(validation, "WhisperSpeechProvider", _NeverBuilt)
+        monkeypatch.setattr(validation, "resolve_whisper_model", lambda: "medium")
+        monkeypatch.setattr(validation, "whisper_model_available", lambda name: True)
+        monkeypatch.setattr(validation, "vad_model_available", lambda: True)
+        assert validation.main(_argv(tmp_path, "--suggestions", "confirm-all")) == 2
+        assert "[refused] --suggestions confirm-all: the language model is not installed" in (
+            capsys.readouterr().out
+        )
+
+    @windows_only
+    def test_an_encounter_under_confirm_all_carries_its_counts(self, tmp_path: Path) -> None:
+        """Through ``run_encounters`` (the runner's real store): the two-turn
+        script with only the clinician's line quoted, the patient's line
+        asked and added (U), the counts on the outcome."""
+        pytest.importorskip("numpy")
+        encounters, _ = find_encounters(_set_folder(tmp_path / "set"))
+        stage = _FakeSuggestionStage({1: "presenting_complaint"})
+        inputs = _inputs(
+            tmp_path, note_provider_factory=lambda config: _QuoteFirst(), suggestion_stage=stage
+        )
+        (outcome,) = run_encounters(encounters, inputs, progress=lambda line: None)
+        assert outcome.status == "measured" and outcome.metrics is not None
+        assert stage.asked == [[1]]
+        assert outcome.suggestions == validation.SuggestionCounts(0, 1, 0, 0, 0, 2.5)
+        assert outcome.metrics.transcript_lines == 2
+        off = run_encounters(
+            encounters,
+            _inputs(tmp_path, note_provider_factory=lambda config: _QuoteFirst()),
+            progress=lambda line: None,
+        )
+        assert off[0].suggestions is None and off[0].metrics is not None
+        assert off[0].metrics.transcript_lines == 1

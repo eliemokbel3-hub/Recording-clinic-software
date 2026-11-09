@@ -5,6 +5,13 @@ All notable changes to this project will be documented here.
 ## [Unreleased]
 
 ### Added
+- Indices-only section suggestions for transcript lines the note left out (`.cursor/plans/plan-note-content-design.md` Phase C, 2026-11-09; on `main`, not yet a build of record; the version stays 0.3.5 until the plan's release). Added:
+  - `note_suggest.py`: the local language model is asked, in windows of 40 segments with context lines, which note section each left-out line belongs in; its answer is read only as window line numbers and section keys, so no model text reaches the note, a log or a report; one 240-second cap over the whole job;
+  - the Note tab shows a suggestion as `[suggested: <title>]` on the existing line chooser, accepted only through the chooser's ownership rule; the "Show flagged lines only" tick becomes "Show flagged or suggested lines only" and the count line names the suggested lines;
+  - the suggestion job runs in its own job slot beside the writing-style job (the slot extracted first, `7e47f42`), gives way to a pending style job between windows, never blocks Save, Complete or Discard, and is stopped by every way out of the review, closing the window included;
+  - the validation harness's `--suggestions off|confirm-all` with six report columns (lines suggested by the clinician and by others, dropped, not assessed, facts wrongly present through a suggestion, model seconds); `off` reproduces run 8's reports exactly.
+
+  Measured over the six seen synthetic sets with every suggestion accepted: 85 clinician and 19 other-speaker lines added and 3 facts wrongly present through a suggestion; where no change of patient was detected, a next patient's line can be suggested, which costs `heldout-3` its pass and adds a next-patient count on `heldout-5`.
 - A governed clinical register for the prose writing styles (`.cursor/plans/plan-note-content-design.md` Phase R, 2026-11-08 → 2026-11-09; on `main`, not yet a build of record; the version stays 0.3.5 until the plan's release). Added:
   - the practitioner-ratified lexicon of by-definition clinical equivalents, `config_defaults/clinical_equivalents.json` (93 entries, such as "six weeks" = "6/52"), loaded by `note_config.CLINICAL_EQUIVALENTS`, which refuses a malformed file, a repeated term or a repeated JSON key as a broken install;
   - Check 5 folds the lexicon on both sides (`note_check.canonicalise`), so prose may use the clinical form of a phrase without being refused, and no entry may hold a side, a negation, a medication or a number outside a duration;

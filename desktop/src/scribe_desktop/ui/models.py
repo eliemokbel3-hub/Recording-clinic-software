@@ -123,6 +123,11 @@ from scribe_desktop.note_config import (
     load_practitioner_settings,
     save_practitioner_settings,
 )
+from scribe_desktop.note_suggest import (
+    SuggestionInput,
+    SuggestionStageResult,
+    run_suggestion_stage,
+)
 from scribe_desktop.past_sessions import KeepLabel
 from scribe_desktop.practitioner_profile import (
     ConsentRecord,
@@ -2289,7 +2294,7 @@ WARNING_COPY: Final[Mapping[str, WarningCopy]] = {
         "A side, negation, number, dose, name or medication someone said is not in the note",
         None,
         "Check the transcript beside the note (a line you removed can raise this too), "
-        "tick 'Show flagged lines only' to find them, then acknowledge.",
+        "tick 'Show flagged or suggested lines only' to find them, then acknowledge.",
     ),
     # Validation-run6 plan D1 (Check 4's second code): a whole line the
     # confirmed clinician said is in no section — no cue routed it and it holds
@@ -2299,8 +2304,8 @@ WARNING_COPY: Final[Mapping[str, WarningCopy]] = {
     "clinician_line_omitted": WarningCopy(
         "A line you said is not in the note",
         None,
-        "Check the transcript beside the note, tick 'Show flagged lines only' to find it, "
-        "add it with Add line to section if it belongs, then acknowledge.",
+        "Check the transcript beside the note, tick 'Show flagged or suggested lines only' "
+        "to find it, add it with Add line to section if it belongs, then acknowledge.",
     ),
     # Note-learning plan Task 4.2 (D6, C8): the prose the language model
     # wrote for a section did not pass the fidelity check, so that section is
@@ -2712,6 +2717,13 @@ FLAGGED_LINE_MARK = "[flagged] "
 # plan D3 (the 0.3.3 P.2 observation): a SHORT fixed token, so the open
 # chooser's middle elision of a long label cannot cut it.
 NEXT_PATIENT_LINE_MARK = "[next patient?] "
+# Note-content-design plan D6 (Task C.3): the mark on a chooser entry the
+# local model suggested a section for, after any ``FLAGGED_LINE_MARK`` and
+# ``NEXT_PATIENT_LINE_MARK`` (the existing mark order) and before the speaker;
+# ``{title}`` is the section's ``SECTION_TITLES`` title. Plain ASCII, as the
+# other marks. A mark only: choosing the line pre-selects that section, and
+# the clinician's own Add is the only way it enters the note.
+SUGGESTED_LINE_MARK: Final = "[suggested: {title}] "
 # The codes whose segment the chooser and the line editor mark
 # ``FLAGGED_LINE_MARK``: Check 4's two (validation-run6 plan D1).
 OMISSION_CODES: Final[frozenset[str]] = frozenset({"high_risk_omission", "clinician_line_omitted"})
@@ -2859,37 +2871,72 @@ def remove_tail_failed_line(exc: BaseException) -> str:
     )
 
 
-# Said on the count line while "Show flagged lines only" hides every line the
-# chooser could offer (nothing offered is flagged — the last flagged line was
-# added back, or the flagged ones are typed over or partly in the note), so an
-# empty chooser and a disabled Add never go unexplained (Phase 2 review LOW).
+# The chooser's filter tick (note-routing-omissions D4; widened by
+# note-content-design D6, Task C.4, to the lines the local model suggested a
+# section for).
+FLAGGED_FILTER_LABEL: Final = "Show flagged or suggested lines only"
+
+# Said on the count line while the filter tick hides every line the chooser
+# could offer (nothing offered is flagged or suggested — the last flagged line
+# was added back, or the flagged ones are typed over or partly in the note),
+# so an empty chooser and a disabled Add never go unexplained (Phase 2 review
+# LOW).
 FLAGGED_FILTER_EMPTY_LINE = (
-    "No line in the list is flagged - untick 'Show flagged lines only' to see every line."
+    "No line in the list is flagged or suggested - untick "
+    f"'{FLAGGED_FILTER_LABEL}' to see every line."
 )
 
 
-def flagged_count_line(flagged: Collection[int], offered: Collection[int]) -> str:
+def flagged_count_line(
+    flagged: Collection[int],
+    offered: Collection[int],
+    *,
+    suggested: Collection[int] = (),
+    not_assessed: int = 0,
+) -> str:
     """The Note tab's count line (D4): how many flagged transcript lines the
     note leaves out — a line the clinician said, or a flagged word anyone said
     (Check 4's two codes, validation-run6 plan D1) — and, by transcript line
     number, each flagged line the chooser does NOT offer (replaced by a typed
     line, or only partly in the note; PR-MED-001), which is found on its row
-    in the line editor instead. Empty when nothing is flagged."""
-    if not flagged:
-        return ""
-    count = len(flagged)
+    in the line editor instead. Note-content-design D6 (Task C.3) adds the
+    suggestion clause (``suggestion_count_clause``) when the chooser offers
+    a line with a suggested section (``suggested``: their segments) or the
+    suggestion job left lines ``not_assessed``. Empty when there is neither."""
+    parts: list[str] = []
+    if flagged:
+        count = len(flagged)
+        text = (
+            f"{count} flagged {'line is' if count == 1 else 'lines are'} not in the note (a "
+            "line you said, or a side, negation, number, dose, name or medication someone "
+            "said)."
+        )
+        elsewhere = sorted(index + 1 for index in flagged if index not in offered)
+        if elsewhere:
+            numbers = ", ".join(str(number) for number in elsewhere)
+            if len(elsewhere) == 1:
+                text += f" Line {numbers} is replaced or partly in the note - see its row below."
+            else:
+                text += (
+                    f" Lines {numbers} are replaced or partly in the note - see their rows "
+                    "below."
+                )
+        parts.append(text)
+    if suggested or not_assessed:
+        parts.append(suggestion_count_clause(len(suggested), not_assessed))
+    return " ".join(parts)
+
+
+def suggestion_count_clause(suggested: int, not_assessed: int) -> str:
+    """D9's count string: "K lines have a suggested section (M not assessed)",
+    the bracket only when the job left lines unassessed (the cap, or a
+    window that failed)."""
     text = (
-        f"{count} flagged {'line is' if count == 1 else 'lines are'} not in the note (a line "
-        "you said, or a side, negation, number, dose, name or medication someone said)."
+        f"{suggested} {'line has' if suggested == 1 else 'lines have'} a suggested section"
     )
-    elsewhere = sorted(index + 1 for index in flagged if index not in offered)
-    if elsewhere:
-        numbers = ", ".join(str(number) for number in elsewhere)
-        if len(elsewhere) == 1:
-            text += f" Line {numbers} is replaced or partly in the note - see its row below."
-        else:
-            text += f" Lines {numbers} are replaced or partly in the note - see their rows below."
-    return text
+    if not_assessed:
+        text += f" ({not_assessed} not assessed)"
+    return text + "."
 
 
 @dataclass(frozen=True)
@@ -2899,12 +2946,16 @@ class UtteranceChoice:
     only, like the transcript panel) and the sections it may enter under the
     ownership rule (``note.admissible_sections``, the router's own rule).
     ``flagged`` (note-routing-omissions D4): the line carries a Check 4
-    omission, and its label carries ``FLAGGED_LINE_MARK`` after its number."""
+    omission, and its label carries ``FLAGGED_LINE_MARK`` after its number.
+    ``suggested`` (note-content-design D6): the section the local model
+    suggested for the line — always one of ``allowed_sections`` — and its
+    label carries ``SUGGESTED_LINE_MARK``; None when there is none."""
 
     segment_index: int
     label: str
     allowed_sections: tuple[NoteSectionKey, ...]
     flagged: bool = False
+    suggested: NoteSectionKey | None = None
 
 
 def eligible_utterances(
@@ -2914,6 +2965,7 @@ def eligible_utterances(
     in_note: Collection[int],
     flagged: Collection[int] = (),
     boundary: int | None = None,
+    suggested: Mapping[int, NoteSectionKey] | None = None,
 ) -> tuple[UtteranceChoice, ...]:
     """The utterances the clinician may ADD: every segment with quotable
     text whose index is not already carried by the working note (a line
@@ -2927,7 +2979,19 @@ def eligible_utterances(
     both front marks before the speaker, the suspect prefix after it (the
     practitioner's front-mark decision, 2026-10-13), and ``_lead_words``' cut
     applies to the words only, so no mark is ever cut (validation-run6 plan
-    D3)."""
+    D3).
+
+    ``suggested`` (note-content-design D6, Task C.3): the local model's
+    section per segment (``note_suggest.SuggestionStageResult.suggestions``).
+    A suggestion is ACCEPTED only through this function's own ownership rule
+    — its key must be in the entry's ``allowed_sections`` (so a
+    clinician-owned key for another speaker's line or for a question is
+    refused) — on an entry this function offers (a segment in the note is
+    refused) and before ``boundary`` (the suggestion input is cut there, so
+    a later segment is never asked; one arriving anyway is refused). An
+    accepted one sets ``UtteranceChoice.suggested`` and puts
+    ``SUGGESTED_LINE_MARK`` after the other two front marks:
+    ``"<n>. [flagged] [suggested: <title>] <speaker>: …"``."""
     choices: list[UtteranceChoice] = []
     for index, segment in enumerate(document.transcript_segments):
         if index in in_note:
@@ -2943,13 +3007,22 @@ def eligible_utterances(
         )
         mark = index in flagged
         flag = FLAGGED_LINE_MARK if mark else ""
-        after = NEXT_PATIENT_LINE_MARK if boundary is not None and index >= boundary else ""
+        past_boundary = boundary is not None and index >= boundary
+        after = NEXT_PATIENT_LINE_MARK if past_boundary else ""
+        key = suggested.get(index) if suggested is not None else None
+        accepted = key if key in allowed and not past_boundary else None
+        hint = suggested_line_mark(accepted) if accepted is not None else ""
         label = (
-            f"{index + 1}. {flag}{after}{segment.speaker}: "
+            f"{index + 1}. {flag}{after}{hint}{segment.speaker}: "
             f"{suspect_prefix(segment)}{_lead_words(text)}"
         )
-        choices.append(UtteranceChoice(index, label, allowed, mark))
+        choices.append(UtteranceChoice(index, label, allowed, mark, suggested=accepted))
     return tuple(choices)
+
+
+def suggested_line_mark(key: NoteSectionKey) -> str:
+    """``SUGGESTED_LINE_MARK`` for ``key``'s section title."""
+    return SUGGESTED_LINE_MARK.format(title=SECTION_TITLES[key])
 
 
 LineState = Literal["routed", "removed", "moved", "added", "replaced"]
@@ -4151,6 +4224,126 @@ def carry_renderings(note: GeneratedNote, previous: GeneratedNote | None) -> Gen
     return attach_style_renderings(note, previous.style_renderings)
 
 
+# --- the section suggestions (note-content-design plan Task C.3; D6, D7, D9; C8) ---
+#
+# The Note tab runs ONE suggestion job per review on its second job slot (Task
+# C.4), under ANY writing style: it reuses the prose stage's resident model
+# (``_LANGUAGE_MODEL_CACHE`` — one copy, one load, the same remembered
+# failure), asks ``note_suggest.run_suggestion_stage`` for the left-out lines
+# and returns ids, keys and counts; the tab re-filters the suggestions through
+# ``eligible_utterances`` against the note it holds when the job lands. Every
+# fallback names its reason on screen (C8); no clinical text rides any line.
+
+SUGGESTION_NOTHING_LINE: Final = "Nothing to suggest."
+SUGGESTION_NONE_LINE: Final = "No suggestions."
+SUGGESTION_IN_FLIGHT_LINE: Final = "Suggesting sections for {count} left-out {lines}..."
+SUGGESTION_LOAD_FAILED_LINE: Final = (
+    "Suggested sections: the language model could not be loaded ({reason})."
+)
+# Task C.4 (C8): the Note tab's two other fallbacks — the job raised (only the
+# exception's TYPE name is shown: its message could carry an input value),
+# and the job was stopped because the window was asked to close
+# (`NoteScreen.prepare_close`, D8).
+SUGGESTION_FAILED_LINE: Final = "Suggested sections: the suggestion job failed ({reason})."
+SUGGESTION_STOPPED_LINE: Final = (
+    "Suggested sections: stopped because the window was asked to close."
+)
+
+
+def suggestion_model_absent_line() -> str:
+    """The C8 line when the language model or its runtime is missing (the
+    prose styles' reason, ``language_model_absent_reason``, for this build)."""
+    return f"Suggested sections {language_model_absent_reason()}."
+
+
+def suggestion_in_flight_line(count: int) -> str:
+    """D9's "Suggesting sections for N left-out lines..." line."""
+    return SUGGESTION_IN_FLIGHT_LINE.format(
+        count=count, lines="line" if count == 1 else "lines"
+    )
+
+
+@dataclass(frozen=True)
+class SuggestionStageOutcome:
+    """One suggestion job's outcome: the stage's ``result`` (ids, keys and
+    counts only), or — when no job could run — None and the C8 ``reason``
+    line (nothing to suggest, the model absent, its load failed)."""
+
+    result: SuggestionStageResult | None
+    reason: str | None = None
+
+
+class SuggestionStage(Protocol):
+    """The callable the Note tab runs on its second TaskThread: the input it
+    was started for, ``abort`` (consulted before each window) and
+    ``yield_to`` (the wait while a prose job is pending — D8)."""
+
+    def __call__(
+        self,
+        suggestion_input: SuggestionInput,
+        /,
+        *,
+        abort: Callable[[], bool] | None = None,
+        yield_to: Callable[[], None] | None = None,
+    ) -> SuggestionStageOutcome: ...
+
+
+def build_suggestion_stage(
+    *,
+    model_factory: Callable[[], LanguageModel] = LocalLanguageModel,
+    cache: _LanguageModelCache | None = _LANGUAGE_MODEL_CACHE,
+    available: Callable[[], bool] = language_model_available,
+) -> SuggestionStage:
+    """The suggestion stage callable, mirroring ``build_prose_stage``: the
+    same seams (``model_factory``, ``cache`` — None builds a fresh model per
+    job, tests — and the presence stat ``available``) and the same resident
+    model. It never touches a widget, never logs, and asks for nothing when
+    no line is left out (no load, no call)."""
+
+    def stage(
+        suggestion_input: SuggestionInput,
+        /,
+        *,
+        abort: Callable[[], bool] | None = None,
+        yield_to: Callable[[], None] | None = None,
+    ) -> SuggestionStageOutcome:
+        if not suggestion_input.lines_asked:
+            return SuggestionStageOutcome(None, SUGGESTION_NOTHING_LINE)
+        # As the prose stage (round 20 MED-002): presence is a STAT asked on
+        # every job and never remembered; only a LOAD that failed with the
+        # file present is remembered for the process (the cache's own rule).
+        if not available():
+            return SuggestionStageOutcome(None, suggestion_model_absent_line())
+        try:
+            model = cache.get(model_factory) if cache is not None else model_factory()
+        except LanguageModelError as exc:
+            return SuggestionStageOutcome(None, SUGGESTION_LOAD_FAILED_LINE.format(reason=exc))
+        return SuggestionStageOutcome(
+            run_suggestion_stage(suggestion_input, model, abort=abort, yield_to=yield_to)
+        )
+
+    return stage
+
+
+def suggestion_stage_line(outcome: SuggestionStageOutcome, *, accepted: int) -> str:
+    """The Note tab's suggestion status line once a job landed (D9):
+    ``accepted`` is how many suggestions the chooser accepted
+    (``eligible_utterances``) against the note as it stands. The C8 reason
+    when no job ran; "Nothing to suggest." when no line was left out; "No
+    suggestions." (with any lines not assessed) when none was accepted; else
+    ``suggestion_count_clause``."""
+    result = outcome.result
+    if result is None:
+        return outcome.reason or SUGGESTION_NONE_LINE
+    if result.reason == "nothing_to_suggest":
+        return SUGGESTION_NOTHING_LINE
+    if not accepted:
+        if result.lines_not_assessed:
+            return f"No suggestions ({result.lines_not_assessed} not assessed)."
+        return SUGGESTION_NONE_LINE
+    return suggestion_count_clause(accepted, result.lines_not_assessed)
+
+
 STYLE_NOT_LEARNED_LINE: Final = (
     "Learned style: none yet - teach the scribe your note style from 1-5 past notes."
 )
@@ -4752,6 +4945,21 @@ __all__ = [
     "sections_to_render",
     "style_stage_line",
     "with_retained_prose",
+    "SUGGESTED_LINE_MARK",
+    "SUGGESTION_FAILED_LINE",
+    "SUGGESTION_IN_FLIGHT_LINE",
+    "SUGGESTION_LOAD_FAILED_LINE",
+    "SUGGESTION_NONE_LINE",
+    "SUGGESTION_NOTHING_LINE",
+    "SUGGESTION_STOPPED_LINE",
+    "SuggestionStage",
+    "SuggestionStageOutcome",
+    "build_suggestion_stage",
+    "suggested_line_mark",
+    "suggestion_count_clause",
+    "suggestion_in_flight_line",
+    "suggestion_model_absent_line",
+    "suggestion_stage_line",
     "STYLE_LABELS",
     "STYLE_NOT_LEARNED_LINE",
     "STYLE_PROFILE_EMPTY_REASON",
@@ -4877,6 +5085,7 @@ __all__ = [
     "speaker_model_missing_reason",
     "UNFINISHED_STORE_WARNING",
     "FLAGGED_FILTER_EMPTY_LINE",
+    "FLAGGED_FILTER_LABEL",
     "FLAGGED_LINE_MARK",
     "NEXT_PATIENT_LINE_MARK",
     "OMISSION_CODES",

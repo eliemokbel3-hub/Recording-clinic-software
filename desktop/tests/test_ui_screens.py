@@ -8800,6 +8800,44 @@ class TestNoteWiring:
         window.closeEvent(event2)
         assert event2.isAccepted()
 
+    def test_close_refused_while_an_orphaned_suggestion_window_runs(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """Note-content-design D8 (Task C.4): the close guard covers the Note
+        tab's SECOND slot — a suggestion job orphaned by the review's end
+        holds the close (destroying its running QThread would abort the
+        process) until its in-flight window returns, then the close goes
+        through. The window's stage is a held fake; its presence seam says
+        present; the model is never loaded."""
+        from PySide6.QtGui import QCloseEvent
+
+        entered = threading.Event()
+        release = threading.Event()
+
+        def stage(_input: Any, /, *, abort: Any = None, yield_to: Any = None) -> Any:
+            entered.set()
+            assert release.wait(10.0), "the test never released the window"
+            return models.SuggestionStageOutcome(None, models.SUGGESTION_NONE_LINE)
+
+        monkeypatch.setattr(models, "build_suggestion_stage", lambda **_kwargs: stage)
+        window = _main_window(tmp_path, FakeController(), language_model_available=lambda: True)
+        try:
+            window._on_draft_ready(_note_result())  # one left-out line: a job starts
+            assert entered.wait(5.0)
+            note_screen = window.note_screen
+            assert note_screen.suggestion_in_flight
+            note_screen.clear()  # the review ends; the job is orphaned mid-window
+            event = QCloseEvent()
+            window.closeEvent(event)
+            assert not event.isAccepted()
+            assert window.statusBar().currentMessage().startswith("Work in progress - ")
+        finally:
+            release.set()
+        assert _process_until(qapp, lambda: not window.note_screen.is_busy)
+        event2 = QCloseEvent()
+        window.closeEvent(event2)
+        assert event2.isAccepted()
+
     # --- Task 9.1a: the recorded copy decision, driven through the window ---
 
     def _generate_through_window(

@@ -1727,6 +1727,210 @@ def test_prose_generation_no_sockets_with_the_real_model(tmp_path: Path) -> None
             proc.wait(timeout=15)
 
 
+# Child (note-content-design plan Task C.5; C7): the SECTION SUGGESTIONS under
+# the prose leg's gate pattern — the transcript's one way into the language
+# model. The stage is the real `models.build_suggestion_stage` over the mock
+# language model; the model call blocks on a gate so the parent's polls
+# provably land INSIDE a suggestion window. Invented lines only.
+_SUGGESTION_STAGE_CHILD = '''
+import sys
+
+from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
+
+apply_offline_env()
+assert_offline_env()
+from scribe_desktop import install_layout
+
+install_layout.channel = lambda: "production"  # D2: what ships (round 22)
+install_layout.is_frozen = lambda: False
+from scribe_desktop import transcription
+transcription.cuda_device_count = lambda: 0  # gpu-decoding plan C12, as the parent pins
+transcription.preload_cuda_libraries = lambda device: None
+print("OFFLINE-OK", flush=True)
+
+from scribe_desktop.language_model import MockLanguageModel
+from scribe_desktop.note_suggest import SuggestionInput
+from scribe_desktop.ui import models
+from test_note_suggest import _request
+
+lines = [
+    ("speaker_1", "How long has the knee been sore?"),
+    ("speaker_2", "About three weeks now."),
+    ("speaker_1", "Range of movement is reduced on the left."),
+]
+suggestion_input = SuggestionInput.from_request(
+    _request(lines), in_note={2: "objective_examination"}, clinician_speaker="speaker_1"
+)
+gated = [False]
+
+
+def responder(system_text, user_text):
+    if not gated[0]:
+        gated[0] = True
+        print("MID-SUGGEST", flush=True)
+        line = sys.stdin.readline()
+        assert line.strip() == "GO", "parent gate broken: %r" % line
+    numbers = []
+    for row in user_text.splitlines():
+        head = row.split(" ", 1)[0]
+        if head.endswith("?") and head[:-1].isdigit():
+            numbers.append(head[:-1])
+    return "\\n".join("%s history_presenting_complaint" % number for number in numbers)
+
+
+stage = models.build_suggestion_stage(
+    model_factory=lambda: MockLanguageModel(responder=responder),
+    cache=None,
+    available=lambda: True,  # the mock leg runs where no model file exists
+)
+outcome = stage(suggestion_input)
+assert outcome.reason is None, outcome.reason
+result = outcome.result
+assert result.windows_run == 1 and result.lines_asked == 2, result
+assert result.suggestions == (
+    (0, "history_presenting_complaint"), (1, "history_presenting_complaint")
+), result
+print("SUGGEST-OK", flush=True)
+line = sys.stdin.readline()
+assert line.strip() == "CONTINUE", "parent gate broken: %r" % line
+print("DONE", flush=True)
+'''
+
+
+def test_section_suggestions_no_sockets_with_the_mock_model(tmp_path: Path) -> None:
+    """Note-content-design Task C.5 (C7): the suggestion STAGE's orchestration
+    — the input, the window prompt, the token budget, the call, the strict
+    parse — opens no socket while the process is provably inside a
+    language-model call (the child blocks there on a gate while the parent
+    polls) and after the result is built. Runs everywhere over
+    `MockLanguageModel`, so no native runtime code runs here; the runtime's
+    coverage is the real-model leg below."""
+    script = _write_child(tmp_path, "suggestion_stage_child.py", _SUGGESTION_STAGE_CHILD)
+    stderr_path = tmp_path / "child-stderr.txt"
+    proc, reader = _spawn_child(script, tmp_path / "unused", stderr_path)
+    try:
+        _await_marker(reader, proc, stderr_path, "OFFLINE-OK", 60)
+        ps = _child_tree(proc, reader, stderr_path)
+        _await_marker(reader, proc, stderr_path, "MID-SUGGEST", 60)
+        _poll_no_connections(
+            proc, ps, reader, stderr_path, "inside a suggestion window (mock model)", polls=10
+        )
+        _send(proc, reader, stderr_path, b"GO")
+        _await_marker(reader, proc, stderr_path, "SUGGEST-OK", 60)
+        assert_no_connections(ps, "after the suggestion result was built")
+        _send(proc, reader, stderr_path, b"CONTINUE")
+        _await_marker(reader, proc, stderr_path, "DONE", 60)
+        assert proc.wait(timeout=30) == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=15)
+
+
+# Child (Task C.5): the REAL prose runtime and the pinned model running ONE
+# suggestion window — the model LOAD window (digest, DLL load, the smoke
+# generation) and the window's token count and generation under a
+# continuous poll. Skips by name while the wheel or the file is absent.
+# Invented lines only.
+_REAL_SUGGESTION_CHILD = '''
+import sys
+
+from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
+
+apply_offline_env()
+assert_offline_env()
+# Installation plan D2: pinned to the production channel, as the parent
+# test is. Task 2.6: the model is loaded from the source run's DEV root,
+# where the parent's skip check found it.
+from scribe_desktop import install_layout
+
+install_layout.channel = lambda: "production"
+install_layout.is_frozen = lambda: False  # a source run, as the parent pins (C6)
+from scribe_desktop import transcription
+transcription.cuda_device_count = lambda: 0  # gpu-decoding plan C12, as the parent pins
+transcription.preload_cuda_libraries = lambda device: None
+_real_ml_root = install_layout.models_root("dev")
+install_layout.models_root = lambda of=None: _real_ml_root
+print("OFFLINE-OK", flush=True)
+line = sys.stdin.readline()
+assert line.strip() == "GO", "parent gate broken: %r" % line
+
+from scribe_desktop.language_model import LocalLanguageModel
+from scribe_desktop.note_suggest import SuggestionInput
+from scribe_desktop.ui import models
+from test_note_suggest import _request
+
+lines = [
+    ("speaker_1", "How long has the knee been sore?"),
+    ("speaker_2", "About three weeks now."),
+    ("speaker_1", "Range of movement is reduced on the left."),
+    ("speaker_1", "We will review it in two weeks."),
+]
+suggestion_input = SuggestionInput.from_request(
+    _request(lines), in_note={2: "objective_examination"}, clinician_speaker="speaker_1"
+)
+stage = models.build_suggestion_stage(model_factory=LocalLanguageModel, cache=None)
+outcome = stage(suggestion_input)
+assert outcome.reason is None, outcome.reason
+result = outcome.result
+assert result.windows_run == 1 and result.lines_asked == 3, result
+print("SUGGEST-DONE asked=%d suggested=%d not_assessed=%d failed=%d seconds=%.1f" % (
+    result.lines_asked, len(result.suggestions), result.lines_not_assessed,
+    result.windows_failed, result.seconds), flush=True)
+line = sys.stdin.readline()
+assert line.strip() == "CONTINUE", "parent gate broken: %r" % line
+print("DONE", flush=True)
+'''
+
+
+def test_section_suggestions_no_sockets_with_the_real_model(tmp_path: Path) -> None:
+    """Task C.5 (C7): the RUNTIME's coverage for the suggestion prompt — the
+    real library's load and one suggestion window over the pinned GGUF under
+    a continuous poll from before the model load until the result is built.
+    Conditional evidence: it skips by name while the wheel or the file is
+    absent. The suggestion counts are printed (the composer's record), not
+    asserted: routing quality is C.6's measurement, the socket table is this
+    leg's."""
+    from scribe_desktop.language_model import (
+        language_model_file_available,
+        language_runtime_importable,
+    )
+
+    if not language_runtime_importable():
+        pytest.skip("the prose runtime is not installed (desktop/requirements-ml-prose.txt)")
+    # Installation plan Task 2.6: looked for in the source run's DEV models
+    # root, where the child loads it from.
+    if not on_real_ml_root(language_model_file_available):
+        pytest.skip(real_ml_skip_reason("the pinned language model"))
+    apply_offline_env()
+    script = _write_child(tmp_path, "real_suggestion_child.py", _REAL_SUGGESTION_CHILD)
+    stderr_path = tmp_path / "child-stderr.txt"
+    proc, reader = _spawn_child(script, tmp_path / "unused", stderr_path)
+    try:
+        _await_marker(reader, proc, stderr_path, "OFFLINE-OK", 120)
+        ps = _child_tree(proc, reader, stderr_path)
+        assert_no_connections(ps, "before the language model load")
+        _send(proc, reader, stderr_path, b"GO")
+        polls = 0
+        deadline = time.monotonic() + 900
+        while reader.find("SUGGEST-DONE") is None:
+            if reader.eof or time.monotonic() > deadline:
+                _await_marker(reader, proc, stderr_path, "SUGGEST-DONE", 0.1)
+                break
+            assert_no_connections(ps, "during the language model load and a suggestion window")
+            polls += 1
+            time.sleep(0.05)
+        assert polls >= 3, "the suggestion window closed before any poll landed"
+        assert_no_connections(ps, "after the real suggestion window")
+        _send(proc, reader, stderr_path, b"CONTINUE")
+        _await_marker(reader, proc, stderr_path, "DONE", 120)
+        assert proc.wait(timeout=60) == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=15)
+
+
 # Child: records continuously until the parent hard-kills it (crash-sim).
 # Continuous tone -> the recovered store yields ONE segment (numpy-free)
 # no matter where the kill lands; a torn tail record is expected crash
