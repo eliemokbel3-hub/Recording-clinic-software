@@ -3805,7 +3805,9 @@ def render_report(
                 "becomes a reported set and `heldout-5`, a set designated for blind "
                 "authoring, a gate set."
             )
-        if rule.label == "v5" and rule.schema_version >= 4:
+        # Note-content-design D11: rule v6 (the same schema) keeps the
+        # sentence below as rule v5's history and adds its own after it.
+        if rule.label in ("v5", "v6") and rule.schema_version >= 4:
             reports = rule.set_row(set_name).r1_marked_reported is True
             amendments += (
                 " Rule v5 (schema 4; validation-run8 D1, decided 2026-11-06) keeps rule v4's "
@@ -3818,6 +3820,14 @@ def render_report(
                     else "this set counts them under the ceiling"
                 )
                 + "); the verdict with marked R1 counted is printed beside it."
+            )
+        if rule.label == "v6" and rule.schema_version >= 4:
+            amendments += (
+                " Rule v6 (schema 4; note-content-design D11, decided 2026-11-07) keeps rule "
+                "v5's predicates and ceilings and changes the set schedule only: `heldout-5` "
+                "becomes a reported set that counts marked R1 under its ceiling and "
+                "`heldout-6`, a set designated for blind authoring, a gate set that reports "
+                "them."
             )
     elif set_name is not None:
         amendments += (

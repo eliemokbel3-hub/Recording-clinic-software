@@ -4194,6 +4194,253 @@ class TestRuleV5Reading:
         assert validation.rule_v2_counterpart(rule, "heldout") == "same"
 
 
+# Note-content-design D11: rule v6's seven rows; each reads as the rule-v5 row
+# named here (the blind row's strictness moved to the fresh set).
+_RULE_V6_ROWS: tuple[str, ...] = (
+    "scripts", "heldout", "heldout-2", "heldout-3", "heldout-4", "heldout-5", "heldout-6"
+)
+_RULE_V5_COUNTERPART: dict[str, str] = {"heldout-5": "heldout-4", "heldout-6": "heldout-5"}
+
+
+class TestRuleV6:
+    """Note-content-design plan D11 (C6; codex PR-MED-008): ``rule-v6.json``
+    is rule v5 under schema 4 — every predicate and ceiling rule v5's — with
+    the set schedule moved: ``heldout-5``, spent since run 8, a reported row
+    that counts marked R1, and a seventh row, ``heldout-6`` (the fresh blind
+    set, authored after this file), the gate row that reports it, as rule
+    v5's ``heldout-5`` did. Rule v5's file and the tests that read it are
+    untouched (a rule that has been run is never edited)."""
+
+    def test_the_repository_rule_v6_file(self) -> None:
+        rule = validation.load_pass_rule(_RULES / "rule-v6.json")
+        assert rule == PassRule.model_validate(
+            {
+                "schema_version": 4,
+                "rule_name": "rule-v6",
+                "max_material_wrong": 0,
+                "max_silent_omissions": 0,
+                "require_uncertainty_surfaced": True,
+                "max_word_error_rate": None,
+                "unsupported_line_r1_exemption": True,
+                "sets": {
+                    "scripts": {
+                        "gate": True,
+                        "max_r1_facts": 2,
+                        "max_r2_facts": 2,
+                        "max_r3_encounters": 2,
+                        "r1_marked_reported": False,
+                    },
+                    "heldout": {
+                        "gate": False,
+                        "max_r1_facts": 1,
+                        "max_r2_facts": 1,
+                        "max_r3_encounters": 1,
+                        "r1_marked_reported": False,
+                    },
+                    "heldout-2": {
+                        "gate": False,
+                        "max_r1_facts": 1,
+                        "max_r2_facts": 1,
+                        "max_r3_encounters": 1,
+                        "r1_marked_reported": False,
+                    },
+                    "heldout-3": {
+                        "gate": False,
+                        "max_r1_facts": 1,
+                        "max_r3_encounters": 1,
+                        "require_uncertainty_surfaced": False,
+                        "r1_marked_reported": False,
+                    },
+                    "heldout-4": {
+                        "gate": False,
+                        "max_r1_facts": 1,
+                        "max_r3_encounters": 1,
+                        "require_uncertainty_surfaced": False,
+                        "r1_marked_reported": False,
+                    },
+                    "heldout-5": {
+                        "gate": False,
+                        "max_r1_facts": 1,
+                        "max_r3_encounters": 1,
+                        "require_uncertainty_surfaced": False,
+                        "r1_marked_reported": False,
+                    },
+                    "heldout-6": {
+                        "gate": True,
+                        "max_r1_facts": 1,
+                        "max_r3_encounters": 1,
+                        "require_uncertainty_surfaced": False,
+                        "r1_marked_reported": True,
+                    },
+                },
+            }
+        )
+        sets = rule.sets or {}
+        assert list(sets) == list(_RULE_V6_ROWS)
+        assert {name for name, row in sets.items() if row.gate} == {"scripts", "heldout-6"}
+        assert rule.schema_version == 4
+        assert validation.RULE_SCHEMA_VERSION == 4
+        assert rule.exempts_r1_lines is True
+        assert rule.label == "v6"
+
+    def test_heldout_6_is_the_only_row_reporting_marked_r1(self) -> None:
+        sets = validation.load_pass_rule(_RULES / "rule-v6.json").sets or {}
+        assert {name: row.r1_marked_reported for name, row in sets.items()} == {
+            name: name == "heldout-6" for name in _RULE_V6_ROWS
+        }
+
+    def test_rule_v6_is_rule_v5_with_the_set_schedule_moved(self) -> None:
+        """D11: every top-level field but the name is rule v5's (schema 4
+        both); rule v5's six rows keep their order and every field, but
+        ``heldout-5``'s ``gate`` and ``r1_marked_reported``, both now false —
+        so it is rule v5's ``heldout-4`` row field for field; the seventh row,
+        ``heldout-6``, is rule v5's ``heldout-5`` row field for field. No
+        predicate and no ceiling moves."""
+        v5 = validation.load_pass_rule(_RULES / "rule-v5.json")
+        v6 = validation.load_pass_rule(_RULES / "rule-v6.json")
+        assert (v5.schema_version, v6.schema_version) == (4, 4)
+        assert (v5.rule_name, v6.rule_name) == ("rule-v5", "rule-v6")
+        not_compared = {"rule_name", "sets"}
+        assert v6.model_dump(exclude=not_compared) == v5.model_dump(exclude=not_compared)
+        v5_sets, v6_sets = v5.sets or {}, v6.sets or {}
+        assert list(v6_sets) == [*v5_sets, "heldout-6"]
+        for name, row in v5_sets.items():
+            if name == "heldout-5":
+                moved = row.model_copy(update={"gate": False, "r1_marked_reported": False})
+                assert v6_sets[name] == moved
+            else:
+                assert v6_sets[name] == row
+        for name, counterpart in _RULE_V5_COUNTERPART.items():
+            assert v6_sets[name] == v5_sets[counterpart]
+
+    def test_the_file_is_lf_in_rule_v5s_key_order(self) -> None:
+        """Rule v5's top-level keys in its order; its rows in its order with
+        ``heldout-6`` last; each row's keys its rule-v5 counterpart's; LF line
+        endings, a final newline."""
+        raw_v5 = (_RULES / "rule-v5.json").read_bytes()
+        raw_v6 = (_RULES / "rule-v6.json").read_bytes()
+        assert b"\r" not in raw_v6
+        assert b"\x00" not in raw_v6
+        assert raw_v6.endswith(b"}\n")
+        v5, v6 = json.loads(raw_v5), json.loads(raw_v6)
+        assert list(v6) == list(v5)
+        assert list(v6["sets"]) == [*v5["sets"], "heldout-6"]
+        for name in _RULE_V6_ROWS:
+            counterpart = _RULE_V5_COUNTERPART.get(name, name)
+            assert list(v6["sets"][name]) == list(v5["sets"][counterpart])
+
+    @pytest.mark.parametrize("shape", sorted(TestRuleV5Reading._SHAPES))
+    @pytest.mark.parametrize("set_name", _RULE_V6_ROWS)
+    def test_each_row_reads_as_its_rule_v5_counterpart(self, set_name: str, shape: str) -> None:
+        """The equivalence on outcomes (D11's "predicates and ceilings
+        EXACTLY"): on every row, rule v6's verdict, its verdict with marked R1
+        counted, its verdict without the R1 exemption and its class counts
+        are rule v5's on the counterpart row — ``heldout-5`` reads as rule
+        v5's ``heldout-4``, ``heldout-6`` as rule v5's ``heldout-5``, every
+        other row as itself."""
+        v5 = validation.load_pass_rule(_RULES / "rule-v5.json")
+        v6 = validation.load_pass_rule(_RULES / "rule-v6.json")
+        counterpart = _RULE_V5_COUNTERPART.get(set_name, set_name)
+        outcomes = TestRuleV5Reading._SHAPES[shape]
+        assert run_passed(v6, outcomes, set_name=set_name) is run_passed(
+            v5, outcomes, set_name=counterpart
+        )
+        assert run_passed(v6.counting_marked_r1(), outcomes, set_name=set_name) is run_passed(
+            v5.counting_marked_r1(), outcomes, set_name=counterpart
+        )
+        assert run_passed(v6.without_r1_exemption(), outcomes, set_name=set_name) is run_passed(
+            v5.without_r1_exemption(), outcomes, set_name=counterpart
+        )
+        assert class_counts(v6, outcomes, set_name) == class_counts(v5, outcomes, counterpart)
+
+    def test_heldout_5_now_counts_marked_r1(self) -> None:
+        """Two marked R1 facts: rule v5's ``heldout-5`` (reporting) passes,
+        rule v6's ``heldout-5`` (counting, ceiling 1) fails, and rule v6's
+        ``heldout-6`` passes as rule v5's ``heldout-5`` did."""
+        v5 = validation.load_pass_rule(_RULES / "rule-v5.json")
+        v6 = validation.load_pass_rule(_RULES / "rule-v6.json")
+        outcomes = _r1_outcomes(2, 0)
+        assert run_passed(v5, outcomes, set_name="heldout-5") is True
+        assert run_passed(v6, outcomes, set_name="heldout-5") is False
+        assert run_passed(v6, outcomes, set_name="heldout-6") is True
+        assert run_passed(v6.counting_marked_r1(), outcomes, set_name="heldout-6") is False
+
+    def test_rule_v2s_counterpart_under_rule_v6(self) -> None:
+        """As under rule v5: the four rule-v2 sets read ``same``; the three
+        later sets have no rule-v2 row."""
+        v6 = validation.load_pass_rule(_RULES / "rule-v6.json")
+        for name in ("scripts", "heldout", "heldout-2", "heldout-3"):
+            assert validation.rule_v2_counterpart(v6, name) == "same"
+        for name in ("heldout-4", "heldout-5", "heldout-6"):
+            assert validation.rule_v2_counterpart(v6, name) == "no_row"
+
+    def test_counting_marked_r1_sets_every_row_false(self) -> None:
+        v6 = validation.load_pass_rule(_RULES / "rule-v6.json")
+        counted = v6.counting_marked_r1()
+        assert counted is not v6
+        assert {name: row.r1_marked_reported for name, row in (counted.sets or {}).items()} == {
+            name: False for name in _RULE_V6_ROWS
+        }
+        assert (v6.sets or {})["heldout-6"].r1_marked_reported is True  # never mutated
+
+    @pytest.mark.parametrize(
+        ("change", "message"),
+        [
+            # The schema-4 vocabulary rule v6 shares with rule v5.
+            (("row", "heldout-6", "r1_marked_reported", None),
+             "a schema-4 rule needs r1_marked_reported on every set"),
+            (("top", None, "unsupported_line_r1_exemption", None),
+             "a schema-4 rule needs unsupported_line_r1_exemption"),
+            (("top", None, "schema_version", 3),
+             "only a schema-4 or later rule takes r1_marked_reported"),
+            (("top", None, "schema_version", 5), "schema_version"),
+            (("row", "heldout-6", "max_r4_facts", 0), "Extra inputs are not permitted"),
+            (("row", "heldout-6", "max_r1_facts", -1), "max_r1_facts"),
+            (("row", "heldout-6", "r1_marked_reported", "sometimes"), "r1_marked_reported"),
+            (("set", "Heldout-6", None, None), "set names must match"),
+            (("top", None, "rule_name", "Rule-v6"), "rule_name"),
+        ],
+    )
+    def test_the_refusal_vocabulary(
+        self, change: tuple[str, str | None, str | None, Any], message: str
+    ) -> None:
+        """Rule v6's file with one change is refused by the loader's own
+        words: a row without ``r1_marked_reported``, the exemption missing,
+        schema 3 with the field or schema 5, an extra or negative ceiling, a
+        non-boolean field, a set or rule name off its pattern. The unchanged
+        file loads (``test_the_repository_rule_v6_file``)."""
+        payload = validation.load_pass_rule(_RULES / "rule-v6.json").model_dump()
+        where, row, field, value = change
+        if where == "top":
+            assert field is not None
+            payload[field] = value
+        elif where == "row":
+            assert row is not None and field is not None
+            payload["sets"][row][field] = value
+        else:
+            assert row is not None
+            payload["sets"][row] = payload["sets"].pop("heldout-6")
+        with pytest.raises(ValueError, match=message):
+            PassRule.model_validate(payload)
+
+    def test_every_repository_rules_label_with_rule_v6(self) -> None:
+        """Every file in the folder, read: rule v4's pin (``TestRuleV4``,
+        untouched) names the five earlier files; with rule v6's file the
+        folder's six labels are each file's own number."""
+        labels = {
+            path.name: validation.load_pass_rule(path).label
+            for path in sorted(_RULES.glob("*.json"))
+        }
+        assert labels == {
+            "option-a-proposed.json": "v1",
+            "rule-v2.json": "v2",
+            "rule-v3.json": "v3",
+            "rule-v4.json": "v4",
+            "rule-v5.json": "v5",
+            "rule-v6.json": "v6",
+        }
+
+
 class TestR1Exemption:
     """D4's predicate, both ways, on hand-built alignments: a line is
     excused when EVERY flagged structured-claim word in it is (i) never an

@@ -1479,6 +1479,44 @@ class TestRunValidationMain:
             assert "Whisper" not in out
             assert "Margaret" not in out
 
+    @pytest.mark.parametrize(
+        ("given", "goes_on"),
+        [
+            (None, False),
+            ("Margaret", False),
+            ("heldout-7", False),
+            ("scripts", True),
+            ("heldout", True),
+            ("heldout-2", True),
+            ("heldout-3", True),
+            ("heldout-4", True),
+            ("heldout-5", True),
+            ("heldout-6", True),
+        ],
+    )
+    def test_the_repository_rule_v6_needs_one_of_its_seven_sets(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], given: str | None, goes_on: bool
+    ) -> None:
+        """Note-content-design D11 through ``main``: ``rule-v6.json``
+        (schema 4) takes ``--set`` as rule v5 does, ``heldout-6`` among its
+        names before the set exists (the rule's row is all ``--set`` reads,
+        as rule v5's ``heldout-5`` row was before that set existed); the
+        refusal names the schema and the seven sets, never the typed name."""
+        argv = _argv(tmp_path) if given is None else _argv(tmp_path, "--set", given)
+        argv[argv.index("--rule") + 1] = str(REPO / "validation" / "rules" / "rule-v6.json")
+        assert validation.main(argv) == 2
+        out = capsys.readouterr().out
+        if goes_on:
+            assert "[refused] no Whisper model is installed in" in out
+        else:
+            assert out.strip().endswith(
+                "[refused] a schema-4 rule needs --set naming one of its sets: heldout, "
+                "heldout-2, heldout-3, heldout-4, heldout-5, heldout-6, scripts"
+            )
+            assert "Whisper" not in out
+            assert "Margaret" not in out
+            assert "heldout-7" not in out
+
     def test_the_set_help_names_rule_v5s_sets(self) -> None:
         """Validation-run7 review round 18 LOW-001: the ``--set`` help names
         the sets as a literal, so it is pinned to the newest rule's rows —
@@ -2095,6 +2133,11 @@ def _repository_rule_v5() -> PassRule:
     return validation.load_pass_rule(REPO / "validation" / "rules" / "rule-v5.json")
 
 
+def _repository_rule_v6() -> PassRule:
+    """``validation/rules/rule-v6.json`` (note-content-design D11)."""
+    return validation.load_pass_rule(REPO / "validation" / "rules" / "rule-v6.json")
+
+
 def _rule_v3(*, exempt: bool) -> PassRule:
     """A schema-3 rule of one gate set whose ceilings are NOT rule v2's
     (R1 1 where rule v2's ``scripts`` row holds 2)."""
@@ -2177,6 +2220,36 @@ class TestHarnessDocument:
             if line.startswith("| `")
         ]
         rule = _repository_rule_v5()
+        sets = rule.sets or {}
+
+        def ceiling(value: int | None) -> str:
+            return "—" if value is None else str(value)
+
+        assert [row[0].split("`")[1] for row in rows] == list(sets)
+        assert [row[1:] for row in rows] == [
+            [
+                "gate" if row.gate else "reported",
+                ceiling(row.max_r1_facts),
+                "reported" if row.r1_marked_reported else "counted",
+                ceiling(row.max_r2_facts),
+                ceiling(row.max_r3_encounters),
+                "required" if rule.uncertainty_required(row) else "reported, not required",
+            ]
+            for row in sets.values()
+        ]
+
+    def test_the_rule_v6_ceiling_table_is_the_files(self) -> None:
+        """Note-content-design D11: the "Rule v6" section's ceiling table
+        states ``rule-v6.json``'s seven rows in its order, in the "Rule v5"
+        table's columns."""
+        text = (REPO / "docs" / "testing" / "validation-harness.md").read_text(encoding="utf-8")
+        section = text.split("\n## Rule v6 ", 1)[1].split("\n## ", 1)[0]
+        rows = [
+            [cell.strip() for cell in line.strip().strip("|").split("|")]
+            for line in section.splitlines()
+            if line.startswith("| `")
+        ]
+        rule = _repository_rule_v6()
         sets = rule.sets or {}
 
         def ceiling(value: int | None) -> str:
@@ -3350,26 +3423,29 @@ class TestReport:
 
     def test_a_schema_4_rule_of_another_name_prints_its_own_label(self) -> None:
         """Peer round 2 PR-LOW-002: the fourth verdict's name is
-        ``PassRule.label`` — "v6" for a schema-4 rule named
-        ``rule-v6-test`` — at every label site; rule v5's sentence is rule
-        v5's alone, and nothing names v5."""
+        ``PassRule.label`` — "v7" for a schema-4 rule named
+        ``rule-v7-test`` — at every label site; rule v5's sentence is rule
+        v5's and rule v6's alone (rule v6's own is rule v6's alone), and
+        nothing names v5 or v6. The name was ``rule-v6-test`` until rule v6
+        existed (note-content-design D11, whose report sentence it would now
+        print — ``test_a_heldout_6_report_under_rule_v6``)."""
         payload = _repository_rule_v5().model_dump()
-        payload["rule_name"] = "rule-v6-test"
+        payload["rule_name"] = "rule-v7-test"
         rule = PassRule.model_validate(payload)
-        assert (rule.schema_version, rule.label) == (4, "v6")
+        assert (rule.schema_version, rule.label) == (4, "v7")
         info = validation.RunInfo("medium", False, "silero", None, None, None)
         report = render_report(
             self._blind_shape_outcomes(), rule, info, set_name="heldout-5"
         )
         lines = report.splitlines()
         assert lines[0] == (
-            "## Validation run - rule `rule-v6-test` - set `heldout-5` - rule v6 PASS, rule v6 "
-            "with marked R1 counted FAIL, rule v6 without the R1 exemption FAIL, rule v1 FAIL"
+            "## Validation run - rule `rule-v7-test` - set `heldout-5` - rule v7 PASS, rule v7 "
+            "with marked R1 counted FAIL, rule v7 without the R1 exemption FAIL, rule v1 FAIL"
         )
         assert [line.split(" verdict", 1)[0] for line in lines[2:6]] == [
-            "- Rule v6",
-            "- Rule v6 with marked R1 counted",
-            "- Rule v6 without the R1 exemption",
+            "- Rule v7",
+            "- Rule v7 with marked R1 counted",
+            "- Rule v7 without the R1 exemption",
             "- Rule v1",
         ]
         assert lines[6] == ""
@@ -3378,12 +3454,162 @@ class TestReport:
             + self._RULE_V3_HISTORY
             + self._RULE_V4_SENTENCE
         )
-        assert "### Residue classes (rule v6, set `heldout-5`, a gate set)" in lines
-        after = "- After the classes (the counts rule v6 reads)"
+        assert "### Residue classes (rule v7, set `heldout-5`, a gate set)" in lines
+        after = "- After the classes (the counts rule v7 reads)"
         assert any(line.startswith(after) for line in lines)
         assert "- R1 marked wrong (reported, no ceiling): 2 - syn-001/f0, syn-003/f1" in lines
         assert "v5" not in report
+        assert "v6" not in report
         assert "= rule v4" not in report
+
+    # Note-content-design D11: rule v6's own sentence, after rule v5's (its
+    # history under rule v6).
+    _RULE_V6_SENTENCE = (
+        " Rule v6 (schema 4; note-content-design D11, decided 2026-11-07) keeps rule v5's "
+        "predicates and ceilings and changes the set schedule only: `heldout-5` becomes a "
+        "reported set that counts marked R1 under its ceiling and `heldout-6`, a set "
+        "designated for blind authoring, a gate set that reports them."
+    )
+
+    def test_a_heldout_6_report_under_rule_v6(self) -> None:
+        """Note-content-design D11 on the fresh blind row (marked R1
+        reported), on the blind shape's outcomes: the four verdicts and their
+        lines are rule v5's ``heldout-5`` report's with the label, the gate
+        set and the reported sets moved; the run information adds rule v6's
+        sentence after rule v5's ("this set reports them"); every table and
+        residue line is rule v5's ``heldout-5`` report's but the residue
+        heading's and the after-classes line's label."""
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        outcomes = self._blind_shape_outcomes()
+        lines = render_report(
+            outcomes, _repository_rule_v6(), info, set_name="heldout-6"
+        ).splitlines()
+        assert lines[:7] == [
+            "## Validation run - rule `rule-v6` - set `heldout-6` - rule v6 PASS, rule v6 with "
+            "marked R1 counted FAIL, rule v6 without the R1 exemption FAIL, rule v1 FAIL",
+            "",
+            "- Rule v6 verdict, set `heldout-6` (a gate set): PASS. Failing encounters: none; "
+            "set-level: none; set-level errors: 0. The gate is a rule v6 pass on every gate "
+            "set (`heldout-6`, `scripts`); the other sets are reported in full (`heldout`, "
+            "`heldout-2`, `heldout-3`, `heldout-4`, `heldout-5`).",
+            "- Rule v6 with marked R1 counted verdict (the same outcomes, every marked R1 fact "
+            "counted under the R1 ceiling): FAIL. Failing encounters: none; set-level: R1 3 "
+            "over the ceiling of 1; set-level errors: 0.",
+            "- Rule v6 without the R1 exemption verdict (the same outcomes, every unsupported "
+            "clinical line failing; rule v2 has no row for this set): FAIL. Failing "
+            "encounters: syn-001 (unsupported_clinical_line); set-level: none; set-level "
+            "errors: 0.",
+            "- Rule v1 verdict (the same outcomes on the raw counts, no residue class): FAIL. "
+            "Failing encounters: syn-001 (unsupported_clinical_line, material_wrong); "
+            "syn-002 (material_wrong); syn-003 (material_wrong, silent_omission).",
+            "",
+        ]
+        assert lines[7] == (
+            self._RUN_INFORMATION.format(encounters=3)
+            + self._RULE_V3_HISTORY
+            + self._RULE_V4_SENTENCE
+            + self._RULE_V5_SENTENCE.format(how="this set reports them")
+            + self._RULE_V6_SENTENCE
+        )
+        v5_lines = render_report(
+            outcomes, _repository_rule_v5(), info, set_name="heldout-5"
+        ).splitlines()
+        assert len(lines) == len(v5_lines)
+        assert lines[8:31] == v5_lines[8:31]
+        assert [
+            (old, new) for old, new in zip(v5_lines[31:], lines[31:], strict=True) if old != new
+        ] == [
+            (
+                "### Residue classes (rule v5, set `heldout-5`, a gate set)",
+                "### Residue classes (rule v6, set `heldout-6`, a gate set)",
+            ),
+            (
+                "- After the classes (the counts rule v5 reads): material wrong 0 (raw 3), "
+                "silent omissions 0 (raw 1), uncertainty missed 0 (raw 0).",
+                "- After the classes (the counts rule v6 reads): material wrong 0 (raw 3), "
+                "silent omissions 0 (raw 1), uncertainty missed 0 (raw 0).",
+            ),
+        ]
+        assert (
+            "| R1 recogniser (silent only; marked R1 reported below) | 1 | facts | 1 | yes |"
+        ) in lines
+        assert "- R1 marked wrong (reported, no ceiling): 2 - syn-001/f0, syn-003/f1" in lines
+
+    def test_a_heldout_5_report_under_rule_v6_counts_marked_r1(self) -> None:
+        """``heldout-5`` under rule v6 is a reported row that counts marked
+        R1: on the blind shape's outcomes (one silent, two marked) R1 is 3
+        over its ceiling of 1, so rule v6 FAILS where rule v5 passed it, and
+        equals its verdict with marked R1 counted; the run information says
+        "this set counts them under the ceiling"; the residue section is
+        rule v5's ``heldout-4`` shape."""
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        outcomes = self._blind_shape_outcomes()
+        lines = render_report(
+            outcomes, _repository_rule_v6(), info, set_name="heldout-5"
+        ).splitlines()
+        assert lines[0] == (
+            "## Validation run - rule `rule-v6` - set `heldout-5` - rule v6 FAIL, rule v6 with "
+            "marked R1 counted FAIL, rule v6 without the R1 exemption FAIL, rule v1 FAIL"
+        )
+        assert lines[2] == (
+            "- Rule v6 verdict, set `heldout-5` (a reported set): FAIL. Failing encounters: "
+            "none; set-level: R1 3 over the ceiling of 1; set-level errors: 0. The gate is a "
+            "rule v6 pass on every gate set (`heldout-6`, `scripts`); the other sets are "
+            "reported in full (`heldout`, `heldout-2`, `heldout-3`, `heldout-4`, `heldout-5`)."
+        )
+        assert lines[7] == (
+            self._RUN_INFORMATION.format(encounters=3)
+            + self._RULE_V3_HISTORY
+            + self._RULE_V4_SENTENCE
+            + self._RULE_V5_SENTENCE.format(how="this set counts them under the ceiling")
+            + self._RULE_V6_SENTENCE
+        )
+        assert "### Residue classes (rule v6, set `heldout-5`, a reported set)" in lines
+        assert "| R1 recogniser | 3 | facts | 1 | no |" in lines
+        assert "- R1: syn-001/f0, syn-003/f0, syn-003/f1" in lines
+        assert (
+            "- R1 marked wrong (counted under the ceiling): 2 - syn-001/f0, syn-003/f1"
+        ) in lines
+        v5_heldout_4 = render_report(
+            outcomes, _repository_rule_v5(), info, set_name="heldout-4"
+        ).splitlines()
+        assert lines[8:31] == v5_heldout_4[8:31]
+
+    @pytest.mark.parametrize(
+        ("rule_file", "set_name"),
+        [
+            ("rule-v3.json", "scripts"),
+            ("rule-v3.json", "heldout-4"),
+            ("rule-v4.json", "scripts"),
+            ("rule-v4.json", "heldout-5"),
+            ("rule-v5.json", "scripts"),
+            ("rule-v5.json", "heldout-5"),
+        ],
+    )
+    def test_an_earlier_rules_report_prints_no_rule_v6_sentence(
+        self, rule_file: str, set_name: str
+    ) -> None:
+        """The other side of rule v6's sentence: the three earlier schema-3
+        and schema-4 rules' reports name no ``heldout-6`` and no rule v6."""
+        rule = validation.load_pass_rule(REPO / "validation" / "rules" / rule_file)
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        report = render_report(self._blind_shape_outcomes(), rule, info, set_name=set_name)
+        assert "v6" not in report
+        assert "heldout-6" not in report
+
+    def test_a_schema_3_rule_named_v6_prints_no_rule_v5_or_v6_sentence(self) -> None:
+        """Both sentences need schema 4: a schema-3 file named
+        ``rule-v6-test`` is labelled "v6" but prints rule v3's history alone."""
+        payload = _repository_rule_v4().model_dump()
+        payload["rule_name"] = "rule-v6-test"
+        rule = PassRule.model_validate(payload)
+        assert (rule.schema_version, rule.label) == (3, "v6")
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        report = render_report(self._blind_shape_outcomes(), rule, info, set_name="heldout-5")
+        lines = report.splitlines()
+        assert lines[6] == self._RUN_INFORMATION.format(encounters=3) + self._RULE_V3_HISTORY
+        assert "schema 4" not in report
+        assert "marked R1" not in report
 
     def test_a_schema_3_rule_named_v5_prints_no_rule_v5_sentence(self) -> None:
         """The other side of the rule-v5 sentence's gate (label v5 AND schema
