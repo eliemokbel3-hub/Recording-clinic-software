@@ -104,7 +104,7 @@ it runs out, the documents say so.
   line carried a review mark; 3 carried none. A larger speech model was measured and did
   no better. Real voices and accents and everyday background sound were not measured, so
   the true rate may be higher. The clinician review guide (these lines approved by the practitioner on 2026-11-07; the
-  shadow-mode-off line still awaits approval) asks the practitioner to read every number, unit and abbreviation against
+  shadow-mode-off line approved on 2026-11-10, its wording only) asks the practitioner to read every number, unit and abbreviation against
   what they remember, marked or not: the marks and that reading stay the control.
 
 - **Ahpra, "Meeting your professional obligations when using AI in healthcare".** It sets

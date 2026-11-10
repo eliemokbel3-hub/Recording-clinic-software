@@ -7,8 +7,8 @@
 
 Draft 1 (2026-10-01; the shadow-recording lines added 2026-10-07 for the pilot build,
 approved by the practitioner the same day; the kept-recording line added 2026-10-08 for
-version 0.3.0, awaiting the practitioner's approval; the background-music, marked-line and
-number lines added 2026-10-12 for version 0.3.2, awaiting the practitioner's approval; the
+version 0.3.0, approved by the practitioner on 2026-11-10; the background-music, marked-line and
+number lines added 2026-10-12 for version 0.3.2, approved by the practitioner on 2026-11-10; the
 next-patient, removing-lines, self-correction and "unsure" lines added 2026-10-13 for
 version 0.3.3, approved by the practitioner on 2026-10-22; the left-out-line, wider-doubt and
 shorter next-patient-mark lines added 2026-10-24 for version 0.3.4, approved by the
@@ -16,7 +16,7 @@ practitioner on 2026-11-04; the longer goodbye-and-greeting list lines added 202
 the split-line line added 2026-10-27 for version 0.3.5, approved by the practitioner on
 2026-11-04; the misheard number, unit and abbreviation lines
 added after validation run 7 and the larger-model measurement, 2026-11, with no new
-version, approved by the practitioner on 2026-11-07, their counts refreshed with validation run 8's; the shadow-mode-off line added with them, awaiting the practitioner's approval; the clinical-shorthand, suggested-section and suggested-next-patient lines and the renamed tick added 2026-11-09 for version 0.3.6, approved by the practitioner on 2026-11-10). For the
+version, approved by the practitioner on 2026-11-07, their counts refreshed with validation run 8's; the shadow-mode-off line added with them, approved by the practitioner on 2026-11-10 (its wording only: shadow mode stays on); the clinical-shorthand, suggested-section and suggested-next-patient lines and the renamed tick added 2026-11-09 for version 0.3.6, approved by the practitioner on 2026-11-10). For the
 practitioner, before saving a note and before finalising it in Cliniko.
 
 **Why this matters.** Ahpra's guidance on AI in healthcare ("Meeting your professional
