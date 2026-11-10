@@ -3340,7 +3340,7 @@ class TestBoundedCarry:
             "heldout-3": 2,
             "heldout-4": 1,
             "heldout-5": 0,
-            "heldout-6": 0,
+            "heldout-6": 2,
         }
 
 
@@ -3377,9 +3377,11 @@ _PREDICTED_CORRECTION_DIVERGENCES_BY_SET: dict[
     # no line opens with a frozen marker, and every fix is a clinician's,
     # routes on its own cue or follows an unrouted line, so none diverges.
     "heldout-5": {},
-    # Note-content-design Task F.2: blind until run 9 (C12); its entries are
-    # written in its Task P.5.
-    "heldout-6": {},
+    # Note-content-design Task P.5 (2026-11-10), read off the product after run 9.
+    "heldout-6": {
+        "h6-09": ((), (6,)),  # a marker opening new information is carried (D4's residue)
+        "h6-16": ((6,), ()),  # its opener is not a frozen marker
+    },
 }
 _PREDICTED_CORRECTION_DIVERGENCES =by_case(_PREDICTED_CORRECTION_DIVERGENCES_BY_SET)
 

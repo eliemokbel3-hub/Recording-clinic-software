@@ -164,10 +164,11 @@ set up and build it, and make releases; the installed app needs none of them.
   by the practitioner from a normal terminal (Task 0.4).
 - `lint-held-out-set.py <set-folder> [--log-dir DIR] [--timeout SECONDS]
   [--verbose]` (validation-run6 plan Task 0.17, C12) — runs the desktop test
-  suite while a blind held-out set is in the tree (the blind set is
-  `validation/heldout-6` — in the fixture's table since the
-  note-content-design plan's Task F.2, its scripts authored in that task and
-  blind until that plan's Task P.5; `validation/heldout-5` until its cases
+  suite while a blind held-out set is in the tree (no set is blind now, and
+  the suite runs plain again; the runner still works with no set blind, as
+  CI runs it: `validation/heldout-6` — in the fixture's table since the
+  note-content-design plan's Task F.2, its scripts authored in that task —
+  was blind until that plan's Task P.5 wrote its cases; `validation/heldout-5` until its cases
   were written after run 8 (in the table since the larger-model plan's Task
   0.1 (d), authored in the validation-run8 plan's Task 0.5),
   `validation/heldout-4` until its cases were written after run 7, and

@@ -2681,7 +2681,7 @@ class TestCheck1HedgeMark:
             "heldout-3": 7,
             "heldout-4": 6,
             "heldout-5": 10,
-            "heldout-6": 0,
+            "heldout-6": 7,
         }
         heldout = {c.case_id for c in held_out_set("heldout").all_cases()}
         assert set(_UNSURE_PREDICTIONS_BEFORE_RUN6_0_9) <= heldout
@@ -2782,9 +2782,19 @@ _PREDICTED_UNSURE_DIVERGENCES_BY_SET: dict[
         "h5-20": ((3,), ()),  # its hedge is outside the frozen list
         "h5-22": ((2,), ()),  # its hedge is outside the frozen list
     },
-    # Note-content-design Task F.2: blind until run 9 (C12); its entries are
-    # written in its Task P.5.
-    "heldout-6": {},
+    # Note-content-design Task P.5 (2026-11-10), read off the product after run
+    # 9: ``h6-12``'s lines 5 and 9 hold a listed hedge, and they match.
+    "heldout-6": {
+        "h6-01": ((7,), ()),  # its hedge has a word inside it, outside the frozen list
+        "h6-04": ((4,), ()),  # the doubt is a separate line, its hedge unlisted
+        "h6-09": ((5,), ()),  # its hedge is outside the frozen list (an idiom)
+        "h6-12": ((1, 5, 9), (5, 9)),  # line 1's hedge is outside the frozen list
+        # The doubt is a separate line; its hedge is listed, but that line is
+        # left out and the fact's line ends in a full stop, so none is joined.
+        "h6-15": ((5,), ()),
+        "h6-18": ((6,), ()),  # its hedge has words inside it, outside the frozen list
+        "h6-20": ((2,), ()),  # its hedge is outside the frozen list
+    },
 }
 _PREDICTED_UNSURE_DIVERGENCES = by_case(_PREDICTED_UNSURE_DIVERGENCES_BY_SET)
 

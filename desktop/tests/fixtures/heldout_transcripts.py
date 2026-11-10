@@ -81,13 +81,14 @@ its cases the suite ran only through ``scripts/lint-held-out-set.py``. Its
 cases were written in validation-run8 plan Task P.3 (2026-11-07).
 
 Note-content-design plan Task F.2 (D11, C12): ``validation/heldout-6`` with
-``h6-``, the blind set of run 9, is in the table with ``cases_written=False``
+``h6-``, the blind set of run 9, was in the table with ``cases_written=False``
 until after run 9; its brief is ``heldout-2``'s, so it is ``tails_by_role``
 (the brief's next patient has the ``next_patient`` role) but NOT
 ``routed_material`` (the brief has no routed rule for material facts), with
-the brief's 20 to 25 scripts and no facts-per-script bound. Its folder is
-absent until Task F.2 authors it; from then the suite runs only through
-``scripts/lint-held-out-set.py``. Its cases are written in Task P.5.
+the brief's 20 to 25 scripts and no facts-per-script bound. Its folder was
+absent until Task F.2 authored it (2026-11-10); from then until its cases the
+suite ran only through ``scripts/lint-held-out-set.py``. Its cases were
+written in Task P.5 (2026-11-10), so no set is blind now.
 """
 
 from __future__ import annotations
@@ -1138,9 +1139,177 @@ HELDOUT_5_CASES: Final[tuple[HeldOutCase, ...]] = (
     ),
 )
 
-# Note-content-design Task F.2 (D11, C12): ``heldout-6`` is blind until run 9 —
-# no case is written before its Task P.5.
-HELDOUT_6_CASES: Final[tuple[HeldOutCase, ...]] = ()
+# Note-content-design plan Task P.5 (2026-11-10), after run 9: one case per
+# ``heldout-6`` script, read off its brief (``validation/heldout-6/SPEC.md``,
+# ``heldout-2``'s with four lines changed) and notes (``AUTHOR-NOTES.md``)
+# under the readings above and Task 0.12's two — a fix by ANY speaker (its
+# brief says "a speaker", as ``heldout-2``'s), and doubt in a separate line
+# marks the fact's line — never off the frozen phrase lists, as
+# ``HELDOUT_5_CASES`` were. The boundary is the greeting's segment, or the next
+# one when the closing shares it (``h6-01``, ``h6-03``, ``h6-22``); the
+# harness's reference tail is the first ``next_patient`` line
+# (``tails_by_role``), one later when the clinician's welcome has a line of its
+# own (``h6-06``, ``h6-10``, ``h6-13``, ``h6-16``, ``h6-19``).
+HELDOUT_6_CASES: Final[tuple[HeldOutCase, ...]] = (
+    HeldOutCase(
+        "h6-01",
+        19,
+        "'Take care now' and the welcome by name share 18, so the cut is the next segment, 19",
+        unsure=(7,),
+        unsure_reason="patient doubts the thigh tingling mid-line (7, 'I'm honestly not sure')",
+    ),
+    HeldOutCase(
+        "h6-02",
+        None,
+        "'See you' (5) and 'Bye for now' (6) end the visit; no one new is welcomed",
+        corrections_reason=(
+            "2 fixes 1's side, but 1 routes nowhere, so there is no section to carry it into"
+        ),
+    ),
+    HeldOutCase(
+        "h6-03",
+        11,
+        "'Look after yourself' and 'Come on through, have a seat' share 10, so the cut is 11",
+    ),
+    HeldOutCase(
+        "h6-04",
+        None,
+        "'Good morning' (0) has no closing before it; 'morning stiffness' (3) is clinical",
+        corrections_reason=(
+            "9 fixes 8's frequency, but 8 routes nowhere, so there is no section to carry it"
+            " into"
+        ),
+        unsure=(4,),
+        unsure_reason=(
+            "5 doubts 4 in a separate line, so 4 (the fact's line) is the line to mark"
+        ),
+    ),
+    HeldOutCase(
+        "h6-05",
+        None,
+        "the partner (2) joins with no greeting; 'Hello again' (0) has no closing before it",
+        unsure_reason="only the clinician hedges (8), and the clinician is never marked",
+    ),
+    HeldOutCase(
+        "h6-06",
+        8,
+        "closing at 6-7 ('ta-ra then, love, see you in a fortnight'), 'Ey up, Derek' at 8",
+    ),
+    HeldOutCase(
+        "h6-07",
+        None,
+        "the same patient comes back after the goodbye (6, 'Take care'); no one new",
+    ),
+    HeldOutCase(
+        "h6-08",
+        None,
+        "no closing and no one new",
+        corrections_reason=(
+            "2 fixes 1's time, but 1 routes nowhere, so there is no section to carry it into"
+        ),
+    ),
+    HeldOutCase(
+        "h6-09",
+        None,
+        "'Hello,' (0) opens the visit with no closing before it; no one new is welcomed",
+        corrections_reason=(
+            "6 opens 'Actually,' but adds new information - not a fix (the author's deliberate"
+            " non-fix)"
+        ),
+        unsure=(5,),
+        unsure_reason=(
+            "patient doubts the surgery in 5's trailing clause ('if memory serves'); 11's"
+            " 'I'm certain' is not"
+        ),
+    ),
+    HeldOutCase(
+        "h6-10",
+        8,
+        "closing at 6-7 ('That's us', 'Champion'), 'Next, please' hands over to the next at 8",
+    ),
+    HeldOutCase(
+        "h6-11",
+        None,
+        "'Welcome to the club' (4), 'Hello again' (10) and 'say hello' (11) welcome no one new",
+        unsure_reason="10's 'I suppose' is resignation, not doubt about a fact",
+    ),
+    HeldOutCase(
+        "h6-12",
+        None,
+        "no greeting; 'evening pain' (1) is clinical, and 'See you next week' (12) ends it",
+        unsure=(1, 5, 9),
+        unsure_reason=(
+            "patient doubts 1 ('give or take'), 5 ('maybe') and 9 ('as far as I can tell');"
+            " 3's 'I'm certain' is not"
+        ),
+    ),
+    HeldOutCase(
+        "h6-13",
+        12,
+        "closing at 10-11 ('see you in a fortnight', 'Bye now'), 'Morning, Mrs Hughes' at 12",
+    ),
+    HeldOutCase(
+        "h6-14",
+        None,
+        "no closing and no one new",
+    ),
+    HeldOutCase(
+        "h6-15",
+        None,
+        "no closing and no one new",
+        unsure=(5,),
+        unsure_reason=(
+            "6 doubts 5 in a separate line, so 5 (the fact's line) is the line to mark"
+        ),
+    ),
+    HeldOutCase(
+        "h6-16",
+        13,
+        "closing at 11-12 ('Take care of it', 'bye'), 'Ah, Mr Patel, hello' welcomes at 13",
+        corrections=(6,),
+        corrections_reason="6 fixes 5's day count, opening with a filler ('Um, nine')",
+    ),
+    HeldOutCase(
+        "h6-17",
+        None,
+        "'All the best' (6) is the last segment; no one new is welcomed",
+    ),
+    HeldOutCase(
+        "h6-18",
+        None,
+        "no closing before the last segment (12)",
+        unsure=(6,),
+        unsure_reason=(
+            "patient doubts the change (6, 'or I like to think so'); 2's 'No doubt' and 11's"
+            " 'I'm positive' are not"
+        ),
+    ),
+    HeldOutCase(
+        "h6-19",
+        8,
+        "closing at 6-7 ('that concludes today's session', 'goodbye'), 'Good afternoon' at 8",
+    ),
+    HeldOutCase(
+        "h6-20",
+        None,
+        "the partner (2) is not a new patient; 'see you both in a month' (11) ends it",
+        unsure=(2,),
+        unsure_reason="the partner doubts the limp (2, 'though I'm not always there to see it')",
+    ),
+    HeldOutCase(
+        "h6-21",
+        None,
+        "no closing and no one new",
+    ),
+    HeldOutCase(
+        "h6-22",
+        9,
+        "'Off you go then' and 'Come in, Alan' share 8, so the cut is the next segment, 9",
+        corrections_reason=(
+            "2 fixes 1's side, but 1 routes nowhere, so there is no section to carry it into"
+        ),
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -1216,15 +1385,14 @@ HELD_OUT_SETS: Final[tuple[HeldOutSet, ...]] = (
         script_count=(20, 25),
         facts_per_script=(3, 6),
     ),
-    # Note-content-design Task F.2 (D11): the blind set of run 9, its brief
-    # heldout-2's (so its material facts are not routed and it has no
-    # facts-per-script bound); authored in Task F.2, never read before run 9
-    # (C12); its ``h6-NN`` cases written in Task P.5, after run 9.
+    # Note-content-design Task F.2 (D11): its brief heldout-2's (so its
+    # material facts are not routed and it has no facts-per-script bound);
+    # authored blind in Task F.2, never read before run 9 (C12); its ``h6-NN``
+    # cases written in Task P.5, after run 9.
     HeldOutSet(
         "heldout-6",
         "h6-",
         HELDOUT_6_CASES,
-        cases_written=False,
         tails_by_role=True,
         script_count=(20, 25),
     ),
