@@ -124,15 +124,16 @@ result is recorded there as a dated RUN line.
    ceiling. Its report prints four verdicts: rule v5's, rule v5's with those
    marked facts counted, rule v5's without its R1 exemption, and rule v1's
    (validation-run8 plan D1, D3). Validation run 9 (the note-content-design
-   plan; version 0.3.6) is to read it under rule v6
+   plan; version 0.3.6) read it under rule v6
    (`validation\rules\rule-v6.json`, written before the run at that plan's
    Task F.1) on the 50 scripts and a fresh blind `heldout-6`, with `heldout`
    to `heldout-5` run and reported in full: rule v6 keeps rule v5's
    predicates and ceilings exactly, with `heldout-5` reported and `heldout-6`
    the blind gate set carrying rule v5's marked-R1 reading, and run 9 runs
    with the prose stage and every suggested section accepted (`--prose
-   --suggestions confirm-all`; that plan's D11). Its record is written after
-   the run (that plan's Task P.2).
+   --suggestions confirm-all`; that plan's D11). Run 9 (2026-11-10) did NOT
+   meet the gate (`heldout-6` failed), so shadow mode stays on; its record is
+   that plan's Task P.2 and run 9's entry in the validation harness document.
    *Amended 2026-10-09, after run 1 failed:* the shadow consultations of
    step 4 may start while run 1's findings are controlled by shadow mode (a
    shadow note never reaches Cliniko); step 5 and the exit gate still wait for
@@ -190,8 +191,8 @@ result is recorded there as a dated RUN line.
   (its category and the part of the app), never the patient.
 - **Synthetic encounter ids** (`syn-01` …, and the held-out sets' `hld-01` …
   (`heldout`), `h2-01` … (`heldout-2`), `h3-01` … (`heldout-3`), `h4-01` …
-  (`heldout-4`) and `h5-01` … (`heldout-5`), and — once validation run 9
-  has been run, its rows entered after it — `h6-01` … (`heldout-6`)) may
+  (`heldout-4`), `h5-01` … (`heldout-5`) and, since validation run 9,
+  `h6-01` … (`heldout-6`)) may
   appear in the register; they identify invented content only. A real consultation's encounter is `—`, and
   a smoke measurement's `k-01` … name stays in your pilot log.
 - **Real consultations are never fed to the validation harness** (pilot plan
