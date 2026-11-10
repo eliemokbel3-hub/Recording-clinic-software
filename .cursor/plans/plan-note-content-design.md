@@ -8,7 +8,7 @@
 ## Completion Status
 - Completion timestamp: 2026-11-10
 - Main implementation complete: Yes
-- Ready for archive: No (the Retained Follow-Up Items below: P.1, the clinician review guide's 0.3.6 lines and P.3 are the practitioner's; the Deferred items)
+- Ready for archive: No (the Retained Follow-Up Items below: P.1 and P.3 are the practitioner's — the clinician review guide's 0.3.6 lines were approved 2026-11-10; the Deferred items)
 
 ## Plan Lineage
 - **Parent plans:**
@@ -2235,7 +2235,7 @@ Reconciled 2026-11-10 against `c6698c6` plus this close's records (stage-5 leg x
 
 **The practitioner's (open at the close):**
 - **P.1 — the register sheet** (R.7's procedure on the developer build; `docs/testing/prose-register-scoring.md`). `[2026-11-10 reconciliation] Still valid — not started; run 9's result does not change it; a finding becomes a register row.`
-- **The clinician review guide's 0.3.6 lines** (step 7's suggested headings and suggested next-patient line, step 8's shorthand, "Pt reports" frame and residues (4)–(6), (r7) and (r8)), due before P.3. `[2026-11-10 reconciliation] Still valid — awaiting approval; nothing in run 9 changes their wording.`
+- **The clinician review guide's 0.3.6 lines** (step 7's suggested headings and suggested next-patient line, step 8's shorthand, "Pt reports" frame and residues (4)–(6), (r7) and (r8)), due before P.3. `[2026-11-10 reconciliation] Still valid — awaiting approval; nothing in run 9 changes their wording.` **DONE 2026-11-10: approved by the practitioner in chat ("I approve the guidelines"); recorded in the guide's draft line and the practice README.**
 - **P.3 — install 0.3.6 with shadow mode on, and its smoke** (decided "Install, shadow on (Recommended)"): re-verify the download from a normal terminal (`gh attestation verify`, `Get-FileHash` against `SHA256SUMS.txt`), install, reload the extension, restart Chrome, the mock smoke P.3 lists; then `AGENTS.md` names the installed build. `[2026-11-10 reconciliation] Still valid — 0.3.6 at `b130df7` is unchanged in code; not installed.`
 - **The exit gate's dated rule-v6 line** (beside the rule-v5 proposal; `docs/pilot/exit-gate.md`). `[2026-11-10 reconciliation] Still valid — a proposal; run 9 did not meet the gate, so it stays one (the run-8 precedent at its P.2).`
 - **The drift question** (how D5's seconds line is read when the machine's speed drifts) — due before any further timed measurement, such as a prompt change's R.5 repeat. `[2026-11-10 reconciliation] Still valid — no timed measurement was made after R.5.`
