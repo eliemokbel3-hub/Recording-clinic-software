@@ -34,8 +34,8 @@ Write no prose, no input line and no quotation into the table, the plan or a fin
 
 | Date | Style | Notes | Sections read | Invented or wrong shorthand | Reads as clinician-written | Shown clean | Frames used |
 |---|---|---|---|---|---|---|---|
-|  | narrative |  |  |  |  |  |  |
-|  | own_voice |  |  |  |  |  |  |
+| 2026-11-10 | narrative | 12 | 40 | 0 | 40 | 0 | 0 |
+| 2026-11-10 | own_voice | 12 | 40 | 0 | 40 | 0 | 0 |
 
 ## The pass line
 
