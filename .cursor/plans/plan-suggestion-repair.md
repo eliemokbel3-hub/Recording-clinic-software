@@ -246,7 +246,7 @@ See "Deferred — Actionable Later" and "Excluded — Revisit Only If Needed" in
 - Current in-progress step: None.
 - Immediate next action: Task 0.2 (the measurement script) via `/execute` or `/execute-loop`. Commit this plan first, on the practitioner's word.
 - Open blockers / open questions: None. Next practitioner decision: Task 0.4, after Task 0.3's table.
-- Plan peer pass (codex `gpt-6-astra` high, 2026-11-14): rounds 1–5, 14 findings (2 MED, 12 LOW), all verified and applied; round 6 (the cap raised by one on the practitioner's word) brought no new finding but judged PR-LOW-012 (the answer-budget table in Task 0.2) not fixed; its three gaps were then closed, and THAT completion has not been seen by a further round. Everything else was confirmed by a later round.
+- Plan peer pass (codex `gpt-6-astra` high, 2026-11-14): rounds 1–5, 14 findings (2 MED, 12 LOW), all verified and applied; round 6 brought no new finding but judged PR-LOW-012 (the answer-budget table in Task 0.2) not fixed, and its three gaps were then closed; round 7 confirmed that completion with no new finding. CONVERGED at round 7 (the cap raised twice on the practitioner's word); the peer's verdict: ready to build from Task 0.2.
 - Last plan sync: 2026-11-14
 
 ## Review History
@@ -256,6 +256,7 @@ See "Deferred — Actionable Later" and "Excluded — Revisit Only If Needed" in
 - 2026-11-14 round 4: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=plan peer-review (codex); action=round 3's two confirmed; the one new verified and applied
 - 2026-11-14 round 5: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=plan peer-review (codex); action=round 4's one confirmed; the one new verified and applied; cap of 5 reached, unconverged (the last amendment unreviewed)
 - 2026-11-14 round 6: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=plan peer-review (codex); action=no new finding; PR-LOW-012 judged not fixed and completed; cap (raised to 6 on the practitioner's word) reached, that completion unreviewed
+- 2026-11-14 round 7: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=plan peer-review (codex); action=PR-LOW-012 confirmed; no new finding; CONVERGED (cap raised to 7 on the practitioner's word); the peer's verdict: ready to build from Task 0.2
 
 ## Review Findings Log
 ### Round 1 — 2026-11-14
@@ -328,6 +329,12 @@ Materiality: 0 build-affecting / 0 record-only / 0 invalid
 Composer-recorded, as rounds 1 to 5 (`.cursor/loops/suggestion-repair-plan-peer-r6.log`). The practitioner raised the cap by one for this round ("One more round (Recommended)"). **No new finding.** PR-LOW-012 was judged `not fixed`: the round-5 amendment landed in all three places, but its table had no justified upper bound. The peer found no contradiction with D2, D8, `_fit_window` or S.1, and confirmed the calculation needs only `count_tokens`. Its readiness line: "no — correct PR-LOW-012's budget-evidence recipe first"; the correction is applied here and has NOT been seen by a further round (the cap is reached again).
 
 - **[LOW]** PR-LOW-012 (completed): Tasks 0.2 / 0.4 — the budget table's three gaps — verified: the parser already admits one of `.`, `)`, `:`, `-` after the number (`note_suggest.py:288`), which the listed variants left out; "the highest window numbers" and "the costliest key" were asserted to be the worst case, not shown; and `complete` passes the budget as `max_tokens` and returns the content only (`language_model.py:359-376`), so the text's token count leaves out whatever closes the completion — Decision: Applied (Task 0.2 defines the finite set of bounded answer forms with the separators and their combinations, takes the per-line maximum by token count over every key, every window number 1 to 40 and every form instead of assuming it, and prints the bound with a measured cross-check; Task 0.4 adds an explicit closing allowance and requires the budget to cover the bound plus that allowance at every n); applied by: Claude Code
+
+### Round 7 — 2026-11-14
+Round status: Closed
+Source: Codex (gpt-6-astra high) plan peer-review
+Materiality: 0 build-affecting / 0 record-only / 0 invalid
+Composer-recorded, as rounds 1 to 6 (`.cursor/loops/suggestion-repair-plan-peer-r7.log`; plan at `0fb4200`). The practitioner raised the cap by one more for this round ("run round 7"). PR-LOW-012: `confirmed`, each of round 6's three points closed (the separator combinations; the maximum token cost taken by measurement at every asked count; the completion-closing allowance in Task 0.4 and Task S.2). The peer found the recipe consistent with D2, D4, D8, S.1 and the output rules, computable with `count_tokens` alone. **No new findings.** Its readiness line: "Ready to build from Task 0.2: yes — all three Round 6 gaps are closed; no further build blocker survives verification against HEAD `0fb4200`." **CONVERGED** by the plan-mode rule (a round after the first with no new build-affecting finding, every earlier finding confirmed). No amendment was needed; the plan's content is unchanged by this round.
 
 ## Tasks
 Markers: 🟥 To Do, 🟨 In Progress, 🟩 Done. A `[decision]` task is a planned stop for the practitioner. "Suite" means `ruff check . && mypy && pytest` in `desktop/`.
