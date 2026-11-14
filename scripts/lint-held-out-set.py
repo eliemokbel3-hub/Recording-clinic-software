@@ -221,6 +221,25 @@ def _child_env(report: Path) -> dict[str, str]:
     return env
 
 
+def _child_interpreter(env: dict[str, str]) -> str:
+    """The interpreter the child runs on, so that the child is ONE process.
+
+    On Windows a venv's ``python.exe`` is a redirector that starts the base
+    interpreter as a second process. Killing the redirector at the timeout
+    returns before that second process has ended, so it can still hold the
+    report file open when this process removes it, and the removal fails
+    (``runner-error``, the report left beside the log: the timeout-kill
+    flake, note-content-design plan Deferred). As the standard library's
+    ``multiprocessing`` does (bpo-35797), the base interpreter is started
+    directly, with the variable the redirector would have set, so that the
+    child's exit is the end of every handle it holds."""
+    base = getattr(sys, "_base_executable", sys.executable)
+    if os.name == "nt" and os.path.normcase(base) != os.path.normcase(sys.executable):
+        env["__PYVENV_LAUNCHER__"] = sys.executable
+        return base
+    return sys.executable
+
+
 def _arguments(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument("set_folder")
@@ -258,8 +277,9 @@ def run(argv: list[str] | None = None) -> int:
         print(f"exit {RUNNER_FAILURE_EXIT}")
         return RUNNER_FAILURE_EXIT
     print(f"log {log_path.name}")
+    env = _child_env(report_path)
     command = [
-        sys.executable,
+        _child_interpreter(env),
         "-c",
         _BOOTSTRAP,
         str(SCRIPTS / "lint_held_out_plugin.py"),
@@ -275,7 +295,7 @@ def run(argv: list[str] | None = None) -> int:
             child = subprocess.Popen(
                 command,
                 cwd=args.root,
-                env=_child_env(report_path),
+                env=env,
                 stdin=subprocess.DEVNULL,
                 stdout=log,
                 stderr=subprocess.STDOUT,

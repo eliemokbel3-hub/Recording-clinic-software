@@ -555,6 +555,59 @@ class TestRunnerChecks:
         assert [(child.killed, child.waits) for child in children] == [(True, 2)]
         assert [p.suffix for p in logs.iterdir()] == [".log"]
 
+    @pytest.mark.parametrize(
+        ("os_name", "base", "expected", "launcher"),
+        [
+            ("nt", r"C:\Base\python.exe", r"C:\Base\python.exe", r"C:\Venv\Scripts\python.exe"),
+            ("nt", r"c:\venv\scripts\PYTHON.exe", r"C:\Venv\Scripts\python.exe", None),
+            ("posix", "/base/python", r"C:\Venv\Scripts\python.exe", None),
+        ],
+    )
+    def test_a_venv_child_is_started_on_its_base_interpreter(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        os_name: str,
+        base: str,
+        expected: str,
+        launcher: str | None,
+    ) -> None:
+        """The timeout-kill flake (note-content-design plan Deferred): on
+        Windows a venv's python.exe starts the base interpreter as a second
+        process, which can still hold the report open after the kill. The
+        child runs on the base interpreter directly, as multiprocessing
+        does (bpo-35797); elsewhere, or outside a venv, nothing changes."""
+        monkeypatch.setattr(runner.os, "name", os_name)
+        monkeypatch.setattr(runner.sys, "executable", r"C:\Venv\Scripts\python.exe")
+        monkeypatch.setattr(runner.sys, "_base_executable", base, raising=False)
+        env: dict[str, str] = {}
+        assert runner._child_interpreter(env) == expected
+        assert env.get("__PYVENV_LAUNCHER__") == launcher
+
+    def test_the_child_is_started_with_the_interpreter_and_its_environment(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        started: list[tuple[list[str], dict[str, str]]] = []
+
+        class Child:
+            def __init__(self, command: list[str], **kwargs: Any) -> None:
+                started.append((command, kwargs["env"]))
+
+            def wait(self, timeout: float | None = None) -> int:
+                return 1
+
+        def interpreter(env: dict[str, str]) -> str:
+            env["__PYVENV_LAUNCHER__"] = "venv-python"
+            return "base-python"
+
+        monkeypatch.setattr(runner.subprocess, "Popen", Child)
+        monkeypatch.setattr(runner, "_child_interpreter", interpreter)
+        (tmp_path / "heldout-3").mkdir()
+        runner.run([str(tmp_path / "heldout-3"), "--log-dir", str(tmp_path / "logs")])
+        [(command, env)] = started
+        assert command[0] == "base-python"
+        assert env["__PYVENV_LAUNCHER__"] == "venv-python"
+        assert env[plugin.REPORT_ENV].endswith(".report")
+
     def test_a_clean_run_exits_zero_and_prints_only_counts(self) -> None:
         records = [
             '{"k": "collected", "n": 1}',
