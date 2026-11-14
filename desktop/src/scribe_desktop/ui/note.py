@@ -2480,20 +2480,6 @@ class NoteScreen(QWidget):
         hold Save, Complete or Discard — D8)."""
         return self._suggest_slot.job is not None
 
-    def _placed_segments(self) -> dict[int, NoteSectionKey]:
-        """The transcript lines the working note quotes, by segment, with the
-        section each is in — the suggestion input's placed context."""
-        working = self._working
-        placed: dict[int, NoteSectionKey] = {}
-        if working is None:
-            return placed
-        for section in working.note_sections:
-            for assertion in section.note_assertions:
-                coords = assertion.note_span.source_coords
-                if assertion.provenance == "transcript" and coords is not None:
-                    placed.setdefault(coords.segment_index, section.section_key)
-        return placed
-
     def _begin_suggestions(self) -> None:
         """At the end of `begin_review` (D8): build the review's ONE input —
         the draft's request, cut at the next-patient boundary, with the lines
@@ -2519,8 +2505,10 @@ class NoteScreen(QWidget):
             )
             self._refresh_suggestion_line()
             return
+        working = self._working
+        placed = models.placed_segments(working.note_sections) if working is not None else {}
         suggestion_input = SuggestionInput.from_request(
-            request, in_note=self._placed_segments(), clinician_speaker=draft.clinician_speaker
+            request, in_note=placed, clinician_speaker=draft.clinician_speaker
         )
         if not suggestion_input.lines_asked:
             self._suggest_outcome = models.SuggestionStageOutcome(

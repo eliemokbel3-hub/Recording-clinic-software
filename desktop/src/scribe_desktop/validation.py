@@ -108,7 +108,6 @@ from scribe_desktop.note import (
     NoteAssertion,
     NoteDraft,
     NoteModelProvider,
-    NoteSectionKey,
     ProposalResolution,
     compose_draft,
     content_tokens,
@@ -213,6 +212,7 @@ from scribe_desktop.ui.models import (
     flagged_runs,
     language_model_available,
     next_patient_segment,
+    placed_segments,
     working_draft,
 )
 from scribe_desktop.ui.note_review import ProposalDecision, build_resolutions, prefilled_ids
@@ -3232,12 +3232,7 @@ def suggestion_pass(
     ``unavailable``. Besides ids, keys and counts, only the additions leave
     this function: transcript assertions quoting their lines' words, which go
     into the one finalisation and nowhere else (review round 10 LOW-003)."""
-    placed: dict[int, NoteSectionKey] = {}
-    for section in draft.note_sections:
-        for assertion in section.note_assertions:
-            coords = assertion.note_span.source_coords
-            if assertion.provenance == "transcript" and coords is not None:
-                placed.setdefault(coords.segment_index, section.section_key)
+    placed = placed_segments(draft.note_sections)
     request = build_note_request(
         document, inputs.config, draft.template_profile_id, clinician_speaker=clinician
     )

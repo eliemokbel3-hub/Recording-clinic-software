@@ -173,6 +173,7 @@ from scribe_desktop.note import (
     NoteWarning,
     _assemble_note_request,
     _decode_shipped_json,
+    _refuse_duplicate_keys,
     content_tokens,
     digest_bytes,
     normalise_token,
@@ -960,9 +961,34 @@ def _read_config_blob(config_root: Path, filename: str) -> tuple[bytes, str]:
         ) from exc
 
 
+class _RepeatedKeyError(ValueError):
+    """A key repeated in one object of a config file (SEC-008)."""
+
+
+def _refuse_repeated_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    try:
+        return _refuse_duplicate_keys(pairs)
+    except ValueError:
+        raise _RepeatedKeyError from None
+
+
 def _parse_config_blob[FileModelT: BaseModel](
     model: type[FileModelT], blob: bytes, filename: str, source: str
 ) -> FileModelT:
+    # Note-content-design follow-up S.2 (review round 19 SEC-008): pydantic
+    # keeps the LAST of two equal keys silently, so a cue file naming one
+    # section twice would drop the first list with every status line
+    # healthy. A repeated key is refused first, by a message that names the
+    # file only (no key, no value); any other decode problem is left to
+    # ``model_validate_json`` below, so its message is unchanged.
+    try:
+        json.loads(blob, object_pairs_hook=_refuse_repeated_keys)
+    except _RepeatedKeyError:
+        raise NoteConfigInvalidError(
+            f"{source} config {filename} is malformed: a key is repeated in one object"
+        ) from None
+    except (ValueError, RecursionError):
+        pass
     try:
         return model.model_validate_json(blob)
     except ValidationError as exc:

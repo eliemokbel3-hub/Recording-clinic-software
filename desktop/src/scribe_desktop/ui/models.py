@@ -2958,6 +2958,20 @@ class UtteranceChoice:
     suggested: NoteSectionKey | None = None
 
 
+def placed_segments(sections: Sequence[GeneratedSection]) -> dict[int, NoteSectionKey]:
+    """The transcript lines a note quotes, by segment, with the section each
+    is in (the first section wins) — the suggestion input's placed context.
+    ONE rule for the Note tab's job and the harness's ``confirm-all`` pass
+    (note-content-design D6; review round 18 SIMP-005)."""
+    placed: dict[int, NoteSectionKey] = {}
+    for section in sections:
+        for assertion in section.note_assertions:
+            coords = assertion.note_span.source_coords
+            if assertion.provenance == "transcript" and coords is not None:
+                placed.setdefault(coords.segment_index, section.section_key)
+    return placed
+
+
 def eligible_utterances(
     document: TranscriptDocument,
     *,

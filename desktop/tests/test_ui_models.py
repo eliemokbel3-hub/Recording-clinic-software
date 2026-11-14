@@ -31,15 +31,20 @@ from scribe_desktop.language_model import LanguageModelError, MockLanguageModel
 from scribe_desktop.note import (
     CANONICAL_SECTION_KEYS,
     CLINICIAN_OWNED_SECTIONS,
+    ConfirmationDecision,
     ExtractiveNoteProvider,
+    GeneratedSection,
+    NoteAssertion,
     NoteModelProvider,
     NoteRequest,
+    NoteSpan,
     NoteUtterance,
     admissible_sections,
     compose_draft,
     digest_bytes,
     manual_assertion_id,
     reconstruct_span_text,
+    text_digest,
     whole_utterance_assertion,
 )
 from scribe_desktop.note_config import (
@@ -2854,6 +2859,65 @@ def _suggestion_result(
         seconds=0.0,
         reason=reason,
     )
+
+
+class TestPlacedSegments:
+    """Note-content-design follow-up S.1 (review round 18 SIMP-005): ONE
+    placed-context map for the Note tab's suggestion job and the harness."""
+
+    def test_the_map_is_every_quoted_transcript_line_by_its_section(
+        self, tmp_path: Path
+    ) -> None:
+        draft, _document = _review_draft(tmp_path)
+        expected = {
+            assertion.note_span.source_coords.segment_index: section.section_key
+            for section in reversed(draft.note_sections)
+            for assertion in section.note_assertions
+            if assertion.provenance == "transcript"
+            and assertion.note_span.source_coords is not None
+        }
+        placed = models.placed_segments(draft.note_sections)
+        assert placed, "the review draft must quote transcript lines"
+        assert placed == expected
+
+    def test_the_first_section_wins_a_line_quoted_twice(self, tmp_path: Path) -> None:
+        _draft, document = _review_draft(tmp_path)
+        sections = (
+            GeneratedSection(
+                section_key="assessment", note_assertions=(_manual_line(document, 0, "assessment"),)
+            ),
+            GeneratedSection(
+                section_key="diagnosis", note_assertions=(_manual_line(document, 0, "diagnosis"),)
+            ),
+        )
+        assert models.placed_segments(sections) == {0: "assessment"}
+
+    def test_a_typed_line_places_nothing(self, tmp_path: Path) -> None:
+        draft, document = _review_draft(tmp_path)
+        wording = "Typed by the clinician"
+        typed = NoteAssertion(
+            assertion_id="t0001",
+            section_key="management_plan",
+            note_span=NoteSpan(span_text=wording, provenance="clinician"),
+            shown_text_digest=text_digest(wording),
+            config_digest=draft.config_digest,
+            confirmation=ConfirmationDecision(
+                proposal_id="t0001",
+                note_confirmation="confirmed",
+                decided_at=datetime(2026, 11, 14, 9, 0, tzinfo=UTC),
+            ),
+        )
+        sections = (
+            GeneratedSection(section_key="management_plan", note_assertions=(typed,)),
+            GeneratedSection(
+                section_key="assessment", note_assertions=(_manual_line(document, 1, "assessment"),)
+            ),
+        )
+        assert typed.note_span.source_coords is None
+        assert models.placed_segments(sections) == {1: "assessment"}
+
+    def test_no_sections_place_nothing(self) -> None:
+        assert models.placed_segments(()) == {}
 
 
 class TestSuggestedSections:
