@@ -149,6 +149,27 @@ set up and build it, and make releases; the installed app needs none of them.
   speech. No word, line or primer text is printed. Developer build only, from
   a normal terminal with the installed app closed; the tables go onto the
   plan's Task 3.1 (decision 0.4).
+- `measure-suggestions.py <set folder> [<set folder> ...] --config <folder>
+  [--timing] [--source-root <folder>] [--verbose]` (suggestion-repair plan Task
+  0.2) — runs the shipped section-suggestion stage at text level. For each
+  synthetic script it builds the note from the script's own words as the
+  harness's `--suggestions confirm-all` pass does, asks the stage about every
+  left-out line through a recorder held in this script (the package's
+  call-site pin is unchanged), accepts every suggestion the chooser's
+  ownership rule accepts, and prints counts, ids and section keys only: the
+  answer lines by shape and how they were read, the lines holding a silently
+  lost material fact, the facts still silent after every suggestion, the
+  facts wrongly present through a suggestion, the suggestions on a next
+  patient's lines with no boundary, the stage's own counts and the
+  answer-budget table. `--timing` instead times one completion over a 40-line
+  window and prints the module file, the stage version and the window's
+  SHA-256, so two runs (one with `--source-root` a detached worktree's
+  `desktop/src`) make a paired timing. `--verbose` also prints the raw
+  completions (synthetic text): foreground only. A set holding a script
+  without synthetic conditions is refused whole before any model loads; it
+  writes no file and calls no logger. Developer build only; needs the
+  language model; close the installed app first. Results of record:
+  `docs/testing/validation-harness.md` "Suggestion-stage measurement".
 - `speaker-embedding-smoke.py --model <path> <wav> [<wav> ...]` (practitioner-profile
   plan Task 0.3) — loads a speaker-embedding ONNX model from an explicit path (the
   `SileroVad` contract: offline kill-switches asserted before onnxruntime is

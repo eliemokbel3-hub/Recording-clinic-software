@@ -429,6 +429,32 @@ Any other difference is a finding, read before anything else — first by re-run
       - The unsupported line's class, and `h6-13/f1`'s reading.
     - **A reading limit, named.** The reference reading has no suggestion pass. So a fact on a line that only a suggestion adds is never right on the script's own words, and R1 can never excuse it, marked or not (`h6-14/f5`).
 
+## Suggestion-stage measurement (suggestion-repair plan, 2026-11-14 → 2026-11-15)
+
+`scripts/measure-suggestions.py` measures the section-suggestion stage at text level (each script's own words, the clinician confirmed), as `--suggestions confirm-all` uses it. Text level is an upper bound on audio level. The counts are on the plan's Tasks 0.3, S.2 and S.3; the reports are git-ignored (`.cursor/loops/stage-0-t03-*.md`, `stage-1-a*-*.md`, `stage-1-s3-heldout-2.md`).
+
+- **Baseline** (`suggest-v1`, Task 0.3): on `heldout-6`, 26 silently lost material facts in 16 encounters before suggestions and 21 in 13 after every suggestion is accepted. The model mostly copied the instruction's literal `<n> <key>` template, so 19 of the 23 lines holding a lost fact got no readable answer.
+- **Five attempts** (S.2). The tuning sets are `heldout-6` and the 50. The thresholds were fixed by the practitioner at Task 0.4 before any attempt:
+  - E ≤ 3 encounters still silent;
+  - F ≤ 12 facts still silent;
+  - H ≤ 1 fact wrongly present through a suggestion;
+  - T ≤ 1 suggestion on a next patient's lines with no boundary detected;
+  - R ≤ 1.5, the paired timing ratio against `suggest-v1` in one session;
+  - no line unassessed.
+
+  The table is on `heldout-6` except the H on the 50 column:
+
+  | Attempt | Version | E | F | H | T | H on the 50 | R | Not assessed |
+  |---|---|---|---|---|---|---|---|---|
+  | 1, a `?` after the number admitted, budget 10n + 16 | `suggest-v2` | 13 | 20 | 4 | 3 | 0 | 1.08 | 129 |
+  | 2, a worked answer example | `suggest-v3` | 9 | 11 | 7 | 6 | 1 | 0.95 | 50 |
+  | 3, a reply goes with its question | `suggest-v4` | 9 | 12 | 5 | 5 | 1 | 1.04 | 52 |
+  | 4, the `none` wording | `suggest-v5` | 10 | 13 | 7 | 7 | 1 | 1.00 | 63 |
+  | 5, a neutral speaker hint, on attempt 3 | `suggest-v6` | 8 | 10 | 5 | 5 | 0 | 0.88 | 56 |
+
+- **The check** (S.3): `suggest-v6` was frozen and `heldout-2` was read once. Before suggestions it had 25 facts in 14 encounters; after, F 9 in E 5, with H 5, T 3, R 0.88 and 26 lines not assessed. That is a NO-GO by the rule. The practitioner decided "No-go, plan the fallback (Recommended)" (2026-11-15). The stage is `suggest-v1` again, and `heldout-2` is spent as a check.
+- **What the numbers say:** each format fix got more answers read, and the harm rose with them. Every attempt that recovered more lost facts also added wrong facts (H 4–7) and next patients' lines (T 3–7; the next-patient boundary was out of scope and unchanged).
+
 ## Custody and privacy
 
 Each encounter is transcribed in a temporary encrypted session store under a fresh DPAPI-wrapped key — the same helpers `measure-speakers.py` uses (`speaker_eval.transcribe_in_temporary_store` and `destroy_temporary_store`). The store is torn down key-first and probed; one that cannot be shown gone stops the whole run and names its path. The harness writes no audit row and no Past-sessions entry and reads none. The offline environment is applied and asserted before any model loads. The report holds ids, numbers, flags and closed vocabularies only — never a transcript, note or script line; an unexpected failure is reported by its exception type name.

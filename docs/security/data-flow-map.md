@@ -1602,7 +1602,13 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     opened — pinned by the suggestion legs of
     `desktop/tests/test_integration_no_sockets.py`. The validation harness's
     `--suggestions confirm-all` makes the same call over synthetic sets
-    (flow 26).
+    (flow 26), and so does `scripts/measure-suggestions.py` (the
+    suggestion-repair plan's Task 0.2; developer build, synthetic sets only,
+    a set holding any other script refused before the model loads) at text
+    level, through a recorder held in the script, not a second call site
+    in the package. It prints counts, ids and section keys only, writes no
+    file and calls no logger; its `--verbose` prints the raw completions,
+    which are synthetic text, to the console.
 
 ## Explicit non-flows
 
