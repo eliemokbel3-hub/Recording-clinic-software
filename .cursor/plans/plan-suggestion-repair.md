@@ -265,7 +265,7 @@ UPDATE 2026-11-14T23:07+11:00 (leg sx5): S.2 attempt 3 recorded on S.2 — NOT m
 - Last completed step: the plan's close with NO CHANGE (2026-11-15T16:40+11:00): D15's verification by the composer (`ruff` clean, `mypy` clean, the full suite 10836 passed / 9 skipped against `suggest-v1`); `/document` — `AGENTS.md` (a Current Status paragraph, Local Run Steps step 16, the section-suggestions pointer, Last Session), `CHANGELOG.md`, `scripts/README.md`, `docs/testing/validation-harness.md` ("Suggestion-stage measurement") and flow 29 of `docs/security/data-flow-map.md`; the documents' pinning tests pass (1268). Before: S.4 🟩 NO-GO and D15 applied (2026-11-15T16:11+11:00).
 - Current in-progress step: None — the plan is Completed — Follow-ups Retained.
 - Immediate next action: the commit on the practitioner's word (not pushed); then the fallback plan (Follow-Up Continuation Note 1).
-- Open blockers / open questions: None. Next practitioner actions: the commit's word, the fallback plan (Plan Mode, with Fable), and removing the detached worktree `C:\sr-v1-baseline` (`git worktree remove C:/sr-v1-baseline`, or delete the folder and run `git worktree prune`).
+- Open blockers / open questions: None. Next practitioner actions: the commit's word, the fallback plan (Plan Mode, with Fable). The detached worktree `C:\sr-v1-baseline` was removed on 2026-11-15 (`git worktree remove`, at the practitioner's request).
 - Plan peer pass (codex `gpt-6-astra` high, 2026-11-14): rounds 1–5, 14 findings (2 MED, 12 LOW), all verified and applied; round 6 brought no new finding but judged PR-LOW-012 (the answer-budget table in Task 0.2) not fixed, and its three gaps were then closed; round 7 confirmed that completion with no new finding. CONVERGED at round 7 (the cap raised twice on the practitioner's word); the peer's verdict: ready to build from Task 0.2.
 - Retro report: .cursor/loops/retro-suggestion-repair-2026-11-15.md (2026-11-15)
 - Last plan sync: 2026-11-15
@@ -659,7 +659,7 @@ Markers: 🟥 To Do, 🟨 In Progress, 🟩 Done. A `[decision]` task is a plann
   - Risk if deferred: minor.
   - Revisit by: a later change to the suggestion stage.
 - **The detached worktree `C:\sr-v1-baseline`** (`526913f`, the paired timing's `suggest-v1` side). No longer needed: the stage is `suggest-v1` again.
-  - Recommended next action: the practitioner runs `git worktree remove C:/sr-v1-baseline` (or deletes the folder and runs `git worktree prune`); the agent shell cannot delete a top-level `C:\` folder.
+  - DONE 2026-11-15: removed with `git worktree remove C:/sr-v1-baseline` at the practitioner's request (no uncommitted changes in it; `git worktree list` no longer names it).
   - Risk if deferred: minor.
   - Revisit by: the next session.
 - **`heldout-2` is spent as a check** (D6). No held-back seen set is left; `heldout-6` was tuned on in S.2. A later plan that needs a check before a blind run must author or name a fresh one.
