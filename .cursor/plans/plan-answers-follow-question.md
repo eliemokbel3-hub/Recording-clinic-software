@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** answers-follow-question (a patient's uncued reply joins the note beside the clinician's in-note question; version 0.3.7 only on a GO; validation run 10 only if gate-capable)
-**Overall Progress:** `0%`
+**Overall Progress:** `25%` (Phase 0: eight of nine done (0.1–0.7); 0.8 is written at the close. 0.4b is recorded UNMEASURED, with n enrolled 2 < 3. 0.6: IMPROVEMENT, V4gs under QT, the real-speech line overridden by name, four residues accepted. 0.7 hardened the kept phases and marked the gate-capable ones NOT BUILT. Ahead: Phase 0's commit on the practitioner's word, then Phases 1 (1.1–1.4), V, M.1, D (D.1–D.4), F.3, P.3 and P.5.)
 
 ## Lifecycle State
 - Active
@@ -15,7 +15,7 @@
 - Follow-up plans: None.
 
 ## Goal
-Decide, on measured numbers, whether a deterministic rule can close the class that failed validation run 9 (patients' uncued replies, 23 of 24 silent omissions on the blind `heldout-6`), and build it only if it can. The rule: a patient's uncued reply to a clinician's question that is in the note joins the note beside that question; when the clinician's line is itself left out, its existing warning also covers the reply, which is shown `[flagged]`. No language model. The rule is simulated at audio level and on real speech before any product code changes. Three exits: gate-capable (build, then validation run 10 on a fresh blind `heldout-7`), improvement (build, shadow mode stays on, no blind set spent), or close with no change.
+Decide, on measured numbers, whether a deterministic rule can close the class that failed validation run 9 (patients' uncued replies, 23 of 24 silent omissions on the blind `heldout-6`), and build it only if it can. The rule: a patient's uncued reply to a clinician's question that is in the note joins the note beside that question; when the clinician's line is itself left out, its existing warning also covers the reply, which is shown `[flagged]` (as chosen at Task 0.6: when that line is a question). No language model. The rule is simulated at audio level and on real speech before any product code changes. Three exits: gate-capable (build, then validation run 10 on a fresh blind `heldout-7`), improvement (build, shadow mode stays on, no blind set spent), or close with no change.
 
 ## Planning Extraction Summary
 
@@ -41,6 +41,7 @@ Decide, on measured numbers, whether a deterministic rule can close the class th
 - Phase 0: a scratch simulation of the rule at text level, at audio level over the seven seen sets, and on the practitioner's consented kept recordings; the decision (Task 0.6).
 - Only on a GO, and only after Task 0.7 re-hardens them: the answer hop and the reply flag (Phase 1), version 0.3.7 and hardening (V), the built rule measured (M), documents (D), the build of record (F.3), the install decision and close (P).
 - Only on the gate-capable exit: rule v7, predictions v7, the pre-registration, the blind `heldout-7`, validation run 10 and its diagnosis (F.1, F.2, P.1–P.4).
+  - NOT BUILT (2026-11-17): Task 0.6 chose the improvement exit (Task 0.7 marked F.1, F.2, P.1, P.2 and P.4).
 
 ### Deferred — Actionable Later
 - **Adding a left-out question from the Line list also adds its reply.**
@@ -70,6 +71,7 @@ Decide, on measured numbers, whether a deterministic rule can close the class th
 - **A clinician's answer to a patient's question (inverted roles); a reply joined when no clinician is confirmed.**
   - Why excluded: the rule is the confirmed clinician's question and another speaker's reply; anything else fails toward leaving the line out.
   - When to revisit: only if real-speech attribution makes the confirmed-clinician test miss most questions (Task 0.4b's attribution line).
+  - 2026-11-17: Task 0.4b's script prints no attribution line, so this trigger cannot be evaluated: neither met nor ruled out. On the two recordings every finalist joined 0, cause unknown (round 8 MED-001). The question goes to the practitioner at Task 0.6.
 - **The next-patient boundary and the practitioner's own goodbyes and greetings.**
   - Why excluded: the practitioner's standing decision (SR, 2026-11-14: "Keep it out, say so before the run"). D10 pre-registers the consequence.
   - When to revisit: run 10 fails on the next-patient count alone, or the practitioner asks. It stays the validation-run8 plan's retained item.
@@ -101,6 +103,7 @@ Decide, on measured numbers, whether a deterministic rule can close the class th
   - Why accepted for now: the practitioner keeps consented recordings (n = 2 on 2026-10-23). The agent cannot and must not look.
   - Risk if assumption becomes false: D8's real-speech line is unmeasured and no build starts without the practitioner's named override.
   - Trigger for revisit: Task 0.4b's `--list` (decrypts nothing).
+  - FALSE 2026-11-17 (Task 0.4b): `--list` printed `kept recordings: 2`, and both passes measured n enrolled 2. D8's real-speech line is unmeasured, and no build starts without the practitioner's explicit, named override (D8's "Real speech" bullet).
 
 ### Key Design Decisions
 See "Design Decisions" (D1–D13); each says whether it still applies to follow-up work.
@@ -146,13 +149,13 @@ See "Design Decisions" (D1–D13); each says whether it still applies to follow-
   - Report shape: `test_validation_harness.py:2300`, `:2345-2388`, `:2975-2997`, `:3069-3146`, `:3231`, `:3367`; the full amendment sentence `:2349-2360`, `:3080-3094`.
   - The matrix: `test_note_matrix.py:833-866` (the hop needs its own registry and "only a declared join" lint beside `test_every_carry_cell_is_registered`); `test_validation_scripts.py:894-924` ("a hedged line routes, or is a correction" gains a third arm).
   - Not touched: `test_shadow_exits.py` (its "ONE call per path" pin counts the guard's two mark functions only), `test_vocabulary.py`, `test_note_config.py`'s construction guard. No test reads the security or design documents; the harness document is pinned only by the rule ceiling tables (`test_validation_harness.py:2183-2262`).
-- **`heldout-7` and rule v7 sites** (gate-capable exit; for Task 0.7): NCD's F.2 list (`plan-note-content-design.md:2044-2060`) plus `test_pilot_docs.py:132`, `:341`; `scripts/lint_held_out_plugin.py:88` and `scripts/lint-held-out-set.py`'s docstring; `docs/pilot/findings-register.md`'s id rule; `test_validation_harness.py:3427-3461` (`rule-v7-test` becomes `rule-v8-test` when a `v7` label branch lands); `.github/workflows/ci.yml:65-82`; `docs/pilot/README.md`. Template edits: `ncd-brief-leak.py` (`OUT`, `RUNNER_PROMPT`, `EDITS` line 1 and h2 → h7, the `:96-113` guard; `SOURCE` stays `validation/heldout-2`), the author prompt (`h6-01.json` → `h7-01.json`), `ncd-heldout6-author-run.sh:2-9`, `ncd-heldout6-tails.py:21`, `:27`, `:57-61`. The brief's behaviour text is a Task 0.7 question (`validation/heldout-6/SPEC.md:9` tells the author an uncued line "can be left out").
+- **`heldout-7` and rule v7 sites** (gate-capable exit; NOT BUILT 2026-11-17: the improvement exit touches none of them, and the brief's behaviour text needs no answer): NCD's F.2 list (`plan-note-content-design.md:2044-2060`) plus `test_pilot_docs.py:132`, `:341`; `scripts/lint_held_out_plugin.py:88` and `scripts/lint-held-out-set.py`'s docstring; `docs/pilot/findings-register.md`'s id rule; `test_validation_harness.py:3427-3461` (`rule-v7-test` becomes `rule-v8-test` when a `v7` label branch lands); `.github/workflows/ci.yml:65-82`; `docs/pilot/README.md`. Template edits: `ncd-brief-leak.py` (`OUT`, `RUNNER_PROMPT`, `EDITS` line 1 and h2 → h7, the `:96-113` guard; `SOURCE` stays `validation/heldout-2`), the author prompt (`h6-01.json` → `h7-01.json`), `ncd-heldout6-author-run.sh:2-9`, `ncd-heldout6-tails.py:21`, `:27`, `:57-61`. The brief's behaviour text is a Task 0.7 question (`validation/heldout-6/SPEC.md:9` tells the author an uncued line "can be left out").
 - **The six version strings:** `desktop/pyproject.toml:7`, `desktop/src/scribe_desktop/__init__.py:3`, `extension/package.json:4`, `extension/package-lock.json:3` and `:9`, `extension/src/manifest.ts:29`. No desktop test pins 0.3.6.
 - **Line endings:** plans and `test_pilot_docs.py` are LF; `AGENTS.md`, `CHANGELOG.md`, `docs/testing/validation-harness.md`, `docs/security/threat-model.md`, `docs/security/data-flow-map.md`, `validation.py` and several test files are CRLF in the working tree. Check `git ls-files --eol` before any byte-level edit.
 - **Lessons that apply** (`docs/lessons.md`, `AGENTS.md` "Pattern worth knowing"): the agent shell reads the developer models folder but its writes under `%LOCALAPPDATA%` are virtualised; every Python call takes `< /dev/null` (a heredoc on stdin hangs); long runs in the background, mains power, lid open, the installed app closed; a scoped executor leg runs no Python and cannot read a folder outside the repository, so the composer runs the scratch and copies outputs into a git-ignored `.cursor/loops/afq-out/`; bash redirection writes UTF-8 with CRLF and PowerShell's `>` writes UTF-16; paths in record scripts are raw strings or forward slashes; a top-level `C:\` folder cannot be deleted from the agent shell; a codex pass is sliced (at most about 15 files) and documents are their own slice; a re-run reproduces counts and verdicts, not words.
 
 ### Shared helpers (used by more than one phase)
-- `.cursor/loops/afq_lib.py` — the rule variants, the credit variants and the counters: Tasks 0.1–0.4b, and Phase 1's one-off comparison.
+- `.cursor/loops/afq_lib.py` — the rule variants, the credit variants and the counters: Tasks 0.1–0.4b, and, imported unchanged, Task 1.4's `afq-pin.py` and Task M.1's `afq-measure-built.py`.
 - The saved documents and projections under `C:\afq-sets\` — Tasks 0.2–0.3, the end-of-Phase-1 comparison, and the improvement exit's Phase M.
 - `desktop/tests/fixtures/answer_hops.py` (Phase 1) — the committed fixture matrix `TestAnswerHop` reads.
 
@@ -171,7 +174,7 @@ The practitioner runs one reviewed script over their consented kept recordings, 
 The tables are read against thresholds fixed beforehand. The practitioner chooses gate-capable, improvement or no change, and the form of the rule.
 
 ### Flow 4 — In the app (only on a GO)
-After Finish, the note holds the patient's reply right after the clinician's question it answers, as a verbatim quoted line with the usual check marks. Where the clinician's own line was left out, its warning is unchanged and the Line list shows both that line and its reply `[flagged]`.
+After Finish, the note holds the patient's reply right after the clinician's question it answers, as a verbatim quoted line with the usual check marks. Where the clinician's own line was left out, its warning is unchanged and the Line list shows both that line and its reply `[flagged]`. Under Task 0.6's QT credit (2026-11-17), the reply is flagged only when that left-out line is a question, and the whole reply turn is flagged.
 
 ## Design Decisions
 - **D1 — The answer hop is a third way into the note, after the cue route and the same-speaker carry.** In `generate_sections`, an utterance U that no cue routes and the carry does not take joins the previous non-transparent utterance P's section when all hold:
@@ -226,9 +229,9 @@ After Finish, the note holds the patient's reply right after the clinician's que
   - NO-GO → close with no change.
   On the improvement exit: Phase M's reports are measurements, not runs of record; rule v6's verdict of record stays run 9's; the amendment is logged in the harness document as a loosening the next rule inherits; `docs/pilot/exit-gate.md` is unchanged and that is stated; the register's F-155 gets a dated control line and stays `controlled`.
   Still applies to follow-up work: No.
-- **D10 — Rule v7 (gate-capable exit only).** Rule v6's predicates and ceilings with the set schedule moved (`heldout-6` a reported row counting marked R1; `heldout-7` rule v6's `heldout-6` row field for field), and the reply credit listed as that cycle's loosening with its second verdict (D5). Every set runs `--suggestions confirm-all --prose`. The pre-registration follows the `heldout-5` model (falsifiers, bands, outcomes fixed in advance) and says beforehand that run 10 may fail on the next-patient count alone: the boundary is unchanged, and where none is found the hop can quote a next patient's reply.
+- **D10 — Rule v7 (gate-capable exit only; NOT APPLIED 2026-11-17: Task 0.6 chose the improvement exit).** Rule v6's predicates and ceilings with the set schedule moved (`heldout-6` a reported row counting marked R1; `heldout-7` rule v6's `heldout-6` row field for field), and the reply credit listed as that cycle's loosening with its second verdict (D5). Every set runs `--suggestions confirm-all --prose`. The pre-registration follows the `heldout-5` model (falsifiers, bands, outcomes fixed in advance) and says beforehand that run 10 may fail on the next-patient count alone: the boundary is unchanged, and where none is found the hop can quote a next patient's reply.
   Still applies to follow-up work: Yes.
-- **D11 — The freeze and the blind rule (gate-capable exit).** Rule v7, predictions v7 and the pre-registration are one commit before `heldout-7` exists. From then to run 10 nothing under `desktop/src/` or `scripts/` changes beyond the named plumbing. While the set is blind the suite runs only through `scripts\lint-held-out-set.py validation\heldout-7`; the executor never opens the folder; the author session is launched by the practitioner from a normal terminal.
+- **D11 — The freeze and the blind rule (gate-capable exit; NOT APPLIED 2026-11-17: improvement exit, so no set is blind and the suite runs plain throughout).** Rule v7, predictions v7 and the pre-registration are one commit before `heldout-7` exists. From then to run 10 nothing under `desktop/src/` or `scripts/` changes beyond the named plumbing. While the set is blind the suite runs only through `scripts\lint-held-out-set.py validation\heldout-7`; the executor never opens the folder; the author session is launched by the practitioner from a normal terminal.
   Still applies to follow-up work: Yes.
 - **D12 — Version 0.3.7 on either building exit; installing it is a decision on the outcome, not a default.** The models do not change, so no model pack is needed.
   Still applies to follow-up work: No.
@@ -249,7 +252,7 @@ None. No record, audit field, stored file or schema version changes (D3). New tr
 - **C3 — Frozen things stay frozen:** the phrase lists, markers, hedges and `is_interrogative`'s word lists; the cue files; every existing held-out set and fixture; rules v1–v6; the suggestion and prose stages. A predicted fixture divergence is recorded in its per-set table, never edited away.
 - **C4 — A gate is a finding, never a tuning reason.** D8 is not edited after any audio-level number; predictions are written before the run they judge; a rule that has been run is never edited.
 - **C5 — The reviewed real-speech script is the one that runs.** `afq-measure-kept.py` and `afq_lib.py` are frozen by SHA-256 between their review (Task 0.4a) and the practitioner's run (0.4b); a change repeats 0.4a.
-- **C6 — The blind rule and the freeze** (D11), on the gate-capable exit.
+- **C6 — The blind rule and the freeze** (D11), on the gate-capable exit. Not in force: Task 0.6 chose the improvement exit (2026-11-17).
 - **C7 — Host and conduct.** This Windows host only, never the cloud. Commits and pushes only on the practitioner's word (autocommit off, builds on `main`). Long runs in the background with `< /dev/null`, mains power, lid open; the installed app closed while a model or transcription run is in progress; one build open at a time.
 - **C8 — Line endings are kept** as each file has them; plans are LF.
 
@@ -258,7 +261,7 @@ None. No record, audit field, stored file or schema version changes (D3). New tr
 - **Phase 0:** the premise (0 mismatches against the shipped harness, replay mode, all seven sets; the text-mode equality); the scratch's self-test counts; the off baseline rows equal to the named report files with the Rule column masked; each table tied to a commit, the whisper model and the built set's folder; the kept-recordings script's dry run over the synthetic pickles and its refusal smoke (no `--enrolment`: exit 2).
 - **Build (on a GO):** `ruff check . && mypy && pytest` in `desktop/`, composer-run, after every code task; every changed expectation listed with its reason; the built product replayed over the saved documents equal to the scratch projection (exact, minutes, no audio).
 - **Phase M:** improvement exit — the replay above in the gate configuration re-confirms D8's improvement line. Gate-capable exit — the seven sets re-run in full; a masked diff against the confirm baselines; transcript-level cells identical (Status, Segments, Ref words, WER, Spelling-normalised words, Suspect segments, the two attribution-seconds columns, the reference-boundary line); every other differing row is an encounter where the replay lists a join, a credited reply or changed suggestion cells. A seen set that differs unexplained is re-run once at the same commit.
-- **Gate-capable exit:** rule v7, predictions v7 and the pre-registration committed before `heldout-7` exists; the suite green through the blind runner; CI green; the release attested (`gh attestation verify`; from an agent shell read its exit code); run 10's verdicts and every column recorded against predictions v7.
+- **Gate-capable exit** (NOT BUILT 2026-11-17, improvement exit; kept for the record): rule v7, predictions v7 and the pre-registration committed before `heldout-7` exists; the suite green through the blind runner; CI green; the release attested (`gh attestation verify`; from an agent shell read its exit code); run 10's verdicts and every column recorded against predictions v7.
 - **Install smoke (either building exit):** a mock with a cued clinician question and its reply beside it in the note; a left-out clinician question with its reply `[flagged]`; nothing extra in Copy; the audit CSV's `app_version`.
 - Side-effecting commands (set builds, transcription and harness runs, the kept-recordings script, the release, the author session) were inspected, not run, during planning.
 
@@ -268,10 +271,87 @@ See "Deferred — Actionable Later", "Excluded — Revisit Only If Needed" and "
 Named now, and not this plan's to decide: if even the best harm-free form is not gate-capable, the zero-silent-omission gate may be out of reach for patients' uncued lines by any rule already tried or rejected. What turns shadow mode off would then be a pilot-level decision for the practitioner (`plan-pilot.md`, the 2026-10-09 stop rule and Constraint 12).
 
 ## Current State / Handoff Note
-- Last completed step: Planning complete (native plan approved, hardened by `/review-plan` 2026-11-15). Nothing built, nothing committed; this file is untracked.
-- Current in-progress step: None.
-- Immediate next action: Task 0.1 via `/execute-loop` (its wizard first) or `/execute`. The codex plan peer-review is done: four rounds on 2026-11-15, converged at round 4 (15 findings in all, every one verified and applied; Review Findings Log).
-- Open blockers / open questions: None. Pauses to expect: the practitioner's run at 0.4b, the decision at 0.6, every commit and push.
+- Loop config: executor=claude-p model="claude-opus-5-5" effort=high profile=default; peer=codex model="gpt-6-astra" effort=medium; architect=off; cadence=every-phase; caps=review:3,peer:5; gates=executor; cap-raise=executor; high-auto=on; peer-max=12; notify=action-only; scope=all; autocommit=off; isolation=none; merge=off; perms=scoped; liveness=10; monitor-delivery=auto; verify=composer
+- COMPOSER RUN-STATE (2026-11-15T19:31+11:00): `/execute-loop` run `answers-follow-question-20261115-192900-2af4` (isolation none, builds on `main`, autocommit off; the practitioner's wizard answers, every one the recommended option, confirmed at the close table with the plan's own C7 overriding the preset's autocommit and worktree). Runkeys: stage-0 = Phase 0 (Tasks 0.1-0.8), stage-1 = Phase 1, stage-2 = V, stage-3 = M, stage-4 = D, stage-5 = F, stage-6 = P. Spawn helper `.cursor/loops/afq-spawn.sh`; peer runner `.cursor/loops/afq-peer-run.sh`; probe log `.cursor/loops/stage-0-probe.log`; policy log `.cursor/loops/answers-follow-question-20261115-192900-2af4-policy.log`. Now: preflight harness probe (leg ah1), then the stage-0 executor for Task 0.1.
+- Last completed step:
+  - Task 0.7 DONE (2026-11-17, leg ax11): the scoped `/review-plan` hardened the improvement exit's phases and marked the gate-capable ones NOT BUILT (Round 12). Before it, Task 0.6 DONE the same leg, when the practitioner answered "Accept all three (Recommended)".
+  - Task 0.6's decision recorded, pending three residue words (2026-11-17, leg ax10). The practitioner's "yes, record QT": V4gs under QT as an improvement (0.3.7, shadow on, no run 10), with the real-speech line overridden by name and the `h5-17` residue accepted by name. Before it, codex round 11 reviewed the five open points (0 findings).
+  - Task 0.5, DONE 2026-11-17 (leg ax9):
+    - Codex round 10 over the records and numbers found 1 LOW (PR-LOW-006, fixed). Its jobs 1–5 found every figure, D8 reading and 0.6 option consistent with the outputs.
+    - The executor's sweep settled D8's "don't write this down" first-reply check.
+    - The five open points were not in round 10's slice (handoff).
+  - Before it, Task 0.5's first half (2026-11-17, leg ax8): the executor's `/review-loop` over the records of Tasks 0.2–0.4b. Each figure was checked against `afq-text-2.txt`, `afq-docs-3.txt`, `afq-gate-3.txt` and the 0.4b blocks. It converged in rounds 8–9 with 0 CRIT / 0 HIGH / 1 MED / 1 LOW; no recorded number was wrong.
+  - Before it, Task 0.4b, recorded UNMEASURED (2026-11-17): both passes COMPLETE, n enrolled 2 < 3, joined 0 under every form and config.
+  - Before that, Task 0.3's two gate-configuration flagged columns, replaced from `afq-gate-3.txt` (2026-11-16, leg ax7). The composer's comparison found it equal to `afq-gate-2.txt` outside those columns and the timing cells. With that, Task 0.3 is DONE: its tables are recorded with the commit, the whisper model and the folder, and each D8 line is marked met or not met per finalist. Before that, leg ax6 recorded Task 0.3's gate-configuration lines from `afq-gate-2.txt` (2026-11-16): the join table, the S counter, the credit table, the replay premise (0 problems), D8 met / not met per finalist and per line, and the `h5-17` diagnosis (no scratch defect). Before that, Task 0.3's off part (2026-11-15, at `22feec4`, whisper `medium`, `C:\afq-sets\`): the builds, the transcriptions, the replay premise (0 problems), the baseline check (no table cell differs; `heldout-5`'s R1 row reads differently by rule v6's design), the join table, the S counter (holds: `h6-01:f2`), the credit table and the mechanical shortlist (finalists V4gs, V4s, V3gs), recorded on the task. Then Task 0.4a, DONE 2026-11-16 (the review converged in rounds 5–7; the composer's dry run `COMPLETE` 183 / 183, the refusal smokes and the two hashes are on the task). Task 0.2's and Task 0.3's flagged columns are replaced from `afq-text-2.txt` and `afq-docs-3.txt` (PR-MED-012). Before them: Tasks 0.1 and 0.2 (done 2026-11-15). Planning was committed in `22feec4` (not pushed).
+- Current in-progress step: none. Phase 0's decision tasks are done (0.1–0.7). Task 0.8 waits for the close (D.2 and P.5 on this exit).
+- Immediate next action:
+  - The composer closes Phase 0: the practitioner's word on a commit of Phase 0's records (this plan and the two documents leg ax3–ax4 edited; C7, autocommit off).
+  - Then Phase 1 under a new stage, stage-1, from Task 1.1.
+- Executor handoff (leg ax11, 2026-11-17T06:45+11:00 resume):
+  - Recorded in leg ax11:
+    - Task 0.6 DONE, with the composer's question and the practitioner's label verbatim, "Accept all three (Recommended)". The three reported residues are now accepted by name, beside the `h5-17` residue, the named real-speech override and AT's declined load.
+    - Task 0.7 DONE, a scoped `/review-plan` (Review Findings Log Round 12). The improvement exit's phases are hardened in place:
+      - Phase 1: 1.1 the hop, 1.2 the flag and credit, 1.3 consumers, and a new 1.4 for scratch against product;
+      - V: V.1 and Step H, with Task 0.6's residues on H3's read list;
+      - M.1: the built product replayed over the saved documents in the gate configuration, compared encounter for encounter with Task 0.3's V4gs QT gate projections;
+      - D: split into D.1–D.4, with the practitioner's copy wording and review-guide approvals at D.4;
+      - F.3, and P.3 and P.5.
+    - The gate-capable phases are marked NOT BUILT with dated lines.
+    - Task 0.8 stays 🟥: on this exit its parts are written with D.2 and at P.5.
+    - Tracked changes: this plan, plus leg ax3–ax4's two document edits. No scratch file changed, so the hashes stand. No product code changed (D6). No Python run by the executor.
+  - MUST-PAUSE from Task 0.7: none. Three points for the composer:
+    - The copy wording (D5) is placed at D.4 as a practitioner approval; Phase 1 builds a marked draft.
+    - The plan has no "M.2". M.1's stop rule is its only decision point, unchanged: any difference from Task 0.3's lines pauses for the practitioner, with D13.
+    - M.1's time: Task 0.3's gate run took 7.9 h for four configurations and M.1 replays one. It is still planned as an overnight background job of up to about eight hours.
+  - Leg ax8's record, unchanged: Task 0.4b recorded UNMEASURED (n enrolled 2 < 3), and the Accepted Assumption on three recordings now FALSE.
+  - Task 0.4b's observations, recorded on the task:
+    - On real speech no finalist joined or carried any line, under either config. The hop's real-speech cost and benefit are both nil on this sample, and why is not observable from what the script prints (unknown).
+    - The Excluded item on inverted roles has an unevaluable trigger: there is no attribution line (round 8 MED-001).
+    - The reply credit's real-speech load, the same for every form:
+      - pass 1 extra flagged lines Q1 median 2-3 (total 5), QT 11-15 (26), A1 12-26 (38), AT 115-127 (242);
+      - pass 2 the same except AT 115-126 (241).
+  - The `h5-17` finding (leg ax6) stands. It is a named harm residue for the practitioner's word at 0.6: "an indirect next-patient quote through the suggestion stage, not on a joined line".
+  - Next actions, in order:
+    1. The composer's close of Phase 0: the practitioner's word on a commit of Phase 0's records.
+    2. Phase 1 under stage-1 (Tasks 1.1–1.4), then V, M.1, D.1–D.4, F.3, P.3 and P.5.
+  - HISTORICAL — the options presented at Task 0.6, as leg ax8 wrote them. Decided 2026-11-17: option 1 ("yes, record QT"); see Task 0.6.
+    - Every building exit needs, besides the choices below, the practitioner's explicit, named override of D8's unmeasured real-speech line (n enrolled 2 < 3).
+    - On this sample the hop joined nothing on real speech. So in clinical use the build's only visible change there would be the reply credit's `[flagged]` marks.
+    1. Recommended (REVISED in leg ax8 from "V4gs under AT"): accept the named `h5-17` residue, decline AT's real-speech load as a reported residue, and take V4gs under QT. That is the configuration D8's choice rule picks once AT and AT+m are set aside: QT's gate-pair silent count is 4 + 8. V4s ties and is broken by "G on". QT comes before QT+m.
+       - Its reading: IMPROVEMENT (25 → 4 and 24 → 8 silent, 2 and 7 encounters failing), not GATE-CAPABLE.
+       - Its cost, from `afq-gate-3.txt` (no threshold): extra flagged lines on `heldout-5` / `heldout-6` 15 / 30, and stay-out newly flagged 0/1/0 and 1/1/1.
+       - On real speech: QT's extra flagged lines per recording, median 11-15, max 15 (total 26), in both passes.
+       - Why the revision: AT would flag median 115-127 extra lines per real recording, against QT's 11-15. That is about nine times QT's load by the passes' totals (242 against 26), for 1 + 5 more facts recovered on the synthetic gate pair (AT 3 / 3 against QT 4 / 8).
+       - The credit marks those lines `warned` in the harness, which claims the clinician was pointed to each one. At over a hundred extra flags in one consultation that claim is weak, and the mark stops singling anything out. QT's load keeps the claim plausible while still meeting IMPROVEMENT.
+       - What does not change: every harm sub-line except the `h5-17` residue is met, and the case for accepting that residue is the same as before. The quote is not on a joined line (D8's own words). It arises under `confirm-all`, the harness's worst case, whereas in the app a suggestion is added only when the clinician accepts it. Its class is already registered (F-155–F-169, F-132).
+    2. V4gs under AT, the configuration D8's choice rule picks if the practitioner accepts both the `h5-17` residue and AT's real-speech load.
+       - IMPROVEMENT: 3 / 3 silent, 1 / 3 failing.
+       - Synthetic cost: extra flagged 50 / 78 on `heldout-5` / `heldout-6`, stay-out newly flagged 2/2/2 on each.
+       - Real-speech load: AT median 115-127, max 127 (total 242) in pass 1; 115-126 (241) in pass 2.
+    3. The reply credit alone, no hop (`none` under AT or AT+m). It is harm-free under the recipe's measure and reads IMPROVEMENT (9 / 8 silent, 3 / 7 failing).
+       - Its cost: AT's synthetic load (51 / 75 extra flagged, 3/2/3 and 2/2/2 stay-out newly flagged) and AT's real-speech load above.
+       - No other credit with no hop reads IMPROVEMENT: QT reaches 10 / 13 against the halves 12.5 / 12.
+       - Whether D8's configurations include a credit with no hop is the practitioner's reading of the plan, not the executor's.
+    4. NO-GO: close with no change and record the numbers, as the suggestion-repair plan did. Its case is stronger since 0.4b: real speech is unmeasured, and on the two recordings the hop did nothing.
+  - Lesson (run time): the gate configuration (`--gate`, suggestions confirm-all and prose, three forms, the seven saved sets) takes about EIGHT hours on this laptop, not the one hour the plan and leg ax3 estimated. Each set was about an hour, the 50 longer. Plan any re-run of it as an overnight job, never beside a practitioner run.
+  - Open points (the executor's readings where D1 / D2 / D4 leave a choice; none changes a premise), checked against Task 0.3's audio-level output — keep all five. REVIEWED 2026-11-17 by codex round 11 (the composer routed them to one more slice before 0.6), 0 findings: points 1, 4 and 5 match D1 / D2 as written; points 2 and 3 are consistent with D4's words, and their numerical share of QT's 4 / 8 is not isolable. They are now part of Task 0.6's chosen definition:
+    1. After a joined line or a carried piece the existing carry's chain is closed (`prev_cued` False), as when that line was dropped before the hop, so row 5's existing carry never reaches across a reply. Now exercised: carries after a join under V1 are 2, 3, 2, 1, 1, 3, 5 by set (`scripts` … `heldout-6`), with no line that must stay out quoted.
+    2. "Questions only" counts a run as a question when any piece passes `is_interrogative` (S's "a question if either piece is"). Runs of two pieces now exist (S candidates on five sets); the tables do not separate this reading's effect. The peer may ask for a one-off count.
+    3. `replies_after` skips textless segments (transparent, row 1) and, in "whole turn", passes over a covered line of the reply speaker without crediting it. Joins across a wordless segment are still 0 at audio level. The whole-turn reading is exercised (QT and AT credit more facts than Q1 and A1 on both gate sets).
+    4. V4t's window survives a cue-routed line of the first joined speaker, or of any non-clinician before the first join. Text-only by D2, exercised at Task 0.2.
+    5. The S counter counts, with S off, each existing carry of a confirmed-clinician piece after which S would open a window, and the S-only reach is measured by composing the `s` form (`joins_only`). At audio level: candidates on five sets, one S-only line (`heldout-6`, holding `h6-01:f2`), so S is on the finalists.
+  - The scratch: three files written in leg ax1 (2026-11-15T19:31+11:00 spawn) and a fourth, `afq-measure-kept.py`, in leg ax3, all git-ignored under `.cursor/loops/` (synthetic content only, except a measuring run of the fourth, which is the practitioner's; every printed surface is ids or ordinals, script-line and segment indices, counts and section keys).
+    - `afq_lib.py` — `HopProvider` (an `ExtractiveNoteProvider` subclass re-implementing `generate_sections` with D1's five-row table; `Form` / `parse_form`: `none`, `V1` / `V3` / `V4`, suffixes `g` (guard G, D2's sentence cut and alone-routes test), `s` (switch S), `t` (V4t, text only)); `JoinRecord` (joined reply → its question, carried pieces, joins across a wordless segment, windows, S windows, S candidates, V4t survivals); D4's credit (`Credit`, `credited`, `replies_after`, `flagged_run_ranges`, `manual_only_clinician_lines`; names `Q1` `QT` `A1` `AT`, `+m` for the chooser's wider predicate, `CREDIT_ORDER` as D8's tie-break); the recipe's patches (`credit_patch` over `validation.credited_segments`, `capturing` over `_compose_note` / `encounter_metrics`, `replaying` over `transcribe_in_temporary_store` / `read_wav_pcm`, an alignment cache over `validation._Alignment` — one alignment per document, since only the note changes between forms); `text_encounter`, `replay_encounter` (the shipped `evaluate_encounter`, dummy enrolment, fixed `now`), `joins_only`; the counters (`newly_quoted` as the per-fact verdict difference, `note_counters` — the one per-note function 0.4a's real-speech entry will share — `next_patient_joins`, `label_disagreements`, `stay_out_newly_flagged`, `extra_flagged`, `fact_segments`, `segment_script_lines`, `projection`).
+    - `afq-transcribe.py` — `run8-p3-transcribe.py` with `RULES` rule v6 only, the seven seen sets, its `:142-144` C12 block dropped; one pickle per encounter (`encounter_id`, `commit`, `whisper_model`, `clinician`, `outcome`, `document`) and `report-rule-v6.md`.
+    - `afq-measure.py` — `--self-test` (Task 0.1's premise), `--text` (Task 0.2: the join table, the S counter, the credit table per set, D8 across the sets, the mechanical shortlist), `--docs <root> --built <root>` (Task 0.3: the replay premise against each pickle first, `--premise-only` to stop there, then the same tables; writes `report-none-rule-v6.md` per set for the masked baseline diff), `--gate` (the finalists in `--suggestions confirm-all --prose`, all eight credits). Outputs: `.cursor/loops/afq-out/<mode>-summary.md` and per set and form a JSON projection.
+    - `afq-measure-kept.py` (leg ax3; Task 0.4a) — modes `--list` (prints n; decrypts nothing), a measuring run (`<past_sessions folder> --enrolment <WAV> --config <folder> [--forms V4gs,V4s,V3gs]`, the finalists by default), and `--dry-run-docs <root> --config <folder>` (the synthetic pickles). Per ordinal and form it prints joined, carried, review on hop, error on hop, new error, review net and extra flagged lines under Q1 / QT / A1 / AT, then the aggregate block. It is described in its docstring and in the threat model's MEASUREMENT SCRATCH.
+- Open blockers / open questions: None. Pauses to expect:
+  - Phase 0's commit;
+  - any M.1 difference (its stop rule);
+  - D.4's two approvals (the copy wording, the review guide's 0.3.7 lines);
+  - F.3's push;
+  - P.3's install decision;
+  - every commit and push.
 - Critique gate (2026-11-15, three parallel lenses, every finding dispositioned in this plan):
   - Coverage and risk: 1 CRIT (`h5-18`: the first-line rule quotes a non-material line that must stay out → the practitioner's decision, D8's harm line and guard G); 4 HIGH (the flag's harm side → a reported column; the suggestion policy → D7; the loosening convention → D5 and D10; unnamed pins → Key Findings); 9 MED and 2 LOW (D4's form, the fixture mechanism, the real-speech fallthrough, Check 2 errors, documents, the improvement exit, `heldout-7` sites, residues, harm attribution, `provider_name`) → applied.
   - Practicality: 2 HIGH (the real-speech script reviewed and dry-run before it runs → Task 0.4a and C5; which cue file → the practitioner's "Both"); 6 MED and 3 LOW (the script's shape, the simulation recipe, the comparison mechanism, Phase 1's dependence on 0.6, the Phase M comparison, the host split, time, the no-change proof, the scratch's own document entry) → applied.
@@ -283,6 +363,14 @@ Named now, and not this plan's to decide: if even the best harm-free form is not
 - 2026-11-15 round 2: 0 CRIT / 0 HIGH / 2 MED / 1 LOW; skew=plan peer-review (codex); action=round 1's nine confirmed; all three new verified and applied
 - 2026-11-15 round 3: 0 CRIT / 0 HIGH / 1 MED / 1 LOW; skew=plan peer-review (codex); action=round 2's three confirmed; both new verified and applied
 - 2026-11-15 round 4: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=plan peer-review (codex); action=round 3's two confirmed; the one record-only finding applied; CONVERGED
+- 2026-11-15 round 5: 0 CRIT / 0 HIGH / 2 MED / 3 LOW; skew=none; action=none
+- 2026-11-15 round 6: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=pre-existing; action=triage-and-ship
+- 2026-11-15 round 7: 0 CRIT / 0 HIGH / 2 MED / 1 LOW; skew=build peer review (codex); action=all three verified and applied
+- 2026-11-17 round 8: 0 CRIT / 0 HIGH / 1 MED / 1 LOW; skew=records review (Task 0.5); action=MED recorded for 0.6 (C5 forbids the fix), LOW applied; no number corrected
+- 2026-11-17 round 9: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=records review (Task 0.5); action=none; CONVERGED
+- 2026-11-17 round 10: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=records peer review (codex, Task 0.5); action=verified and applied, with a sibling sweep (one more stale 0.4b line; D8's first-reply check settled); CONVERGED
+- 2026-11-17 round 11: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=open-points peer review (codex, Task 0.5); action=none; the five open points reviewed
+- 2026-11-17 round 12: scoped /review-plan (Task 0.7); 7 adjustments (Coverage 5, Practicality 2) plus the NOT BUILT marking and sibling sweep; action=all applied in place; no MUST-PAUSE
 
 ## Review Findings Log
 ### Round 1 — 2026-11-15
@@ -405,86 +493,578 @@ Composer-recorded: a fresh peer, read-only, on the plan as amended after round 3
 
 - **[LOW]** PR-LOW-004: D2 — V4's stopping words "until a row other than 3 or 4 applies" took in row 1, which D1's table makes transparent — Materiality: record-only (verified at D1 row 1 and `note.py:2259-2260`: a wordless line changes nothing) — Decision: Applied (D2 now reads "until row 2 or 5 applies; row 1 stays transparent"; D1's table unchanged, no sibling restates the old words); applied by: Claude Code
 
+### Round 5 — 2026-11-15
+Round status: Closed
+Source: Claude Code (`/review-loop` round 1 of cap 3, executor leg ax3; Task 0.4a's Review line)
+Scope: `.cursor/loops/afq-measure-kept.py` (new) and the `afq_lib.py` functions it reaches (`parse_form`, `measure_document`, `compose_off`, `note_counters`, `credited`, `replies_after`, `flagged_run_ranges`, `factory_for` / `HopProvider`, `load_pickle`); git-ignored scratch, read in full. Baseline: HEAD `22feec4` (the scratch is untracked).
+
+#### MED-001: `afq_lib.note_counters` — "new error-grade warnings" was a net count
+- Where: `afq_lib.py`, `note_counters` (`error_new`).
+- Why it matters: D8 sends any new error-grade warning back to the practitioner. A form that removed one error-grade warning and added another scored 0, and the synthetic tables' "New error-grade" column reads the same function.
+- /fix decision: Applied
+- /fix notes: `error_new` now counts the form's error-grade warnings that the no-hop note lacks, keyed by code and segment. It can only rise against the old count. Consequence: the off tables (`afq-docs-1.txt`) and the gate run started at 21:46 (`afq-gate-1.txt`) used the net count, so the leg ax3 handoff asks for both to be re-run before the D8 lines are read.
+- /fix date: 2026-11-15
+- /fix applied by: Claude Code
+
+#### MED-002: the real-speech pass 2 names a config the premise never saw
+- Where: `afq_lib.py` `measure_document`; `afq-measure-kept.py`.
+- Why it matters: Task 0.1's premise (the scratch's no-hop note equals the shipped one) was proven under `validation/config` only, while pass 2 composes under the installed app's own config folder.
+- /fix decision: Applied
+- /fix notes: `measure_document` composes the shipped provider's note (the default factory) beside the scratch's no-hop note, per document, and raises `PremiseMismatchError` on any difference. The kept script counts that as the recording's failure by type, so the pass reads `INCOMPLETE`. The real-speech entry is self-checking on every document under its own config.
+- /fix date: 2026-11-15
+- /fix applied by: Claude Code
+
+- **[LOW]** LOW-001: "review on hop" counts warnings on carried pieces as well as joined lines, where D8 names "a joined line" — Triage: Fix-now; Decision: Applied (the reading is recorded in the script's docstring: both are quoted only by the hop, so the count is the higher one; the synthetic tables' "Review marks on hop lines" reads the same); applied by: Claude Code
+- **[LOW]** LOW-002: `afq_lib.joins_only` repeated `compose_off`'s body — Triage: Fix-now; Decision: Applied (`joins_only` returns `compose_off(...)[1]`; same composition, same record); applied by: Claude Code
+- **[LOW]** LOW-003: an unused `REPO` in `afq-measure-kept.py` — Triage: Fix-now; Decision: Applied (removed); applied by: Claude Code
+
+### Round 6 — 2026-11-15
+Round status: Closed
+Source: Claude Code (`/review-loop` round 2 of cap 3, executor leg ax3)
+Scope: the same files in full after round 5's fixes, with the two document edits (`docs/security/threat-model.md` MEASUREMENT SCRATCH, `docs/testing/kept-recordings.md` after line 7) checked against the script. Post-fix regression check: round 5's five fixes verified in place, none introducing a new path that prints text or an id. CONVERGED: no CRIT, HIGH or MED.
+
+- **[LOW]** LOW-001: `--list` was refused by an invalid `--forms` value, though the documents say it checks only the channel and the folder — Triage: Fix-now; Decision: Applied (the `--list` dispatch now precedes the forms check); applied by: Claude Code
+
+### Round 7 — 2026-11-15
+Round status: Closed
+Source: Codex — codex gpt-6-astra medium — build peer review (stage-0-t04a.p1)
+Composer-recorded: Task 0.4a's codex slice over `afq-measure-kept.py` and `afq_lib.py` with the two document diffs, read-only, static only (`.cursor/loops/stage-0-peer-r7.log`, from its last `### Round 7` header; peer round 1 of cap 5; 17 files inspected, 5 jobs evidenced). The peer confirmed in place round 5's two MED fixes, the refusal order, the lock, the custody and interrupt paths, and the `persist_key=False` teardown. The executor (leg ax4) verified each finding against the code and disposed it as `/fix` does.
+
+#### PR-MED-011: `afq-measure-kept.py` — a nonexistent `--config` folder measures the shipped defaults
+- Materiality: build-affecting (verified at `note_config.py:948-957`: `_read_config_blob` treats `FileNotFoundError` as "use the shipped default", and `load_note_config:1017-1031` reads all four files that way without checking the root, so an absent folder loads cleanly as the defaults; the per-document premise compares two notes built from the same config and cannot see it)
+- Why it matters: a mistyped installed-config path at Task 0.4b's pass 2 would measure the validation-like defaults and could end `COMPLETE`.
+- Triage: Fix-now
+- /fix decision: Applied
+- /fix notes: `_config_dir` refuses (exit 2) when `--config` is absent or not an existing folder. It runs in the measuring run's argument checks, before the archive is touched or any config or model loads, and in the dry run before anything is read. A missing file inside an existing folder stays the loader's ordinary default. Siblings: `afq-measure.py` and `afq-transcribe.py` now refuse the same way. Every run recorded so far named the existing `validation/config`, so no recorded number is affected. The threat model's MEASUREMENT SCRATCH entry and `docs/testing/kept-recordings.md` now say "an existing config folder" (CRLF kept).
+- /fix date: 2026-11-15
+- /fix applied by: Claude Code
+
+#### PR-MED-012: `afq_lib.py` — "extra flagged" subtracted the harness credit, not the chooser's shipped mark
+- Materiality: build-affecting for the records, not for any exit (verified at `ui/models.py:2773-2784`: the chooser marks `omission_anchors | flagged_runs`, so a patient's `high_risk_omission` line is already `[flagged]`; `validation.credited_segments` is `flagged_runs` only, clinician lines, `:1893-1902`; the scratch subtracted the latter)
+- Why it matters: a reply already marked by its own anchor was counted as a new flag, so the counts over-stated what the reply flag adds.
+- Triage: Fix-now
+- /fix decision: Applied
+- /fix notes: one helper, `afq_lib.newly_flagged`, gives the credit's segments minus `ui.models.flagged_segments`, and all three readers use it:
+  - `extra_flagged`: the synthetic credit table's "Extra flagged lines" column in the text, docs and gate modes;
+  - `stay_out_newly_flagged`: the credit table's "Stay-out newly flagged mat/other/at-or-after tail" column, also in all three modes;
+  - `measure_document`: the kept script's "extra flagged Q1 … AT" columns, per ordinal and in the aggregate.
+
+  No other column, the D8-across-sets table or the shortlist reads them (the shortlist ranks silent facts and orders least harm by quoted lines). D8 sets no threshold on them: they are its "Reported for the practitioner's word at 0.6, with no threshold" line (lines that must stay out and are newly `[flagged]`; extra flagged lines per recording), so no exit moves. Each printed name now says what it counts (newly `[flagged]`, beyond the shipped mark). No separate harness-credit metric was added, because "Facts credited" already reports what the credit changes in the metrics.
+
+  The counts recorded at Task 0.2 (17 / 18 / 39 / 40) and at Task 0.3 (the extra-flagged and stay-out-newly-flagged lines) were taken under the old reading. They are marked on their tasks and replaced from the composer's re-runs (leg ax4 handoff). Replaced: Task 0.2 from `afq-text-2.txt`, Task 0.3's off part from `afq-docs-3.txt`, and its gate configuration from `afq-gate-3.txt` (leg ax7, 2026-11-16).
+- /fix date: 2026-11-15
+- /fix applied by: Claude Code
+
+- **[LOW]** PR-LOW-005: `afq-measure-kept.py` grouped `PastSessionError` failures by `replay_kept._reason` reason codes, where C1, Task 0.4a and the documents say by type name — Materiality: record-only (verified: the three handlers read `_reason`, which returns the allow-listed `exc.reason`; content-free either way) — Triage: Fix-now; Decision: Applied (all three now use `validation._error_type`; the measuring loop's separate `PastSessionError` branch is folded into the by-type handler; the docstring states the by-type rule); /fix date: 2026-11-15; applied by: Claude Code
+
+### Round 8 — 2026-11-17
+Round status: Closed
+Source: Claude Code (`/review-loop` round 1 of cap 3, executor leg ax8; Task 0.5's first half)
+Scope: this plan's records of Tasks 0.2, 0.3 (off part and gate configuration) and 0.4b, every figure checked against the composer's outputs, opened by name only:
+- `.cursor/loops/afq-text-2.txt`: Task 0.2's join table, credit table, flagged columns and the text-level D8 and shortlist lines;
+- `afq-docs-3.txt`: Task 0.3 off, the join table, S counter, credit table, flagged columns and their sums, replay premise, the D8 table and the shortlist;
+- `afq-gate-3.txt`: the gate join table, credit table, flagged columns, replay premise and D8 rows, which equal `afq-gate-2.txt` outside the flagged and timing cells;
+- the 0.4b aggregate blocks as pasted.
+
+`afq_lib.py`'s `credited`, `replies_after`, `flagged_run_ranges`, `newly_flagged` and `measure_document` were read, not changed, for the 0.4b reading. Every recorded count, sum, ranking and verdict matched its source; no number is corrected.
+
+#### MED-001: the Excluded item's revisit trigger names an output no task produces
+- Where: Excluded — Revisit Only If Needed, "A clinician's answer to a patient's question (inverted roles) …": "When to revisit: only if real-speech attribution makes the confirmed-clinician test miss most questions (Task 0.4b's attribution line)".
+- Why it matters: Task 0.4a's specification and `afq-measure-kept.py` print no attribution line, no question count and no refused-condition count. On real speech every finalist joined 0 under both configs, and the trigger cannot be evaluated: it is neither met nor ruled out. Task 0.6 would read an absent number as no evidence.
+- Triage: Record-and-defer. Measuring attribution would change the hashed scripts (C5) and need another practitioner run. That is a choice for the practitioner, not a fix.
+- /fix decision: Recorded, not changed. Task 0.4b's observation 1 states the trigger is unevaluable and the cause of joined 0 unknown, and the handoff's 0.6 options carry it.
+- /fix date: 2026-11-17
+- /fix applied by: Claude Code
+
+- **[LOW]** LOW-001: Task 0.3's gate record attributed the no-hop R3 2 / 1 on `heldout-3`, `heldout-5` and `heldout-6` to the suggestion stage "as run 9 found", which is not cited and not established for `heldout-3` — Triage: Fix-now; Decision: Applied. The line now cites the off comparison, R3 1 / 1 on all three in `afq-docs-3.txt`, and the elimination: the prose stage only counts sections. Applied by: Claude Code.
+
+### Round 9 — 2026-11-17
+Round status: Closed
+Source: Claude Code (`/review-loop` round 2 of cap 3, executor leg ax8)
+Scope: round 8's fix in place. Then the leg's new text against its sources: Task 0.4b's record and observations against the pasted blocks and `afq_lib.py`; the handoff's revised 0.6 options against `afq-gate-3.txt`'s credit rows; and the Accepted Assumption's dated line.
+- The QT reading checked out: V4gs and V4s QT at 4 / 8 silent and 2 / 7 failing; V3gs QT at 5 / 8; IMPROVEMENT against the halves 12.5 / 12; QT with no hop at 10 / 13, not an improvement.
+- The choice-rule order with AT and AT+m set aside gives V4gs under QT.
+- No per-recording value is recorded.
+- CONVERGED: no CRIT, HIGH or MED; 0 findings.
+
+### Round 10 — 2026-11-17
+Round status: Closed
+Source: Codex — codex gpt-6-astra medium — build peer review (stage-0-t05.p1)
+Composer-recorded: Task 0.5's codex slice over the records and numbers, read-only (`.cursor/loops/stage-0-peer-r10.log`, from its last `### Round 10` header; peer round 1 of cap 5; 5 files read, 1,014 table rows checked, 5 / 5 jobs evidenced).
+- Jobs 1–3 found every recorded figure, total and ranking, the D8 readings and both real-speech aggregate blocks consistent with `afq-text-2.txt`, `afq-docs-3.txt` and `afq-gate-3.txt`, with gate-2 against gate-3 sampled. No per-recording value appears.
+- Jobs 4–5 found the decision options' disclosures sound, with one current-status contradiction.
+- The executor (leg ax9) verified the finding against the plan and disposed it as `/fix` does.
+
+- **[LOW]** PR-LOW-006: Overall Progress (`:3`) and the expected pauses (the handoff's "Open blockers" line) still listed the practitioner's 0.4b run as future work, though Task 0.4b is DONE, recorded UNMEASURED — Materiality: record-only (verified: `:3` read "the practitioner's real-speech run (0.4b) … ahead" and the pauses line "the practitioner's run at 0.4b") — Triage: Fix-now; Decision: Applied.
+  - /fix notes: both lines now drop 0.4b from pending work and keep its UNMEASURED result and the named-override requirement.
+  - The sibling sweep, every line naming 0.4b, found one more: Task 0.3's D8 line "Real speech: owed (Task 0.4b)", now UNMEASURED with the override. The same line still left D8's "don't write this down" first-reply check "owed to Task 0.5's records". It is now settled on Task 0.3: a phrase search over every script under `validation/` finds one line, `hld-17` line 2, a second reply that no finalist quotes or newly flags. The search's limit is stated there.
+  - The sweep also found the five open points marked "the codex peer to review them at 0.5", outside round 10's slice. Their routing is left to the composer in the handoff, with a recommendation; they are not marked reviewed.
+  - /fix date: 2026-11-17; applied by: Claude Code
+
+### Round 11 — 2026-11-17
+Round status: Closed
+Source: Codex — codex gpt-6-astra medium — build peer review (stage-0-t05.p2)
+Composer-recorded: the composer routed the five open points to one more codex slice before Task 0.6, rather than to Task 0.7 (`.cursor/loops/stage-0-peer-r11.log`, from its last `### Round 11` header; peer round 2 of cap 5; 6 scoped files read, 5 / 5 jobs evidenced, static only). Its readings, one per point:
+- Point 1 (carry-state closure): matches D1, and the shipped `note.py:2286-2289` also clears the carry state after a carry or a dropped utterance, so row 5 cannot carry across a reply.
+- Point 2 (`run_is_question`'s any-piece reading on D4's question-only credit): consistent with D4, which does not prescribe classifying the concatenated text. It can credit more than a concatenated predicate would, but the tables do not isolate that difference.
+- Point 3 (whole-turn traversal past a covered line): consistent with D4. A speaker change ends the turn; coverage only filters what is included. V4gs Q1 → QT is 14 → 4 silent on `heldout-2` and 16 → 8 on `heldout-6`, combining all later-line credit, so any share that crosses a covered line is not isolable. No change to the recommended 4 / 8 is established.
+- Point 4 (V4t): unreachable for V4gs, V4s and V3gs (it needs the `t` suffix); the gate tables report zero survival.
+- Point 5 (the S counter and composition): matches D2's potential-window definition; `joins_only` isolates S.
+
+Findings: none.
+
+### Round 12 — 2026-11-17
+Round status: Closed
+Source: Claude Code (scoped `/review-plan`, Task 0.7, executor leg ax11; `.claude/skills/review-plan/SKILL.md` "Scoped mode", full scoped critique, since the addition is multi-task and cross-cutting)
+Scope:
+- The tasks hardened: the improvement exit's kept phases, read against Task 0.6's record, D1–D13, C1–C8, Key Findings' pin and site lists and Validation / Verification.
+- The real code read at HEAD `22feec4`, whose product tree equals `50a8a2b`, the commit Key Findings verified (`git diff --stat 50a8a2b 22feec4` over the product paths is empty):
+  - `note.py` `generate_sections` and the class docstring;
+  - `ui/models.py` `omission_anchors`, `flagged_runs`, `flagged_segments`, `flagged_count_line` and the `clinician_line_omitted` copy;
+  - `validation.py` `credited_segments`, the run-only counts and `word_info`;
+  - `test_note_matrix.py`'s carry lint and registry;
+  - the predicted-divergence tables in `test_note_check.py` and `test_note.py`;
+  - `TestFlaggedLineCredit` and `TestJoinedRunCredit`'s locations.
+- Executor tier inherited (entirely premium).
+
+The three lenses:
+- Coverage: five gaps, all applied in place.
+  - (1) M.1 had no named tool or exact comparison target. It now names `afq-measure-built.py` and compares against Task 0.3's V4gs QT gate projections, encounter for encounter.
+  - (2) D5 gives the copy's wording to the practitioner in Phase D, but Phase 1 builds the copy. Resolved without a new decision: Task 1.2 lands a marked draft and D.4 takes the practitioner's wording before F.3.
+  - (3) The scratch-against-product comparison sat in 1.1, before the credit exists. It is now its own Task 1.4, after 1.2 and 1.3.
+  - (4) D5 says what the report prints under rule v7 only. Task 1.2 now states rule v6's form: the verdict with the credit, the second verdict in the report-only line, and no column.
+  - (5) Task 0.6's accepted residues are now pinned or read: residue (3) as a `TestAnswerHop` case, and the `h5-17` quote and residue (3) on H3's read list. F-155's control line is in P.5.
+- Practicality: two applied.
+  - D.1 was one task over about fifteen documents. It is now D.1–D.4: security and design; testing; practice, pilot, release and project; approvals and the peer pass.
+  - Every line cite in the hardened tasks was checked at HEAD; the threat model's cites are re-located by search, since that file changed after `50a8a2b`. Key Findings' `h5-17` prediction was made for the first-line rule, so Task 1.1 takes the V4gs entries from the suite.
+- Simplicity: no simpler approach meets the goal. M.1 replays one configuration over the saved documents, not a full re-run, so the comparison is exact and free of transcription noise. That is what Validation / Verification already said.
+
+The NOT BUILT marking (Task 0.7's done-when), following `plan-suggestion-repair.md`'s convention (the tasks stay 🟥 for the record under a dated NOT BUILT line):
+- F.1, F.2, P.1, P.2 and P.4;
+- M.1's gate-capable variant;
+- D10 and D11 (NOT APPLIED), and C6 (not in force);
+- Agreed Scope's gate-capable bullet, Validation's gate-capable line, and Key Findings' `heldout-7` sites.
+
+Amendment-application discipline:
+- Each edit was confirmed landed by a fresh read or search.
+- Contradicted siblings were reconciled:
+  - the Goal and Flow 4 now say the reply is flagged only after a left-out question (QT);
+  - Shared helpers names the two new scratch files;
+  - Task 0.8 says when its parts are written on this exit;
+  - the plan footer points to this round.
+- A sibling left as is, with its reason: Planning Extraction's "Hardening depth" line, which records the 2026-11-15 choice.
+
+MUST-PAUSE: none surfaced. Every open item resolves within D1–D13 or is already placed with the practitioner (D.4's two approvals; P.3).
+
+Findings: none beyond the seven adjustments above (Coverage 5, Practicality 2), all applied in place, plus the NOT BUILT marking and the sibling sweep.
+
 ## Tasks
 
 ### Phase 0 — The simulation and the decision (no product change; C2)
 
-- [ ] 🟥 **0.1 The synthetic scratch and its premise.**
+- [x] 🟩 **0.1 The synthetic scratch and its premise.** DONE 2026-11-15 at `22feec4` (the scratch written in executor leg ax1, run by the composer): text mode's premise holds with 0 mismatches on all seven sets (`afq-measure.py --self-test`: `scripts` 50, `heldout` 22, `heldout-2` 22, `heldout-3` 23, `heldout-4` 22, `heldout-5` 22, `heldout-6` 22 encounters; note, metrics, reference reading, credit mirror and errors all 0; `PREMISE mismatches total: 0`). `heldout-3` has 23 scripts, not the 22 leg ax1's handoff expected. The replay premise stays Task 0.3's.
   - Files (new, git-ignored): `.cursor/loops/afq_lib.py` (the D1 rule as a provider subclass with reach V1 / V3 / V4, guard G on or off, switch S, and V4t for text mode; `replies_after` with D4's four sub-variants; the counters), `.cursor/loops/afq-transcribe.py` (from `run8-p3-transcribe.py`: `RULES` rule v6, the seven sets, its `:142-144` dropped; one pickle per encounter), `.cursor/loops/afq-measure.py` (text mode over `validation.reference_document`; `--docs` over the saved pickles; prints ids, counts and section keys only), outputs under `.cursor/loops/afq-out/`.
   - Follows: the simulation recipe in Codebase Integration Notes; D1, D2, D4.
   - Behaviour once done: with no hop and the shipped credit, the scratch reproduces the shipped outcome.
   - Done when: text mode's equality holds on all seven sets (0 mismatches), recorded here with the commit. The replay premise is Task 0.3's.
   - The executor writes; the composer runs (C7; the executor runs no Python).
-- [ ] 🟥 **0.2 The self-test at text level.**
+- [x] 🟩 **0.2 The self-test at text level.** DONE 2026-11-15 at `22feec4` (the composer's run: `afq-measure.py --text --per-encounter --config validation/config`, exit 0, 72 s; `.cursor/loops/afq-text-1.txt`, `afq-out/text-summary.md`, `afq-out/text/`).
   - Run `afq-measure.py` in text mode over the seven sets with `--config validation\config`.
   - Record here (ids and counts only): silent facts before (expected 25 on `heldout-2`, 26 on `heldout-6`, 0 elsewhere); V1 recovered (expected 11) and V4t recovered (expected 17) with what each quotes that must stay out (expected: V4t `hld-17`; V1 without G `h5-18` line 3; with G to be read); joins per set.
   - Done when: each expected count is reproduced, or the difference is explained on this task (the planning counts were estimates). This is a self-test, not a decision table.
-- [ ] 🟥 **0.3 The audio-level tables.**
+  - Recorded (shipped credit unless named; ids, script-line numbers and counts only):
+    - Silent facts before (no hop): `heldout-2` 25 (14 failing encounters), `heldout-6` 26 (16 failing), 0 on the other five. As expected.
+    - V1 recovered 11 (`heldout-2` 3: `h2-09` 3 → 1, `h2-18` 4 → 3; `heldout-6` 8: `h6-01` 2 → 1, `h6-02` 2 → 0, `h6-04` 2 → 0, `h6-08` 3 → 2, `h6-09` 1 → 0, `h6-21` 2 → 1; `h6-19` joins once and stays at 2). V1g the same 11. As expected. V3 / V4 (G off or on) recover 14 (`heldout-2` 6, `heldout-6` 8); V3 is equal to V4 on every set.
+    - V4t recovered 17 (`heldout-2` 8, `heldout-6` 9, the ninth `h6-16` 3 → 2). As expected.
+    - Quoted that must stay out (material / not): V4t `hld-17` line 2 (material), `hld-18` line 5 (not) and `h5-18` line 3 (not); V1, V3 and V4 without G `h5-18` line 3 (not material) only; with G (V1g, V3g, V4g) none. The expected `hld-17` and `h5-18` line 3 reproduce; the two others are V4t's own, outside the planning list, which named only the material one. G removes `h5-18`'s quote, the case it was written for.
+    - Joins per set (V1 / V1g / V3 / V3g / V4 / V4g / V4t): `scripts` 7 every form (`syn-09`, `syn-10`, `syn-13`, `syn-24` twice, `syn-29`, `syn-40`); `heldout` 2 every reach (`hld-15`, `hld-22`), V4t 11; `heldout-2` 2 / 2 / 4 / 4 / 4 / 4 / 9; `heldout-3` 0, V4t 2 (`h3-07`, `h3-12`); `heldout-4` 0, V4t 1 (`h4-12`); `heldout-5` 3 without G, 2 with G (`h5-12`, `h5-17`; `h5-18` the one G stops), V4t 5 (adds `h5-02`, `h5-16`); `heldout-6` 8 / 8 / 9 / 9 / 9 / 9 / 11. At most 2 joins per encounter (V4t 3 on `heldout`).
+    - Read beside them, all 0 on every set and form: newly silent facts, next-patient joins with no boundary found, new unsupported clinical lines, new error-grade warnings, new checker failures, sets pushed over R3, the 50 newly failing, carries after a join, joins across a wordless segment, label disagreements, S candidates. Review marks on hop lines: `scripts` 1, `heldout` 1 (V4t 3), `heldout-2` 0 (V4t 2), `heldout-5` 1, `heldout-6` 3 (V1) / 4 (V3, V4) / 5 (V4t), else 0.
+  - Against the planning estimates (Accepted Assumptions, "The planning cross-checks are estimates"):
+    - "Join plus credit leaves about 6–12 silent facts on `heldout-2` and 1–4 on `heldout-6`": V1 (G off or on) leaves 6 (QT, AT) to 12 (Q1, A1) on `heldout-2` and 1 (AT) to 4 (Q1) on `heldout-6`, inside both. V3 / V4 leave 3–9 on `heldout-2` (1–4 on `heldout-6`), below the low end: the estimate was the first-line reach's, and the wider reach joins 2 more lines on `heldout-2` (3 more facts).
+    - "`h5-18` line 3 is quoted by the first-line rule": reproduced (not material), and G stops it.
+    - "The reply flag lands on about 17 (questions only) to 39 (any clinician line) lines that must stay out". REPLACED 2026-11-16 from `.cursor/loops/afq-text-2.txt`, after peer round 7 PR-MED-012. The column now subtracts the chooser's shipped `[flagged]` mark, `ui.models.flagged_segments`. The first reading (17, 18, 39, 40 from `afq-text-1.txt`) subtracted only the harness credit, so it counted lines already flagged by a patient's own `high_risk_omission` anchor.
+      - Corrected, summed over the seven sets with no hop: Q1 8, QT 8, A1 19, AT 19. Of the A1 19, 10 are material and 8 sit at or after the reference tail.
+      - Per set, Q1; A1, material / other / tail (QT equals Q1 and AT equals A1 on every set): `scripts` 0/5/0; 3/5/0 — `heldout` 0/0/0; 0/0/0 — `heldout-2` 0/0/0; 1/1/1 — `heldout-3` 1/0/1; 2/1/2 — `heldout-4` 1/1/2; 1/1/2 — `heldout-5` 0/0/0; 2/0/2 — `heldout-6` 0/0/0; 1/1/1.
+      - Extra flagged lines with no hop, Q1 / QT / A1 / AT: `scripts` 7 / 7 / 11 / 11; `heldout` 1 / 1 / 3 / 3; `heldout-2` 5 / 9 / 14 / 18; `heldout-3` 5 / 5 / 18 / 18; `heldout-4` 6 / 6 / 24 / 24; `heldout-5` 4 / 5 / 17 / 18; `heldout-6` 8 / 10 / 23 / 25.
+      - Against the estimate: the corrected counts are about half of it. The first reading matched the estimate exactly (17 and 39), so the planning cross-check most likely made the same subtraction.
+      - The unit is one per `absent` fact on a newly `[flagged]` line, not distinct lines; Task 0.5's review checks it.
+      - `afq-text-2.txt` differs from `afq-text-1.txt` in these two columns only (none rose) and the per-encounter lines' added `np=` (0 throughout), as the composer compared.
+    - Not exercised at text level (the reference document has no recogniser splits, no wordless segments and labels taken from the script): S (0 candidates), the carry after a join (0), joins across a wordless segment (0) and label disagreement (0). Task 0.3 reads them at audio level.
+  - The text-level D8 section in the output (harm line met only by `none` and the three G forms; no form gate-capable; the mechanical shortlist V3g, V4g, V1g at 4, 4 and 7 silent on `heldout-2` + `heldout-6` under AT) is a self-test reading on the scripts' own words, at most an upper bound on what audio level can show; D8 is read at Task 0.6 on Task 0.3's audio-level numbers, and nothing here is decided.
+- [x] 🟩 **0.3 The audio-level tables.** DONE 2026-11-16 at `22feec4`, whisper `medium`, `C:\afq-sets\`. The off part was recorded 2026-11-15. The finalists' gate-configuration lines and each D8 line's met / not met come from `afq-gate-2.txt` (leg ax6); the two flagged columns from `afq-gate-3.txt` (leg ax7). All are below.
   - Build the seven sets into `C:\afq-sets\<set>` (voices checked first), transcribe each once with `afq-transcribe.py` (each script's clinician enrolled), keep the built folders.
   - Premise: the replay equals each pickled outcome (0 mismatches), and the baseline rows equal `stage-2-c6-off-<set>.md` (and `stage-4-f1-off-heldout-2.md`) with the Rule column masked; if transcript cells differ, re-transcribe that set once and record it. `heldout-6` has no off baseline: record its row.
   - Tables, per set (off, no prose): (1) the join table — V1 / V3 / V4, each with G off and on (V3 printed only where it differs from both): silent facts and failing encounters after, facts recovered, lines that must stay out quoted (material / not), next-patient joins with no boundary found, new unsupported clinical lines, new review marks and new error-grade warnings, joins per encounter, joins across a wordless segment, joins whose reply label disagrees with the label track, carries after a join; (2) the S counter (windows only S would open); (3) the credit table — D4's four sub-variants: facts credited, extra flagged lines, lines that must stay out newly flagged (material / not / at or after the reference tail).
   - The shortlist, mechanical: rank the six forms (three reaches, G off and on) that meet D8's harm line at off by the fewest silent facts on `heldout-2` + `heldout-6` at off under the widest credit (any clinician line, whole turn); ties go to the smaller reach, then to G on. The top three are the finalists; S is added to each if D2's condition holds. If no form meets the harm line at off, the one with the least harm is the only finalist, ordered by, in turn: material lines that must stay out quoted; non-material ones; new unsupported clinical lines; new error-grade warnings and checker failures; sets pushed over their next-patient ceiling; the 50 failing; then the smaller reach, then G on.
-  - Each finalist form is composed once in the gate configuration over the saved documents (one model pass, about an hour for the seven sets). From that one composed note the metric walk is repeated for each of D4's four credit sub-variants and for the chooser's wider predicate (the recipe's re-invocation), so every credit configuration has its full D8 lines, with the join-only figures beside.
+  - Each finalist form is composed once in the gate configuration over the saved documents (one model pass; planned as about an hour for the seven sets, measured at about eight on this laptop, 2026-11-16). From that one composed note the metric walk is repeated for each of D4's four credit sub-variants and for the chooser's wider predicate (the recipe's re-invocation), so every credit configuration has its full D8 lines, with the join-only figures beside.
   - Done when: the tables are on this task with the commit, the whisper model and the folder; each D8 line is marked met or not met per finalist.
-- [ ] 🟥 **0.4a The real-speech script, reviewed before it runs** (C1, C5).
+  - Recorded, off and no prose (ids and counts only; every table at commit `22feec4`, whisper `medium`, built and saved under `C:\afq-sets\`; the composer's runs, logs `.cursor/loops/afq-build-<set>.txt`, `afq-transcribe-<set>.txt`, `afq-replay-premise-1.txt`, `afq-docs-1.txt`, `afq-baseline-diff-1.txt`):
+    - Built: voices 0 David, 1 Hazel, 2 Zira as the baseline; each set "built N encounter(s); 0 error(s)" (50, 22, 22, 23, 22, 22, 22) into `C:\afq-sets\<set>`. Transcribed once each with `afq-transcribe.py` (19:57–21:41), pickles in `C:\afq-sets\docs\<set>`; every set exit 0, no `[error]`, `[custody]` or `[refused]` line; rule v6 PASS on `scripts` and `heldout-3`, FAIL on the other five.
+    - Replay premise: 0 problems on all seven sets (encounters 50, 22, 22, 23, 22, 22, 22; incomplete, missing pickles, errors and mismatches all 0).
+    - Baseline: each set's no-hop report (`afq-out/docs/<set>/report-none-rule-v6.md`) against `stage-2-c6-off-<set>.md`, and `heldout-2` also against `stage-4-f1-off-heldout-2.md` (CR stripped, `[run ]` lines dropped, rule names masked), checked line by line. The only differing lines are the title and verdict lines (rule v5 → v6 wording; the gate-set list `heldout-5`, `scripts` → `heldout-6`, `scripts`; `heldout-5` "a gate set" → "a reported set"), the run paragraph (the commit; rule v6's added sentence; `heldout-5`'s "this set reports them" → "counts them under the ceiling"), the residue-class heading and the "After the classes" line's wording (its counts equal), and on `heldout-5` alone the residue-class R1 row (0 → 1, "R1: none" → "R1: `h5-01/f4`", "reported, no ceiling" → "counted under the ceiling"). That row is rule v6's set schedule by design (`heldout-5` now counts its one marked R1, the same `h5-01/f4`, under its ceiling; the same FAIL on `h5-17`). No per-encounter table cell and no count differs, so no set is re-transcribed. The failing-encounter lists are equal on every set. `heldout-6` has no off baseline; its row: rule v6 FAIL, 17 failing encounters (16 on silent omission; `h6-13` material wrong only), silent facts 26, material wrong 2 (raw 5), uncertainty missed 0 (raw 7), one unsupported clinical line (`h6-09`), R3 1 / 1.
+    - (1) The join table, shipped credit (G on or off gives the same counts on every set; it changes only the windows opened on `heldout-6`, 14 → 13). V1 / V3 / V4:
+      - `heldout-2`: silent 25 → 22 / 22 / 19 (failing 14 → 14 / 14 / 13); recovered 3 / 3 / 6 (`h2-09` 3 → 1, → 0 under V4; `h2-18` 4 → 3, → 1 under V4; `h2-11` joins once and stays at 1); joins 6 / 8 / 11; carries after a join 2 / 0 / 0; review marks on hop lines 1.
+      - `heldout-6`: silent 26 → 21 / 20 / 20 (failing 16 → 15 / 14 / 14); recovered 5 / 6 / 6 (`h6-02` 2 → 1, → 0 under V3 and V4; `h6-04` 2 → 0; `h6-08` 3 → 2; `h6-09` 2 → 1; `h6-01` and `h6-19` join and stay at 2); joins 7 / 13 / 17; carries 5 / 1 / 0; review marks on hop lines 1 / 3 / 4.
+      - The other five (silent 0 before and after): joins `scripts` 10 / 13 / 13, `heldout` 6 / 9 / 9, `heldout-3` 3 / 4 / 4, `heldout-4` 3 / 4 / 4, `heldout-5` 4 / 7 / 7; carries under V1 2, 3, 1, 1, 3 (0 under V3 and V4); review marks on hop lines 4, 1, 0, 0, 2.
+      - Next-patient joins with no boundary found: 1 on `scripts` under every form, none elsewhere. `scripts` stays PASS with R3 2 / 2 as at no hop. The encounter is not named by this run's per-encounter line; the line names it from leg ax3 on (`np=`).
+      - 0 on every set and form: lines that must stay out quoted (material / not), newly silent facts, new unsupported clinical lines, new error-grade warnings (0 also under round 5 MED-001's strict count: the re-run `afq-docs-2.txt` differs from `afq-docs-1.txt` only in its timing cells), new checker failures, joins across a wordless segment, replies labelled the clinician, questions labelled another speaker. Joins per encounter: median 0 on every set; maximum 2 under V1, up to 3 under V3 (4 on `scripts`), and under V4 4 on `scripts` and `heldout-2` and 5 on `heldout-6`. Every set's rule v6 verdict is unchanged by every form.
+    - (2) The S counter: S candidates (windows only S would open) `heldout` 4, `heldout-2` 1, `heldout-3` 1, `heldout-4` 1, `heldout-6` 1, else 0, the same under every form. Only `heldout-6`'s has an S-only hop line, and it holds one silent material fact under the widest credit, `h6-01:f2`. D2's condition (a silently lost material fact on any set on a reply only an S window reaches) therefore holds, and S is added to each finalist. The composer's reading is confirmed.
+    - (3) The credit table, D4's four sub-variants (silent facts / failing encounters on the gate pair; `+m` equals its base at off, where no clinician Add exists):
+      - `heldout-2`: no hop Q1 20 / 11, QT 10 / 4, A1 20 / 11, AT 9 / 3; V1 and V3 (G either) 17 / 11, 7 / 4, 17 / 11, 6 / 3; V4 (G either) 14 / 9, 4 / 2, 14 / 9, 3 / 1. Facts credited 5, 15, 5, 16.
+      - `heldout-6`: no hop Q1 23 / 14, QT 15 / 11, A1 22 / 14, AT 10 / 8; V1 18 / 13, 10 / 9, 17 / 13, 5 / 5; V3 and V4 17 / 12, 9 / 8, 16 / 12, 4 / 4. Facts credited 3, 11, 4, 16.
+      - The two flagged columns, REPLACED 2026-11-16 from `.cursor/loops/afq-docs-3.txt` (peer round 7 PR-MED-012: they now subtract the chooser's shipped `[flagged]` mark, `ui.models.flagged_segments`, not the harness credit). Against `afq-docs-2.txt` only these two columns and the timing cells changed, and none rose (the composer's comparison, 329 cells). The silent, failing and facts-credited counts above and the shortlist do not read them and stand. Both are equal under every form, as before.
+        - Extra flagged lines, Q1 / QT / A1 / AT: `scripts` 7 / 21 / 16 / 33; `heldout` 2 / 3 / 7 / 11; `heldout-2` 10 / 32 / 23 / 58; `heldout-3` 6 / 12 / 25 / 53; `heldout-4` 10 / 16 / 30 / 53; `heldout-5` 5 / 16 / 26 / 59; `heldout-6` 9 / 30 / 34 / 81.
+        - Lines that must stay out newly `[flagged]`, material / other / at or after the reference tail (one per `absent` fact on a newly flagged line), Q1; QT; A1; AT:
+          - `scripts` 0/2/0; 0/5/0; 3/2/0; 3/5/0
+          - `heldout` 0/0/0 under all four
+          - `heldout-2` 0/1/0; 0/1/0; 0/1/0; 2/3/2
+          - `heldout-3` 0/0/0; 0/0/0; 0/0/0; 2/1/2
+          - `heldout-4` 1/1/2 under all four
+          - `heldout-5` 0/1/0; 1/1/1; 1/1/1; 4/2/4
+          - `heldout-6` 0/0/0; 1/1/1; 0/0/0; 3/2/3
+        - Over the seven sets: 6 (1 material), 12 (3), 10 (5), 29 (15). The first reading gave 10, 21, 20 and 52. At text level the corrected column gives 8, 8, 19 and 19 (Task 0.2); audio level reorders them because the recogniser's runs differ from the script's lines.
+    - The shortlist, mechanical: all six forms meet D8's harm line at off (0 lines that must stay out quoted, no new unsupported line, error-grade warning or checker failure, the 50 pass, no set over its next-patient ceiling). Ranked by silent facts on `heldout-2` + `heldout-6` under AT: V4g 7 (3 + 4), V4 7, V3g 10, V3 10, V1g 11, V1 11. V4g and V4 tie and share a reach, so G on ranks V4g first. Finalists: V4g, V4 and V3g, each with S (condition above): V4gs, V4s, V3gs. Their gate-configuration run (`--gate --forms V4gs,V4s,V3gs`): `afq-gate-1.txt` (21:46, the old net error count) was stopped as obsolete. `afq-gate-2.txt` (started 22:00, round 5's counter, the old flagged reading) is the record for the D8 lines. `afq-gate-3.txt` is the record for the two flagged columns; it equals gate-2 in every other cell. Each run takes about eight hours, not one.
+    - The gate configuration, recorded 2026-11-16 (leg ax6) from `.cursor/loops/afq-gate-2.txt`:
+      - Run: the composer's gate run of the three finalists (suggestions confirm-all and prose) over the saved documents. Commit `22feec4`, whisper `medium`, `C:\afq-sets\`. Started 2026-11-15 22:00, ended 2026-11-16 05:56:39, exit 0, 513 lines. Set times (s): 6075, 3274, 4252, 4129, 3411, 3707, 3749, about 7.9 h in all.
+      - Round 5's error counter. `afq-gate-2.txt` ran before PR-MED-012, so its two flagged columns ("Extra flagged lines", "Stay-out newly flagged") were the old reading, an upper bound. The practitioner chose to re-run: "Rerun now, 0.4b waits" (2026-11-16, in chat).
+      - The re-run, `.cursor/loops/afq-gate-3.txt` (recorded 2026-11-16, leg ax7), is the record for the two flagged columns under (3).
+        - It ran at HEAD `22feec4`, whisper `medium`, `C:\afq-sets\`, with the same three forms and `--config validation/config`, round 5's counter and the PR-MED-012 flagged reading. It started 05:56:43, ended 13:49:47 and exited 0; 513 lines.
+        - Set times (s): 5997, 3251, 4234, 4102, 3409, 3701, 3687.
+        - The composer's column comparison against `afq-gate-2.txt` gives the same 513 lines and 375 changed cells. All 375 are in the two flagged columns, and none rose. The other changes are the seven "Seconds" cells. Every other line and cell is identical, including the per-encounter lines and the D8 lines.
+        - So every count above and below other than the flagged columns reads the same from either file.
+      - Replay premise in this configuration: 0 problems on all seven sets (incomplete, missing pickles and errors 0; mismatches not compared here, since the pickles hold the off outcome).
+      - (1) The join table, shipped credit, V4gs / V4s / V3gs:
+        - `heldout-2`: silent 25 → 19 / 19 / 19 (failing 14 → 13 / 13 / 13); recovered 6; joins 11 / 11 / 8; review marks on hop lines 1. `h2-09` 3 → 0 / 0 / 1; `h2-18` 4 → 1 / 1 / 0; `h2-11` stays 1.
+        - `heldout-6`: silent 24 → 19 / 19 / 19 (failing 15 → 14 / 14 / 14); recovered 5; joins 18 / 18 / 14; carries 0 / 0 / 1; review marks 4 / 4 / 3. `h6-01` 2 → 1, `h6-04` 2 → 0, `h6-08` 3 → 2, `h6-09` 2 → 1; `h6-19` stays 2.
+        - The no-hop baseline here is not the off one: `heldout-6` 24 silent over 15 failing (26 and 16 at off), because the suggestion stage itself recovers two.
+        - The other five, silent 0 before and after: joins `scripts` 13, `heldout` 9, `heldout-3` 4, `heldout-4` 4, `heldout-5` 7, the same under all three; review marks 4, 1, 0, 0, 2.
+        - Next-patient joins with no boundary found: 1 on `scripts`, now named, `syn-38` (all three forms). `scripts` stays PASS with R3 2 / 2.
+        - Lines that must stay out quoted, material / other: `heldout-5` 1 / 0 (`h5-17` line 15, material, all three forms; diagnosis below), 0 / 0 elsewhere.
+        - 0 on every set and form: newly silent, new unsupported, new error-grade (strict count), new checker failures, joins across a wordless segment, label disagreements. Every set's rule v6 verdict is unchanged by the hop.
+        - `heldout-3`, `heldout-5` and `heldout-6` read R3 2 / 1 already with no hop in this configuration, against 1 / 1 at off (`afq-docs-3.txt`). The suggestion stage is the only stage that differs between the two no-hop runs and could move it: the prose stage only counts sections. None is pushed over by a finalist.
+      - (2) The S counter: 0 S candidates, 0 S-only hop lines and 0 silent material facts on them, on every set and finalist. S is on in all three finalists. Windows opened (V4gs / V4s / V3gs): `scripts` and `heldout` 36, `heldout-2` 20, `heldout-3` 21, `heldout-4` 18, `heldout-5` 18, `heldout-6` 14 / 15 / 14.
+      - (3) The credit table on the gate pair, silent / failing (`+m` gives the same silent and failing counts as its base on every row):
+        - `heldout-2`, no hop: shipped 25 / 14, Q1 20 / 11, QT 10 / 4, A1 20 / 11, AT 9 / 3. V4gs and V4s: 19 / 13, 14 / 9, 4 / 2, 14 / 9, 3 / 1. V3gs: 19 / 13, 15 / 10, 5 / 3, 15 / 10, 4 / 2. Facts credited (Q1, QT, A1, AT): V4 5, 15, 5, 16; V3gs 4, 14, 4, 15.
+        - `heldout-6`, no hop: 24 / 15, 21 / 13, 13 / 10, 20 / 13, 8 / 7. All three finalists: 19 / 14, 16 / 11, 8 / 7, 15 / 11, 3 / 3. Facts credited 3, 11, 4, 16.
+        - The two flagged columns, from `afq-gate-3.txt` (PR-MED-012's reading). Extra flagged lines are given under Q1 / QT / A1 / AT, with `+m` in brackets where it differs. Then stay-out newly flagged, as material / other / at-or-after the tail, under Q1, QT, A1 and AT (`+m` equal on every row). No hop and the three finalists are equal unless named:
+          - `scripts`: 7 / 21 / 16 / 33; 0/2/0, 0/5/0, 3/2/0, 3/5/0.
+          - `heldout`: 2 / 3 / 7 / 11; 0/0/0 under all four.
+          - `heldout-2`: no hop, V4gs and V4s 10 / 32 / 22 (23) / 55 (58); V3gs 9 / 31 / 21 (22) / 54 (57). All read 0/1/0, 0/1/0, 0/1/0, 2/3/2.
+          - `heldout-3`: 5 / 9 / 23 (24) / 45 (49); 0/0/0, 0/0/0, 0/0/0, 2/1/2.
+          - `heldout-4`: 8 / 12 (13) / 26 (28) / 44 (50); 1/1/2 under all four.
+          - `heldout-5`:
+            - no hop 5 / 16 / 21 (25) / 51 (57), with 0/1/0, 1/1/1, 0/1/0, 3/2/3;
+            - the finalists 5 / 15 / 21 (25) / 50 (56), with 0/1/0, 0/1/0, 0/1/0, 2/2/2.
+          - `heldout-6`: no hop 9 / 30 / 31 (34) / 75 (80); the finalists 9 / 30 / 32 (34) / 78 (80). All read 0/0/0, 1/1/1, 0/0/0, 2/2/2.
+          - Against `afq-gate-2.txt`'s old reading, every cell fell or stayed equal; for example, AT on `heldout-6` fell from 107 to 78 for the finalists.
+      - D8, per finalist and per line, exactly as the scratch reads D8 (its "D8 across the sets" table); D8 decides nothing here (Task 0.6):
+        - Harm: 0 lines that must stay out quoted — NOT met by V4gs, V4s or V3gs under any credit (1 material, `h5-17` line 15; met by every no-hop row). No new unsupported clinical line — met (0). No new checker failure and no new error-grade warning — met (0). The 50 still pass — met (0 newly failing). No set pushed over its rule-v6 next-patient ceiling — met (0 pushed).
+        - GATE-CAPABLE (0 encounters failing on silent omission on both `heldout-2` and `heldout-6`): not met by any configuration. The fewest are V4gs and V4s under AT, 1 and 3 failing.
+        - IMPROVEMENT (silent at least halved on each gate set against the same run's no-hop, 25 and 24): met for all three finalists under QT, QT+m, AT and AT+m (V4gs and V4s QT 4 / 8, AT 3 / 3; V3gs QT 5 / 8, AT 4 / 3). Not met under shipped, Q1, Q1+m, A1 or A1+m. With no hop, the reply credit alone meets it under AT and AT+m (9 / 8) and under no other credit.
+        - Real speech: UNMEASURED (Task 0.4b, 2026-11-17: both passes COMPLETE, n enrolled 2 < 3). Any building exit needs the practitioner's explicit, named override.
+        - Reported with no threshold: the two flagged columns, above from `afq-gate-3.txt`. They change no D8 reading, since D8 sets no threshold on them and gate-3's D8 lines equal gate-2's.
+        - The "don't write this down" first-reply check, settled 2026-11-17 (leg ax9, Task 0.5):
+          - The search: a case-insensitive phrase search over every script under `validation/` (the seven sets), for "don't / do not / please don't / no need to" with "write / put / record / note" and "this / that / it", plus "off the record" and "leave that / this / it out of".
+          - It finds one line, `hld-17` line 2. That line is the patient's SECOND line after the clinician's question at line 0, with the patient's line 1 between them, so it is not a first reply. It is the `absent` material fact that V4t quoted at text level (Task 0.2).
+          - No finalist quotes it: `heldout` reads 0/0 quoted, and 0/0/0 stay-out newly flagged under every credit, both at off and in the gate configuration.
+          - So D8's "clean by absence" holds for the phrasings searched. A request worded otherwise would be missed by the search.
+      - The `h5-17` line-15 quote, diagnosed from code and the synthetic script (`validation/heldout-5/h5-17.json`, not blind since validation-run8 P.3):
+        - What line 15 is: the next patient's line, after the clinician's greeting at line 14. Its only fact is `absent` and material, and the script's last fact.
+        - The hop's joins are the same two segments (6 and 7) at off and here. That is in the projections (`afq-out/docs/heldout-5/V4g.json` and `afq-out/gate/heldout-5/V4gs.json`, `h5-17` `joined`), and the off run quotes nothing. So line 15 is not quoted on a joined line.
+        - What differs is the suggestion stage. Under `--suggestions confirm-all` the harness asks the suggestions from the draft and adds every accepted line before the one finalisation (`validation.py:3376-3387`). The prose stage runs on the finished note and only counts sections (`:3388-3394`), so it cannot change a fact's verdict.
+        - Line 15's fact reads `wrongly_present` in the variant's note and not in the same configuration's no-hop note. The joins are identical to off's, and off quotes nothing; the prose stage cannot move a verdict. The one stage left that differs is the suggestion pass, asked over a draft that the joins on segments 6–7 have changed. That is an inference by elimination; no suggestion's text or line numbers are read here. The same encounter's facts 1–3, on clinician lines 7, 8 and 9, read `correct` here against `omitted` (warned) at off.
+        - Not a scratch defect: the plan's recipe defines harm as the per-fact verdict difference between the no-hop and the variant run in the same configuration, for every `absent` fact (Review Findings Log PR-HIGH-001), and the scratch counts exactly that. It does attribute to the hop an effect that reaches the note through the suggestion stage.
+        - D8's harm line says "quoted on a joined line", so the two readings part here. This is a named harm residue for the practitioner's word at Task 0.6: "an indirect next-patient quote through the suggestion stage". D8 already allows it: NO-GO "unless the practitioner, shown the table, accepts a named residue". The same class is register F-155–F-169's suggestion-stage next-patient additions, and F-132's cross-patient class.
+- [x] 🟩 **0.4a The real-speech script, reviewed before it runs** (C1, C5). DONE 2026-11-16.
+  - Built in leg ax3 (2026-11-15): `afq-measure-kept.py`, which per document calls `afq_lib.measure_document`; that function counts with `note_counters` and checks the no-hop note against the shipped provider's. It has a `--dry-run-docs` mode, and the two documents are edited (CRLF kept).
+  - Review converged: `/review-loop` rounds 5–6 (2 MED and 4 LOW), then the codex slice, round 7 (2 MED and 1 LOW). All were verified and applied (Review Findings Log).
+  - The composer's checks, after round 7's fixes, with the files unchanged since (last modified 2026-11-15 22:09):
+    - `py_compile` of the four scratch files: exit 0.
+    - The dry run over the synthetic pickles (`.cursor/loops/afq-kept-dry-2.txt`): `[dry-run] synthetic saved documents: 183`, expected 183, measured 183, failed 0, `COMPLETE`, exit 0. Against the pre-round-7 dry run (`afq-kept-dry-1.txt`, also `COMPLETE` 183 / 183, exit 0), the 549 per-ordinal rows differ only in the four "extra flagged" columns, none rising (PR-MED-012). Every other line is identical.
+    - The refusal smoke with no `--enrolment`: `[refused] --enrolment is required (give the path to your enrolment WAV)`, exit 2.
+    - The two PR-MED-011 smokes, a nonexistent `--config` on the measuring run and on the dry run: each `[refused] --config: not an existing folder (give the config folder for this pass)`, exit 2.
+  - SHA-256 (the files Task 0.4b runs):
+    - `98dd3d3ee1c9622bcaaff85f1856fb0a1dd381140ae56d42c575704ee7f47643` `.cursor/loops/afq-measure-kept.py`
+    - `cbd991620f940e60b7da394bdc37050f2537749eb38afa7155739274b9fc2138` `.cursor/loops/afq_lib.py`
   - Files (new, git-ignored): `.cursor/loops/afq-measure-kept.py`, modelled on `run7-measure-kept.py`: `--list` (decrypts nothing; prints n); `--enrolment <WAV>` required; `--config <folder>` required; the refusal order of `replay_kept.py:576-647` (dev channel, enrolment, folder, entries, the crash-report exclusion, the single-instance lock held to the end, offline environment, models, config); ordinals oldest first; each recording re-transcribed in memory (`read_recording`, then `transcribe_in_temporary_store(..., persist_key=False)`), never the stored transcript; all forms read the one in-memory document through the same per-document function as the synthetic entry; an outer by-type error handler.
   - Prints, per ordinal and per finalist form: joined lines; review-severity warnings on a joined line; new error-grade warnings; the net change in review warnings; extra flagged lines; whether the clinician was enrolled. Then one aggregate block: recordings expected (the `--list` count), measured, failed (with the count per error type name), a status line `COMPLETE` (failed 0 and measured equal to expected) or `INCOMPLETE`, n enrolled, n not enrolled, and each median and maximum over the enrolled recordings only (D8). The exit code is 0 only on `COMPLETE`. A custody stop or an interrupt prints its one fixed line (naming the temporary folder to look for, as the precedent does at `run7-measure-kept.py:331-339`) and no aggregate block.
   - Also: the threat model's MEASUREMENT SCRATCH entry (`docs/security/threat-model.md:4864-4898`) and `docs/testing/kept-recordings.md:7` name this script (documents only; needed on every exit).
   - Review: `/review-loop`, then one codex slice over `afq-measure-kept.py` and `afq_lib.py` only (the refusal order, the by-type errors, the print surface).
   - Composer checks: a dry run of the same per-document function over the synthetic pickles; the refusal smoke (no `--enrolment`: exit 2); the two files' SHA-256 recorded here.
   - Done when: the review converged, both checks are recorded, and the hashes are on this task.
-- [ ] 🟥 **0.4b The practitioner's run** (practitioner, normal PowerShell, developer build, both builds closed).
+- [x] 🟩 **0.4b The practitioner's run** (practitioner, normal PowerShell, developer build, both builds closed). DONE 2026-11-17, recorded UNMEASURED (n enrolled 2 < 3; D8), as this task's done-when allows. The record is below the commands.
   - First `--list` to learn n. Then pass 1 with `--config validation\config` and pass 2 with `--config "$env:LOCALAPPDATA\ClinikoScribe\config"`, each over `"$env:LOCALAPPDATA\ClinikoScribe\past_sessions"`, no `>` redirect. About 15 min per recording per pass.
   - The executor writes the exact commands for the practitioner here after 0.4a (single-quoted Python bodies, the measurement folder's enrolment WAV).
+  - The commands (written 2026-11-16, leg ax5). YOU run every line yourself, in a normal Windows PowerShell window opened from the Start menu, never an agent shell (an agent shell cannot unwrap your keys or prove anything here, `docs/lessons.md`). No Python body is needed. Do not add a `>` redirect: watch the window and copy from it.
+    0. Before you start:
+       - The composer has told you that the gate run (`afq-gate-2.txt`) has ended; the two would compete for the processor.
+       - Clinic Scribe is closed, BOTH builds: the installed app and the developer build. The script refuses otherwise.
+       - The laptop is on mains power with the lid open.
+       - Your enrolment WAV is in place: `enrolment\me.wav` in your measurement folder, the one set up for the clinic 1 smoke (its path on this computer is in the git-ignored `AGENTS.local.md`, "measurement folder"). Below it is written `<measurement folder>`; type your folder's path there.
+    1. Go to the repository: `cd "C:\Recording clinic software"`
+    2. Check the two script files are the reviewed ones. Each line must print `True`; if either prints `False`, STOP and tell the composer:
+       - `(Get-FileHash -Algorithm SHA256 .cursor\loops\afq-measure-kept.py).Hash -eq '98dd3d3ee1c9622bcaaff85f1856fb0a1dd381140ae56d42c575704ee7f47643'`
+       - `(Get-FileHash -Algorithm SHA256 .cursor\loops\afq_lib.py).Hash -eq 'cbd991620f940e60b7da394bdc37050f2537749eb38afa7155739274b9fc2138'`
+    3. How many recordings are kept (decrypts nothing): `.\.venv\Scripts\python.exe .cursor\loops\afq-measure-kept.py "$env:LOCALAPPDATA\ClinikoScribe\past_sessions" --list`
+       - Expected one line, `kept recordings: N`. Each pass then takes about 15 minutes per recording (N × 15 min), and there are two passes.
+    4. Pass 1, the repository's validation config: `.\.venv\Scripts\python.exe .cursor\loops\afq-measure-kept.py "$env:LOCALAPPDATA\ClinikoScribe\past_sessions" --enrolment "<measurement folder>\enrolment\me.wav" --config validation\config; "exit=$LASTEXITCODE"`
+    5. Pass 2, the installed app's own config: `.\.venv\Scripts\python.exe .cursor\loops\afq-measure-kept.py "$env:LOCALAPPDATA\ClinikoScribe\past_sessions" --enrolment "<measurement folder>\enrolment\me.wav" --config "$env:LOCALAPPDATA\ClinikoScribe\config"; "exit=$LASTEXITCODE"`
+       - Both passes measure the three finalists (V4gs, V4s, V3gs) by default; add no `--forms`.
+       - Each prints `[start]`, a table header, one row per recording and form (ordinals, form names and numbers only), then `## Aggregate`.
+    6. What to paste back, per pass: ONLY the block from the line `## Aggregate (integers only; …)` to its end, plus the `exit=` line. Never the per-recording rows above it.
+    7. If something goes wrong:
+       - The aggregate says `INCOMPLETE` (exit 1): paste the block anyway (its `failed:` line names each failure by type only) and do not re-run. The cause is fixed under Task 0.4a first.
+       - A line starting `[refused]` (exit 2): nothing was measured. Paste that one line. It names its own remedy:
+         - close Clinic Scribe;
+         - the enrolment WAV not a file: check the path;
+         - crash reports not excluded for this interpreter: re-run `scripts\register-native-host.py` from a normal terminal, `AGENTS.md` run step 5.
+
+         Then run the pass again once the cause is gone.
+       - A line starting `[custody]` or `[stopped]` (exit 1, no aggregate block): paste that one line. Then look in `%TEMP%` for the `scribe-speaker-eval-*` folder it names and delete it.
+       - Any other `[error] the run stopped (<type>)` line: paste it.
+  - Recorded 2026-11-17 (leg ax8). The practitioner ran these commands in a normal PowerShell on the developer build. The scripts were the files hashed at Task 0.4a (unchanged since 2026-11-15 22:09), at the commit `22feec4`. AGGREGATES ONLY: the per-recording rows the practitioner also pasted are recorded nowhere (D8, C1).
+    - The hash checks: both lines printed `True`, so the two files are the reviewed ones (C5).
+    - `--list`: `kept recordings: 2`.
+    - Pass 1, `--config validation\config`, `exit=0`:
+      - recordings expected: 2; measured: 2; failed: 0; status: COMPLETE; n enrolled: 2; n not enrolled: 0.
+      - For each of V4gs, V4s and V3gs (identical):
+        - joined median 0, max 0, total 0; carried 0/0/0;
+        - review on hop 0/0/0; error on hop 0/0/0; new error 0/0/0; review net 0/0/0;
+        - extra flagged Q1 median 2-3, max 3, total 5; QT median 11-15, max 15, total 26; A1 median 12-26, max 26, total 38; AT median 115-127, max 127, total 242.
+    - Pass 2, `--config "$env:LOCALAPPDATA\ClinikoScribe\config"` (the installed app's own config), `exit=0`:
+      - recordings expected: 2; measured: 2; failed: 0; status: COMPLETE; n enrolled: 2; n not enrolled: 0.
+      - For each of V4gs, V4s and V3gs (identical):
+        - joined 0/0/0; carried 0/0/0;
+        - review on hop 0/0/0; error on hop 0/0/0; new error 0/0/0; review net 0/0/0;
+        - extra flagged Q1 median 2-3, max 3, total 5; QT median 11-15, max 15, total 26; A1 median 12-26, max 26, total 38; AT median 115-126, max 126, total 241.
+    - With n = 2 the script prints a median as the range of the two middle values ("2-3"). The figures above are as printed, with nothing derived per recording.
+    - The per-document premise held on every document of both passes: the scratch's no-hop note equalled the shipped provider's under each pass's config, including the installed app's own, since a mismatch would have read failed, not COMPLETE (round 5 MED-002).
+    - D8's reading, in D8's words (its "Real speech" bullet): both passes ended `COMPLETE`, but there are "Fewer than 3 recordings with the clinician enrolled" (n enrolled 2). The real-speech line is therefore UNMEASURED: "no build starts without the practitioner's explicit, named override". The budget figures, new review marks per recording median ≤ 2 and maximum ≤ 5, are not read as met. Joined 0 and review on hop 0 are reported, not counted.
+    - What these two recordings show for Task 0.6, as observations only:
+      1. On real speech no finalist joined or carried any line under either config (joined 0, carried 0), so the hop added no review mark, no error and no quoted line. Its real-speech cost and its real-speech benefit are both nil on this sample, and the three forms are indistinguishable on it.
+         - The reply credit does act here: the extra flagged lines are above 0 under every credit. The scratch counts a credit's extra line only as another speaker's wholly uncovered line after a warned, left-out run of the CONFIRMED clinician (`afq_lib.credited` / `flagged_run_ranges` / `replies_after`, minus the shipped mark).
+         - So on these recordings the confirmed-clinician test does find left-out clinician lines followed by another speaker. The hop reads a different place: the reply after a CUE-ROUTED, in-note clinician question (D1 (a)).
+         - Why the hop found none is NOT observable here. The script prints no count of cue-routed clinician questions, no attribution figure and no count of which D1 condition refused a candidate. The cause is unknown, and no reason is offered.
+         - The Excluded item "A clinician's answer to a patient's question (inverted roles); a reply joined when no clinician is confirmed" (Excluded — Revisit Only If Needed) is revisited "only if real-speech attribution makes the confirmed-clinician test miss most questions (Task 0.4b's attribution line)". This run has no attribution line, so its trigger is neither met nor ruled out. The item stays excluded, and the question is open for the practitioner at 0.6.
+      2. The credit's real-speech load, which D8 reports with no threshold. It is the same under every form, since nothing joined:
+         - pass 1: Q1 median 2-3 (total 5), QT 11-15 (26), A1 12-26 (38), AT 115-127 (242);
+         - pass 2: equal except AT 115-126 (241).
+         - Against it, the synthetic gate configuration flags 78 extra lines under AT over all 22 encounters of `heldout-6` for the finalists (Task 0.3, `afq-gate-3.txt`).
+         - Task 0.3's leading 0.6 option, V4gs under AT, carries this load. Its effect on that option is set out in the handoff's 0.6 options.
   - Done when: both passes ended `COMPLETE` and their aggregate blocks are on this task (expected, measured, failed, the status line, n enrolled, n not enrolled, the medians and maxima over enrolled recordings; nothing per recording). A pass that ended `INCOMPLETE` or printed no block is re-run after the cause (named by its error type) is fixed under 0.4a; if it still cannot complete, the task records "incomplete" and D8 reads that pass as unmeasured. If n enrolled < 3, record "unmeasured" (D8).
-- [ ] 🟥 **0.5 The numbers reviewed.** `/review-loop` over this plan's records of 0.2–0.4b (each figure against the scratch outputs in `.cursor/loops/afq-out/`), then the codex peer pass with the records as their own slice.
+- [x] 🟩 **0.5 The numbers reviewed.** DONE 2026-11-17. The `/review-loop` converged in rounds 8–9, and the codex pass in round 10, with its one LOW fixed; no recorded figure was corrected. D8's first-reply check is settled on Task 0.3. The five open points were not in round 10's slice: see the handoff. `/review-loop` over this plan's records of 0.2–0.4b (each figure against the scratch outputs in `.cursor/loops/afq-out/`), then the codex peer pass with the records as their own slice.
   - Done when: the pass converged and any corrected figure is recorded.
-- [ ] 🟥 **0.6 The exit, the form and the residues** `[decision]`
+- [x] 🟩 **0.6 The exit, the form and the residues** `[decision]`. DONE 2026-11-17: IMPROVEMENT, "build as an improvement", V4gs under QT, D8's real-speech line overridden by name, and the `h5-17` residue and the three reported residues accepted by name. The record is below.
   - Options: GATE-CAPABLE (build, then run 10); IMPROVEMENT — "build as an improvement" or "close with no change"; NO-GO — close with no change. With a building exit: the reach and guard (D2), the credit sub-variant and whether the chooser's wider predicate also credits (D4), and the practitioner's word on each reported residue (D8's "Reported for the practitioner's word" bullet).
   - Decide after: 0.3, 0.4b and 0.5. The composer presents the D8 table with the recommended option first; D8 decides which exits are open. Only a configuration with its own gate-configuration D8 lines in 0.3's tables can be authorised; if the practitioner prefers one that was not run that way, the composer runs it over the saved documents and returns before the choice is recorded.
   - Blocks: 0.7 and every later phase.
   - Record with the choice: the chosen form's state table and credit definition (they supersede D1's and D4's measured alternatives for Phase 1), and the base commit for D13.
-- [ ] 🟥 **0.7 The chosen exit's phases hardened.** A scoped `/review-plan` over the phases the exit keeps (Phase 1 onward), from the outlines below, 0.6's record and Key Findings' pin and site lists. On the gate-capable exit it also settles the `heldout-7` brief (recommended: `heldout-2`'s brief with only the ids changed, so the set stays comparable; its digest committed in F.1).
+  - Recorded 2026-11-17 (leg ax10).
+    - How it went:
+      - Before the decision, the five open points were reviewed by codex round 11 (0 findings).
+      - The composer presented the options, recommendation first (the handoff).
+      - The practitioner asked: "do you suggest QT or AT? Take the third recording out of the factor".
+      - The composer recommended QT. Its reasons: AT's extra recovery rests on a credit that, at 115-127 extra flags per real consultation, no longer means the clinician was pointed to the line; on real speech the flags are the whole visible change; QT keeps most of the gain.
+      - The composer proposed recording: "build V4gs under QT as an improvement (0.3.7, shadow mode stays on, no run 10), overriding D8's unmeasured real-speech line by name and accepting the h5-17 next-patient quote as a named residue".
+    - The practitioner's words, verbatim: "yes, record QT".
+    - The decision, as so worded:
+      - Exit: IMPROVEMENT, "build as an improvement" (D9). The phases kept are 1, V, M as a replay, D, F.3, then the install decision. There is no rule v7, no `heldout-7` and no run 10; shadow mode stays on; the version is 0.3.7.
+      - Form: V4gs, that is reach V4 (unlimited), guard G on and switch S on.
+      - Credit: QT, questions only, whole turn.
+      - D8's real-speech line, UNMEASURED (Task 0.4b: n enrolled 2 < 3), is overridden by the practitioner's explicit, named override, in the words proposed and accepted: "overriding D8's unmeasured real-speech line by name".
+      - The `h5-17` residue is accepted by name: "accepting the h5-17 next-patient quote as a named residue". That is the leg ax6 residue "an indirect next-patient quote through the suggestion stage, not on a joined line".
+      - AT's real-speech load (median 115-127 extra flagged lines per recording) is declined, which is why the credit is QT.
+      - The chooser's wider predicate (`+m`), D4's remaining sub-choice. D4 as written makes the chooser's mark the credit plus the `m` replies, and the harness credit is QT without `+m`. D8's tie-break also puts each credit first without, then with, the wider predicate. QT and QT+m read the same silent and failing counts on every set in the gate tables, and extra flagged lines differ only on `heldout-4` (12 against 13). Recorded reading: the harness credits QT without `+m`; the chooser's mark adds the `m` replies, as D4 says.
+    - The chosen form's state table, superseding D1's and D2's measured alternatives for Phase 1:
+      - D1's five rows, conditions (a)–(d) and the sentence after the table, unchanged.
+      - The budget of row 3 is unlimited (V4): the window stays open, joining every line that meets row 3, until row 2 or row 5 applies. Row 1 stays transparent. Carried pieces (row 4) never count.
+      - Guard G on: the window opens only when P's last sentence is itself a question and alone routes to P's section. This uses D2's sentence cut, `_CLOSING_MARKS` peeled, no abbreviation handling, `is_interrogative` and `layered_section` over the sentence's own tokens with `_route`'s arguments. D2's two named limits of G stand.
+      - Switch S on: P may also be a cue-routed line plus its one carried piece. It is a question if either piece is, and with G the two pieces are read as one line.
+      - V4t is not chosen: the window does not survive the reply speaker's own cue-routed lines.
+      - The scratch's readings, peer-reviewed in round 11, are part of this definition:
+        - after a joined line or a carried piece the existing carry's chain is closed (point 1);
+        - the S counter and composition (point 5);
+        - V4t is unreachable (point 4).
+    - The credit definition, superseding D4's measured alternatives for Phase 1:
+      - `replies_after(run)` is the wholly uncovered, text-bearing lines of the one speaker other than the confirmed clinician that directly follows a `flagged_runs` run, before the next-patient cut.
+      - Questions only: a run counts when any of its pieces passes `is_interrogative` (round 11 point 2).
+      - Whole turn: the lines run on through that speaker's turn. Textless segments are transparent, and a covered line is passed over without being credited; a speaker change ends the turn (round 11 point 3).
+      - The harness credit is those lines, as their own term in `word_info`. A reply is credited only while its clinician run still carries the warning.
+      - The chooser's mark is that credit plus the same replies after a confirmed-clinician question that is in the note solely through the clinician's own Add (its `m` assertion); the harness does not credit those (no `+m`).
+      - D4's named consequences stand.
+    - Base commit for D13: `22feec4` (HEAD at the decision; tree with the three uncommitted Phase 0 record edits only).
+    - The phases this exit drops are marked NOT BUILT at Task 0.7, as its done-when assigns ("the phases the exit drops are marked NOT BUILT with a dated line"); they are not marked here.
+    - MUST-PAUSE (leg ax10). Task 0.6 asks for "the practitioner's word on each reported residue (D8's 'Reported for the practitioner's word' bullet)". The words above cover the `h5-17` residue and AT's load, but not the three items below, all reported for V4gs under QT. They are left undecided. ONE question, with three named items:
+      - (1) Lines that must stay out and are newly `[flagged]`, the gate configuration, summed over the seven sets: 2 material, 9 other, 3 at or after the reference tail (`afq-gate-3.txt`).
+        - Per set, material / other / tail: `scripts` 0/5/0, `heldout` 0/0/0, `heldout-2` 0/1/0, `heldout-3` 0/0/0, `heldout-4` 1/1/2, `heldout-5` 0/1/0, `heldout-6` 1/1/1.
+        - No hop under QT reads 3 / 9 / 4, so the hop adds none.
+      - (2) The real-speech load of the chosen credit: QT median 11-15 extra flagged lines per recording, max 15, total 26, in both passes; joined lines 0.
+      - (3) "Clean by absence": no seen script has a patient's "don't write this down" as the FIRST reply to an in-note question. The only such line, `hld-17` line 2, is a second reply (Task 0.3). Task 1.1 pins that a first-reply "don't write this down" IS quoted, as a named residue.
+      - Recommended: "Accept all three as named residues".
+        - For (1) and (2): a `[flagged]` mark only points the clinician to a line on the Line list. It puts nothing in the note, and Save is not held back (D4), so a flagged line that must stay out enters only by the clinician's own Add.
+        - For (2) also: it is the composer's own reason for QT over AT.
+        - For (3): no seen script has the case, it is pinned and named, and the clinician reviews every note under shadow mode.
+      - Alternative, "Decline (1) or (2)": then no building configuration remains under the chosen form. Q1 is not an IMPROVEMENT, at 14 / 16 silent against the halves 12.5 / 12, so the exit becomes NO-GO.
+      - Alternative, "Decline (3)": this needs a new guard against the case, a new dated design decision with its own measurement, before Phase 1.
+    - The answer, 2026-11-17 (in chat; recorded in leg ax11).
+      - The composer's question, verbatim: "To close Task 0.6, D8 needs your word on three costs of V4gs under QT. (1) Lines that must stay out of the note get newly [flagged]: 2 material, 9 other, 3 at or after the next-patient tail, across the seven synthetic sets. The QT credit with no hop gives 3 / 9 / 4, so the hop adds none. (2) On real speech, about 11-15 extra [flagged] lines per consultation. (3) No seen script has a patient's 'don't write this down' as a first reply, but if one were, the hop would quote it; Phase 1 pins that as a named residue. A [flagged] mark only points to a line in the Line list: it adds nothing to the note and doesn't block Save. Accept these as named residues?"
+      - The practitioner's chosen label, verbatim: "Accept all three (Recommended)".
+      - The composer checked item (1)'s totals against `afq-gate-3.txt`: V4gs QT 2/9/3, no hop QT 3/9/4.
+      - So all three are named residues accepted by the practitioner:
+        - (1) stay-out lines newly `[flagged]` under QT;
+        - (2) QT's real-speech load;
+        - (3) a first-reply "don't write this down" quoted by the hop, pinned by Task 1.1.
+      - Every item of D8's "Reported for the practitioner's word" bullet and of this task's "the practitioner's word on each reported residue" now has it, and the MUST-PAUSE above is closed.
+- [x] 🟩 **0.7 The chosen exit's phases hardened.** DONE 2026-11-17 (leg ax11; Review Findings Log Round 12).
+  - The improvement exit's phases are hardened in place: Phase 1 (1.1–1.4), V (V.1, Step H), M.1, D (D.1–D.4), F.3, and P's improvement path (P.3, P.5).
+  - The gate-capable phases are marked NOT BUILT with dated lines: F.1, F.2, P.1, P.2, P.4, M.1's gate-capable variant, D10, D11, C6, the Validation line, and Key Findings' `heldout-7` sites.
+  - The `heldout-7` brief question does not arise. A scoped `/review-plan` over the phases the exit keeps (Phase 1 onward), from the outlines below, 0.6's record and Key Findings' pin and site lists. On the gate-capable exit it also settles the `heldout-7` brief (recommended: `heldout-2`'s brief with only the ids changed, so the set stays comparable; its digest committed in F.1).
   - Done when: each kept task meets the Task Specification Standard and the phases the exit drops are marked NOT BUILT with a dated line.
 - [ ] 🟥 **0.8 The simulation recorded** (every exit). `docs/testing/validation-harness.md` gains "Answer-hop simulation" (the method, the tables as ids and counts, the decision); `AGENTS.md` and `CHANGELOG.md` per `/document`. On a no-change exit: SR's Deferred item and NCD's question-and-answer item get dated reconciliation lines, the plan closes, and the practitioner deletes `C:\afq-sets\`.
   - Done when: the documents hold the record and, on a no-change exit, the lifecycle state reads Completed.
+  - On this exit (improvement, 2026-11-17), the "Answer-hop simulation" section is written with D.2, beside M.1's measurement. `AGENTS.md` and `CHANGELOG.md` are updated at P.5's `/document`. Nothing of 0.8 is placed before Phase 1, and it stays 🟥 until then.
 
-### Phase 1 — The build (outline; hardened at 0.7; GATE-CAPABLE or "build as an improvement")
-- [ ] 🟥 **1.1 The answer hop.** `note.py` `ExtractiveNoteProvider.generate_sections` and its class docstring, in the form 0.6 recorded; `desktop/tests/fixtures/answer_hops.py` (plain expectations); `TestAnswerHop` in `test_note.py` (every guard and state rule, both directions; a patient's "don't write this down" as a first reply pinned as quoted, a named residue); the matrix registry and lint in `test_note_matrix.py`; the predicted held-out divergences in their per-set tables; one test that a joined assertion is field for field a carried one. Then the composer's one-off `afq-pin.py` (scratch against product over the matrix, the seven reference documents and the saved documents), its difference count recorded.
-- [ ] 🟥 **1.2 The reply flag and the credit.** `ui/models.py` `replies_after` and `flagged_segments` (D4), the count line and hint (D5); `validation.py` `word_info`'s separate credit term, the second full metrics computation without it (D5) with its verdict and report line, the dated amendment sentence; tests beside `TestFlaggedLineCredit` and `TestJoinedRunCredit` (credit ⊆ `[flagged]`; undo restores; the no-warning count line; a suggested line's `m` assertion; "Acknowledge all" unchanged); the moved pins in Key Findings.
-- [ ] 🟥 **1.3 Consumers.** Check 2 in each direction with a reply that names what it negates (a joined "No numbness." against a pre-filled line: error grade; a low-confidence one: review grade), and a bare "No." pinned as drawing no contradiction (the named residue); a recorded reading for the learners, `note_fill`, `note_suggest` and the prose frame.
-- Each task: `ruff check . && mypy && pytest` in `desktop/` (composer-run).
+### Phase 1 — The build (hardened 2026-11-17 at Task 0.7 for the improvement exit: V4gs under QT, Task 0.6)
+Phase 1 builds exactly Task 0.6's record: "The chosen form's state table" and "The credit definition". Those two blocks are the canonical specification and supersede D1's, D2's and D4's measured alternatives. Code-verified against HEAD `22feec4`, whose product tree equals Key Findings' `50a8a2b`. Every task ends with the composer's `ruff check . && mypy && pytest` in `desktop/` (C7; the executor runs no Python). Every changed expectation is listed in the task's record with its reason, and a predicted fixture divergence goes in its per-set table, never edited away (C3).
+- [ ] 🟥 **1.1 The answer hop in the router.**
+  - Files:
+    - `desktop/src/scribe_desktop/note.py`: `ExtractiveNoteProvider.generate_sections` (`:2243-2305`) and the class docstring (`:2172-2216`). The hop is a fourth branch beside (1) cue-routed, (2) the same-speaker carry and (3) dropped. It applies D1's five rows with the unlimited V4 budget, guard G and switch S exactly as Task 0.6's state table says. `_route`, `is_interrogative` and every frozen vocabulary stay unchanged (C3), and `provider_name` stays `extractive-v1` (Excluded).
+    - New `desktop/tests/fixtures/answer_hops.py`: plain expectations, one case per D1 row and per G / S condition, each with its turns and the expected section per segment.
+    - `desktop/tests/test_note.py`: new `TestAnswerHop`, reading the fixture. It covers:
+      - every row in both directions (joins / does not join);
+      - G's two named limits (D2);
+      - S's either-piece question;
+      - a reply that is itself a question, or holds a suspect word, closing the window;
+      - an unconfirmed clinician (no join);
+      - a joined line closing the existing carry's chain (Task 0.6, round 11 point 1);
+      - one test that a joined assertion is field for field a carried one (D3: same `transcript` assertion, `x` id, no new field);
+      - a patient's "don't write this down" given as the FIRST reply, pinned as QUOTED. That is accepted residue (3), Task 0.6, 2026-11-17; the test's docstring names it.
+    - `desktop/tests/test_note_matrix.py` (`:832-868`): a hop registry and an "only a declared join" lint beside `test_every_carry_cell_is_registered`, so no `EXTRACTIVE_CELLS` oracle starts joining by accident. A cell whose expectation moves is examined: a join by design is declared in the registry and listed with its reason, and anything else is a finding.
+    - `desktop/tests/test_validation_scripts.py:894-924` ("a hedged line routes, or is a correction") gains its third arm, "or is joined".
+  - Held-out fixtures (`desktop/tests/fixtures/heldout_transcripts.py` readers):
+    - The tables are `_PREDICTED_UNSURE_DIVERGENCES_BY_SET` (`test_note_check.py:2728`) and `_PREDICTED_CORRECTION_DIVERGENCES_BY_SET` (`test_note.py:3353`).
+    - Each assertion the hop moves goes into its per-set table with the count line updated, as C3 says. Key Findings' "`h5-17` (5,) → (3, 5)" was predicted for the first-line rule, so the V4gs entries are whatever the suite shows, each explained by a join.
+  - Done when: the composer's suite is green with every moved expectation listed with its reason.
+- [ ] 🟥 **1.2 The reply flag (chooser) and the reply credit (harness).**
+  - Files:
+    - `desktop/src/scribe_desktop/ui/models.py`:
+      - a new `replies_after` beside `flagged_runs` (`:2744-2770`), the ONE helper both readers use (D4), implementing Task 0.6's credit definition (questions only, whole turn, before the next-patient cut);
+      - `flagged_segments` (`:2773-2784`) adds the replies after `flagged_runs`' question runs, and the replies after a confirmed-clinician question in the note solely through its `m` assertion (the chooser's wider mark; D4);
+      - `flagged_count_line` (`:2890-2927`): the count line's parenthesis (`:2910-2912`) also names an answer to a question you asked;
+      - the `clinician_line_omitted` hint (`:2304-2309`) gains one clause, pointing to the answer flagged after the line.
+      - The two copy strings are the executor's DRAFT. The practitioner's wording replaces them at D.4 (D5), with their pins, before F.3.
+    - `desktop/src/scribe_desktop/validation.py`:
+      - `encounter_metrics`: the reply credit as its own term in `word_info`'s `warned` (`:2110-2142`), computed through `replies_after` WITHOUT the `m` replies (Task 0.6: QT, no `+m`). `credited_segments` (`:1893-1902`) and the run-only counts (`:2078-2086`) stay exactly as they are, so `credited == flagged_runs` holds (`test_validation_metrics.py:1387-1395`).
+      - D5's second complete metrics computation without the reply credit (residue classes and exemptions included), its verdict, and the report-only line: segments and material facts credited by the reply only, in how many encounters.
+        - Under rule v6 (this exit; D5's "both verdicts" wording is rule v7's), the report's verdict is the one with the credit. The report-only line also states the verdict without it, and no column is added, so every unaffected row stays byte-comparable (D5).
+      - The dated amendment sentence among the per-rule sentences (`:3784-3852`), which says the reply credit is a loosening decided after run 9 failed on this class.
+      - No rule file changes, and rule v6's verdict of record stays run 9's (D9).
+  - Tests:
+    - New tests beside `TestFlaggedLineCredit` (`test_validation_metrics.py:1117`) and `TestJoinedRunCredit` (`:1318`): credit ⊆ `[flagged]`; an Add then undo restores the mark; a reply flagged with no warning row behind it; a suggested line's `m` assertion keeps its reply flagged; a non-question run credits no reply (QT); "Acknowledge all" unchanged.
+    - The moved pins in Key Findings ("Pins a build would move"):
+      - the copy pins and the report-shape pins move, and are listed;
+      - the `flagged_segments` exact pins are expected to hold under questions only, and a moved one is a finding.
+  - Done when: the composer's suite is green, every moved pin is listed with its reason, and the copy is marked "draft until D.4" in the code comment beside it.
+- [ ] 🟥 **1.3 Consumers.**
+  - Check 2 (`note_check.py` `_structured_quoted` `:1292-1316`, `contradiction` `:1319-1333`), tested in `test_note_check.py` `TestCheck2Contradictions` (`:417`):
+    - a joined reply that names what it negates ("No numbness.") against a pre-filled or typed line draws error grade, and a low-confidence one review grade;
+    - a bare "No." beside its question draws no contradiction, pinned as the named residue (Codebase Integration Notes).
+  - A one-paragraph recorded reading on this task (no code change expected) for:
+    - the two learners (`ui/note_review.py:311`, `:392`: a joined patient line teaches nothing);
+    - `note_fill` and Check 6 (they read the document only);
+    - `note_suggest` (a joined line is placed context);
+    - the prose frame (`prose_style.py:264-266`, "Pt", and `section_input_digest` changes);
+    - `replay_kept.note_drift` (drift against 0.3.6).
+  - Done when: the composer's suite is green and the reading is on this task.
+- [ ] 🟥 **1.4 Scratch against product, once** (D6; composer-run, minutes, no model).
+  - The executor writes `.cursor/loops/afq-pin.py`, git-ignored and synthetic only. It imports `afq_lib.py` without changing it (C5) and compares:
+    - the product's sections against the scratch's `V4gs` sections, encounter by encounter, over the `EXTRACTIVE_CELLS` turns, the seven sets' reference documents, and the saved documents under `C:\afq-sets\docs` (off, no suggestions, no prose);
+    - the product harness's reply credit against `afq_lib.credited(..., QT)`;
+    - the product's `flagged_segments` against the scratch's shipped mark plus `newly_flagged(QT)` (no `m` lines exist at off).
+  - It prints the difference count per set: ids and counts only.
+  - Done when: the count is recorded here and is 0. Any difference is a finding against the scratch or the product (D6), disposed before Phase V.
 
-### Phase V — Version and hardening (outline)
-- [ ] 🟥 **V.1** The six version strings to 0.3.7; `CHANGELOG.md`.
-- [ ] 🟥 **Step H: Hardening pass**
+### Phase V — Version and hardening
+- [ ] 🟥 **V.1 Version 0.3.7.** The six strings (Key Findings: `desktop/pyproject.toml:7`, `desktop/src/scribe_desktop/__init__.py:3`, `extension/package.json:4`, `extension/package-lock.json:3` and `:9`, `extension/src/manifest.ts:29`) and a `CHANGELOG.md` entry (CRLF kept, C8): the hop, the reply flag and credit, the improvement exit, shadow mode on, no run 10. Verification: the composer's desktop suite and `npm run qa` in `extension/`.
+- [ ] 🟥 **Step H: Hardening pass** over Phase 1 and V's whole diff against `22feec4`.
   - [ ] 🟥 H1: `/review-loop` to convergence
   - [ ] 🟥 H2: `/simplify` — log findings; trivial → `/fix`, substantial → scoped `/review-plan`
-  - [ ] 🟥 H3: `/security-review` — log findings; same routing (the residues to read: a wrong speaker label, a false question by its opening word, a next patient's reply where no boundary is found, a spoken instruction as a reply, a third speaker, learned-cue amplification)
-  - [ ] 🟥 H4: codex peer re-check, whole surface in slices
+  - [ ] 🟥 H3: `/security-review` — log findings; same routing. The residues to read are:
+    - a wrong speaker label;
+    - a false question by its opening word;
+    - a next patient's reply where no boundary is found;
+    - a spoken instruction as a reply, including accepted residue (3);
+    - a third speaker;
+    - learned-cue amplification;
+    - the suggestion stage's indirect next-patient quote (`h5-17`).
+  - [ ] 🟥 H4: codex peer re-check, whole surface in slices (at most about 15 files a slice)
 
-### Phase M — The built rule measured (outline)
-- [ ] 🟥 **M.1** Improvement exit: the built product replayed over the saved documents in the gate configuration; D8's improvement line re-confirmed; harm read as the per-fact difference against Phase 0's saved no-hop projection in the same configuration. Gate-capable exit: the seven sets re-run in full at the hardened tree under rule v6 with `--suggestions confirm-all --prose` (background, about 3.5–5 h), compared as Validation / Verification says; the reports are predictions v7's source.
-  - Stop rule (no decision task): M reproduces the finalist's D8 lines and the plan continues; any difference pauses for the practitioner, with D13 available.
+### Phase M — The built rule measured (improvement exit)
+- [ ] 🟥 **M.1 The built rule replayed in the gate configuration.**
+  - What it runs:
+    - The hardened commit's product over the seven seen sets' saved documents (`C:\afq-sets\docs`, transcribed at `22feec4`, whisper `medium`), with no re-transcription.
+    - Rule v6 with `--suggestions confirm-all --prose`, the configuration rule v6 gates in.
+    - The executor writes `.cursor/loops/afq-measure-built.py`, git-ignored and synthetic only. It uses `afq_lib.py`'s replay patches and projection unchanged, but the PRODUCT provider and the product harness credit: no `HopProvider`, no credit patch.
+  - Who and when: the composer, in the background with `< /dev/null`, on mains power with the lid open and the installed app closed (C7). Plan it as an overnight job of up to about eight hours. Task 0.3's gate run took 7.9 h for four configurations; this is one.
+  - What it compares against: Task 0.3's V4gs QT gate lines (`afq-gate-3.txt`), encounter for encounter, through the per-encounter projections `afq-out/gate/<set>/V4gs.json` under QT. Equal means:
+    - every fact's verdict, `warned` and silent flag;
+    - silent facts and failing encounters per set: `heldout-2` 4 / 2, `heldout-6` 8 / 7, 0 elsewhere;
+    - the `h5-17` line-15 quote as the one line quoted that must stay out;
+    - new unsupported, new error-grade and new checker failures 0, the 50 still passing, no set pushed over its R3 ceiling;
+    - the two flagged columns under QT.
+    - Harm is the per-fact difference against Phase 0's saved no-hop gate projection, as in Task 0.3.
+  - Stop rule (no decision task, unchanged): M reproduces the finalist's lines and the plan continues; any difference pauses for the practitioner, with D13 available. M's reports are measurements, not runs of record (D9).
+  - The gate-capable variant of M.1 (the seven sets re-run in full as predictions v7's source): NOT BUILT, improvement exit (Task 0.6, 2026-11-17).
 
-### Phase D — Documents (outline)
-- [ ] 🟥 **D.1** `docs/security/threat-model.md`: Phase 3A surface 2 gains THE ANSWER HOP with its residues; the sentences it makes false are restated (`:354-357`, `:531-534`, `:698-700`, `:712-720`, `:771-772`, the Check 4 text `:522-547`, surface 5's readers of a suspect word `:958-971`). `docs/security/data-flow-map.md` flows 7, 10, 17, 26, 27, 29. `docs/design-system.md` (the flag's reach, the wording). `docs/testing/validation-harness.md` (the amendment as a loosening; Known limits: "Material facts in an uncued sentence", "Section placement is not measured", "Small talk and spoken instructions", "End of consultation and new patient", "Spoken contradictions"). `docs/testing/shipping-gate.md` (a 0.3.7 note: what the app does, not a rubric change). `docs/testing/kept-recordings.md` (expected drift). `docs/practice/` — the clinician review guide's 0.3.7 lines and the README's approval record (the practitioner approves before the install decision). `docs/pilot/README.md`; `docs/pilot/exit-gate.md` (a dated rule-v7 line on the gate-capable exit; stated unchanged otherwise). `docs/release/pilot-builds.md` ("Rolling back below 0.3.7"). `PLAN.md`'s delivery note; `docs/architecture/phase-history.md`; `AGENTS.md` (the carry and suspect-reader pointers, Current Status). Then the cross-family peer pass on the documents, each claim checked against the code.
+### Phase D — Documents
+Each document's line endings are kept (C8; check `git ls-files --eol` first). No document claims anything the code does not do.
+- [ ] 🟥 **D.1 Security and design documents.**
+  - `docs/security/threat-model.md`: Phase 3A surface 2 gains THE ANSWER HOP and THE REPLY FLAG, with every named residue: Task 0.6's four accepted residues, the bare "No.", and learned-cue amplification. The sentences the build makes false are restated (`:354-357`, `:531-534`, `:698-700`, `:712-720`, `:771-772`, the Check 4 text `:522-547`, surface 5's readers of a suspect word `:958-971`), re-located by search first, since the file changed after `50a8a2b`.
+  - `docs/security/data-flow-map.md` flows 7, 10, 17, 26, 27 and 29.
+  - `docs/design-system.md`: the flag's reach and the copy.
+- [ ] 🟥 **D.2 Testing documents.**
+  - `docs/testing/validation-harness.md`:
+    - the reply credit logged as a loosening the next rule inherits (D9);
+    - the Known limits "Material facts in an uncued sentence", "Section placement is not measured", "Small talk and spoken instructions", "End of consultation and new patient", "Spoken contradictions";
+    - M.1's measurement.
+  - `docs/testing/shipping-gate.md`: a 0.3.7 note on what the app does, not a rubric change.
+  - `docs/testing/kept-recordings.md`: the expected drift.
+- [ ] 🟥 **D.3 Practice, pilot, release and project documents.**
+  - `docs/practice/`: the clinician review guide's 0.3.7 lines and the README's approval record.
+  - `docs/pilot/README.md`.
+  - `docs/pilot/exit-gate.md` is UNCHANGED, and the plan and the harness document say so (D9).
+  - `docs/release/pilot-builds.md`: "Rolling back below 0.3.7", no data step.
+  - `PLAN.md`'s delivery note, `docs/architecture/phase-history.md`, and `AGENTS.md` (the carry and suspect-reader pointers, Current Status).
+- [ ] 🟥 **D.4 Approvals and the documents' peer pass.**
+  - The practitioner approves or rewords the count line's parenthesis and the hint clause (D5). Any rewording is applied in `ui/models.py` with its pins, and the composer's suite runs.
+  - The practitioner approves the review guide's 0.3.7 lines before P.3.
+  - Then the cross-family codex pass on D.1–D.3, the documents as their own slices, each claim checked against the code.
+  - Done when: both approvals are recorded in the practitioner's words and the peer pass has converged.
 
-### Phase F — The freeze and the build of record (outline)
-- [ ] 🟥 **F.1** (gate-capable only) `validation/rules/rule-v7.json`, the `v7` label branch with its loosening sentence and second verdict, `TestRuleV7`, the harness document's "Rule v7" section with its ceiling table, predictions v7 from M.1's reports, and the pre-registration (D10) — one commit before the set exists.
-- [ ] 🟥 **F.2** (gate-capable only) `heldout-7`'s plumbing (Key Findings' site list) and blind authoring from the edited templates, launched by the practitioner; copy-in unread, checked by `sha256sum -c`; the tails rows by script. From here the suite runs only through the blind runner (C6).
-- [ ] 🟥 **F.3** (either building exit) The build of record: push on the practitioner's word, CI green, the `Release` run, the attestation checks, `docs/release/pilot-builds.md`.
+### Phase F — The build of record
+- **NOT BUILT — 2026-11-17, Task 0.6's improvement exit (D9).** F.1 and F.2 stay 🟥 for the record and are not executed in this plan, and `heldout-7` is never created, so the blind rule (D11, C6) never applies.
+- [ ] 🟥 **F.1** NOT BUILT (gate-capable only): rule v7, the `v7` label branch, `TestRuleV7`, the harness document's "Rule v7", predictions v7 and the pre-registration (D10).
+- [ ] 🟥 **F.2** NOT BUILT (gate-capable only): `heldout-7`, its plumbing (Key Findings' site list), the blind authoring and the blind period.
+- [ ] 🟥 **F.3 The build of record** (either building exit).
+  - On the practitioner's word (C7): push, CI green, the `Release` run, and the attestation checks (`gh attestation verify`; from an agent shell, read its exit code).
+  - `docs/release/pilot-builds.md` records 0.3.7 as a build of record.
+  - Done when: the release is attested and recorded.
 
-### Phase P — The practitioner (outline)
-- [ ] 🟥 **P.1** (gate-capable only) Validation run 10 at the build-of-record commit (or a later documents-only commit), recorded against predictions v7.
-- [ ] 🟥 **P.2 Shadow mode** `[decision]` (gate-capable only)
-  - Options: keep shadow on; off for clinic 1's reviewed consultations (only on a passed run 10; the pilot plan's stop rule).
-  - Decide after: P.1.
-- [ ] 🟥 **P.3 Installing 0.3.7** `[decision]` (either building exit)
-  - Options: install with shadow mode on (or as P.2 decided), then the smoke; do not install (0.3.6 stays).
-  - Decide after: M.1 and the review guide's approval (improvement exit), or P.2 (gate-capable exit).
-- [ ] 🟥 **P.4** (gate-capable only) The `h7-` cases and the diagnosis; the blind period ends; the suite plain again.
-- [ ] 🟥 **P.5** Records and close: the findings register (F-155's dated line; a row per residue the measurement shows, within the closed vocabularies), `AGENTS.md`, `CHANGELOG.md`, the lifecycle state and Retained Follow-Up Items, `/document`. The practitioner deletes `C:\afq-sets\` and, if authored, `C:\heldout7-author\`.
+### Phase P — The practitioner (improvement path)
+- **NOT BUILT — 2026-11-17, Task 0.6's improvement exit (D9).** P.1, P.2 and P.4, the gate-capable path, stay 🟥 for the record and are not executed in this plan. Shadow mode stays on.
+- [ ] 🟥 **P.1** NOT BUILT (gate-capable only): validation run 10 against predictions v7.
+- [ ] 🟥 **P.2** NOT BUILT (gate-capable only): the shadow-mode decision on a passed run 10.
+- [ ] 🟥 **P.3 Installing 0.3.7** `[decision]`
+  - Options: install with shadow mode on, then the install smoke (Validation / Verification); or do not install, and 0.3.6 stays.
+  - Decide after: M.1 and the review guide's approval (D.4).
+- [ ] 🟥 **P.4** NOT BUILT (gate-capable only): the `h7-` cases, the diagnosis and the end of the blind period.
+- [ ] 🟥 **P.5 Records and close.**
+  - The findings register:
+    - F-155 gets a dated control line and stays `controlled` (D9);
+    - a row per accepted residue the measurement shows, within the closed vocabularies (`test_pilot_docs.py`).
+  - `AGENTS.md`, `CHANGELOG.md`, the lifecycle state and the Retained Follow-Up Items, then `/document`.
+  - The practitioner deletes `C:\afq-sets\` (synthetic only).
+  - Done when: the plan's lifecycle state reads Completed (or Completed — Follow-ups Retained).
 
 ## Retained Follow-Up Items
 N/A — the plan is Active.
@@ -498,4 +1078,4 @@ N/A — the plan is Active.
 *Sections marked (Only if relevant) can be omitted when genuinely not applicable, but never omit decisions, constraints, verification steps, or integration knowledge that a fresh session would otherwise have to rediscover.*
 *For lightweight plans, plans with fewer than 5 tasks, or plans created without a preceding `/explore` discussion, sections with no real content should be marked `N/A — simple feature` rather than padded with placeholder structure.*
 *State-once convention (new plans): state each cross-section contract — a critical constraint, design decision, invariant, or other normative rule — once in its canonical section, and have every other section point to it rather than restate it. Scope guard: this governs cross-section normative duplication only — the Task Specification Standard (in `/create-plan` and `/review-plan`) and task-local detail are untouched, and a plan recording `fast/medium involved` in its Executor tier may keep extra restatement where it helps the fast executor. It applies to new plans as they are written; never retroactively rewrite an existing plan to conform.*
-_Plan drafted in Plan Mode and hardened by `/review-plan` on 2026-11-15 (Fable 5.2; exploration began on Opus 5.5 before the practitioner switched the model). Critique gate: three parallel lenses (Coverage and risk / Practicality / Simplicity), every finding dispositioned in the plan. Phase 0 is hardened in full; Phases 1–P are outlines hardened at Task 0.7 (the practitioner's choice). Planning only: nothing built, nothing committed._
+_Plan drafted in Plan Mode and hardened by `/review-plan` on 2026-11-15 (Fable 5.2; exploration began on Opus 5.5 before the practitioner switched the model). Critique gate: three parallel lenses (Coverage and risk / Practicality / Simplicity), every finding dispositioned in the plan. Phase 0 is hardened in full; Phases 1–P are outlines hardened at Task 0.7 (the practitioner's choice). Planning only: nothing built, nothing committed._ _Task 0.7 (2026-11-17, executor leg ax11, a scoped `/review-plan`) hardened the improvement exit's phases and marked the gate-capable ones NOT BUILT: Review Findings Log Round 12._

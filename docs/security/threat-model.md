@@ -4896,6 +4896,41 @@ or a message. RESIDUE: it is a
 scratch, not a tested tool — its content-free output is checked by reading
 it (that plan's H3), not by a pin; and `--list` reads the folder while
 either build may be running (it stats files and decrypts nothing).
+The answers-follow-question plan's Task 0.4a measurement (2026-11-15) —
+`.cursor/loops/afq-measure-kept.py`, with the shared synthetic library
+`.cursor/loops/afq_lib.py` — is the same class under the same rules:
+git-ignored, never shipped or tested, and a MEASURING run is
+practitioner-run only, from a normal terminal with both builds closed (the
+agent never runs it over kept recordings, C1). A measuring run refuses in
+the replay tool's order before any recording is decrypted: the developer
+channel, its own argument checks (the forms named, the practitioner's
+enrolment WAV required and a file, an existing config folder required (an
+absent one would load every file as the shipped default) — the plan's two
+passes name the repository's `validation/config` and then the installed
+app's own), the folder holding an entry key, the crash-report exclusion of
+the running interpreter, and the instance exclusion, held to the end; then,
+with the offline switches applied, the models folder and models, the config,
+and the enrolment WAV loaded. Each kept recording is re-transcribed in memory
+over a memory-keyed temporary store (`persist_key=False`), never from the
+stored transcript, and that one document is composed with suggestions off
+and no prose, once with no answer hop (checked equal to the shipped
+provider's note, else that recording fails) and once per measured form; a
+recording whose clinician was not enrolled is counted and not composed. It
+prints session ORDINALS (oldest kept first), form names and integers — never
+a session id, a name, a line or a note — then one aggregate block (expected,
+measured, failed by error type name, `COMPLETE` or `INCOMPLETE`, how many
+were enrolled and not, medians and maxima over the enrolled recordings),
+the only part the plan records. It exits 0 only on `COMPLETE`; a custody
+stop or an interrupt prints one fixed line naming the temporary-folder
+prefix to look for, and no aggregate block; an exception it does not handle
+ends the run with its type only. Its `--list` mode checks only the channel
+and that the path is a folder, then prints how many recordings are kept
+(nothing decrypted, no model loaded, no crash-report or instance check).
+Its `--dry-run-docs` mode runs the same per-document function over the
+plan's SYNTHETIC saved documents (`C:\afq-sets\docs`) for the composer's
+check, reading no kept recording. RESIDUE: as above, a scratch checked by
+reading it (the plan's `/review-loop` and one codex slice) and by the
+synthetic dry run, not by a pin.
 
 OLDER BUILDS (D14). 0.2.0 opens a kept entry's transcript and notes and
 ignores the audio (listing and reading test only `key.dpapi` and `pending`);
