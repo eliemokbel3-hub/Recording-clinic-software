@@ -213,6 +213,7 @@ from scribe_desktop.ui.models import (
     language_model_available,
     next_patient_segment,
     placed_segments,
+    replies_after,
     working_draft,
 )
 from scribe_desktop.ui.note_review import ProposalDecision, build_resolutions, prefilled_ids
@@ -1043,7 +1044,11 @@ class EncounterMetrics:
     silently omitted under 0.3.4's credit that the run's credit warns — a
     second walk over word flags credited by 0.3.4's set, no walk flag; both 0
     when the encounter has no ``reference`` reading (a unit test, or the
-    reference run itself). Reported in the residue section, read by no rule."""
+    reference run itself). Reported in the residue section, read by no rule.
+    ``segments_credited_by_reply_only``, ``facts_credited_by_reply_only`` and
+    ``without_reply_credit`` (answers-follow-question plan D5, metric
+    amendment 2026-11-17): the reply credit's own reach and the encounter's
+    second complete computation without it (see the fields)."""
 
     words: WordErrors
     spelling_normalised_words: int
@@ -1066,6 +1071,17 @@ class EncounterMetrics:
     # sorted, one per fact; empty unless ``encounter_metrics`` was given the
     # suggested segments (``--suggestions confirm-all``). Read by no rule.
     facts_wrongly_present_via_suggestion: tuple[int, ...] = ()
+    # Answers-follow-question plan D5 (metric amendment 2026-11-17): the
+    # segments the reply credit reaches (``ui.models.replies_after`` without
+    # its added-question replies), the material facts silently omitted
+    # without it that it warns, and the encounter's second COMPLETE
+    # computation without it (residue classes and exemptions included) —
+    # None, with both counts 0, where the credit reached no segment or there
+    # was no ``reference`` reading. The counts are reported in the residue
+    # section with the verdict without the credit; no rule reads them.
+    segments_credited_by_reply_only: int = 0
+    facts_credited_by_reply_only: int = 0
+    without_reply_credit: EncounterMetrics | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -1078,8 +1094,15 @@ class EncounterMetrics:
             "hedge_marks_unhedged",
             "segments_credited_by_run_only",
             "facts_credited_by_run_only",
+            "segments_credited_by_reply_only",
+            "facts_credited_by_reply_only",
         ):
             _require_count(getattr(self, name), name)
+        plain = self.without_reply_credit
+        if plain is not None and (
+            not isinstance(plain, EncounterMetrics) or plain.without_reply_credit is not None
+        ):
+            raise ValueError("without_reply_credit must be one EncounterMetrics, not nested")
         excused = self.unsupported_lines_excused_by_r1
         if not isinstance(excused, tuple) or not all(
             isinstance(entry, tuple) and len(entry) == 2 for entry in excused
@@ -1108,6 +1131,10 @@ class EncounterMetrics:
             raise ValueError("facts must be FactOutcome results")
         if self.facts_credited_by_run_only > sum(1 for fact in self.facts if fact.material):
             raise ValueError("facts_credited_by_run_only exceeds the material facts")
+        if self.facts_credited_by_reply_only > sum(1 for fact in self.facts if fact.material):
+            raise ValueError("facts_credited_by_reply_only exceeds the material facts")
+        if plain is not None and len(plain.facts) != len(self.facts):
+            raise ValueError("without_reply_credit must judge the same facts")
         via = self.facts_wrongly_present_via_suggestion
         if not isinstance(via, tuple):
             raise ValueError("facts_wrongly_present_via_suggestion must be a tuple of indices")
@@ -1948,6 +1975,7 @@ def encounter_metrics(
     *,
     reference: ReferenceReading | None = None,
     suggested_segments: frozenset[int] = frozenset(),
+    reply_credit: bool = True,
 ) -> EncounterMetrics:
     """Task 2.3's metric contract over one encounter (D8), exactly:
 
@@ -2051,6 +2079,18 @@ def encounter_metrics(
       reference tokens is aligned to a transcript token carried by such a
       line: ANY carrying line counts (the inclusive rule). The verdicts
       themselves are unchanged.
+    - The REPLY CREDIT (answers-follow-question plan D4, D5; metric
+      amendment 2026-11-17, a loosening decided after run 9 failed on this
+      class): a silent omission's ``warned`` also holds on a non-suspect
+      word of a reply to a flagged question (``ui.models.replies_after``,
+      the chooser's own helper, WITHOUT its added-question replies — Task
+      0.6's QT), its own term beside the flagged-line credit, which stays
+      ``credited_segments``. With ``reply_credit`` False the term is off.
+      With a ``reference`` reading and a credit that reached a segment, the
+      encounter's metrics are computed a SECOND time, completely, without
+      it (``without_reply_credit``: residue classes and exemptions
+      included), and the difference is counted
+      (``segments_credited_by_reply_only``, ``facts_credited_by_reply_only``).
     """
     canonical_reference = _reference(script)
     hypothesis = _canonical_hypothesis(document)
@@ -2075,6 +2115,11 @@ def encounter_metrics(
     # remedy, adding the line, restores the fact).
     boundary = next_patient_segment(note.note_warnings)
     credited = credited_segments(note, document)
+    # Answers-follow-question plan D4/D5 (metric amendment 2026-11-17): the
+    # reply credit, its OWN term in ``warned`` (``credited`` stays the
+    # flagged-line credit): the chooser's helper without its added-question
+    # replies (Task 0.6's QT, no ``+m``).
+    replies = replies_after(note, document) if reply_credit else frozenset[int]()
     # D1's report-only counts, against 0.3.4's credit re-derived from the
     # document; a second walk only when the two credits differ.
     run_only_segments: frozenset[int] = frozenset()
@@ -2129,8 +2174,13 @@ def encounter_metrics(
             covered_any=position in covered,
             covered_all=position in covered,
             # D13's credit skips a suspect word too: the harness's ``warned``
-            # never counts one (invented-text guard D6).
-            warned=warned_v033 or (segment_index in credit and not word.suspect),
+            # never counts one (invented-text guard D6); so does the reply
+            # credit, the third term (answers-follow-question D4), which the
+            # 0.3.4 walk below reads too, so the run-only counts stay the
+            # joined run's alone.
+            warned=warned_v033
+            or (segment_index in credit and not word.suspect)
+            or (segment_index in replies and not word.suspect),
             # Run 1's predicate AND its clinician-only scope (D3).
             warned_v1=flaggable
             and clinician
@@ -2337,6 +2387,27 @@ def encounter_metrics(
         if code not in expected
         and (NOTE_WARNING_SEVERITY[code] == "error" or code in CONTRADICTION_CODES)
     )
+    # D5: the SECOND complete computation, without the reply credit, from
+    # the same finalised note (no model runs again) — only where the credit
+    # reached a segment (else the two are equal) and, as the run-only counts,
+    # only with a reference reading. A material fact credited by the reply
+    # only is silently omitted without it and not with it.
+    without: EncounterMetrics | None = None
+    reply_only_facts = 0
+    if reference is not None and replies:
+        without = encounter_metrics(
+            document,
+            note,
+            script,
+            reference=reference,
+            suggested_segments=suggested_segments,
+            reply_credit=False,
+        )
+        reply_only_facts = sum(
+            1
+            for kept, plain in zip(facts, without.facts, strict=True)
+            if plain.silent_omission and not kept.silent_omission
+        )
     return EncounterMetrics(
         words=WordErrors(
             len(canonical_reference.tokens), len(hypothesis.tokens), alignment.total
@@ -2356,6 +2427,9 @@ def encounter_metrics(
         segments_credited_by_run_only=len(run_only_segments),
         facts_credited_by_run_only=run_only_facts,
         facts_wrongly_present_via_suggestion=tuple(via_suggestion),
+        segments_credited_by_reply_only=0 if without is None else len(replies - credited),
+        facts_credited_by_reply_only=reply_only_facts,
+        without_reply_credit=without,
     )
 
 
@@ -3542,6 +3616,16 @@ def run_passed_v1(
     return bool(outcomes) and not errors and all(not v1_failures(rule, o) for o in outcomes)
 
 
+def without_reply_credit(outcome: EncounterOutcome) -> EncounterOutcome:
+    """``outcome`` with the metrics computed without the reply credit
+    (answers-follow-question plan D5) — the outcome itself where the credit
+    reached nothing, so its verdict is the one with the credit."""
+    metrics = outcome.metrics
+    if metrics is None or metrics.without_reply_credit is None:
+        return outcome
+    return replace(outcome, metrics=metrics.without_reply_credit)
+
+
 def _rate(value: float) -> str:
     return f"{value:.3f}"
 
@@ -3790,8 +3874,18 @@ def render_report(
         "(validation-run6 D7, D13; 0.3.3's reading: Silent (0.3.3 predicate)); that flagged "
         "line is the whole joined run of the pieces the recogniser split it into (a "
         "same-speaker piece ending mid-sentence joined to the next), metric amendment "
-        "2026-10-26 (validation-run7 D1)."
+        "2026-10-26 (validation-run7 D1). It also holds on the reply to a flagged line "
+        "that holds a question (the other speaker's wholly uncovered lines through the "
+        "turn that follows it, before the next-patient boundary), metric amendment "
+        "2026-11-17 (answers-follow-question D4, D5): a loosening decided after run 9 "
+        "failed on this class."
     )
+    if set_name is not None:
+        # D5: no column — the verdict without it is one residue-section line.
+        amendments += (
+            " The verdict without the reply credit, and what it alone credits, is the "
+            "residue section's reply-credit line."
+        )
     if set_name is not None and rule.schema_version >= 3:
         amendments += (
             " Rule v3 (schema 3; validation-run7 D4, decided 2026-10-25) keeps rule v2's "
@@ -4050,7 +4144,7 @@ def render_report(
                 f"| {_flag(fact.ambiguous)} | {_fact_classes(fact)} |"
             )
     if set_name is not None:
-        lines += _residue_section(outcomes, rule, set_name)
+        lines += _residue_section(outcomes, rule, set_name, errors=errors)
     return "\n".join(lines)
 
 
@@ -4075,7 +4169,7 @@ def _median(values: Sequence[int]) -> str:
 
 
 def _residue_section(
-    outcomes: Sequence[EncounterOutcome], rule: PassRule, set_name: str
+    outcomes: Sequence[EncounterOutcome], rule: PassRule, set_name: str, *, errors: int = 0
 ) -> list[str]:
     """A schema-2 run's set layer (validation-run6 plan D8, D14, D17): each
     class against the set's ceiling with its members, the residue-adjusted
@@ -4085,7 +4179,11 @@ def _residue_section(
     schema-3 or later run's adds the unsupported lines the R1 exemption
     excuses, as ``<id>/line <n> (segment <i>)`` (validation-run7 plan D4); a
     schema-4 run's adds the marked R1 facts after R1's members, reported or
-    counted under the ceiling as the row says (validation-run8 plan D1)."""
+    counted under the ceiling as the row says (validation-run8 plan D1).
+    Every run's adds the reply-credit line after the run-only one: what the
+    reply credit alone credits and the verdict without it
+    (answers-follow-question plan D5; ``errors`` is the run's set-level
+    errors, for that verdict)."""
     row = rule.set_row(set_name)
     reports_marked = row.r1_marked_reported is True
     label = f"rule {rule.label}"
@@ -4191,6 +4289,28 @@ def _residue_section(
         f"credited by the run only: {total(sum(m.facts_credited_by_run_only for m in measured))} "
         "(the flagged-line credit per joined run against 0.3.4's, metric amendment 2026-10-26, "
         "validation-run7 D1; reported, read by no rule)."
+    )
+    # Answers-follow-question plan D5: what the reply credit alone credits,
+    # and the verdict on the second complete computation without it (the
+    # verdict above is the one with it; no column is added).
+    plain = [without_reply_credit(outcome) for outcome in outcomes]
+    plain_breaches = "; ".join(
+        f"{count.residue_class} {count.total} over the ceiling of {count.ceiling}"
+        for count in class_breaches(rule, plain, set_name)
+    )
+    reply_segments = total(sum(m.segments_credited_by_reply_only for m in measured))
+    reply_facts = total(sum(m.facts_credited_by_reply_only for m in measured))
+    reached = total(sum(1 for m in measured if m.segments_credited_by_reply_only))
+    plain_passed = run_passed(rule, plain, errors=errors, set_name=set_name)
+    lines.append(
+        "- Reply credit (the reply to a flagged question, metric amendment 2026-11-17, "
+        "answers-follow-question D4, D5; the counts reported, read by no rule): segments "
+        f"credited by the reply only {reply_segments}, material facts credited by the reply "
+        f"only {reply_facts}, in {reached} encounters. Verdict without the reply credit "
+        f"(every metric computed again without it): {_verdict(plain_passed)}. Failing "
+        "encounters: "
+        + _failing_encounters(plain, lambda o: rule_failures(rule, o, set_name=set_name))
+        + f"; set-level: {plain_breaches or 'none'}."
     )
     records = [
         (outcome.encounter_id, outcome.reference)
@@ -4809,6 +4929,7 @@ __all__ = [
     "suspect_segment_count",
     "transcript_wer",
     "v1_failures",
+    "without_reply_credit",
     "word_errors",
 ]
 

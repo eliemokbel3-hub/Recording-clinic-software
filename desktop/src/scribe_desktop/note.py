@@ -1836,6 +1836,29 @@ def ends_mid_sentence(words: Sequence[TranscriptWord]) -> bool:
     return False
 
 
+# The answer hop's guard G (answers-follow-question plan D2): what ends a
+# sentence for its sentence cut, once closing quotes and brackets are peeled
+# off as ``ends_mid_sentence`` does.
+_SENTENCE_END_MARKS: Final[frozenset[str]] = frozenset({".", "?", "!"})
+
+
+def _last_sentence_text(words: Sequence[TranscriptWord]) -> str:
+    """The span text of the line's last sentence with text, or "" (plan D2).
+    A sentence ends after any word whose text, closing marks peeled off, ends
+    in ``.``, ``?`` or ``!``; a line with no such word is one sentence. No
+    abbreviation handling: "Dr." cuts a sentence (a named limit of G)."""
+    sentences: list[list[TranscriptWord]] = [[]]
+    for word in words:
+        sentences[-1].append(word)
+        text = word.word_text.strip().rstrip(_CLOSING_MARKS)
+        if text and text[-1] in _SENTENCE_END_MARKS:
+            sentences.append([])
+    for sentence in reversed(sentences):
+        if span := reconstruct_span_text(sentence):
+            return span
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # Check 4's coverage rule and its unit (validation-run7 plan D1): ONE
 # implementation each, read by the checker (``note_check``), the chooser
@@ -2209,6 +2232,32 @@ class ExtractiveNoteProvider:
     …" opener of unrelated content is carried (misplaced, not lost), and a
     fenced-off clause after a marker is quoted, as after a comma.
 
+    The answer hop (answers-follow-question plan D1, in the form its Task 0.6
+    chose: unlimited reach, guard G and switch S on): an utterance no cue
+    routes and the carry does not take JOINS the section of the confirmed
+    clinician's cue-routed question before it, so a patient's uncued reply
+    sits right after the question it answers. The window opens only after a
+    question by the CONFIRMED clinician (none without one) that holds no
+    suspect word, is not in a clinician-owned section, and whose last
+    sentence is itself a question that alone routes there (guard G,
+    ``_last_sentence_text``); a cue-routed line plus its one carried piece
+    opens it too, a question if either piece is, the two read as one line for
+    the guard (switch S). A reply joins when someone other than the clinician
+    said it, it holds no suspect word, is not itself a question and carries
+    no cue of either layer in any section; from the second joined line on it
+    must be the first reply's speaker. The reach is unlimited, so a reply the
+    recogniser split at a comma, or a correction after it, joins as a line of
+    its own (D1's carried-piece row adds nothing at this reach). A cue-routed
+    utterance, or anything else, closes the window; a joined line closes the
+    carry's chain. A joined line is an ordinary quoted line (D3):
+    the same ``transcript`` assertion and ``x`` id as a cued or carried one.
+    Named residues: a patient's "don't write this down" given as the FIRST
+    reply is quoted (accepted at Task 0.6, 2026-11-17); a bare "No." beside
+    its question carries no claim of its own for Check 2, and a phrase
+    learned from a clinician's added question later routes it and pulls its
+    reply in (the plan's Codebase Integration Notes); and G's sentence cut
+    has no abbreviation handling, so "Dr." cuts a sentence (D2).
+
     Deliberately NOT excluded (invented-text guard decision 0.1, D6): the
     router reads a suspect word like any other, so a cue in a suspect line
     still routes it — into the note with its ``[check: possibly not
@@ -2240,7 +2289,66 @@ class ExtractiveNoteProvider:
             question=is_interrogative(utterance.text),
         )
 
+    def _question_routes_alone(
+        self,
+        request: NoteRequest,
+        speaker: str,
+        words: Sequence[TranscriptWord],
+        key: NoteSectionKey,
+    ) -> bool:
+        """Guard G (answers-follow-question plan D2): the line's last sentence
+        is itself a question and alone routes to ``key`` (``layered_section``
+        with ``_route``'s arguments)."""
+        last = _last_sentence_text(words)
+        if not last or not is_interrogative(last):
+            return False
+        routed = layered_section(
+            self._cues,
+            self._fallback_cues,
+            content_tokens(last),
+            request.section_keys,
+            speaker=speaker,
+            clinician_speaker=request.clinician_speaker,
+            question=True,
+        )
+        return routed == key
+
+    def _opens_answer_window(
+        self,
+        request: NoteRequest,
+        speaker: str,
+        question_words: Sequence[Sequence[TranscriptWord]],
+        key: NoteSectionKey,
+    ) -> bool:
+        """The answer hop's window opens after ``question_words`` — one
+        cue-routed line, or that line and its one carried piece (switch S) —
+        when the CONFIRMED clinician said it, no piece holds a suspect word,
+        ``key`` is not clinician-owned, some piece is a question, and guard G
+        passes over the pieces read as one line (plan D1 (a) and (d), D2)."""
+        if not spoken_by_confirmed_clinician(speaker, request.clinician_speaker):
+            return False
+        if any(words_hold_suspect(piece) for piece in question_words):
+            return False
+        if key in CLINICIAN_OWNED_SECTIONS:
+            return False
+        if not any(is_interrogative(reconstruct_span_text(piece)) for piece in question_words):
+            return False
+        joined = tuple(word for piece in question_words for word in piece)
+        return self._question_routes_alone(request, speaker, joined, key)
+
+    def _answer_is_clean(self, utterance: NoteUtterance) -> bool:
+        """Plan D1 (c): no suspect word, not itself a question, and no cue of
+        either layer in any section."""
+        return (
+            not words_hold_suspect(utterance.transcript_words)
+            and not is_interrogative(utterance.text)
+            and not any_cue_matches(
+                self._cues, self._fallback_cues, content_tokens(utterance.text)
+            )
+        )
+
     def generate_sections(self, request: NoteRequest) -> tuple[GeneratedSection, ...]:
+        clinician = request.clinician_speaker
         routed: dict[NoteSectionKey, list[NoteAssertion]] = {}
         # The carry's state (D11): the previous non-transparent utterance's
         # section, whether a cue routed it, its speaker, whether it may open a
@@ -2251,11 +2359,17 @@ class ExtractiveNoteProvider:
         prev_speaker: str | None = None
         prev_clean = False
         prev_open = False
+        # The answer hop's state (answers-follow-question plan D1): the last
+        # cue-routed line's words (switch S), the open window's section (None:
+        # closed) and the first joined reply's speaker.
+        cue_words: tuple[TranscriptWord, ...] = ()
+        window_key: NoteSectionKey | None = None
+        reply_speaker: str | None = None
         for utterance in request.transcript_utterances:
             words = utterance.transcript_words
             # (0) Transparent BEFORE routing (``_route`` would read nothing as
             # "dropped"): nothing to quote, and the state is left untouched,
-            # so a blank utterance never breaks a chain.
+            # so a blank utterance never breaks a chain or closes a window.
             if not words or not utterance.text:
                 continue
             key = self._route(request, utterance)
@@ -2267,6 +2381,29 @@ class ExtractiveNoteProvider:
                 prev_speaker = utterance.speaker
                 prev_clean = not words_hold_suspect(words)
                 prev_open = ends_mid_sentence(words)
+                # Any open window closes; a question may open a new one.
+                cue_words = words
+                window_key = (
+                    key
+                    if self._opens_answer_window(request, utterance.speaker, (words,), key)
+                    else None
+                )
+                reply_speaker = None
+            elif (
+                window_key is not None
+                and not spoken_by_confirmed_clinician(utterance.speaker, clinician)
+                and (reply_speaker is None or utterance.speaker == reply_speaker)
+                and self._answer_is_clean(utterance)
+            ):
+                # (4) The answer hop (plan D1 row 3): a reply joins its
+                # question's section, and the carry's chain is closed. With
+                # the unlimited reach D1's row 4 (one carried piece after a
+                # joined reply) is subsumed here: such a piece is the same
+                # speaker's and meets the same tests, so it joins.
+                key = window_key
+                if reply_speaker is None:
+                    reply_speaker = utterance.speaker
+                prev_cued = False
             elif (
                 prev_cued
                 and prev_key is not None
@@ -2281,12 +2418,23 @@ class ExtractiveNoteProvider:
                     self._cues, self._fallback_cues, content_tokens(utterance.text)
                 )
             ):
-                # (2) Carried into the previous section; one hop only.
+                # (2) Carried into the previous section; one hop only. Any
+                # open window closes; the question and its carried piece may
+                # open a new one (switch S).
                 key = prev_key
                 prev_cued = False
+                window_key = (
+                    key
+                    if self._opens_answer_window(
+                        request, utterance.speaker, (cue_words, words), key
+                    )
+                    else None
+                )
+                reply_speaker = None
             else:
-                # (3) Dropped: the chain breaks.
+                # (3) Dropped: the chain breaks and any open window closes.
                 prev_cued = False
+                window_key = None
                 continue
             assertion = whole_utterance_assertion(
                 provider_assertion_id(utterance.segment_index),

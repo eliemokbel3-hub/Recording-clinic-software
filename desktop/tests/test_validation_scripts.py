@@ -67,6 +67,7 @@ from scribe_desktop.note import (
     CANONICAL_SECTION_KEYS,
     CLINICIAN_OWNED_SECTIONS,
     DEFAULT_SECTION_CUES,
+    ExtractiveNoteProvider,
     NoteSectionKey,
     any_cue_matches,
     content_tokens,
@@ -74,7 +75,7 @@ from scribe_desktop.note import (
     is_interrogative,
     layered_section,
 )
-from scribe_desktop.note_config import load_note_config
+from scribe_desktop.note_config import build_note_request, load_note_config
 from scribe_desktop.speaker_eval import CLINICIAN_LABEL, parse_audacity_labels
 from scribe_desktop.transcription import TranscriptDocument
 from scribe_desktop.validation import (
@@ -214,6 +215,44 @@ def _validation_cues() -> Mapping[NoteSectionKey, tuple[tuple[str, ...], ...]]:
     """The validation config's own cue layer — the table the held-out
     briefs give their authors."""
     return load_note_config(CONFIG).normalised_cues()
+
+
+def _hop_joined_lines(case: HeldOutCase) -> frozenset[int]:
+    """The case's lines the answer hop places (answers-follow-question plan
+    Task 1.1): in the shipped provider's note under the validation config
+    over the shipped cues, with no route of their own, and not the bounded
+    carry of the same speaker's cue-routed line before them."""
+    config = load_note_config(CONFIG)
+    request = build_note_request(
+        case.document(),
+        config,
+        config.template_profiles[0].template_profile_id,
+        clinician_speaker=case.clinician_speaker,
+    )
+    provider = ExtractiveNoteProvider(cues=config.normalised_cues())
+    placed = {
+        coords.segment_index
+        for section in provider.generate_sections(request)
+        for assertion in section.note_assertions
+        if (coords := assertion.note_span.source_coords) is not None
+    }
+    spoken = [u for u in request.transcript_utterances if u.transcript_words and u.text]
+    joined: set[int] = set()
+    for position, utterance in enumerate(spoken):
+        if (
+            utterance.segment_index not in placed
+            or provider._route(request, utterance) is not None
+        ):
+            continue
+        previous = spoken[position - 1] if position else None
+        if (
+            previous is not None
+            and previous.speaker == utterance.speaker
+            and provider._route(request, previous) is not None
+        ):
+            continue  # the bounded carry
+        joined.add(utterance.segment_index)
+    return frozenset(joined)
 
 
 @functools.cache
@@ -898,9 +937,11 @@ class TestHeldOutTranscripts:
         layers) — never the phrase lists the features read. A correction
         holds no cue of either layer and follows its speaker's cue-routed
         line in a section the clinician does not own (one hop); a hedged
-        line is quoted: it routes, or it is a correction."""
+        line is quoted: it routes, or it is a correction, or it is joined
+        (the answer hop, answers-follow-question plan Task 1.1)."""
         cues = _validation_cues()
         turns = case.turns()
+        joined = _hop_joined_lines(case)
 
         def route(index: int) -> NoteSectionKey | None:
             turn = turns[index]
@@ -922,7 +963,10 @@ class TestHeldOutTranscripts:
             assert previous is not None, (case.case_id, index)
             assert previous not in CLINICIAN_OWNED_SECTIONS, (case.case_id, index)
         for index in case.unsure:
-            assert index in case.corrections or route(index) is not None, (case.case_id, index)
+            assert index in case.corrections or route(index) is not None or index in joined, (
+                case.case_id,
+                index,
+            )
 
     def test_the_next_patients_lines_are_never_facts_of_the_first(self) -> None:
         for case in HELD_OUT_CASES:

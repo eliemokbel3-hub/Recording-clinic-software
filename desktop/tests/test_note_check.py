@@ -1041,6 +1041,92 @@ class TestCheck2Contradictions:
         )
         assert contradiction_warnings(note, document) == ()
 
+    # --- Answers-follow-question plan Task 1.3: a JOINED reply is quoted
+    # evidence like any other quoted line -------------------------------------
+
+    _HOP_QUESTION = "Any numbness in your feet?"
+
+    @staticmethod
+    def _typed(text: str, *, aid: str) -> NoteAssertion:
+        """A typed ``clinician`` line (schema v2): no proposal, the decision
+        naming the line itself."""
+        return NoteAssertion(
+            assertion_id=aid,
+            section_key="red_flags_screening",
+            note_span=NoteSpan(span_text=text, provenance="clinician"),
+            shown_text_digest=text_digest(text),
+            config_digest=_CHECK_CONFIG.config_digest(),
+            confirmation=ConfirmationDecision(
+                proposal_id=aid, note_confirmation="confirmed", decided_at=_NOW
+            ),
+        )
+
+    def _joined(self, reply: Turn) -> tuple[TranscriptDocument, tuple[NoteAssertion, ...]]:
+        """The clinician's cue-routed question and the patient's ``reply``
+        through the shipped provider: the reply carries no cue, so only the
+        answer hop places it — beside its question, in Red flags."""
+        document = _document((self._HOP_QUESTION, SPEAKER_2), reply)
+        request = build_note_request(
+            document,
+            _CHECK_CONFIG,
+            _CHECK_CONFIG.template_profiles[0].template_profile_id,
+            clinician_speaker=SPEAKER_2,
+        )
+        provider = ExtractiveNoteProvider(cues=_CHECK_CONFIG.normalised_cues())
+        assert provider._route(request, request.transcript_utterances[1]) is None
+        assertions = tuple(
+            assertion
+            for section in provider.generate_sections(request)
+            for assertion in section.note_assertions
+        )
+        placed = {
+            assertion.note_span.source_coords.segment_index: assertion.section_key
+            for assertion in assertions
+            if assertion.note_span.source_coords is not None
+        }
+        assert placed == {0: "red_flags_screening", 1: "red_flags_screening"}
+        return document, assertions
+
+    @pytest.mark.parametrize("line", ["prefill", "typed"])
+    def test_a_joined_reply_that_names_what_it_negates_contradicts_at_error(
+        self, line: str
+    ) -> None:
+        """A joined "No numbness." against a pre-filled or typed "Numbness
+        reported.": the reply's negated symptom against the authored line's
+        affirmed one — error grade, on the authored line, the evidence the
+        reply's two words."""
+        document, joined = self._joined(("No numbness.", SPEAKER_1))
+        authored = (
+            _authored("Numbness reported.", "red_flags_screening", aid="a1")
+            if line == "prefill"
+            else self._typed("Numbness reported.", aid="a1")
+        )
+        warnings = contradiction_warnings(_note(document, (*joined, authored)), document)
+        assert _codes(warnings) == ["contradiction"]
+        assert warnings[0].severity == "error"
+        assert warnings[0].assertion_id == "a1"
+        assert warnings[0].source_coords == SourceCoords(1, 0, 1)
+
+    def test_a_low_confidence_joined_reply_contradicts_at_review(self) -> None:
+        """The same pair with the reply's "numbness." heard at low confidence:
+        the evidence is weak, so the low-confidence twin at review grade."""
+        document, joined = self._joined(("No numbness.", SPEAKER_1, {1: 0.3}))
+        authored = _authored("Numbness reported.", "red_flags_screening", aid="a1")
+        warnings = contradiction_warnings(_note(document, (*joined, authored)), document)
+        assert _codes(warnings) == ["contradiction_low_confidence"]
+        assert warnings[0].severity == "review"
+
+    def test_a_bare_no_beside_its_question_draws_no_contradiction(self) -> None:
+        """The named residue (the plan's Codebase Integration Notes): a bare
+        joined "No." carries no claim of its own — Check 2 parses each line
+        apart, takes no evidence from a question and needs the negated word
+        in the same line — so "No." beside "Any numbness in your feet?" is
+        never checked against "Numbness reported." The reading the two lines
+        make together is the clinician's to review."""
+        document, joined = self._joined(("No.", SPEAKER_1))
+        authored = _authored("Numbness reported.", "red_flags_screening", aid="a1")
+        assert contradiction_warnings(_note(document, (*joined, authored)), document) == ()
+
     def test_a_correlative_across_the_but_boundary_is_review_not_error(self) -> None:
         """Task H4.1, the round-58 trace that ended parser patching. `but` closes
         clause 1 as `[not, only, left, but]` - no anatomy for the stray `left`
@@ -2680,7 +2766,7 @@ class TestCheck1HedgeMark:
             "heldout-2": 10,
             "heldout-3": 7,
             "heldout-4": 6,
-            "heldout-5": 10,
+            "heldout-5": 11,
             "heldout-6": 7,
         }
         heldout = {c.case_id for c in held_out_set("heldout").all_cases()}
@@ -2778,6 +2864,11 @@ _PREDICTED_UNSURE_DIVERGENCES_BY_SET: dict[
         "h5-10": ((4,), ()),  # a bare-modal hedge, outside the frozen list
         "h5-13": ((3,), ()),  # its hedge is outside the frozen list
         "h5-14": ((4,), ()),  # a bare-modal hedge, outside the frozen list
+        # Answers-follow-question plan Task 1.1 (2026-11-17), read off the
+        # product: the hop joins the patient's uncued "maybe" reply (script
+        # line and segment 3) to the clinician's cue-routed question before it
+        # (segment 2, "did it start"), so its listed hedge is now marked too.
+        "h5-17": ((5,), (3, 5)),
         "h5-19": ((1,), ()),  # the doubt is a separate line, its hedge unlisted
         "h5-20": ((3,), ()),  # its hedge is outside the frozen list
         "h5-22": ((2,), ()),  # its hedge is outside the frozen list

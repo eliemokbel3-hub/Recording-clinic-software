@@ -21,8 +21,10 @@ PR-MED-003). Axis coverage:
   shape: merged turns, low-`probability` words — never audio), uncertainty,
   spoken prompt injection, greetings and end-of-consultation, and a
   sentence the recogniser split at a comma (the bounded carry, with its
-  instruction residue pinned as behaviour), and a self-correction split off
-  after a full stop (the self-correction carry, validation-pass plan D4).
+  instruction residue pinned as behaviour), a self-correction split off
+  after a full stop (the self-correction carry, validation-pass plan D4), and
+  the clinician's question with the patient's uncued reply beside it (the
+  answer hop, answers-follow-question plan D1).
 - **Axis B (provider behaviour):** every `MockNoteModelProvider` behaviour,
   on fixtures that can express its class AND on fixtures that cannot (the
   latter must raise, never silently test the wrong class).
@@ -70,6 +72,7 @@ from scribe_desktop.note import (
     any_cue_matches,
     content_tokens,
     ends_mid_sentence,
+    is_interrogative,
     opens_with_correction,
     reconstruct_span_text,
     text_digest,
@@ -400,6 +403,11 @@ class ExtractiveCell(NamedTuple):
     # withheld segment. Every other cell's transcript has none (linted), so the
     # boundary never moves their oracle.
     boundary: int | None = None
+    # Segments the answer hop joins (answers-follow-question plan D1, Task
+    # 1.1): each follows the confirmed clinician's question or an earlier
+    # join. Every other cell has no confirmed clinician's question (linted),
+    # so the hop never moves their oracle.
+    joins: tuple[int, ...] = ()
 
 
 EXTRACTIVE_CELLS: tuple[ExtractiveCell, ...] = (
@@ -700,6 +708,28 @@ EXTRACTIVE_CELLS: tuple[ExtractiveCell, ...] = (
         material_segments=(1,),
         expected_mapped=(("t-presenting", (0,)), ("t-assessment", (1,))),
     ),
+    # Answers-follow-question plan Task 1.1: the clinician's cue-routed
+    # question and the patient's uncued reply beside it — the class run 9
+    # failed on. The reply joins Red flags; quoted, its "no" and "none" draw
+    # no omission warning.
+    ExtractiveCell(
+        fixture_id="ex-answer-joined",
+        turns=(
+            ("Any numbness in your feet?", SPEAKER_2),
+            ("No, none at all.", SPEAKER_1),
+            ("On examination the knee is stable.", SPEAKER_2),
+        ),
+        clinician_speaker=SPEAKER_2,
+        expected=(
+            ExpectedAssertion("red_flags_screening", 0, "Any numbness in your feet?"),
+            ExpectedAssertion("red_flags_screening", 1, "No, none at all."),
+            ExpectedAssertion("objective_examination", 2, "On examination the knee is stable."),
+        ),
+        expected_reviews=(),
+        material_segments=(1, 2),
+        expected_mapped=(("t-assessment", (0, 1, 2)),),
+        joins=(1,),
+    ),
     # Validation-pass plan Task 1.5: one declared cell per boundary failure
     # mode. The withheld lines are NOT in the note (D3), Check 6 says so once
     # (D5), and a withheld claim word still draws Check 4 (decision 0.5 (a)).
@@ -865,6 +895,41 @@ class TestExtractiveCells:
             "ex-split-sentence-carried",
             "ex-comma-then-instruction",
             "ex-self-correction-carried",
+        }
+
+    @pytest.mark.parametrize("cell", EXTRACTIVE_CELLS, ids=lambda cell: cell.fixture_id)
+    def test_only_a_declared_join_follows_a_clinician_question(
+        self, cell: ExtractiveCell
+    ) -> None:
+        """The fixture lint (answers-follow-question plan Task 1.1): the
+        confirmed clinician's turn is a question — read by the provider's own
+        ``is_interrogative`` — exactly where the cell declares the reply after
+        it joined, so no other cell's oracle can start joining by accident.
+        Each declared join follows its question or an earlier join, is not
+        the clinician's, has no cue of its own, and lands in the section of
+        the turn before it."""
+        document = _document(*cell.turns)
+        questions = {
+            index
+            for index, segment in enumerate(document.transcript_segments)
+            if cell.clinician_speaker is not None
+            and segment.speaker == cell.clinician_speaker
+            and is_interrogative(reconstruct_span_text(segment.transcript_words))
+        }
+        openers = {joined - 1 for joined in cell.joins if joined - 1 not in cell.joins}
+        assert questions == openers, cell.fixture_id
+        section_of = {e.segment_index: e.section_key for e in cell.expected}
+        for joined in cell.joins:
+            text, speaker = cell.turns[joined][0], cell.turns[joined][1]
+            assert speaker != cell.clinician_speaker, cell.fixture_id
+            assert not any_cue_matches(
+                DEFAULT_SECTION_CUES, DEFAULT_SECTION_CUES, content_tokens(text)
+            ), cell.fixture_id
+            assert section_of[joined] == section_of[joined - 1], cell.fixture_id
+
+    def test_every_join_cell_is_registered(self) -> None:
+        assert {cell.fixture_id for cell in EXTRACTIVE_CELLS if cell.joins} == {
+            "ex-answer-joined",
         }
 
     @pytest.mark.parametrize("cell", EXTRACTIVE_CELLS, ids=lambda cell: cell.fixture_id)

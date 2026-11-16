@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** answers-follow-question (a patient's uncued reply joins the note beside the clinician's in-note question; version 0.3.7 only on a GO; validation run 10 only if gate-capable)
-**Overall Progress:** `25%` (Phase 0: eight of nine done (0.1–0.7); 0.8 is written at the close. 0.4b is recorded UNMEASURED, with n enrolled 2 < 3. 0.6: IMPROVEMENT, V4gs under QT, the real-speech line overridden by name, four residues accepted. 0.7 hardened the kept phases and marked the gate-capable ones NOT BUILT. Ahead: Phase 0's commit on the practitioner's word, then Phases 1 (1.1–1.4), V, M.1, D (D.1–D.4), F.3, P.3 and P.5.)
+**Overall Progress:** `55%` (Phase 0: eight of nine done (0.1–0.7, committed `a00685c`); 0.8 is written at the close. 0.4b is recorded UNMEASURED, with n enrolled 2 < 3. 0.6: IMPROVEMENT, V4gs under QT, the real-speech line overridden by name, four residues accepted. 0.7 hardened the kept phases and marked the gate-capable ones NOT BUILT. Phase 1: all four tasks done 2026-11-17 (1.1–1.4), gate-green at 10933 passed, 9 skipped; the scratch pin found 0 differences; uncommitted and not yet smoked (P.3). Phase V: V.1 and H1 DONE (gate green; H1 converged at round 13); H2 DONE (round 14, no change); H3 DONE (round 15, 2 MED applied; gate green at 10935 passed, 9 skipped); H4 CONVERGED (rounds 16–18: slice A 0 findings; slice B's 2 LOW missing regression tests fixed, then 0 findings), so Step H and Phase V are DONE, gate-green at 10937 passed, 9 skipped. Phase 1 and V are still uncommitted on `a00685c`. Ahead: the one commit, now due by the practitioner's "Commit after hardening (Recommended)"; then M.1 (the seven seen sets at the hardened commit under rule v6 with `--suggestions confirm-all --prose`, run in the background overnight, compared against Task 0.3's V4gs QT lines), D (D.1–D.4), F.3, P.3 and P.5.)
 
 ## Lifecycle State
 - Active
@@ -274,6 +274,18 @@ Named now, and not this plan's to decide: if even the best harm-free form is not
 - Loop config: executor=claude-p model="claude-opus-5-5" effort=high profile=default; peer=codex model="gpt-6-astra" effort=medium; architect=off; cadence=every-phase; caps=review:3,peer:5; gates=executor; cap-raise=executor; high-auto=on; peer-max=12; notify=action-only; scope=all; autocommit=off; isolation=none; merge=off; perms=scoped; liveness=10; monitor-delivery=auto; verify=composer
 - COMPOSER RUN-STATE (2026-11-15T19:31+11:00): `/execute-loop` run `answers-follow-question-20261115-192900-2af4` (isolation none, builds on `main`, autocommit off; the practitioner's wizard answers, every one the recommended option, confirmed at the close table with the plan's own C7 overriding the preset's autocommit and worktree). Runkeys: stage-0 = Phase 0 (Tasks 0.1-0.8), stage-1 = Phase 1, stage-2 = V, stage-3 = M, stage-4 = D, stage-5 = F, stage-6 = P. Spawn helper `.cursor/loops/afq-spawn.sh`; peer runner `.cursor/loops/afq-peer-run.sh`; probe log `.cursor/loops/stage-0-probe.log`; policy log `.cursor/loops/answers-follow-question-20261115-192900-2af4-policy.log`. Now: preflight harness probe (leg ah1), then the stage-0 executor for Task 0.1.
 - Last completed step:
+  - Phase V DONE 2026-11-17 (stage-2, legs cx1–cx5), gate-green and uncommitted on `a00685c`.
+    - V.1: version 0.3.7 and the CHANGELOG entry.
+    - Step H: H1 converged at round 13 (2 LOW applied), H2 at round 14 (no change) and H3 at round 15 (2 MED applied: a test pin and plan records). H4 (codex) converged over rounds 16–18: slice A had 0 findings, and slice B's 2 LOW (two missing regression tests) were fixed and then confirmed.
+    - No product defect was found in Step H. The product code changed only by round 13's copy hint and docstring.
+    - The composer's last gate: ruff and mypy clean, pytest 10937 passed, 9 skipped (`.cursor/loops/stage-2-cx4-gate.txt`). `npm run qa` was last run at V.1: 313 tests passed, `scribe-extension@0.3.7`.
+  - Phase 1 DONE 2026-11-17 (stage-1, legs bx1–bx5), gate-green and uncommitted on `a00685c`:
+    - 1.1 the answer hop (V4gs);
+    - 1.2 the reply flag and credit (QT);
+    - 1.3 Check 2's joined-reply tests and the consumers' reading;
+    - 1.4 the scratch pin, 0 differences over 384 encounters.
+    - The composer's last full gate: ruff and mypy clean, pytest 10933 passed, 9 skipped (`.cursor/loops/stage-1-bx4-full.txt`). The baseline at `a00685c` was 10836 passed.
+    - Its reviews are Phase V's Step H (H1–H4 over Phase 1 and V's whole diff against `22feec4`), and its live smoke is the install smoke (P.3). Neither has run yet.
   - Task 0.7 DONE (2026-11-17, leg ax11): the scoped `/review-plan` hardened the improvement exit's phases and marked the gate-capable ones NOT BUILT (Round 12). Before it, Task 0.6 DONE the same leg, when the practitioner answered "Accept all three (Recommended)".
   - Task 0.6's decision recorded, pending three residue words (2026-11-17, leg ax10). The practitioner's "yes, record QT": V4gs under QT as an improvement (0.3.7, shadow on, no run 10), with the real-speech line overridden by name and the `h5-17` residue accepted by name. Before it, codex round 11 reviewed the five open points (0 findings).
   - Task 0.5, DONE 2026-11-17 (leg ax9):
@@ -283,10 +295,180 @@ Named now, and not this plan's to decide: if even the best harm-free form is not
   - Before it, Task 0.5's first half (2026-11-17, leg ax8): the executor's `/review-loop` over the records of Tasks 0.2–0.4b. Each figure was checked against `afq-text-2.txt`, `afq-docs-3.txt`, `afq-gate-3.txt` and the 0.4b blocks. It converged in rounds 8–9 with 0 CRIT / 0 HIGH / 1 MED / 1 LOW; no recorded number was wrong.
   - Before it, Task 0.4b, recorded UNMEASURED (2026-11-17): both passes COMPLETE, n enrolled 2 < 3, joined 0 under every form and config.
   - Before that, Task 0.3's two gate-configuration flagged columns, replaced from `afq-gate-3.txt` (2026-11-16, leg ax7). The composer's comparison found it equal to `afq-gate-2.txt` outside those columns and the timing cells. With that, Task 0.3 is DONE: its tables are recorded with the commit, the whisper model and the folder, and each D8 line is marked met or not met per finalist. Before that, leg ax6 recorded Task 0.3's gate-configuration lines from `afq-gate-2.txt` (2026-11-16): the join table, the S counter, the credit table, the replay premise (0 problems), D8 met / not met per finalist and per line, and the `h5-17` diagnosis (no scratch defect). Before that, Task 0.3's off part (2026-11-15, at `22feec4`, whisper `medium`, `C:\afq-sets\`): the builds, the transcriptions, the replay premise (0 problems), the baseline check (no table cell differs; `heldout-5`'s R1 row reads differently by rule v6's design), the join table, the S counter (holds: `h6-01:f2`), the credit table and the mechanical shortlist (finalists V4gs, V4s, V3gs), recorded on the task. Then Task 0.4a, DONE 2026-11-16 (the review converged in rounds 5–7; the composer's dry run `COMPLETE` 183 / 183, the refusal smokes and the two hashes are on the task). Task 0.2's and Task 0.3's flagged columns are replaced from `afq-text-2.txt` and `afq-docs-3.txt` (PR-MED-012). Before them: Tasks 0.1 and 0.2 (done 2026-11-15). Planning was committed in `22feec4` (not pushed).
-- Current in-progress step: none. Phase 0's decision tasks are done (0.1–0.7). Task 0.8 waits for the close (D.2 and P.5 on this exit).
+- Current in-progress step: stage-2 (Phase V) is complete; Step H has converged. Phase 1 and V are uncommitted on `a00685c`. The practitioner's "Commit after hardening (Recommended)" (2026-11-17) is now due. Task 0.8 waits for the close (D.2 and P.5 on this exit).
 - Immediate next action:
-  - The composer closes Phase 0: the practitioner's word on a commit of Phase 0's records (this plan and the two documents leg ax3–ax4 edited; C7, autocommit off).
-  - Then Phase 1 under a new stage, stage-1, from Task 1.1.
+  - The one commit of Phase 1 and V, at the composer's seat (autocommit off, so it goes on the practitioner's word). The untracked `desktop/tests/fixtures/answer_hops.py` belongs in it.
+  - Then stage-3, Phase M's M.1: the hardened commit's product over the seven seen sets' saved documents, under rule v6 with `--suggestions confirm-all --prose`, run in the background overnight and compared against Task 0.3's V4gs QT lines.
+- Executor handoff (leg cx5, 2026-11-17T09:23+11:00 resume; stage-2, Phase V's close, plan records only):
+  - Recorded: the composer's gate on leg cx4 (`.cursor/loops/stage-2-cx4-gate.txt`: ruff and mypy clean, pytest 10937 passed, 9 skipped, every return code 0) on round 17.
+  - Transcribed round 18 verbatim from `.cursor/loops/stage-2-peer-r18.log` (its last `### Round 18` header to its `PEER-ROUND-18 RESULT` line), with the composer-recorded line: pass `stage-2-h4b.p1`, peer round 2 of cap 5. Round 18 had 0 findings and confirmed both of round 17's fixes. It is added to Review History.
+  - Marked done: H4 (slice A at round 16, slice B at round 18), Step H (H1 at round 13, H2 at 14, H3 at 15, H4 at 16–18) and Phase V. Updated Overall Progress (55%), the last completed step, the current step and the next action.
+  - `loop-history-check.py`: 18 round entries and 18 findings-log headings, unique and strictly increasing, OK.
+  - No code or test was changed; only this plan, which stays LF with no NUL. No Python was run apart from the history check, and no commit or ref change was made.
+- Executor handoff (leg cx4, 2026-11-17T09:12+11:00 resume; stage-2, the fix leg for round 17):
+  - `/fix` on round 17, one finding at a time. Both were LOW Fix-now and test-harness only, so headless auto-disposable. Both are Applied, and round 17 is Closed; the tuple block's decision lines are updated.
+    - PR-LOW-020: `fixtures/answer_hops.py` (LF) gains `s-a-suspect-carried-piece-opens-nothing`: the S lines with `suspect=(1,)`, placed `((0, RED), (1, RED))`. It adds one parametrised test; the joining set is unchanged.
+    - PR-LOW-021: `test_validation_metrics.py` (CRLF kept) gains `TestReplyCredit.test_a_partly_quoted_reply_is_passed_over`: segment 2 quoted at word 0, `replies_after == {1, 3}`.
+  - Neither test needed a product change. The product as built behaves as each asserts (leg cx3's evidence, re-read before writing), so there is no MUST-PAUSE.
+  - Fix-delta self-check: PASS.
+  - Changed: the two test files and this plan, which stays LF. No product code, `docs/` or frozen file was touched. No Python was run, and no commit or ref change was made.
+  - The gate for the composer, from `C:\Recording clinic software`: `cd desktop && ../.venv/Scripts/python.exe -m ruff check . < /dev/null && ../.venv/Scripts/python.exe -m mypy < /dev/null && ../.venv/Scripts/python.exe -m pytest -q -p no:cacheprovider < /dev/null`
+    - Expected: ruff "All checks passed!"; mypy "Success: no issues found in 67 source files"; pytest 10937 passed, 9 skipped (10935 plus one parametrised case and one test).
+  - Nothing under `extension/` changed, so `npm run qa` is not owed. `afq-pin.py` is not owed either: no router or credit code changed.
+- Executor handoff (leg cx3, 2026-11-17T09:07+11:00 resume; stage-2, verification-only: the gate record, H3's close, H4's rounds 16–17):
+  - Recorded: the composer's gate on leg cx2 (`.cursor/loops/stage-2-cx2-gate.txt`: ruff and mypy clean, pytest 10935 passed, 9 skipped, every return code 0) on round 15, and H3 is CLOSED (🟩).
+  - Transcribed verbatim as rounds 16 and 17: each from the last `### Round N` header to the `PEER-ROUND-N RESULT` line of `.cursor/loops/stage-2-peer-r16.log` and `stage-2-peer-r17.log`, each with a composer-recorded line (its log, pass id `stage-2-h4a.p1` / `stage-2-h4b.p1`, peer round 1 of cap 5, the two slices in parallel). Both rounds were added to Review History.
+  - Round 16 (slice A, the product): 0 findings.
+  - Round 17 (slice B), both verified against the code and the fixture, and both rated `materiality=regression severity=LOW surface=test-harness rec=Fix-now`, with the originals kept beside them:
+    - PR-LOW-020: the S twin with a suspect carried piece. The product carries the piece (`prev_clean` reads only the previous line), and `_opens_answer_window` refuses the window (`note.py:2330`), so the reply is dropped. The proposed expectation `((0, RED), (1, RED))` holds today.
+    - PR-LOW-021: a partly covered reply. `_reply_turn` takes only `wholly_uncovered` lines and walks on, so the proposed expectation (no credit on the partly covered line, credit on the later uncovered one) holds today.
+  - No product defect, so no MUST-PAUSE.
+  - No code or test was changed in this leg; only this plan. It stays LF. No Python was run, and no commit or ref change was made.
+  - For the fix leg: put the PR-LOW-020 twin after `s-the-cue-routed-piece-is-the-question` in `fixtures/answer_hops.py` (LF), with `suspect=(1,)` and `placed=((0, RED), (1, RED))`. Check whether `test_both_directions_are_exercised`'s sets need it. Put PR-LOW-021 in `test_validation_metrics.py` (keep that file's line endings) beside `test_the_whole_reply_turn_and_where_it_ends`, with a one-word `Span` on segment 2. The expected suite after the fix is 10937 passed, 9 skipped: one parametrised case and one test.
+- Executor handoff (leg cx2, 2026-11-17T08:51+11:00 resume; stage-2, the gate record, H2 and H3):
+  - Recorded: the composer's gate on leg cx1 (`.cursor/loops/stage-2-cx1-gate.txt`) on V.1 (now 🟩) and on round 13, and H1 is CONVERGED at round 13.
+  - H2, round 14 (`/simplify`): no simplification worth a maintainer's attention. Seven candidates were left alone with their reasons, and nothing changed.
+  - H3, round 15 (`/security-review`, the portable checklist): 2 MED, both Fix-now and applied.
+    - SEC-001: under V4, a spoken instruction given as a LATER line of the reply turn is quoted, beyond accepted residue (3)'s first reply.
+      - Behaviour is unchanged (Task 0.6 fixed V4). The case is now pinned: the fixture case `joins-a-later-reply-dont-write-this-down` and `test_a_later_reply_dont_write_this_down_is_quoted`.
+      - `test_the_first_reply_dont_write_this_down_is_quoted` now selects its case by exact name, since its old `endswith` filter would match both cases.
+      - The practitioner's word on it is placed at D.4, with the recommendation "accept as a named residue". It is not a MUST-PAUSE: no behaviour changes, shadow mode stays on, and D.4 is before P.3's install decision.
+    - SEC-002: D.1's threat-model residue list now also names:
+      - a wrong speaker label;
+      - a false question by its opening word;
+      - a next patient's whole reply turn where no boundary is found, and the reply flag's same cut;
+      - a third speaker;
+      - the `h5-17` quote.
+  - No product code changed in this leg. Changed files: `desktop/tests/fixtures/answer_hops.py` (one case), `desktop/tests/test_note.py` (a joining-set entry, the exact-name filter and one new test), and this plan. `docs/` is untouched (Phase D).
+  - Line endings are kept: `test_note.py` CRLF; `answer_hops.py` and the plan LF.
+  - No Python was run, and no commit or ref change was made.
+  - Commands for the composer, each from `C:\Recording clinic software`:
+    1. `cd desktop && ../.venv/Scripts/python.exe -m ruff check . < /dev/null && ../.venv/Scripts/python.exe -m mypy < /dev/null && ../.venv/Scripts/python.exe -m pytest -q -p no:cacheprovider < /dev/null`
+       - Expected: ruff "All checks passed!"; mypy "Success: no issues found in 67 source files"; pytest 10935 passed, 9 skipped (10933 plus one parametrised fixture case and one new test).
+    2. Optional, narrow first: `cd desktop && ../.venv/Scripts/python.exe -m pytest -q -p no:cacheprovider tests/test_note.py -k TestAnswerHop < /dev/null`
+    3. `cd extension && npm run qa < /dev/null`, only if the composer wants it: nothing under `extension/` changed in this leg.
+  - `afq-pin.py` is not owed: no router or credit code changed, and the pin reads `EXTRACTIVE_CELLS` and the sets, not `fixtures/answer_hops.py`.
+- Executor handoff (leg cx1, 2026-11-17T08:34+11:00 spawn; stage-2, Task V.1 and H1 round 1):
+  - V.1: the six version fields read 0.3.7, each read before and after its edit:
+    - `desktop/pyproject.toml:7`;
+    - `desktop/src/scribe_desktop/__init__.py:3`;
+    - `extension/package.json:4`;
+    - `extension/package-lock.json:3` and `:9`;
+    - `extension/src/manifest.ts:29`.
+  - No test or document pins the literal. `test_install_layout.py:907-917` and `test_build_release.py:624-626` compare the fields with each other, and `scripts/README.md:112`'s "since 0.3.6" is history.
+  - `CHANGELOG.md`'s 0.3.7 entry is at the top of Added, with CRLF kept. It covers the hop, the reply flag and the QT credit, the improvement exit, shadow mode on, no run 10, the measured numbers, and the draft copy pending D.4.
+  - Not done: the 0.3.6 version commit's `git log -S`, because this leg's grants cover `git status` and `git diff` only. The search above stands in for it.
+  - H1 round 13 (round 1 of cap 3): 0 CRIT / 0 HIGH / 0 MED / 2 LOW, both applied. The round is in the Review Findings Log, and the history check passed (13 entries, 13 headings).
+    - LOW-001: the hint's draft bracket now reads "(if it was a question, its answer is flagged too)", with its one pin in `test_ui_models.py`.
+    - LOW-002: the hop docstring now names the source of each residue.
+    - Nothing in Task 0.6's specification was found to diverge, and there is no MUST-PAUSE. By `/review-loop`'s rule round 13 is converged (no CRIT, HIGH or MED), so a round 2 is needed only if the gate fails.
+  - Files this leg changed:
+    - the six version fields and `CHANGELOG.md`;
+    - `ui/models.py` (the hint), `note.py` (the docstring) and `test_ui_models.py` (the pin);
+    - this plan.
+  - Line endings are kept: CRLF everywhere, except `test_ui_models.py` (LF) and this plan (LF). No Python was run, and no commit or ref change was made.
+  - Commands for the composer, each from `C:\Recording clinic software`:
+    1. `cd desktop && ../.venv/Scripts/python.exe -m ruff check . < /dev/null && ../.venv/Scripts/python.exe -m mypy < /dev/null && ../.venv/Scripts/python.exe -m pytest -q -p no:cacheprovider < /dev/null`
+       - Expected: ruff "All checks passed!"; mypy "Success: no issues found in 67 source files"; pytest 10933 passed, 9 skipped (no test added or removed; one pin moved).
+    2. `cd extension && npm run qa < /dev/null`. The manifest's version moved, so a build or manifest test may read it.
+  - `afq-pin.py` is not owed: neither fix touches the router's behaviour or the credit, only a docstring and a copy string.
+- Executor handoff (leg bx5, 2026-11-17T08:10+11:00 resume):
+  - Phase 1 is complete and gate-green, all four tasks 🟩, uncommitted on `a00685c`.
+    - 1.3 is DONE: the 4 new Check 2 tests (64 passed in `TestCheck2Contradictions`), the recorded reading, and the full gate at 10933 passed, 9 skipped.
+    - 1.4 is DONE: `afq-pin.py` exited 0 with `PIN differences total: 0` over 384 encounters (`.cursor/loops/afq-pin-1.txt`). That agrees with the product leaving out D1's row 4.
+  - This leg changed only the plan: Tasks 1.3 and 1.4, Overall Progress, Last completed step and this note. It ran no Python, made no commit or ref change, and the plan stays LF.
+  - Not yet run, and owed by later steps:
+    - Phase 1's reviews (Step H's H1–H4, over Phase 1 and V's whole diff against `22feec4`);
+    - the live smoke (P.3, the install smoke);
+    - Task 0.8's documents (D.2 and P.5);
+    - the copy wording (D.4).
+  - Uncommitted files: the plan; `desktop/src/scribe_desktop/note.py`, `ui/models.py`, `validation.py`; the tests `test_note.py`, `test_note_check.py`, `test_note_matrix.py`, `test_ui_models.py`, `test_ui_screens.py`, `test_validation_harness.py`, `test_validation_metrics.py`, `test_validation_scripts.py`; and the new `desktop/tests/fixtures/answer_hops.py`. The git-ignored `.cursor/loops/afq-pin.py` is not part of any commit.
+  - Next: the composer asks the practitioner whether to commit Phase 1 now as a checkpoint. Then Phase V (V.1, Step H) runs under stage-2 with a fresh executor.
+- Executor handoff (leg bx3, 2026-11-17T07:28+11:00 resume; written 2026-11-17T07:43+11:00):
+  - (a) Task 1.1 marked 🟩 DONE with the composer's counts (10899 passed, 9 skipped), the one held-out divergence `h5-17` `(5,)` → `(3, 5)` and its join, no matrix cell moved, the new tests, and the row-4 note (unreachable under V4; Task 1.4 checks it).
+  - (b) Task 1.2, what was built (no Python run by the executor; verify=composer):
+    - `ui/models.py`:
+      - `flagged_runs` is unchanged in behaviour. It now reads two private helpers: `_flagged_end` (the cut) and `_flagged_run_ranges` (one range per run, in anchor order, without repeats; their union is `flagged_runs`).
+      - New `_reply_turn`: the scratch's `replies_after` with `whole_turn=True`, line for line. A textless segment is passed over; the first text-bearing speaker must not be the confirmed clinician, and with none confirmed there is no reply; every wholly uncovered line of that speaker's turn is taken, a covered one is passed over, and a speaker change ends the turn.
+      - New `_added_only_clinician_lines`: the scratch's `manual_only_clinician_lines`, with the `m` test written as `assertion_id == manual_assertion_id(segment_index)` rather than the scratch's `startswith("m")`. The two agree on every note the app or the harness makes.
+      - New public `replies_after(note, document, *, added_questions=False)`: the ONE helper (D4).
+        - Questions only: a run counts when any piece is interrogative.
+        - The reply turn after each counting run.
+        - With `added_questions` (the chooser only), also the turn after an added interrogative question before the cut: the scratch's `+m`.
+      - `flagged_segments` = the anchors ∪ `flagged_runs` ∪ `replies_after(..., added_questions=True)`. `replies_after` is in `__all__`.
+      - Copy (both marked in a code comment as "the executor's wording, a draft until D.4"):
+        - the count line's parenthesis is now "(a line you said, an answer to a question you asked, or a side, negation, number, dose, name or medication someone said)";
+        - the `clinician_line_omitted` hint gains "(an answer to it is flagged too)" after "to find it".
+        - The short form in `SEPARATELY_ACKNOWLEDGED_NAMES` is unchanged: the plan names only the parenthesis and one hint clause.
+    - `validation.py`:
+      - `encounter_metrics(..., reply_credit=True)`: `replies = replies_after(note, document)` (no `+m`), its own third term in `word_info`'s `warned`, non-suspect only.
+        - The 0.3.4 walk reads that term too, so the run-only counts stay the joined run's alone.
+        - `credited_segments`, `credited` and the run-only counts are untouched.
+      - D5's second complete computation: `encounter_metrics(..., reply_credit=False)`, from the same note.
+        - It runs only with a `reference` reading and a credit that reached a segment (otherwise the two are equal), the same gating as the run-only counts. With its residue classes and exemptions, it is stored as `EncounterMetrics.without_reply_credit` (one level, the same facts; validated).
+        - It adds `segments_credited_by_reply_only` and `facts_credited_by_reply_only`. The second counts facts silently omitted without the credit and not with it.
+        - New public `without_reply_credit(outcome)`.
+      - The report:
+        - The residue section's new line, after the run-only line: "- Reply credit (the reply to a flagged question, metric amendment 2026-11-17, answers-follow-question D4, D5; the counts reported, read by no rule): segments credited by the reply only N, material facts credited by the reply only M, in E encounters. Verdict without the reply credit (every metric computed again without it): PASS|FAIL. Failing encounters: …; set-level: …."
+        - The line names no rule label, so the same outcomes print the same line under any rule.
+        - The heading and the table keep the verdict with the credit (rule v6's form), and no column is added. `_residue_section` takes the run's `errors`.
+      - The dated amendment sentence, appended to the shared amendments after the run credit's: "It also holds on the reply to a flagged line that holds a question (the other speaker's wholly uncovered lines through the turn that follows it, before the next-patient boundary), metric amendment 2026-11-17 (answers-follow-question D4, D5): a loosening decided after run 9 failed on this class."
+        - A set report adds: "The verdict without the reply credit, and what it alone credits, is the residue section's reply-credit line."
+      - No rule file changes.
+    - New tests:
+      - `test_validation_metrics.py` `TestReplyCredit`, beside `TestJoinedRunCredit`:
+        - the reply flagged and credited; a statement run credits none (QT); no warning, no credit; the whole turn (a covered line passed over, a speaker change ends it); the cut; the clinician's own next line is no reply; a suspect reply word is never credited;
+        - an added (or suggested: the same `manual_assertion_id`) question keeps its reply flagged but not credited, with and without the warning row. Without it, the reply is flagged with no warning behind it;
+        - Add then undo restores the mark; only a question in the note solely by an Add marks its reply (not a provider line, not both, not an added statement); no confirmed clinician;
+        - "Acknowledge all" unchanged; credit ⊆ `[flagged]` and `credited_segments == flagged_runs` over `SPLIT_CASES`;
+        - D5's second computation (the counts 1 / 1, equal to a direct `reply_credit=False` call, the verdict with it passing and without it failing on `silent_omission`); none where the credit reached nothing or there is no reference; its validation.
+      - `test_validation_harness.py`: a `_reply_line` helper and `test_the_reply_credit_line_sums_and_gives_the_verdict_without_it`.
+  - Every moved pin, each with its reason:
+    - Copy, the drafted wording (draft until D.4):
+      - `test_ui_models.py` `clinician_line_omitted`'s `clear_hint` (`:1524-1531`);
+      - `test_the_count_line_counts_and_names_the_lines_the_chooser_cannot_offer` (`:2097-2104`);
+      - `test_the_count_line_carries_the_suggestion_clause` (`:3072-3075`);
+      - `test_ui_screens.py` `test_a_flagged_line_is_marked_in_place_and_counted` (`:5805-5809`) and the replaced-line count label (`:5968-5970`).
+    - The report shape (the new sentence and the new residue line):
+      - `test_validation_harness.py` `_RUN_INFORMATION` gains the two sentences;
+      - the exact residue-section lists gain `_reply_line(...)` after `_run_only_line(...)`: `test_a_schema_2_report_names_both_verdicts_and_the_set_layer`, the rule-v3 `heldout-4` pin, the `heldout-5` rule-v5 pin and the `heldout-4` rule-v5 pin;
+      - `test_a_residue_section_with_nothing_measured_reads_dash`'s `tail[11]` is the new line, reading `-` and `FAIL` with its one failing outcome, and the boundary record moves to `tail[12]`.
+    - Not moved, on a static read:
+      - the legacy header's substring pins (`:2349-2360`): the new sentence follows them;
+      - the short-form pins (`:1529`, `:2273`);
+      - every `flagged_segments` exact pin: no fixture question there has a reply after it (`fixtures/joined_runs.py` holds no `?`; the screens' and suggestions' fixtures end on statements or end with the question). The composer's run is the check, and a moved one is a finding.
+  - Line endings: `ui/models.py`, `validation.py`, `test_validation_metrics.py`, `test_validation_harness.py` and `test_ui_screens.py` stay CRLF throughout. `test_ui_models.py` stays LF, as it already was (`git ls-files --eol`).
+  - Commands for the composer, in order (each from `C:\Recording clinic software`):
+    1. Narrow first: `cd desktop && ../.venv/Scripts/python.exe -m pytest -q -p no:cacheprovider tests/test_validation_metrics.py tests/test_validation_harness.py tests/test_ui_models.py tests/test_ui_screens.py tests/test_ui_suggestions.py tests/test_note_check.py < /dev/null`
+    2. Then the full gate: `cd desktop && ../.venv/Scripts/python.exe -m ruff check . < /dev/null && ../.venv/Scripts/python.exe -m mypy < /dev/null && ../.venv/Scripts/python.exe -m pytest -q -p no:cacheprovider < /dev/null`
+    - Expected:
+      - ruff "All checks passed!" and mypy "Success: no issues found in 67 source files".
+      - pytest about 10929 passed, 9 skipped: 10899 plus about 30 new, the `SPLIT_CASES` parametrisation adding one per case.
+      - Please paste every failing node id with its assertion lines.
+- Executor handoff (leg bx2, 2026-11-17T07:18+11:00 resume):
+  - The composer's leg bx1 run: ruff clean; mypy clean (67 files); pytest 1 failed, 10898 passed, 9 skipped (494 s). The one failure: `test_note_check.py::TestCheck1HedgeMark::test_the_held_out_unsure_lines[h5-17]`, got `(3, 5)` against the expectation `(5,)`. No correction divergence and no other fixture moved.
+  - Recorded as C3 says, the expectation unchanged: `h5-17: ((5,), (3, 5))` in `_PREDICTED_UNSURE_DIVERGENCES_BY_SET["heldout-5"]`, the count 10 → 11.
+  - The join that explains it, read from the code and `validation/heldout-5/h5-17.json`:
+    - segment 2, the clinician's "When did it start?", routes to History through the validation cue `did it start`;
+    - it is a question, and its one sentence routes there alone, so guard G passes and the window opens;
+    - segment 3, the patient's "Maybe a fortnight ago, maybe longer.", has no cue in either layer and is not a question, so it joins History;
+    - its "maybe" is a listed hedge, so Check 1 marks it.
+    This is Key Findings' predicted "`h5-17` (5,) → (3, 5)". It holds under V4gs as well, because the clinician's next cued question (segment 4) closes the window.
+  - Command for the composer: the full gate only, `cd desktop && ../.venv/Scripts/python.exe -m ruff check . < /dev/null && ../.venv/Scripts/python.exe -m mypy < /dev/null && ../.venv/Scripts/python.exe -m pytest -q -p no:cacheprovider < /dev/null`. Expected: ruff and mypy clean as before; pytest 10899 passed, 9 skipped.
+- Executor handoff (leg bx1, 2026-11-17T06:55+11:00 spawn; stage-1, Task 1.1 only):
+  - What was built (no Python run by the executor; verify=composer):
+    - `note.py`: `ExtractiveNoteProvider.generate_sections` gains branch (4), the answer hop, with V4gs fixed (unlimited reach, guard G, switch S); new private methods `_question_routes_alone` (G), `_opens_answer_window` (D1 (a) and (d), S's either-piece test, G over the pieces as one line), `_answer_is_clean` (D1 (c)); new module helper `_last_sentence_text` with `_SENTENCE_END_MARKS` (D2's cut: `.`, `?`, `!`, closing marks peeled, no abbreviation handling, as the scratch's `sentences`). The class docstring gains the hop's paragraph with its named residues. `_route`, `is_interrogative`, every frozen vocabulary and `provider_name` are unchanged.
+    - New `desktop/tests/fixtures/answer_hops.py`: 27 cases (`ANSWER_HOP_CASES`) — rows 1, 2, 3 and 5 both ways, G's refusals and both named limits, S's either-piece and the guard over both pieces, an unconfirmed clinician, the joined line closing the carry chain, and the first-reply "don't write this down" pinned as quoted.
+    - `test_note.py`: `TestAnswerHop` (the cases; both directions; residue (3); `_route` stays cue-only; D1 (d) on the window test itself; D3 field for field against a carried line, with reconstruction; the sentence cut).
+    - `test_note_matrix.py`: `ExtractiveCell.joins` (the hop registry), one declared cell `ex-answer-joined`, the lint `test_only_a_declared_join_follows_a_clinician_question` and `test_every_join_cell_is_registered`. No existing cell has a confirmed clinician's question, so none moves.
+    - `test_validation_scripts.py`: the third arm "or it is joined" (`_hop_joined_lines`: placed by the shipped provider under the validation config, no route of its own, not the bounded carry of the same speaker's cue-routed line).
+  - Finding for the composer (no behaviour change; recommendation: accept as built): under the chosen unlimited reach, D1's row 4 (one carried piece after a joined reply) can never fire. Every piece row 4 would carry also meets row 3: the same non-clinician speaker, who is the first reply's speaker; the same reply tests; the window still open; no budget. The scratch's row-4 branch is therefore unreachable for V4gs, and the product leaves it out, saying so in a comment and the docstring. A comma-split reply's second half and a correction after a reply are pinned as joined (`joins-a-reply-split-at-a-comma`, `joins-a-correction-after-a-reply`). Task 1.4's comparison against the scratch's V4gs checks the equality.
+  - Line endings: `note.py`, `test_note.py`, `test_note_matrix.py`, `test_validation_scripts.py` stay CRLF throughout (checked); the new fixture is LF (git normalises it).
+  - The held-out tables (`_PREDICTED_CORRECTION_DIVERGENCES_BY_SET` in `test_note.py`, `_PREDICTED_UNSURE_DIVERGENCES_BY_SET` in `test_note_check.py`) are NOT yet touched: their moved entries come from the composer's run (they read the real held-out scripts). Expected: a joined reply that opens with a correction marker becomes a "carried correction" in `_held_out_corrections`, and a joined hedged reply becomes an unsure line, so some `test_the_held_out_corrections[...]` / `test_the_held_out_unsure_lines[...]` cases and the two count tests may fail. Also possible: UI and note-level fixtures elsewhere that hold a confirmed clinician's cue-routed question followed by an uncued reply.
+  - Commands for the composer, in order (each from `C:\Recording clinic software`):
+    1. Narrow first: `cd desktop && ../.venv/Scripts/python.exe -m pytest -q -p no:cacheprovider tests/test_note.py tests/test_note_matrix.py tests/test_validation_scripts.py tests/test_note_check.py < /dev/null`
+    2. Then the full gate: `cd desktop && ../.venv/Scripts/python.exe -m ruff check . < /dev/null && ../.venv/Scripts/python.exe -m mypy < /dev/null && ../.venv/Scripts/python.exe -m pytest -q -p no:cacheprovider < /dev/null`
+    - Expected: ruff "All checks passed!"; mypy "Success: no issues found in 67 source files"; pytest about 10836 + about 70 new passed, 9 skipped, apart from any held-out or fixture failures above. Please paste every failing node id with its assertion lines (the `got` / `predicted` / `expected` values), so each moved entry can be recorded with its join.
 - Executor handoff (leg ax11, 2026-11-17T06:45+11:00 resume):
   - Recorded in leg ax11:
     - Task 0.6 DONE, with the composer's question and the practitioner's label verbatim, "Accept all three (Recommended)". The three reported residues are now accepted by name, beside the `h5-17` residue, the named real-speech override and AT's declined load.
@@ -371,6 +553,12 @@ Named now, and not this plan's to decide: if even the best harm-free form is not
 - 2026-11-17 round 10: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=records peer review (codex, Task 0.5); action=verified and applied, with a sibling sweep (one more stale 0.4b line; D8's first-reply check settled); CONVERGED
 - 2026-11-17 round 11: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=open-points peer review (codex, Task 0.5); action=none; the five open points reviewed
 - 2026-11-17 round 12: scoped /review-plan (Task 0.7); 7 adjustments (Coverage 5, Practicality 2) plus the NOT BUILT marking and sibling sweep; action=all applied in place; no MUST-PAUSE
+- 2026-11-17 round 13: 0 CRIT / 0 HIGH / 0 MED / 2 LOW; skew=none; action=both applied (H1 round 1, Phase 1 and V.1's diff against `22feec4`); gate green; CONVERGED
+- 2026-11-17 round 14: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=simplify (H2); action=none; seven candidates left alone by the conservatism guard
+- 2026-11-17 round 15: 0 CRIT / 0 HIGH / 2 MED / 0 LOW; skew=security-review (H3); action=both applied (a test pin, D.1's residue list, D.4's practitioner question); no product code changed; gate green (10935 passed, 9 skipped); H3 closed
+- 2026-11-17 round 16: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=build peer review (codex, H4 slice A `stage-2-h4a.p1`, peer round 1 of cap 5); action=none
+- 2026-11-17 round 17: 0 CRIT / 0 HIGH / 0 MED / 2 LOW; skew=build peer review (codex, H4 slice B `stage-2-h4b.p1`, peer round 1 of cap 5); action=both verified (regression, test-harness; no product defect) and applied in the fix leg cx4 (a fixture case and a test; no product code); gate green (10937 passed, 9 skipped)
+- 2026-11-17 round 18: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=build peer review (codex, H4 slice B confirmation `stage-2-h4b.p1`, peer round 2 of cap 5); action=none; round 17's two fixes confirmed; H4 CONVERGED
 
 ## Review Findings Log
 ### Round 1 — 2026-11-15
@@ -658,6 +846,209 @@ MUST-PAUSE: none surfaced. Every open item resolves within D1–D13 or is alread
 
 Findings: none beyond the seven adjustments above (Coverage 5, Practicality 2), all applied in place, plus the NOT BUILT marking and the sibling sweep.
 
+### Round 13 — 2026-11-17
+Round status: Closed
+Source: Claude Code (`/review-loop` round 1 of cap 3, Step H's H1, executor leg cx1, stage-2)
+Scope: Phase 1 and Task V.1's whole diff against `22feec4` (`git diff 22feec4 -- desktop extension CHANGELOG.md`, 16 files, plus the untracked `desktop/tests/fixtures/answer_hops.py`), read in full:
+- `note.py`'s hop (`generate_sections`, `_opens_answer_window`, `_question_routes_alone`, `_answer_is_clean`, `_last_sentence_text`);
+- `ui/models.py`'s `replies_after`, `_reply_turn`, `_added_only_clinician_lines`, `_flagged_run_ranges`, `_flagged_end`, `flagged_segments` and the two draft copy strings;
+- `validation.py`'s reply-credit term, D5's second computation, `without_reply_credit`, the residue line and the amendment sentence;
+- the new and moved tests, and the six version strings.
+
+Read against Task 0.6's state table and credit definition, D1–D5, the accepted residues and `docs/lessons.md`. What was checked, each holding:
+- The branch order is D1's: transparent first, then a cue route, the join (row 3), the existing carry, dropped. The join comes before the carry, and the two cannot both apply, since the carry needs the clinician and the join refuses the clinician.
+- A join, a carry and a drop each leave the window as D1 says. S's `cue_words` is always the line directly before, because the carry needs `prev_cued`.
+- G calls `layered_section` with `_route`'s arguments. `NoteUtterance.text` is `reconstruct_span_text(words)`, so G and `_route` read the same text.
+- Row 4 is subsumed at V4, as Task 1.1 records and Task 1.4 measured.
+- `replies_after` is QT as Task 0.6 defines it: any piece interrogative, the whole turn, a covered line passed over, a speaker change ends it, the cut. The `+m` case is in the chooser only.
+- Credit ⊆ `[flagged]` holds by construction, and `credited_segments` is unchanged.
+- D5's second computation:
+  - it reaches the 0.3.4 walk as its comment says;
+  - it recurses one level only;
+  - its reference reading is unaffected, because `facts_right` reads verdicts and the credit changes only `warned`;
+  - `facts_credited_by_reply_only` counts material facts only, since `silent_omission` requires `material`.
+- `run_passed` takes `errors=`.
+- Line endings are kept in every touched file (`git ls-files --eol`: no mixed file).
+- No test or document pins "0.3.6" beyond the six version fields. `test_install_layout.py:907-917` and `test_build_release.py:624-626` compare the fields with each other, not with a literal.
+
+- **[LOW]** LOW-001: the `clinician_line_omitted` hint's draft bracket "(an answer to it is flagged too)" is shown on every such warning, but under QT an answer is flagged only after a left-out QUESTION. On a left-out statement the hint claims a flag that is not there — Triage: Fix-now; Decision: Applied. It now reads "(if it was a question, its answer is flagged too)" (`ui/models.py` `WARNING_COPY`), with its one pin (`test_ui_models.py:1524-1530`). It stays a draft until D.4. No other pin holds the string (search). Applied by: Claude Code. /fix date: 2026-11-17.
+- **[LOW]** LOW-002: `ExtractiveNoteProvider`'s docstring credited all four of its named residues to Task 0.6. Only the first-reply "don't write this down" is Task 0.6's accepted residue (3). The bare "No." and learned-cue amplification are the Codebase Integration Notes' residues, and the "Dr." cut is D2's named limit of G — Triage: Fix-now; Decision: Applied. The docstring now names each one's source (`note.py`, docstring only). Applied by: Claude Code. /fix date: 2026-11-17.
+
+Fix-delta self-check: PASS. Re-read the two applied hunks in context: the copy string's concatenation still reads as one sentence, and the pin matches it byte for byte; the docstring edit is prose only. Verification is the composer's gate (verify=composer): the executor ran no Python.
+
+Verification (recorded in leg cx2): the composer's gate over both fixes was green (`.cursor/loops/stage-2-cx1-gate.txt`): ruff and mypy clean, pytest 10933 passed, 9 skipped, `npm run qa` clean. H1 is CONVERGED at this round.
+
+### Round 14 — 2026-11-17
+Round status: Closed
+Source: Claude Code simplify (Step H's H2, executor leg cx2, stage-2; `.claude/skills/simplify/SKILL.md`)
+Scope: the same surface as round 13 (Phase 1 and V.1's diff against `22feec4`, plus the untracked `desktop/tests/fixtures/answer_hops.py`), every in-scope file read in full. D1–D5, Task 0.6's state table and credit definition, C5 and D6's scratch-equality rule were read as fixed shapes. A simplification that moved the product from the scratch's behaviour (Task 1.4's 0 differences) would not have been applied.
+
+Simplifications found: none. No candidate is worth a maintainer's attention.
+
+Consciously left alone (the conservatism guard), each with its reason:
+- `flagged_segments` computes `covered_words` and the cut twice, through `flagged_runs` and `replies_after`. Merging the two saves one walk of the note per chooser refresh, a small cost, and would couple the chooser's two readers that D4 keeps apart. Marginal.
+- `_segment_line` is a one-line wrapper over `reconstruct_span_text` with two call sites. Taste only.
+- The two `window_key = key if self._opens_answer_window(...) else None` assignments in `generate_sections` could become one method returning the key or None. An equivalent idiom; marginal.
+- `segments_credited_by_reply_only = len(replies - credited)`. The two sets are disjoint by construction (a reply is never the confirmed clinician's, and every `flagged_runs` segment is). `len(replies)` would be equal, but the subtraction states the intent and survives a future change to either set. Left.
+- `_reply_turn`'s two loops (skip textless, then walk the turn) could be one loop with a state flag, which would be less legible. Left.
+- `_flagged_run_ranges`' `run not in runs` de-duplication over a list (quadratic in the run count, which is at most the segment count). It keeps the anchor order; no measurable cost. Left.
+- The two test helpers `_hop_joined` (`test_note.py`) and `_hop_joined_lines` (`test_validation_scripts.py`) answer different questions: the fixture's own cases, and the held-out scripts under the validation config with the bounded carry excluded. Not duplication.
+
+Summary: round 14, 0 findings (0 CRIT / 0 HIGH / 0 MED / 0 LOW), no change.
+
+### Round 15 — 2026-11-17
+Round status: Closed
+Source: Claude Code security-review (Step H's H3, executor leg cx2, stage-2; `.claude/skills/security-review/SKILL.md`, the portable checklist run in this session, no native subagent)
+Scope: the same surface as rounds 13–14, read against:
+- `docs/security/threat-model.md` Phase 3A surface 2 (`:477-754`: Check 4's two codes, NEXT PATIENT, THE TRIM, the bounded carry's CONTINUATION RESIDUE, THE CORRECTION CARRY, THE UNSURE MARK);
+- the "Phase 3B (coverage)" section (`:2166-2376`, ENFORCED and residues (s1)–(s5));
+- Step H's residue list: a wrong speaker label, a false question by its opening word, a next patient's reply where no boundary is found, a spoken instruction as a reply (accepted residue (3) included), a third speaker, learned-cue amplification and the `h5-17` suggestion-stage quote.
+
+Trust boundaries examined:
+- transcript text into the note (the hop places verbatim transcript lines only, the same `transcript` assertion, rebuilt by Check 1);
+- the ownership rule (a question never sits in a clinician-owned section, and `_opens_answer_window` refuses one anyway);
+- the next-patient cut (the request is cut before the provider, and `_flagged_end` is the same cut);
+- the reply flag (indices only; it adds nothing to the note and blocks nothing);
+- the harness credit (synthetic only).
+`validation/heldout/hld-17.json` was read, a synthetic script and not blind, to check how the unlimited reach meets a spoken instruction.
+
+#### SEC-001 (MED): a spoken instruction given as a LATER line of the reply turn is quoted, beyond accepted residue (3)
+- Severity: MED (no exploit path beyond what the clinician reviews; a scope-of-acceptance gap on patient-privacy content).
+- Where: `note.py` `ExtractiveNoteProvider.generate_sections`, the hop branch (4). With the unlimited reach (V4), every line of the reply speaker's turn joins while it meets D1 (c).
+- Why it matters:
+  - Task 0.6's accepted residue (3) names a "don't write this down" given as the FIRST reply, which D8 singled out as clean by absence. Under V4, the same instruction as a second or later line also joins whenever the first reply is uncued.
+  - `hld-17` line 2 escaped only because its first reply (line 1) is cue-routed, which closes the window (row 2).
+  - The practitioner's acceptance (2026-11-17) covered the first-reply case by name. The later-line case was neither pinned nor named.
+- Current behaviour: quoted, unpinned. Desired: behaviour unchanged (Task 0.6 fixed V4), pinned and named, with the practitioner's word on it.
+- Triage: Fix-now (pin and record; no behaviour change). Fix route: fix-on-fast.
+- /fix decision: Applied.
+- /fix notes:
+  - A new fixture case `joins-a-later-reply-dont-write-this-down` (`fixtures/answer_hops.py`: the question, "No, none at all.", then "And please don't write this down."; each reply word checked absent from the shipped cue file) and `TestAnswerHop.test_a_later_reply_dont_write_this_down_is_quoted`.
+  - `test_both_directions_are_exercised`'s joining set gains the case.
+  - `test_the_first_reply_dont_write_this_down_is_quoted` now selects its case by exact name: its `endswith` filter would have matched both cases and broken its one-element unpack.
+  - D.1's threat-model residue list names it, and D.4 asks the practitioner, with the recommendation to accept it as a named residue (the class of residue (3) and of the bounded carry's CONTINUATION RESIDUE). Declining needs a new dated guard decision with its own measurement (Task 0.6's "Decline (3)" route).
+  - Pattern siblings: the bounded carry and the correction carry already carry this class, named (CONTINUATION RESIDUE, THE CORRECTION CARRY); there is no other route into the note. Search: `generate_sections`' branches (1)–(4), the only placement code.
+- /fix date: 2026-11-17. Applied by: Claude Code.
+
+#### SEC-002 (MED): D.1's threat-model residue list omits five residues the hop and flag have as built
+- Severity: MED (a threat model that understates cross-patient and misattribution reach; documentation only).
+- Where: Task D.1, which listed "Task 0.6's four accepted residues, the bare 'No.', and learned-cue amplification".
+- Why it matters: H3's list names more, and each holds in the code:
+  - a wrong speaker label (D1 (a), (b) key on the label: a patient's question labelled as the clinician opens a window, and a clinician's line labelled as another speaker joins as a reply);
+  - a false question by its opening word (`is_interrogative`'s WH-opener and auxiliary-with-pronoun rules; G repeats them on the last sentence);
+  - a next patient's reply where no boundary is found (the request is cut only at a detected boundary, so a next patient's whole reply turn joins: wider than the bounded carry's one hop, NEXT PATIENT residue (a)). The reply flag's `_flagged_end` likewise stops only at a detected cut;
+  - a third speaker as the reply speaker (D1 (b); pinned `joins-another-speakers-reply`);
+  - the `h5-17` quote, recorded beside (s3).
+  Documents belong to Phase D, so `docs/` is not edited now.
+- Triage: Fix-now (plan record). /fix decision: Applied. D.1's bullet now lists each residue, and SEC-001's, with its source.
+- /fix date: 2026-11-17. Applied by: Claude Code.
+
+Checked and clean:
+- Injection and taint: no new sink. The hop quotes verbatim transcript words through `whole_utterance_assertion`, no model reads them, and no text leaves `replies_after` (indices only).
+- Ownership: a joined line never enters a clinician-owned section (`_opens_answer_window` refuses the key; a question never routes there), and the chooser still applies `admissible_sections`.
+- Next-patient cut: the provider's request is already cut, and `_flagged_end` reads the same `next_patient_segment`.
+- Secrets and logs: no logger or log call added, and no new field or persisted shape (D3). The tripwire signatures are unchanged.
+- Copy and write: a joined line is copied and written like any quoted line, under the same gates (shadow mode refuses both). Check marks stay out of copies.
+- Suspect words: the hop refuses a suspect question or reply (D1 (a), (c)), the harness credit skips suspect words, and the chooser may flag a suspect reply. Flagging adds nothing, and an Add goes through Check 1's marks.
+- Resource: `replies_after` is linear in the segments per run; `_flagged_run_ranges` is quadratic in the run count, bounded by the segment count; no unbounded allocation.
+- Dependencies and config: none changed. The frozen vocabularies, cue files, held-out sets and rules are unchanged.
+- Learned-cue amplification: named in the docstring and on D.1. The learners still test `spoken_by_confirmed_clinician` first (Task 1.3's reading), so a joined patient line teaches nothing.
+
+Summary: round 15, 0 CRIT / 0 HIGH / 2 MED / 0 LOW, both Fix-now and applied (a pin and two plan records); no product code changed. A recommendation that stands: the project's own security tests (`test_shadow_exits.py`, `test_integration_no_sockets.py`) run in the composer's full gate.
+
+Fix-delta self-check: PASS. Re-read the three test hunks in context:
+- The new fixture case's tuple is well-formed under ruff's 100-column limit.
+- The first-reply test's exact-name filter selects one case.
+- The new test expects segments {1, 2}: `_hop_joined` counts uncued, non-clinician placed lines, and both replies are such.
+- No product hunk was applied.
+
+Verification (recorded in leg cx3): the composer's gate over round 15's changes was green (`.cursor/loops/stage-2-cx2-gate.txt`): ruff "All checks passed!"; mypy "Success: no issues found in 67 source files"; pytest "10935 passed, 9 skipped in 477.93s (0:07:57)" (10933 plus the new fixture case and the new test, as expected); every return code 0. H3 is CLOSED at this round.
+
+### Round 16 — 2026-11-17
+Composer-recorded (transcribed in leg cx3): from `.cursor/loops/stage-2-peer-r16.log`, its last `### Round 16` header to its `PEER-ROUND-16 RESULT` line; pass id `stage-2-h4a.p1` (slice A, the three product files); peer round 1 of cap 5; slices A and B ran in parallel. Transcribed verbatim below.
+
+Source: Codex — codex gpt-6-astra medium — build peer review (stage-2-h4a.p1, slice A: product code)
+Status: Closed (0 pending)
+
+Scope:
+
+- job 1: checked the hop against Task 0.6 and scratch V4gs: guards, G, S, transparent lines, unlimited reach, cue precedence, speaker changes and carry closure match. `note.py:2406` sets `prev_cued = False` after a join; the existing carry remains one-hop. Scratch row 4 is subsumed by the unlimited clean-reply branch. No ordering defect or double placement found.
+- job 2: checked QT credit, chooser-only `m` replies and D5 recomputation. `ui/models.py:2886` tests questions across the run; `_reply_turn` passes covered lines and stops at speaker changes and the cut. `flagged_segments` includes `replies_after(..., added_questions=True)`, while the harness uses its default, preserving credit ⊆ `[flagged]`. `validation.py:2398` recursively recomputes metrics with `reply_credit=False`, including residue classes and exemptions; the report uses those outcomes and forwards set-level errors. No defect found.
+- job 3: checked empty/textless inputs, absent clinician, final replies, cuts within turns, suspect words, third speakers and quoted-line marks. Bounds checks prevent end-of-transcript indexing; request assembly excludes segments at the boundary (`note.py:1470`). Suspect replies close the hop window; harness credit excludes suspect words. Joined assertions retain full source coordinates and ordinary transcript provenance, preserving number/unsure mark inputs. Third-speaker behavior matches the specified rule. No new failure found.
+- job 4: checked all three product diffs against `22feec4`: existing frozen vocabularies, cues and interrogative rules are unchanged. No persisted note field, schema or provenance was added; the new metrics fields implement D5. Reviewed rounds 13–15 as prior findings, not proof; their addressed issues are not repeated.
+
+Findings: none.
+
+Verification: 5 files read (3 product files, specified plan sections, exact-path reference); 4 jobs evidenced. Static inspection only; no scripts, tests, network commands or writes performed.
+
+PEER-ROUND-16 RESULT: 0 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 0).
+
+### Round 17 — 2026-11-17
+Composer-recorded (transcribed in leg cx3): from `.cursor/loops/stage-2-peer-r17.log`, its last `### Round 17` header to its `PEER-ROUND-17 RESULT` line; pass id `stage-2-h4b.p1` (slice B, tests, fixture, version and CHANGELOG); peer round 1 of cap 5; slices A and B ran in parallel. Transcribed verbatim below; the executor's verification follows the result line.
+Round status: Closed (leg cx4 applied both findings; the peer's own `Status:` line below is as transcribed in leg cx3).
+
+Source: Codex — codex gpt-6-astra medium — build peer review (stage-2-h4b.p1, slice B: tests, fixture, version, changelog)
+Status: Open (2 pending)
+
+Scope:
+- job 1: checked the hop matrix and reply-credit tests against the state table. Main join/refusal, G, S, cut, whole-turn, covered-line, manual-Add and credit-subset cases are present; two failing-direction gaps remain below.
+- job 2: checked every moved expectation. `h5-17: ((5,), (3, 5))` and heldout-5’s 10 → 11 match Task 1.1’s recorded join. The reader still asserts `case.unsure == expected`; the frozen expectation was not edited away. UI changes are the recorded draft-copy changes.
+- job 3: checked fixture expectations, parameter lists, selectors, placement assertions and the third arm. No contradictory fixture expectation or tautological product assertion found. Exact-name selectors unpack one case; fixture-registry checks supplement actual product assertions.
+- job 4: checked all six version fields: 0.3.7. No stale literal 0.3.6 pin found in the reviewed test files. CHANGELOG distinguishes pre-build measurements from release status, retains shadow mode, states no run 10, and identifies copy as draft pending D.4. Measurements were not rerun.
+
+Findings:
+- **PR-LOW-020** (LOW, test coverage, `desktop/tests/fixtures/answer_hops.py:273`): Switch S lacks a negative case where its carried piece contains a suspect word. The single-piece suspect-question case cannot detect a regression that checks only the cue-routed piece when opening an S window. Evidence: `"s-the-cue-routed-piece-is-the-question"` expects `placed=((0, RED), (1, RED), (2, RED))`, without a suspect twin; the product contract says `"no piece holds a suspect word"` (`note.py:2325`). Recommendation: Fix-now — add a twin with a suspect word in the comma-carried piece, asserting that the piece remains carried but the patient’s reply does not join.
+
+- **PR-LOW-021** (LOW, test coverage, `desktop/tests/test_validation_metrics.py:1719`): The reply-credit coverage test exercises a fully quoted reply, but not a partly quoted reply. It therefore does not pin “wholly uncovered” against a regression that credits the uncovered remainder of a partly covered line. Evidence: `note = _note(document, 2, warnings=[_warning(*self._QUESTION_WARNING)])` followed by `assert replies_after(note, document) == frozenset({1, 3})`; the specification requires `"wholly uncovered, text-bearing lines"` (plan:1159). Recommendation: Fix-now — add partial coverage on reply segment 2 and assert that it receives no reply credit while the later uncovered reply remains credited.
+
+Verification:
+- 19 files read through scoped diffs or relevant sections, including the complete new fixture.
+- 4 jobs evidenced.
+- Static review only; no scripts, suites, network operations or writes performed.
+
+PEER-ROUND-17 RESULT: 2 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 2).
+
+Executor verification (leg cx3, verification-only: no `/fix`, no code or test changed). Each finding was read against `fixtures/answer_hops.py`, `test_note.py`, `test_validation_metrics.py`, `note.py` and `ui/models.py`, and the product was checked for how it behaves on each proposed test's input:
+- PR-LOW-020 — original: LOW, test coverage, Fix-now.
+  - `materiality=regression severity=LOW surface=test-harness rec=Fix-now (test-only, owed to the fix leg) — the twin's expectation holds on the product as built, so it is a missing regression guard, not a defect.`
+  - Evidence: the carry (branch (2), `note.py:2407-2433`) tests only the previous line's suspect state (`prev_clean`, set at `:2382`), so a suspect carried piece IS carried into RED. `_opens_answer_window` (`:2330`) then refuses on any suspect piece of `(cue_words, words)`, so `window_key` is None. The reply reaches branch (2) with `prev_cued` False and is dropped (3). The twin's `placed=((0, RED), (1, RED))` therefore passes today. The existing cases pin suspect state only on a single cue-routed question (`a-suspect-question-opens-nothing`) and on a reply (`a-suspect-reply-closes`); neither reaches `:2330` with a suspect second piece, so a regression that tested only `cue_words` would go unseen. The gap is real.
+  - /fix decision: Applied (leg cx4). /fix notes: `desktop/tests/fixtures/answer_hops.py` (LF kept) gains `s-a-suspect-carried-piece-opens-nothing` right after `s-the-cue-routed-piece-is-the-question`: the same three lines, `suspect=(1,)`, `placed=((0, RED), (1, RED))`. `TestAnswerHop.test_the_case_places_its_lines` parametrises it, so that is one more test. `test_both_directions_are_exercised`'s joining set is unchanged: the case joins nothing, because its only uncued placed line (1) is the clinician's, which `_hop_joined` excludes. No other reader counts the cases (search). The re-read before writing agrees with leg cx3's evidence. Product unchanged; verification is the composer's gate. Pattern siblings: none named. /fix date: 2026-11-17. /fix applied by: Claude Code.
+- PR-LOW-021 — original: LOW, test coverage, Fix-now.
+  - `materiality=regression severity=LOW surface=test-harness rec=Fix-now (test-only, owed to the fix leg) — a partly covered reply is passed over by `_reply_turn`'s `wholly_uncovered` test, so the proposed assertion holds on the product as built.`
+  - Evidence: `_reply_turn` (`ui/models.py:2824-2831`) adds a same-speaker, text-bearing segment only when `wholly_uncovered` (`note.py:1919-1925`: no word in `covered`), and walks on past one that is not. A reply with one covered word gets no credit, and a later uncovered line of the same turn stays credited. `test_the_whole_reply_turn_and_where_it_ends` (`test_validation_metrics.py:1707-1720`) quotes segment 2 wholly (`_note(document, 2, …)`), so a regression from "wholly uncovered" to "not wholly covered" would leave it green. `_note` takes any `Span`, so a partial span on segment 2 is expressible with the existing helpers. The gap is real.
+  - /fix decision: Applied (leg cx4). /fix notes: `desktop/tests/test_validation_metrics.py` (CRLF kept: 5111 lines, every one CRLF) gains `TestReplyCredit.test_a_partly_quoted_reply_is_passed_over`, right after `test_the_whole_reply_turn_and_where_it_ends`. The question, the reply, "not since tuesday." and "maybe once."; the note quotes only word 0 of segment 2 (`(2, 0, 0)`) under the question's `clinician_line_omitted`. The test asserts `replies_after == {1, 3}`: segment 2 is passed over, its uncovered remainder included, and the turn runs on to 3. It uses the existing helpers only. Product unchanged; verification is the composer's gate. Pattern siblings: none named. /fix date: 2026-11-17. /fix applied by: Claude Code.
+- No product defect: neither proposed test would fail on the current product, so neither is a MUST-PAUSE. Both are test additions for the fix leg (the two-leg peer shape's leg 2), after which the composer's gate and the next peer round re-check them.
+
+Fix-delta self-check: PASS. I re-read the 2 applied hunks across 2 test files:
+- The fixture case is well-formed and under 100 columns, and its name is unique among the cases.
+- The new test's span is a valid `Span` (`(segment, first, last)`, as `test_a_partly_covered_line_is_not_credited` uses).
+- The anchor run is segment 0 alone, since it ends with "?", and the question warning's words 0–4 match its five words.
+- No product, other test or frozen file was touched.
+
+Verification (recorded in leg cx5): the composer's gate over both fixes was green (`.cursor/loops/stage-2-cx4-gate.txt`): ruff "All checks passed!"; mypy "Success: no issues found in 67 source files"; pytest "10937 passed, 9 skipped in 498.91s (0:08:18)" (10935 plus the new fixture case and the new test, as expected); every return code 0.
+
+### Round 18 — 2026-11-17
+Composer-recorded (transcribed in leg cx5): from `.cursor/loops/stage-2-peer-r18.log`, its last `### Round 18` header to its `PEER-ROUND-18 RESULT` line; pass id `stage-2-h4b.p1` (slice B's confirmation of round 17's fixes); peer round 2 of cap 5. Transcribed verbatim below.
+
+Source: Codex — codex gpt-6-astra medium — build peer review (stage-2-h4b.p1, peer round 2: slice B confirmation)
+Status: Closed (0 pending)
+
+Scope:
+
+- job 1: checked PR-LOW-020 against the fixture, parametrised reader and S window. Confirmed fixed: `suspect=(1,)` marks the carried piece; the clean, comma-ended cue piece permits carrying it. S then checks `(cue_words, words)` and closes the window. Expected `placed=((0, RED), (1, RED))` is correct. Checking only the cue piece would join segment 2 and fail the exact placement assertion.
+- job 2: checked PR-LOW-021 against the span helper and reply-credit definition. Confirmed fixed: `(2, 0, 0)` quotes only “not” from “not since tuesday.” Segment 2 is partially covered and therefore receives no credit; the turn continues to segment 3. Expected `{1, 3}` is correct. Crediting the uncovered remainder would add segment 2 and fail the assertion.
+- job 3: checked the fix delta for weakened assertions, parametrisation, naming and registry compatibility. No new defect found. The fixture name is unique and automatically parametrised; its carried clinician line does not enter `_hop_joined`, so the joining registry remains correct. Exact assertions remain intact. Fixture LF and metrics-test CRLF are consistent; scoped `git diff --check` passed.
+
+Findings: none.
+
+Verification:
+
+- 6 files read, including the complete fixture and scoped plan sections.
+- 3 jobs evidenced.
+- Static review only; no tests, scripts, network operations or writes performed. Matrix lint was not executed.
+
+PEER-ROUND-18 RESULT: 0 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 0).
+
 ## Tasks
 
 ### Phase 0 — The simulation and the decision (no product change; C2)
@@ -926,7 +1317,15 @@ Findings: none beyond the seven adjustments above (Coverage 5, Practicality 2), 
 
 ### Phase 1 — The build (hardened 2026-11-17 at Task 0.7 for the improvement exit: V4gs under QT, Task 0.6)
 Phase 1 builds exactly Task 0.6's record: "The chosen form's state table" and "The credit definition". Those two blocks are the canonical specification and supersede D1's, D2's and D4's measured alternatives. Code-verified against HEAD `22feec4`, whose product tree equals Key Findings' `50a8a2b`. Every task ends with the composer's `ruff check . && mypy && pytest` in `desktop/` (C7; the executor runs no Python). Every changed expectation is listed in the task's record with its reason, and a predicted fixture divergence goes in its per-set table, never edited away (C3).
-- [ ] 🟥 **1.1 The answer hop in the router.**
+- [x] 🟩 **1.1 The answer hop in the router.** DONE 2026-11-17 (legs bx1–bx3). The composer's full gate at HEAD `a00685c` with the uncommitted edits: ruff "All checks passed!"; mypy "Success: no issues found in 67 source files"; pytest 10899 passed, 9 skipped (492.92 s; `.cursor/loops/stage-1-bx2-full.txt`). The baseline was 10836 passed, 9 skipped.
+  - Moved expectations, each with its reason:
+    - The one held-out divergence, recorded per C3 with the expectation unchanged: `h5-17` unsure `(5,)` → `(3, 5)` in `_PREDICTED_UNSURE_DIVERGENCES_BY_SET["heldout-5"]`, the count 10 → 11.
+      - The join: segment 2, the clinician's "When did it start?", routes to History by the validation cue `did it start`, and guard G passes, so the window opens.
+      - Segment 3, the patient's "Maybe a fortnight ago, maybe longer.", is uncued and not a question, so it joins. Its listed hedge "maybe" is then marked.
+      - Key Findings had predicted this.
+    - No correction divergence moved. No `EXTRACTIVE_CELLS` cell moved (none has a confirmed clinician's question). No other fixture moved.
+  - New tests: `TestAnswerHop` (27 fixture cases in `fixtures/answer_hops.py`, plus five single tests and nine sentence-cut cases); the matrix's `joins` registry with the cell `ex-answer-joined`, the lint `test_only_a_declared_join_follows_a_clinician_question` and `test_every_join_cell_is_registered`; and the third arm "or it is joined" in `test_validation_scripts.py`.
+  - Row 4 note: under the unlimited reach, D1's row 4 is unreachable, because row 3 takes every piece it would carry. The product leaves the branch out and says so. Task 1.4 checks equality with the scratch's V4gs.
   - Files:
     - `desktop/src/scribe_desktop/note.py`: `ExtractiveNoteProvider.generate_sections` (`:2243-2305`) and the class docstring (`:2172-2216`). The hop is a fourth branch beside (1) cue-routed, (2) the same-speaker carry and (3) dropped. It applies D1's five rows with the unlimited V4 budget, guard G and switch S exactly as Task 0.6's state table says. `_route`, `is_interrogative` and every frozen vocabulary stay unchanged (C3), and `provider_name` stays `extractive-v1` (Excluded).
     - New `desktop/tests/fixtures/answer_hops.py`: plain expectations, one case per D1 row and per G / S condition, each with its turns and the expected section per segment.
@@ -945,7 +1344,20 @@ Phase 1 builds exactly Task 0.6's record: "The chosen form's state table" and "T
     - The tables are `_PREDICTED_UNSURE_DIVERGENCES_BY_SET` (`test_note_check.py:2728`) and `_PREDICTED_CORRECTION_DIVERGENCES_BY_SET` (`test_note.py:3353`).
     - Each assertion the hop moves goes into its per-set table with the count line updated, as C3 says. Key Findings' "`h5-17` (5,) → (3, 5)" was predicted for the first-line rule, so the V4gs entries are whatever the suite shows, each explained by a join.
   - Done when: the composer's suite is green with every moved expectation listed with its reason.
-- [ ] 🟥 **1.2 The reply flag (chooser) and the reply credit (harness).**
+- [x] 🟩 **1.2 The reply flag (chooser) and the reply credit (harness).** DONE 2026-11-17 (legs bx3–bx4). The composer's gate at HEAD `a00685c` with the uncommitted edits:
+  - narrow run, 2289 passed;
+  - ruff "All checks passed!" and mypy "Success: no issues found in 67 source files";
+  - pytest 10929 passed, 9 skipped (497.92 s; `.cursor/loops/stage-1-bx3-full.txt`).
+  - No `flagged_segments` exact pin moved.
+  - Moved pins, each with its reason (the leg bx3 handoff has the list in full):
+    - The copy pins, for the executor's drafted wording (a draft until D.4):
+      - `test_ui_models.py`: the `clinician_line_omitted` hint and two count-line pins;
+      - `test_ui_screens.py`: two count-label pins.
+    - The report-shape pins, for the new amendment sentences and the residue section's reply-credit line:
+      - `test_validation_harness.py` `_RUN_INFORMATION`;
+      - five exact residue-section lists, the nothing-measured one among them (its boundary record moves to `tail[12]`).
+    - Not moved: the short-form pins and the legacy header's substring pins.
+  - One deviation from the scratch, recorded: the `m` test is `assertion_id == manual_assertion_id(segment_index)`, not the scratch's `startswith("m")`. The two agree on every note the app or the harness makes, and Task 1.4's comparison is the check.
   - Files:
     - `desktop/src/scribe_desktop/ui/models.py`:
       - a new `replies_after` beside `flagged_runs` (`:2744-2770`), the ONE helper both readers use (D4), implementing Task 0.6's credit definition (questions only, whole turn, before the next-patient cut);
@@ -965,7 +1377,25 @@ Phase 1 builds exactly Task 0.6's record: "The chosen form's state table" and "T
       - the copy pins and the report-shape pins move, and are listed;
       - the `flagged_segments` exact pins are expected to hold under questions only, and a moved one is a finding.
   - Done when: the composer's suite is green, every moved pin is listed with its reason, and the copy is marked "draft until D.4" in the code comment beside it.
-- [ ] 🟥 **1.3 Consumers.**
+- [x] 🟩 **1.3 Consumers.** DONE 2026-11-17 (legs bx4–bx5). No product code changed. The composer's runs at HEAD `a00685c` with the uncommitted edits:
+  - `pytest -q tests/test_note_check.py -k TestCheck2Contradictions`: 64 passed, 442 deselected, the 4 new tests among them;
+  - the full gate: ruff "All checks passed!", mypy "Success: no issues found in 67 source files", pytest 10933 passed, 9 skipped (484.66 s; `.cursor/loops/stage-1-bx4-full.txt`). That is 10929 plus the 4 new tests, with nothing else moving.
+  - Tests (`test_note_check.py` `TestCheck2Contradictions`, after `test_a_question_is_not_an_affirmation`). Each reply is placed by the shipped provider: its question routes to Red flags, the reply has no route of its own, and both land in Red flags.
+    - `test_a_joined_reply_that_names_what_it_negates_contradicts_at_error`, run with a pre-filled line and with a typed line. A joined "No numbness." against "Numbness reported." draws `contradiction` at error grade on the authored line, with the evidence on the reply's two words, `SourceCoords(1, 0, 1)`.
+    - `test_a_low_confidence_joined_reply_contradicts_at_review`: the same pair with "numbness." at probability 0.3 draws `contradiction_low_confidence` at review grade.
+    - `test_a_bare_no_beside_its_question_draws_no_contradiction`: a joined bare "No." draws no warning, pinned as the named residue.
+  - Recorded reading (leg bx4, from the code; no change needed). A joined line is an ordinary quoted line of a speaker who is not the confirmed clinician (D1 (b), D3), so each reader sees it like this:
+    - The two learners (`ui/note_review.py:300` for typed shorthand, `:391` for added or moved lines) test `spoken_by_confirmed_clinician` before anything else. Moving or retyping a joined line therefore teaches nothing and says "not attributed" (`LEARNING_NOT_ATTRIBUTED_NOTE`). The hop never places a clinician line, because its question was already cue-routed.
+    - `note_fill` (autofill's `_first_phrase_match`, prefill detection) and Check 6 (`note_check.next_patient_warnings`) read only the document, the config and the boundary, never the sections, so the hop cannot move them.
+    - `note_suggest` sees a joined line as a placed context line (`[placed: <key>]`, `note_suggest.py:19-20`), not an asked one, so it asks about fewer lines.
+    - The prose stage:
+      - A section that gains a joined line becomes other-voice (`note.section_other_voice`, `ProseInput.other_voice`, `prose_style.py:263-271`). It then gets Check 5's "Pt" frame and the prompt's `Speaker` line.
+      - `section_input_digest` (`note.py:1112`) folds that flag and the texts, so a rendering made before the join is no longer bound to it.
+    - `replay_kept.note_drift` (`replay_kept.py:325-368`) regenerates through `extractive_provider_from_config` and `check_note`, so a 0.3.7 replay joins too. Against a 0.3.6 replay of the same recording:
+      - `sections_missing` can fall;
+      - `reviews` can move either way (a reply's `high_risk_omission` goes once it is covered, and Check 1's marks on a joined line come);
+      - `clinician_lines_omitted` does not change, because no clinician line is joined.
+      - That drift is by design (Codebase Integration Notes).
   - Check 2 (`note_check.py` `_structured_quoted` `:1292-1316`, `contradiction` `:1319-1333`), tested in `test_note_check.py` `TestCheck2Contradictions` (`:417`):
     - a joined reply that names what it negates ("No numbness.") against a pre-filled or typed line draws error grade, and a low-confidence one review grade;
     - a bare "No." beside its question draws no contradiction, pinned as the named residue (Codebase Integration Notes).
@@ -976,7 +1406,24 @@ Phase 1 builds exactly Task 0.6's record: "The chosen form's state table" and "T
     - the prose frame (`prose_style.py:264-266`, "Pt", and `section_input_digest` changes);
     - `replay_kept.note_drift` (drift against 0.3.6).
   - Done when: the composer's suite is green and the reading is on this task.
-- [ ] 🟥 **1.4 Scratch against product, once** (D6; composer-run, minutes, no model).
+- [x] 🟩 **1.4 Scratch against product, once** (D6; composer-run, minutes, no model). DONE 2026-11-17 (script written in leg bx4, run by the composer, recorded in leg bx5). The count is 0.
+  - Command (repository root, at HEAD `a00685c` with Phase 1's uncommitted edits): `.venv/Scripts/python.exe .cursor/loops/afq-pin.py --docs C:/afq-sets/docs --config validation/config < /dev/null`. Exit 0 in 14 s; output `.cursor/loops/afq-pin-1.txt`.
+  - The product against the scratch's `V4gs` under credit QT (off), by population. Every row reads 0 sections, 0 credit and 0 flag differences, 0 skipped and 0 errors:
+
+    | Population | Encounters |
+    |---|---|
+    | cells (`EXTRACTIVE_CELLS`) | 18 |
+    | `scripts` text / docs | 50 / 50 |
+    | `heldout` text / docs | 22 / 22 |
+    | `heldout-2` text / docs | 22 / 22 |
+    | `heldout-3` text / docs | 23 / 23 |
+    | `heldout-4` text / docs | 22 / 22 |
+    | `heldout-5` text / docs | 22 / 22 |
+    | `heldout-6` text / docs | 22 / 22 |
+
+    That is 384 encounters (18 cells and 183 documents in each mode), then "(no difference)" and `PIN differences total: 0`.
+  - Row 4: the product leaves out D1's row 4 (Task 1.1's note), while the scratch's `HopProvider` keeps it. On all 384 encounters the two place every section the same, which agrees with Task 1.1's argument that row 3 takes every piece row 4 would carry. That argument is the general proof; this run is its measurement over the seen populations.
+  - The `m`-assertion deviation recorded on Task 1.2 does not arise here: off, no note holds an `m` line.
   - The executor writes `.cursor/loops/afq-pin.py`, git-ignored and synthetic only. It imports `afq_lib.py` without changing it (C5) and compares:
     - the product's sections against the scratch's `V4gs` sections, encounter by encounter, over the `EXTRACTIVE_CELLS` turns, the seven sets' reference documents, and the saved documents under `C:\afq-sets\docs` (off, no suggestions, no prose);
     - the product harness's reply credit against `afq_lib.credited(..., QT)`;
@@ -985,11 +1432,17 @@ Phase 1 builds exactly Task 0.6's record: "The chosen form's state table" and "T
   - Done when: the count is recorded here and is 0. Any difference is a finding against the scratch or the product (D6), disposed before Phase V.
 
 ### Phase V — Version and hardening
-- [ ] 🟥 **V.1 Version 0.3.7.** The six strings (Key Findings: `desktop/pyproject.toml:7`, `desktop/src/scribe_desktop/__init__.py:3`, `extension/package.json:4`, `extension/package-lock.json:3` and `:9`, `extension/src/manifest.ts:29`) and a `CHANGELOG.md` entry (CRLF kept, C8): the hop, the reply flag and credit, the improvement exit, shadow mode on, no run 10. Verification: the composer's desktop suite and `npm run qa` in `extension/`.
-- [ ] 🟥 **Step H: Hardening pass** over Phase 1 and V's whole diff against `22feec4`.
-  - [ ] 🟥 H1: `/review-loop` to convergence
-  - [ ] 🟥 H2: `/simplify` — log findings; trivial → `/fix`, substantial → scoped `/review-plan`
-  - [ ] 🟥 H3: `/security-review` — log findings; same routing. The residues to read are:
+- [x] 🟩 **V.1 Version 0.3.7.** DONE 2026-11-17 (leg cx1; gate recorded in leg cx2). The composer's gate (`.cursor/loops/stage-2-cx1-gate.txt`):
+  - ruff "All checks passed!" and mypy "Success: no issues found in 67 source files";
+  - pytest "10933 passed, 9 skipped in 478.73s (0:07:58)";
+  - `npm run qa` in `extension/`: typecheck and lint clean, vitest "Test Files 13 passed (13)" and "Tests 313 passed (313)", package `scribe-extension@0.3.7`;
+  - every return code 0.
+
+  Build record: The six fields read 0.3.7, each read before and after its edit; no test or document pins the literal (search; the 0.3.6 version commit's own `git log -S` was not run, since the leg's grants cover `git status` and `git diff` only). `CHANGELOG.md` gains the 0.3.7 entry at the top of Added (CRLF kept). The six strings (Key Findings: `desktop/pyproject.toml:7`, `desktop/src/scribe_desktop/__init__.py:3`, `extension/package.json:4`, `extension/package-lock.json:3` and `:9`, `extension/src/manifest.ts:29`) and a `CHANGELOG.md` entry (CRLF kept, C8): the hop, the reply flag and credit, the improvement exit, shadow mode on, no run 10. Verification: the composer's desktop suite and `npm run qa` in `extension/`.
+- [x] 🟩 **Step H: Hardening pass** over Phase 1 and V's whole diff against `22feec4`. DONE 2026-11-17 (legs cx1–cx5): H1 at round 13, H2 at round 14, H3 at round 15, H4 at rounds 16–18. The composer's last gate: ruff and mypy clean, pytest 10937 passed, 9 skipped (`.cursor/loops/stage-2-cx4-gate.txt`). With it, Phase V is DONE.
+  - [x] 🟩 H1: `/review-loop` to convergence. CONVERGED at round 13 (round 1 of cap 3, leg cx1): 0 CRIT / 0 HIGH / 0 MED / 2 LOW, both applied. The composer's gate was green over both fixes (V.1's record: ruff and mypy clean, pytest 10933 passed, 9 skipped, `npm run qa` clean).
+  - [x] 🟩 H2: `/simplify` — log findings; trivial → `/fix`, substantial → scoped `/review-plan`. DONE 2026-11-17 (leg cx2), round 14: 0 findings, seven candidates left alone by the conservatism guard, no change.
+  - [x] 🟩 H3: `/security-review` — log findings; same routing. DONE 2026-11-17: round 15 (leg cx2), 2 MED, both Fix-now and applied (SEC-001 a test pin plus D.4's practitioner question; SEC-002 D.1's residue list), no product code changed. The composer's gate was green over the new test (`.cursor/loops/stage-2-cx2-gate.txt`: ruff and mypy clean, pytest 10935 passed, 9 skipped). The residues read were:
     - a wrong speaker label;
     - a false question by its opening word;
     - a next patient's reply where no boundary is found;
@@ -997,7 +1450,11 @@ Phase 1 builds exactly Task 0.6's record: "The chosen form's state table" and "T
     - a third speaker;
     - learned-cue amplification;
     - the suggestion stage's indirect next-patient quote (`h5-17`).
-  - [ ] 🟥 H4: codex peer re-check, whole surface in slices (at most about 15 files a slice)
+  - [x] 🟩 H4: codex peer re-check, whole surface in slices (at most about 15 files a slice). CONVERGED 2026-11-17 (codex `gpt-6-astra` medium).
+    - Slice A (the three product files) converged at round 16 with 0 findings.
+    - Slice B (tests, fixture, version and CHANGELOG) found 2 LOW at round 17: PR-LOW-020 and PR-LOW-021, verified in leg cx3 as missing regression tests with no product defect.
+    - Both were applied in leg cx4 (a fixture case and a test), and the composer's gate was green at 10937 passed, 9 skipped.
+    - Slice B converged at round 18 (peer round 2 of cap 5) with 0 findings, both fixes confirmed.
 
 ### Phase M — The built rule measured (improvement exit)
 - [ ] 🟥 **M.1 The built rule replayed in the gate configuration.**
@@ -1019,7 +1476,15 @@ Phase 1 builds exactly Task 0.6's record: "The chosen form's state table" and "T
 ### Phase D — Documents
 Each document's line endings are kept (C8; check `git ls-files --eol` first). No document claims anything the code does not do.
 - [ ] 🟥 **D.1 Security and design documents.**
-  - `docs/security/threat-model.md`: Phase 3A surface 2 gains THE ANSWER HOP and THE REPLY FLAG, with every named residue: Task 0.6's four accepted residues, the bare "No.", and learned-cue amplification. The sentences the build makes false are restated (`:354-357`, `:531-534`, `:698-700`, `:712-720`, `:771-772`, the Check 4 text `:522-547`, surface 5's readers of a suspect word `:958-971`), re-located by search first, since the file changed after `50a8a2b`.
+  - `docs/security/threat-model.md`: Phase 3A surface 2 gains THE ANSWER HOP and THE REPLY FLAG, with every named residue: Task 0.6's four accepted residues, the bare "No.", and learned-cue amplification.
+    - Also the residues review round 15 (Step H's H3, SEC-001 and SEC-002) found in the code, each a consequence of D1 (b), D1 (a) and the unlimited reach as built:
+      - a spoken instruction given as a LATER line of the reply turn is quoted too, beyond residue (3)'s first reply (pinned `joins-a-later-reply-dont-write-this-down`; the practitioner's word at D.4);
+      - a wrong speaker label: a patient's cue-routed question labelled as the clinician opens a window and the real clinician's reply joins; a clinician's own uncued line labelled as another speaker joins as a "reply";
+      - a false question by its opening word (a WH-opener statement, or an auxiliary with a pronoun) opens a window when guard G's routing passes;
+      - where no next-patient boundary is found, a next patient's whole reply turn joins after the clinician's cued question. That is wider than the bounded carry's one hop (NEXT PATIENT residue (a)), and the reply flag likewise stops only at a detected cut;
+      - a third speaker (a carer, an interpreter) may be the reply speaker (D1 (b); only the first reply's speaker joins after that);
+      - the `h5-17` suggestion-stage quote, beside "Phase 3B (coverage)" residue (s3).
+    - The sentences the build makes false are restated (`:354-357`, `:531-534`, `:698-700`, `:712-720`, `:771-772`, the Check 4 text `:522-547`, surface 5's readers of a suspect word `:958-971`), re-located by search first, since the file changed after `50a8a2b`.
   - `docs/security/data-flow-map.md` flows 7, 10, 17, 26, 27 and 29.
   - `docs/design-system.md`: the flag's reach and the copy.
 - [ ] 🟥 **D.2 Testing documents.**
@@ -1038,6 +1503,7 @@ Each document's line endings are kept (C8; check `git ls-files --eol` first). No
 - [ ] 🟥 **D.4 Approvals and the documents' peer pass.**
   - The practitioner approves or rewords the count line's parenthesis and the hint clause (D5). Any rewording is applied in `ui/models.py` with its pins, and the composer's suite runs.
   - The practitioner approves the review guide's 0.3.7 lines before P.3.
+  - The practitioner's word on review round 15 SEC-001: a spoken instruction given as a LATER line of the reply turn is quoted. Recommended: accept it as a named residue, the class of residue (3) and of the bounded carry's CONTINUATION RESIDUE. The app honours no spoken instruction, the clinician reviews every note, and shadow mode stays on. Declining needs a new dated guard decision with its own measurement (Task 0.6's "Decline (3)" route).
   - Then the cross-family codex pass on D.1–D.3, the documents as their own slices, each claim checked against the code.
   - Done when: both approvals are recorded in the practitioner's words and the peer pass has converged.
 

@@ -5801,10 +5801,11 @@ class TestNoteScreenEdits:
         screen, _record = self._screen(config_root=tmp_path / "config")
         # Validation-run6 plan D1: the fixture's two unquoted clinician lines
         # (3, 5) are flagged from the start by Check 4's second code; the
-        # filter is never pre-ticked.
+        # filter is never pre-ticked. Answers-follow-question Task 1.2: the
+        # parenthesis names the reply too (the executor's draft until D.4).
         classes = (
-            "(a line you said, or a side, negation, number, dose, name or medication "
-            "someone said)."
+            "(a line you said, an answer to a question you asked, or a side, negation, "
+            "number, dose, name or medication someone said)."
         )
         assert not screen.flagged_only_checkbox.isChecked()
         assert not screen.flagged_count_label.isHidden()
@@ -5965,8 +5966,8 @@ class TestNoteScreenEdits:
         # Validation-run6 plan D1: the clinician's two unquoted lines (3, 5)
         # are flagged and offered too; only the typed-over line is named.
         assert screen.flagged_count_label.text() == (
-            "3 flagged lines are not in the note (a line you said, or a side, negation, "
-            "number, dose, name or medication someone said). "
+            "3 flagged lines are not in the note (a line you said, an answer to a question "
+            "you asked, or a side, negation, number, dose, name or medication someone said). "
             f"Line {_PLAN_INDEX + 1} is replaced or partly in the note - see its row below."
         )
         # The filter offers the other flagged lines only; never a duplicate Add.

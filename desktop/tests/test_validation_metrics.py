@@ -48,6 +48,7 @@ from scribe_desktop.note import (
     compose_draft,
     content_tokens,
     finalise_note,
+    manual_assertion_id,
     normalise_token,
     reconstruct_span_text,
     segment_hedged,
@@ -76,9 +77,13 @@ from scribe_desktop.transcription import (
 )
 from scribe_desktop.ui.models import (
     OMISSION_CODES,
+    SEPARATELY_ACKNOWLEDGED_CODES,
+    acknowledge_all_codes,
     flagged_runs,
     flagged_segments,
     next_patient_segment,
+    replies_after,
+    summarise_warnings,
 )
 from scribe_desktop.validation import (
     REFERENCE_HEDGES,
@@ -105,6 +110,7 @@ from scribe_desktop.validation import (
     run_passed,
     run_passed_v1,
     v1_failures,
+    without_reply_credit,
     word_errors,
 )
 
@@ -1616,6 +1622,338 @@ class TestJoinedRunCredit:
             EncounterMetrics(**values, facts=facts, facts_credited_by_run_only=2)
         # Segments are not facts: no such bound.
         assert EncounterMetrics(**values, facts=(), segments_credited_by_run_only=7)
+
+
+class TestReplyCredit:
+    """Metric amendment 2026-11-17 (answers-follow-question plan D4, D5,
+    Task 1.2; Task 0.6's QT): after a flagged run of the confirmed clinician
+    that holds a question, the other speaker's wholly uncovered lines through
+    the turn that follows, before the next-patient cut, are ``[flagged]``
+    and credited — ONE helper (``replies_after``) for the chooser and the
+    harness, the chooser alone also marking the reply to a question the
+    clinician added (``added_questions``). ``flagged_runs`` and
+    ``credited_segments`` are unchanged (``TestJoinedRunCredit``)."""
+
+    _QUESTION = "any numbness in your feet?"
+    _REPLY = "no none at all."
+    _QUESTION_WARNING = ("clinician_line_omitted", 0, 0, 4)
+    _STATEMENT = "rest the knee tonight."
+
+    def _script(self, first: str) -> EncounterScript:
+        """The clinician's ``first`` line (no mark), then the patient's
+        reply, whose "none at all" is the one material fact."""
+        return _script(
+            ("clinician", first),
+            ("patient", "no none at all"),
+            facts=[_fact("present", "none at all", 1)],
+        )
+
+    def _pair(self) -> TranscriptDocument:
+        return _doc((SPEAKER_1, self._QUESTION), (SPEAKER_2, self._REPLY))
+
+    def _pair_script(self) -> EncounterScript:
+        return self._script("any numbness in your feet")
+
+    def _added(
+        self, document: TranscriptDocument, segment: int, assertion_id: str
+    ) -> NoteAssertion:
+        """Segment ``segment`` as a whole line under ``assertion_id``."""
+        added = whole_utterance_assertion(
+            assertion_id,
+            "presenting_complaint",
+            segment_index=segment,
+            speaker=document.transcript_segments[segment].speaker,
+            words=document.transcript_segments[segment].transcript_words,
+        )
+        assert added is not None
+        return added
+
+    def test_the_reply_to_a_flagged_question_is_flagged_and_credited(self) -> None:
+        """The clinician's question (segment 0) is wholly uncovered under its
+        ``clinician_line_omitted``; the patient's reply (segment 1) is in no
+        section. The reply is ``[flagged]`` and its fact is warned: not a
+        silent omission. ``flagged_runs`` (and so ``credited_segments``)
+        still holds the question alone."""
+        document = self._pair()
+        note = _note(document, warnings=[_warning(*self._QUESTION_WARNING)])
+        assert replies_after(note, document) == frozenset({1})
+        assert flagged_segments(note, document) == frozenset({0, 1})
+        assert credited_segments(note, document) == flagged_runs(note, document) == {0}
+        fact = _only_fact(encounter_metrics(document, note, self._pair_script()))
+        assert (fact.verdict, fact.warned, fact.silent_omission) == ("omitted", True, False)
+        # The 0.3.3 and run-1 readings never see the reply credit.
+        assert (fact.silent_omission_v033, fact.silent_omission_v1) == (True, True)
+
+    def test_a_non_question_run_credits_no_reply(self) -> None:
+        """QT's "questions only": the flagged clinician line is a statement,
+        so the patient's line after it is neither flagged nor credited."""
+        document = _doc((SPEAKER_1, self._STATEMENT), (SPEAKER_2, self._REPLY))
+        note = _note(document, warnings=[_warning("clinician_line_omitted", 0, 0, 3)])
+        assert replies_after(note, document, added_questions=True) == frozenset()
+        assert flagged_segments(note, document) == frozenset({0})
+        script = self._script("rest the knee tonight")
+        fact = _only_fact(encounter_metrics(document, note, script))
+        assert (fact.warned, fact.silent_omission) == (False, True)
+
+    def test_a_question_with_no_warning_credits_no_reply(self) -> None:
+        """A reply is credited only while its clinician run carries the
+        warning: the same pair with no omission warning credits nothing."""
+        document = self._pair()
+        note = _note(document)
+        assert replies_after(note, document, added_questions=True) == frozenset()
+        fact = _only_fact(encounter_metrics(document, note, self._pair_script()))
+        assert (fact.warned, fact.silent_omission) == (False, True)
+
+    def test_the_whole_reply_turn_and_where_it_ends(self) -> None:
+        """Whole turn: the patient's lines run on through the turn — a line
+        the note quotes is passed over, never credited — and the clinician's
+        next line ends it; the patient's later line is another turn."""
+        document = _doc(
+            (SPEAKER_1, self._QUESTION),
+            (SPEAKER_2, self._REPLY),
+            (SPEAKER_2, "not since tuesday."),
+            (SPEAKER_2, "maybe once."),
+            (SPEAKER_1, "okay."),
+            (SPEAKER_2, "and my back."),
+        )
+        note = _note(document, 2, warnings=[_warning(*self._QUESTION_WARNING)])
+        assert replies_after(note, document) == frozenset({1, 3})
+
+    def test_a_partly_quoted_reply_is_passed_over(self) -> None:
+        """Wholly uncovered only (review round 17 PR-LOW-021): the note
+        quotes one word of segment 2 ("not"), so that line is not credited,
+        its uncovered remainder included, and the turn runs on to segment 3."""
+        document = _doc(
+            (SPEAKER_1, self._QUESTION),
+            (SPEAKER_2, self._REPLY),
+            (SPEAKER_2, "not since tuesday."),
+            (SPEAKER_2, "maybe once."),
+        )
+        note = _note(document, (2, 0, 0), warnings=[_warning(*self._QUESTION_WARNING)])
+        assert replies_after(note, document) == frozenset({1, 3})
+
+    def test_a_reply_at_or_past_the_next_patient_cut_is_never_credited(self) -> None:
+        """Before the cut only: Check 6's warning on segment 2 stops the
+        turn there."""
+        document = _doc(
+            (SPEAKER_1, self._QUESTION),
+            (SPEAKER_2, self._REPLY),
+            (SPEAKER_2, "good morning come on in"),
+        )
+        note = _note(
+            document,
+            warnings=[
+                _warning(*self._QUESTION_WARNING),
+                _warning("possible_next_patient", 2, 0, 4),
+            ],
+        )
+        assert replies_after(note, document) == frozenset({1})
+
+    def test_the_clinicians_own_next_line_is_no_reply(self) -> None:
+        """The turn after the question must be another speaker's: the
+        clinician going on is no reply."""
+        document = _doc((SPEAKER_1, self._QUESTION), (SPEAKER_1, self._STATEMENT))
+        note = _note(document, warnings=[_warning(*self._QUESTION_WARNING)])
+        assert replies_after(note, document, added_questions=True) == frozenset()
+
+    def test_a_suspect_reply_word_is_never_credited(self) -> None:
+        """The invented-text guard's invariant (D6): the reply is flagged,
+        but ``warned`` never counts a suspect word."""
+        document = _suspect(self._pair(), 1)
+        note = _note(document, warnings=[_warning(*self._QUESTION_WARNING)])
+        assert replies_after(note, document) == frozenset({1})
+        fact = _only_fact(encounter_metrics(document, note, self._pair_script()))
+        assert (fact.warned, fact.silent_omission) == (False, True)
+
+    @pytest.mark.parametrize("warned", [True, False])
+    def test_an_added_question_keeps_its_reply_flagged_but_never_credited(
+        self, warned: bool
+    ) -> None:
+        """The clinician's Add (or a suggestion the clinician accepts:
+        ``validation.suggestion_pass`` adds it under the same
+        ``manual_assertion_id``) puts the question in the note, so it is no
+        flagged run any more: the harness credits its reply no longer (no
+        ``+m``), while the chooser keeps the reply ``[flagged]``. Without
+        the warning row (``warned`` False) the reply is flagged with no
+        warning behind it — D4's named consequence; Save is not held back."""
+        document = self._pair()
+        warnings = [_warning(*self._QUESTION_WARNING)] if warned else []
+        note = _note(
+            document,
+            warnings=warnings,
+            authored=[self._added(document, 0, manual_assertion_id(0))],
+        )
+        assert replies_after(note, document) == frozenset()
+        assert replies_after(note, document, added_questions=True) == frozenset({1})
+        assert flagged_segments(note, document) == (
+            frozenset({0, 1}) if warned else frozenset({1})
+        )
+        fact = _only_fact(encounter_metrics(document, note, self._pair_script()))
+        assert (fact.warned, fact.silent_omission) == (False, True)
+
+    def test_an_add_then_undo_restores_the_mark(self) -> None:
+        """The reply's ``[flagged]`` mark through Add and undo: before (the
+        credit), after the Add (the added question's reply) and after the
+        undo (the credit again) — never lost on the way."""
+        document = self._pair()
+        warnings = [_warning(*self._QUESTION_WARNING)]
+        before = _note(document, warnings=warnings)
+        added = _note(
+            document,
+            warnings=warnings,
+            authored=[self._added(document, 0, manual_assertion_id(0))],
+        )
+        undone = _note(document, warnings=warnings)
+        assert [1 in flagged_segments(note, document) for note in (before, added, undone)] == [
+            True,
+            True,
+            True,
+        ]
+        assert [replies_after(note, document) for note in (before, added, undone)] == [
+            frozenset({1}),
+            frozenset(),
+            frozenset({1}),
+        ]
+
+    def test_only_a_question_in_the_note_solely_by_an_add_marks_its_reply(self) -> None:
+        """After a cue-routed question (a provider line) the reply is not
+        marked (D4's named consequence); nor after a question held by both an
+        added and a provider line, nor after an added statement."""
+        document = self._pair()
+        routed = _note(document, authored=[self._added(document, 0, "x0000")])
+        both = _note(
+            document,
+            authored=[
+                self._added(document, 0, "x0000"),
+                self._added(document, 0, manual_assertion_id(0)),
+            ],
+        )
+        statement = _doc((SPEAKER_1, self._STATEMENT), (SPEAKER_2, self._REPLY))
+        added_statement = _note(
+            statement, authored=[self._added(statement, 0, manual_assertion_id(0))]
+        )
+        assert replies_after(routed, document, added_questions=True) == frozenset()
+        assert replies_after(both, document, added_questions=True) == frozenset()
+        assert replies_after(added_statement, statement, added_questions=True) == frozenset()
+
+    def test_no_confirmed_clinician_flags_no_reply(self) -> None:
+        document = self._pair()
+        note = _note(document, warnings=[_warning(*self._QUESTION_WARNING)], clinician=None)
+        assert replies_after(note, document, added_questions=True) == frozenset()
+
+    def test_acknowledge_all_is_unchanged(self) -> None:
+        """The reply credit adds no warning and changes no code, so
+        "Acknowledge all" still leaves the omission warning to its own
+        row's Acknowledge."""
+        document = self._pair()
+        note = _note(document, warnings=[_warning(*self._QUESTION_WARNING)])
+        assert replies_after(note, document) == frozenset({1})
+        assert "clinician_line_omitted" in SEPARATELY_ACKNOWLEDGED_CODES
+        assert "clinician_line_omitted" not in acknowledge_all_codes(
+            summarise_warnings(note.note_warnings), ()
+        )
+
+    @pytest.mark.parametrize("case", SPLIT_CASES, ids=lambda case: case.name)
+    def test_the_credit_is_within_the_flagged_lines(self, case: SplitCase) -> None:
+        """Over the fixture matrix, each note from the real checker: the
+        harness's reply credit is within the ``[flagged]`` lines, and
+        ``credited_segments`` is still ``flagged_runs`` alone."""
+        note, document = case.note(), case.document()
+        assert replies_after(note, document) <= flagged_segments(note, document)
+        assert credited_segments(note, document) == flagged_runs(note, document)
+
+    def test_the_second_computation_without_the_reply_credit(self) -> None:
+        """D5: with a ``reference`` reading and a credit that reached a
+        segment, the metrics are computed again, completely, without it —
+        the fact silent there — and the difference counted: 1 segment and 1
+        material fact. The verdict with the credit passes; without it the
+        encounter fails on the silent omission."""
+        document = self._pair()
+        note = _note(document, warnings=[_warning(*self._QUESTION_WARNING)])
+        metrics = encounter_metrics(
+            document, note, self._pair_script(), reference=_RIGHT_ON_REFERENCE
+        )
+        plain = metrics.without_reply_credit
+        assert plain is not None and plain.without_reply_credit is None
+        assert plain == encounter_metrics(
+            document, note, self._pair_script(), reference=_RIGHT_ON_REFERENCE, reply_credit=False
+        )
+        assert (_only_fact(metrics).silent_omission, _only_fact(plain).silent_omission) == (
+            False,
+            True,
+        )
+        assert (
+            metrics.segments_credited_by_reply_only,
+            metrics.facts_credited_by_reply_only,
+        ) == (1, 1)
+        outcome = _measured(metrics)
+        assert rule_failures(OPTION_A, outcome) == ()
+        assert rule_failures(OPTION_A, without_reply_credit(outcome)) == ("silent_omission",)
+
+    def test_no_second_computation_where_the_credit_reached_nothing(self) -> None:
+        """No reply credited (a statement run), or no ``reference`` reading:
+        no second computation, both counts 0, and the outcome is its own
+        "without" reading."""
+        statement = _doc((SPEAKER_1, self._STATEMENT), (SPEAKER_2, self._REPLY))
+        unreached = encounter_metrics(
+            statement,
+            _note(statement, warnings=[_warning("clinician_line_omitted", 0, 0, 3)]),
+            self._script("rest the knee tonight"),
+            reference=_RIGHT_ON_REFERENCE,
+        )
+        document = self._pair()
+        bare = encounter_metrics(
+            document,
+            _note(document, warnings=[_warning(*self._QUESTION_WARNING)]),
+            self._pair_script(),
+        )
+        for metrics in (unreached, bare):
+            assert metrics.without_reply_credit is None
+            assert (
+                metrics.segments_credited_by_reply_only,
+                metrics.facts_credited_by_reply_only,
+            ) == (0, 0)
+            outcome = _measured(metrics)
+            assert without_reply_credit(outcome) is outcome
+
+    def test_the_second_computation_is_validated(self) -> None:
+        """One level only, over the same facts; the reply-only counts are
+        validated counts within the material facts."""
+        fact = FactOutcome(
+            fact_index=0,
+            kind="present",
+            material=True,
+            verdict="omitted",
+            warned=True,
+            uncertainty_surfaced=None,
+            not_transcribed=False,
+            ambiguous=False,
+        )
+        values: dict[str, Any] = {
+            "words": WordErrors(1, 1, 0),
+            "spelling_normalised_words": 0,
+            "transcript_lines": 0,
+            "config_lines": 0,
+            "unsupported_clinical_lines": 0,
+            "other_unsupported_words": 0,
+            "checker_tally": (),
+            "checker_failures": (),
+            "checker_failure_count": 0,
+            "expected_warnings_absent": (),
+            "facts": (fact,),
+        }
+        plain = EncounterMetrics(**values)
+        assert EncounterMetrics(**values, without_reply_credit=plain).without_reply_credit == plain
+        nested = EncounterMetrics(**values, without_reply_credit=plain)
+        with pytest.raises(ValueError, match="not nested"):
+            EncounterMetrics(**values, without_reply_credit=nested)
+        with pytest.raises(ValueError, match="the same facts"):
+            EncounterMetrics(**{**values, "facts": ()}, without_reply_credit=plain)
+        for name in ("segments_credited_by_reply_only", "facts_credited_by_reply_only"):
+            with pytest.raises(ValueError, match=f"{name} must be a non-negative count"):
+                EncounterMetrics(**values, **{name: -1})
+        with pytest.raises(ValueError, match="facts_credited_by_reply_only exceeds"):
+            EncounterMetrics(**values, facts_credited_by_reply_only=2)
 
 
 def _covered(note: GeneratedNote) -> set[tuple[int, int]]:

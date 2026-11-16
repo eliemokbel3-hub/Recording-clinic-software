@@ -92,9 +92,11 @@ from scribe_desktop.note import (
     check_mark,
     compose_draft,
     covered_words,
+    is_interrogative,
     is_prefilled,
     joined_run,
     line_marks_by_assertion,
+    manual_assertion_id,
     note_input_digest,
     provenance_label,
     quoted_line_marks,
@@ -203,6 +205,7 @@ from scribe_desktop.transcription import (
     read_transcript,
     recover_session_transcription,
     resolve_whisper_model,
+    segment_has_text,
     transcribe_session,
     whisper_model_available,
     words_hold_suspect,
@@ -2300,12 +2303,16 @@ WARNING_COPY: Final[Mapping[str, WarningCopy]] = {
     # confirmed clinician said is in no section — no cue routed it and it holds
     # no word ``high_risk_omission`` flags (advice, a plan, safety-netting).
     # Its line is marked ``[flagged]`` in the chooser like the first code's, and
-    # only this row's own Acknowledge clears it.
+    # only this row's own Acknowledge clears it. Answers-follow-question plan
+    # D4/D5 (Task 1.2): the hint's bracket points to the reply flagged after a
+    # left-out question (``replies_after``) — the executor's wording, a draft
+    # until D.4 (the practitioner's wording replaces it, with its pins).
     "clinician_line_omitted": WarningCopy(
         "A line you said is not in the note",
         None,
         "Check the transcript beside the note, tick 'Show flagged or suggested lines only' "
-        "to find it, add it with Add line to section if it belongs, then acknowledge.",
+        "to find it (if it was a question, its answer is flagged too), add it with Add line "
+        "to section if it belongs, then acknowledge.",
     ),
     # Note-learning plan Task 4.2 (D6, C8): the prose the language model
     # wrote for a section did not pass the fidelity check, so that section is
@@ -2755,19 +2762,143 @@ def flagged_runs(note: GeneratedNote, document: TranscriptDocument) -> frozenset
     ``[0, end)`` — negative, at or past the cut, past the segment count — adds
     no run and raises nothing; ``flagged_segments`` keeps it as its own mark,
     as 0.3.4 did (review round 15 PR-LOW-001)."""
-    segments = document.transcript_segments
-    cut = next_patient_segment(note.note_warnings)
-    end = len(segments) if cut is None else min(cut, len(segments))
     covered = covered_words(note, document)
-    runs: set[int] = set()
-    for anchor in omission_anchors(note.note_warnings):
+    runs = _flagged_run_ranges(note, document, covered=covered, end=_flagged_end(note, document))
+    return frozenset(index for run in runs for index in run)
+
+
+def _flagged_end(note: GeneratedNote, document: TranscriptDocument) -> int:
+    """Where ``flagged_runs`` and ``replies_after`` stop: the next-patient
+    cut (``next_patient_segment``), or the segment count."""
+    count = len(document.transcript_segments)
+    cut = next_patient_segment(note.note_warnings)
+    return count if cut is None else min(cut, count)
+
+
+def _flagged_run_ranges(
+    note: GeneratedNote,
+    document: TranscriptDocument,
+    *,
+    covered: frozenset[tuple[int, int]],
+    end: int,
+) -> tuple[range, ...]:
+    """``flagged_runs``' runs, one range each, in anchor order without
+    repeats: their union IS ``flagged_runs``."""
+    segments = document.transcript_segments
+    runs: list[range] = []
+    for anchor in sorted(omission_anchors(note.note_warnings)):
         if (
             0 <= anchor < end
             and spoken_by_confirmed_clinician(segments[anchor].speaker, note.clinician_speaker)
             and wholly_uncovered(document, anchor, covered)
         ):
-            runs.update(joined_run(document, anchor, covered=covered, end=end))
-    return frozenset(runs)
+            run = joined_run(document, anchor, covered=covered, end=end)
+            if run not in runs:
+                runs.append(run)
+    return tuple(runs)
+
+
+def _reply_turn(
+    document: TranscriptDocument,
+    after: int,
+    *,
+    clinician: str | None,
+    covered: frozenset[tuple[int, int]],
+    end: int,
+) -> frozenset[int]:
+    """The reply turn from segment ``after`` on, before ``end``: the first
+    text-bearing segment's speaker, unless it is the confirmed clinician (or
+    none is confirmed), and every wholly uncovered segment of that speaker's
+    turn. A textless segment is passed over, a covered one is passed over
+    without being taken, and a speaker change ends the turn."""
+    segments = document.transcript_segments
+    index = after
+    while index < end and not segment_has_text(segments[index]):
+        index += 1
+    if index >= end:
+        return frozenset()
+    speaker = segments[index].speaker
+    if clinician is None or spoken_by_confirmed_clinician(speaker, clinician):
+        return frozenset()
+    turn: set[int] = set()
+    while index < end:
+        segment = segments[index]
+        if segment_has_text(segment):
+            if segment.speaker != speaker:
+                break
+            if wholly_uncovered(document, index, covered):
+                turn.add(index)
+        index += 1
+    return frozenset(turn)
+
+
+def _added_only_clinician_lines(note: GeneratedNote, document: TranscriptDocument) -> list[int]:
+    """The confirmed clinician's segments that are in the note SOLELY
+    through the clinician's own Add: a ``transcript`` assertion with the
+    segment's ``manual_assertion_id``, and no other ``transcript`` assertion
+    on that segment."""
+    added: set[int] = set()
+    other: set[int] = set()
+    for section in note.note_sections:
+        for assertion in section.note_assertions:
+            coords = assertion.note_span.source_coords
+            if assertion.provenance != "transcript" or coords is None:
+                continue
+            index = coords.segment_index
+            (added if assertion.assertion_id == manual_assertion_id(index) else other).add(index)
+    segments = document.transcript_segments
+    return sorted(
+        index
+        for index in added - other
+        if 0 <= index < len(segments)
+        and spoken_by_confirmed_clinician(segments[index].speaker, note.clinician_speaker)
+    )
+
+
+def replies_after(
+    note: GeneratedNote, document: TranscriptDocument, *, added_questions: bool = False
+) -> frozenset[int]:
+    """The reply credit (answers-follow-question plan D4, as Task 0.6
+    defined it on 2026-11-17: questions only, whole turn): after each run of
+    ``flagged_runs`` that holds a question (any piece passing
+    ``is_interrogative``), the wholly uncovered, text-bearing lines of the
+    one speaker other than the confirmed clinician who speaks next, through
+    that speaker's turn (``_reply_turn``), before the next-patient cut. A
+    reply is credited only while its clinician run still carries the
+    warning. ONE helper for the chooser (``flagged_segments``) and the
+    validation harness's ``warned`` (``validation.encounter_metrics``), so
+    the credit is a subset of the ``[flagged]`` lines by construction.
+
+    ``added_questions`` (the chooser's mark only; the harness never passes
+    it): also the reply turn after a confirmed-clinician question that is
+    in the note solely through the clinician's own Add
+    (``_added_only_clinician_lines``), so the reply stays marked once its
+    question is added by hand. Named consequences (D4): a reply can be
+    ``[flagged]`` with no warning row behind it (Save is not held back), and
+    after a cue-routed question a refused reply is unmarked while after an
+    added one it is marked. Returns indices; no text leaves it."""
+    segments = document.transcript_segments
+    end = _flagged_end(note, document)
+    covered = covered_words(note, document)
+    clinician = note.clinician_speaker
+    replies: set[int] = set()
+    for run in _flagged_run_ranges(note, document, covered=covered, end=end):
+        if any(is_interrogative(_segment_line(segments[k])) for k in run):
+            replies |= _reply_turn(
+                document, run.stop, clinician=clinician, covered=covered, end=end
+            )
+    if added_questions:
+        for index in _added_only_clinician_lines(note, document):
+            if index < end and is_interrogative(_segment_line(segments[index])):
+                replies |= _reply_turn(
+                    document, index + 1, clinician=clinician, covered=covered, end=end
+                )
+    return frozenset(replies)
+
+
+def _segment_line(segment: TranscriptSegment) -> str:
+    """A segment's line as Check 1 rebuilds it (``reconstruct_span_text``)."""
+    return reconstruct_span_text(segment.transcript_words)
 
 
 def flagged_segments(note: GeneratedNote, document: TranscriptDocument) -> frozenset[int]:
@@ -2780,8 +2911,15 @@ def flagged_segments(note: GeneratedNote, document: TranscriptDocument) -> froze
     draws ONE ``clinician_line_omitted`` and still has every piece marked,
     and no line 0.3.4 marked loses its mark (C4). A patient's
     ``high_risk_omission``, a partly covered anchor or an anchor at or past
-    the cut marks its own segment only, as before."""
-    return omission_anchors(note.note_warnings) | flagged_runs(note, document)
+    the cut marks its own segment only, as before. Since the
+    answers-follow-question plan's D4 (Task 1.2), also the reply to a
+    left-out question and to an added one (``replies_after`` with
+    ``added_questions``)."""
+    return (
+        omission_anchors(note.note_warnings)
+        | flagged_runs(note, document)
+        | replies_after(note, document, added_questions=True)
+    )
 
 
 def next_patient_segment(warnings: Sequence[NoteWarning]) -> int | None:
@@ -2896,7 +3034,9 @@ def flagged_count_line(
 ) -> str:
     """The Note tab's count line (D4): how many flagged transcript lines the
     note leaves out — a line the clinician said, or a flagged word anyone said
-    (Check 4's two codes, validation-run6 plan D1) — and, by transcript line
+    (Check 4's two codes, validation-run6 plan D1), and since the
+    answers-follow-question plan's D4 the answer to a question the clinician
+    asked (``replies_after``) — and, by transcript line
     number, each flagged line the chooser does NOT offer (replaced by a typed
     line, or only partly in the note; PR-MED-001), which is found on its row
     in the line editor instead. Note-content-design D6 (Task C.3) adds the
@@ -2906,10 +3046,14 @@ def flagged_count_line(
     parts: list[str] = []
     if flagged:
         count = len(flagged)
+        # Answers-follow-question plan D5 (Task 1.2): the parenthesis also
+        # names the reply flagged after a question (``replies_after``) — the
+        # executor's wording, a draft until D.4 (the practitioner's wording
+        # replaces it, with its pins).
         text = (
             f"{count} flagged {'line is' if count == 1 else 'lines are'} not in the note (a "
-            "line you said, or a side, negation, number, dose, name or medication someone "
-            "said)."
+            "line you said, an answer to a question you asked, or a side, negation, number, "
+            "dose, name or medication someone said)."
         )
         elsewhere = sorted(index + 1 for index in flagged if index not in offered)
         if elsewhere:
@@ -5184,6 +5328,7 @@ __all__ = [
     "remove_tail_failed_line",
     "remove_tail_label",
     "remove_tail_question",
+    "replies_after",
     "provenance_label",
     "render_note_sections",
     "render_proposal",

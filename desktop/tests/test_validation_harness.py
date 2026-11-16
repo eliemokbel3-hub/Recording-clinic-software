@@ -2101,6 +2101,26 @@ def _run_only_line(segments: str, facts: str) -> str:
     )
 
 
+def _reply_line(
+    segments: str,
+    facts: str,
+    encounters: str,
+    verdict: str,
+    failing: str = "none",
+    set_level: str = "none",
+) -> str:
+    """The residue section's reply-credit line (answers-follow-question D5):
+    what the reply credit alone credits and the verdict without it."""
+    return (
+        "- Reply credit (the reply to a flagged question, metric amendment 2026-11-17, "
+        "answers-follow-question D4, D5; the counts reported, read by no rule): segments "
+        f"credited by the reply only {segments}, material facts credited by the reply only "
+        f"{facts}, in {encounters} encounters. Verdict without the reply credit (every "
+        f"metric computed again without it): {verdict}. Failing encounters: {failing}; "
+        f"set-level: {set_level}."
+    )
+
+
 def _residue_outcomes() -> list[EncounterOutcome]:
     """``syn-001``: one R1 fact (a material wrong one); ``syn-002``: a
     correct fact and one R3 fact on a next-patient script whose reference
@@ -2522,6 +2542,8 @@ class TestReport:
             "- Surfaced / expected: 0 / 0 (required in this set).",
             "- clinician_line_omitted per measured encounter: total 5, median 2.5, maximum 3.",
             _run_only_line("0", "0"),
+            # Answers-follow-question D5 (Task 1.2): the reply-credit line.
+            _reply_line("0", "0", "0", "PASS"),
             "- Reference boundary on the script's own words, every next-patient script the "
             "run read, measured or role unresolved (id: reference boundary, tail start): "
             "syn-002: none, 4. Mismatches (a reference boundary that is neither none nor "
@@ -2564,9 +2586,13 @@ class TestReport:
             "- clinician_line_omitted per measured encounter: total -, median -, maximum -."
         )
         assert tail[10] == _run_only_line("-", "-")
+        # Answers-follow-question D5 (Task 1.2): the reply-credit line reads
+        # ``-`` too; the run fails either way (nothing measured passes).
+        failing = "syn-001 (harness_error)" if status == "error" else "syn-001 (role_unresolved)"
+        assert tail[11] == _reply_line("-", "-", "-", "FAIL", failing)
         # D14's record still lists a role-unresolved next-patient script.
         expected = "syn-001: none, 4" if status == "role_unresolved" else "tail start): none"
-        assert expected in tail[11]
+        assert expected in tail[12]
 
     def test_the_run_only_credit_is_summed_over_the_measured_encounters(self) -> None:
         """Validation-run7 D1 (Task 1.3): the residue section's one line sums
@@ -2596,6 +2622,46 @@ class TestReport:
         assert [validation.rule_failures(_rule_v2(), o, set_name="heldout") for o in outcomes] == [
             validation.rule_failures(_rule_v2(), o, set_name="heldout") for o in plain
         ]
+
+    def test_the_reply_credit_line_sums_and_gives_the_verdict_without_it(self) -> None:
+        """Answers-follow-question D5 (Task 1.2): the reply-credit line sums
+        each measured encounter's two counts and the encounters the credit
+        reached, and gives the verdict on the second computation without the
+        credit — here ``syn-001``'s reply fact, warned with it, is a silent
+        omission without it. The heading's verdict is the one WITH the credit
+        (rule v6's form: no column, no second heading verdict)."""
+        plain_metrics = _metrics_of(_fact_outcome(verdict="omitted"))
+        outcomes = [
+            _measured_outcome(
+                "syn-001",
+                _fact_outcome(verdict="omitted", warned=True),
+                segments_credited_by_reply_only=2,
+                facts_credited_by_reply_only=1,
+                without_reply_credit=plain_metrics,
+            ),
+            _measured_outcome("syn-002", _fact_outcome()),
+            EncounterOutcome("syn-003", "error", "OSError"),
+        ]
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        lines = render_report(outcomes, _rule_v2(), info, set_name="heldout").splitlines()
+        assert (
+            _reply_line(
+                "2", "1", "1", "FAIL", "syn-001 (silent_omission); syn-003 (harness_error)"
+            )
+            in lines
+        )
+        # syn-003's error fails the run either way; without it the verdict
+        # with the credit passes and the one without it fails.
+        measured = outcomes[:2]
+        assert validation.run_passed(_rule_v2(), measured, set_name="heldout")
+        assert not validation.run_passed(
+            _rule_v2(),
+            [validation.without_reply_credit(o) for o in measured],
+            set_name="heldout",
+        )
+        assert render_report(measured, _rule_v2(), info, set_name="heldout").splitlines()[0] == (
+            "## Validation run - rule `rule-v2-test` - set `heldout` - rule v2 PASS, rule v1 PASS"
+        )
 
     def test_the_reference_boundary_record_covers_every_script_the_run_read(self) -> None:
         """D14's recorded check: a role-unresolved next-patient encounter keeps
@@ -3048,6 +3114,8 @@ class TestReport:
             "- Surfaced / expected: 0 / 0 (reported, not required, in this set).",
             "- clinician_line_omitted per measured encounter: total 3, median 1.5, maximum 2.",
             _run_only_line("3", "0"),
+            # Answers-follow-question D5 (Task 1.2): the reply-credit line.
+            _reply_line("0", "0", "0", "PASS"),
             "- Reference boundary on the script's own words, every next-patient script the "
             "run read, measured or role unresolved (id: reference boundary, tail start): "
             "syn-001: 5, 5; syn-002: none, 4. Mismatches (a reference boundary that is "
@@ -3091,7 +3159,14 @@ class TestReport:
         "next-patient boundary, metric amendments 2026-10-22 and 2026-10-24 (validation-run6 "
         "D7, D13; 0.3.3's reading: Silent (0.3.3 predicate)); that flagged line is the whole "
         "joined run of the pieces the recogniser split it into (a same-speaker piece ending "
-        "mid-sentence joined to the next), metric amendment 2026-10-26 (validation-run7 D1)."
+        "mid-sentence joined to the next), metric amendment 2026-10-26 (validation-run7 D1). "
+        # Answers-follow-question D5 (Task 1.2): the reply credit's dated
+        # amendment sentence, and where a set report puts its verdict.
+        "It also holds on the reply to a flagged line that holds a question (the other "
+        "speaker's wholly uncovered lines through the turn that follows it, before the "
+        "next-patient boundary), metric amendment 2026-11-17 (answers-follow-question D4, "
+        "D5): a loosening decided after run 9 failed on this class. The verdict without the "
+        "reply credit, and what it alone credits, is the residue section's reply-credit line."
     )
     _RULE_V5_SENTENCE = (
         " Rule v5 (schema 4; validation-run8 D1, decided 2026-11-06) keeps rule v4's "
@@ -3280,6 +3355,8 @@ class TestReport:
             "- Surfaced / expected: 0 / 0 (reported, not required, in this set).",
             "- clinician_line_omitted per measured encounter: total 3, median 1, maximum 2.",
             _run_only_line("3", "0"),
+            # Answers-follow-question D5 (Task 1.2): the reply-credit line.
+            _reply_line("0", "0", "0", "PASS"),
             self._BOUNDARY_RECORD,
         ]
         # The counted verdict is the real rule v4's on the same outcomes.
@@ -3408,6 +3485,9 @@ class TestReport:
             "- Surfaced / expected: 0 / 0 (reported, not required, in this set).",
             "- clinician_line_omitted per measured encounter: total 3, median 1.5, maximum 2.",
             _run_only_line("3", "0"),
+            # Answers-follow-question D5 (Task 1.2): the reply-credit line,
+            # the same line as rule v3's report's (it names no label).
+            _reply_line("0", "0", "0", "PASS"),
             self._BOUNDARY_RECORD,
         ]
         # Against rule v3's report on the same outcomes: the R1 row, every

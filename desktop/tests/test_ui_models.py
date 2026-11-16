@@ -1522,8 +1522,11 @@ class TestReviewEditModels:
         assert copy.title == "A line you said is not in the note"
         assert copy.blocks is None
         assert copy.clear_hint == (
+            # Answers-follow-question Task 1.2: the bracket is the executor's
+            # draft until D.4.
             "Check the transcript beside the note, tick 'Show flagged or suggested lines only' "
-            "to find it, add it with Add line to section if it belongs, then acknowledge."
+            "to find it (if it was a question, its answer is flagged too), add it with Add line "
+            "to section if it belongs, then acknowledge."
         )
         assert models.SEPARATELY_ACKNOWLEDGED_NAMES["clinician_line_omitted"] == (
             "a line you said that is not in the note (check its flagged lines)"
@@ -2095,10 +2098,12 @@ class TestReviewEditModels:
         self,
     ) -> None:
         """Validation-run6 plan Task 1.2: the wording covers both omission
-        codes — a line the clinician said, or a flagged word anyone said."""
+        codes — a line the clinician said, or a flagged word anyone said —
+        and, since answers-follow-question Task 1.2, the reply to a question
+        the clinician asked (the executor's draft until D.4)."""
         classes = (
-            "(a line you said, or a side, negation, number, dose, name or medication "
-            "someone said)."
+            "(a line you said, an answer to a question you asked, or a side, negation, "
+            "number, dose, name or medication someone said)."
         )
         assert models.flagged_count_line((), ()) == ""
         assert models.flagged_count_line({4}, {4, 5}) == (
@@ -3065,8 +3070,8 @@ class TestSuggestedSections:
     def test_the_count_line_carries_the_suggestion_clause(self) -> None:
         flagged_text = models.flagged_count_line({4}, {4})
         assert flagged_text == (
-            "1 flagged line is not in the note (a line you said, or a side, negation, "
-            "number, dose, name or medication someone said)."
+            "1 flagged line is not in the note (a line you said, an answer to a question you "
+            "asked, or a side, negation, number, dose, name or medication someone said)."
         )
         assert models.flagged_count_line({4}, {4}, suggested={4, 5}, not_assessed=3) == (
             flagged_text + " 2 lines have a suggested section (3 not assessed)."

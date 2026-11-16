@@ -23,6 +23,7 @@ from typing import get_args
 import pytest
 from pydantic import ValidationError
 
+from fixtures.answer_hops import ANSWER_HOP_CASES, QUESTION, RED, REPLY, AnswerHopCase
 from fixtures.heldout_transcripts import HELD_OUT_CASES, HeldOutCase, by_case, misfiled
 from fixtures.joined_runs import CLINICIAN, PATIENT, SPLIT_CASES, quoted_note, split_document
 from scribe_desktop import note as note_module
@@ -3342,6 +3343,155 @@ class TestBoundedCarry:
             "heldout-5": 0,
             "heldout-6": 2,
         }
+
+
+def _hop_request(case: AnswerHopCase) -> NoteRequest:
+    return _request(document=case.document(), clinician_speaker=case.clinician)
+
+
+def _hop_joined(case: AnswerHopCase) -> frozenset[int]:
+    """The case's lines in the note that no cue routes and that its
+    confirmed clinician did not say — the lines only the hop places."""
+    request = _hop_request(case)
+    provider = ExtractiveNoteProvider()
+    utterances = {u.segment_index: u for u in request.transcript_utterances}
+    return frozenset(
+        index
+        for index in _placed(request)
+        if provider._route(request, utterances[index]) is None
+        and not spoken_by_confirmed_clinician(utterances[index].speaker, case.clinician)
+    )
+
+
+class TestAnswerHop:
+    """Answers-follow-question plan Task 1.1: the answer hop in the form its
+    Task 0.6 chose — D1's transition table with the unlimited reach, guard G
+    and switch S — read from the plain expectations in
+    ``fixtures.answer_hops``: every row, G and S condition in both
+    directions."""
+
+    @pytest.mark.parametrize("case", ANSWER_HOP_CASES, ids=lambda case: case.name)
+    def test_the_case_places_its_lines(self, case: AnswerHopCase) -> None:
+        assert _placed(_hop_request(case)) == dict(case.placed), case.name
+
+    def test_both_directions_are_exercised(self) -> None:
+        names = [case.name for case in ANSWER_HOP_CASES]
+        assert len(names) == len(set(names))
+        joining = {case.name for case in ANSWER_HOP_CASES if _hop_joined(case)}
+        assert joining == {
+            "joins",
+            "joins-the-whole-turn",
+            "joins-a-reply-split-at-a-comma",
+            "joins-a-correction-after-a-reply",
+            "joins-another-speakers-reply",
+            "joins-after-an-unmarked-question-and-statement",
+            "joins-after-an-abbreviation-leaves-a-question",
+            "joins-a-first-reply-dont-write-this-down",
+            "joins-a-later-reply-dont-write-this-down",
+            "a-second-reply-speaker-closes",
+            "a-textless-line-is-transparent",
+            "a-cued-question-opens-its-own-window",
+            "a-joined-reply-closes-the-carry-chain",
+            "s-the-carried-piece-is-the-question",
+            "s-the-cue-routed-piece-is-the-question",
+        }
+        assert set(names) - joining  # and every other case joins nothing
+
+    def test_the_first_reply_dont_write_this_down_is_quoted(self) -> None:
+        """Task 0.6's accepted residue (3), 2026-11-17, pinned as behaviour:
+        the hop quotes a patient's "don't write this down" when it is the
+        FIRST reply to the clinician's in-note question. No seen script has
+        the case (clean by absence); the app honours no spoken instruction,
+        and the clinician reviews every note."""
+        (case,) = (
+            c for c in ANSWER_HOP_CASES if c.name == "joins-a-first-reply-dont-write-this-down"
+        )
+        assert _hop_joined(case) == {1}
+
+    def test_a_later_reply_dont_write_this_down_is_quoted(self) -> None:
+        """The same instruction as a LATER line of the reply turn (review
+        round 15 SEC-001): the unlimited reach quotes it beside the uncued
+        first reply. Pinned as behaviour, a named residue reported for the
+        practitioner's word at D.4; the app honours no spoken instruction,
+        and the clinician reviews every note."""
+        (case,) = (
+            c for c in ANSWER_HOP_CASES if c.name == "joins-a-later-reply-dont-write-this-down"
+        )
+        assert _hop_joined(case) == {1, 2}
+
+    def test_route_stays_cue_only(self) -> None:
+        """``_route`` is unchanged: a joined reply has no route of its own."""
+        request = _request(document=_document(texts=((QUESTION, CLINICIAN), (REPLY, PATIENT))))
+        provider = ExtractiveNoteProvider()
+        question, reply = request.transcript_utterances
+        assert provider._route(request, question) == RED
+        assert provider._route(request, reply) is None
+        assert _placed(request) == {0: RED, 1: RED}
+
+    def test_a_clinician_owned_section_opens_no_window(self) -> None:
+        """D1 (d): automatic for a question (ownership refuses one), tested
+        anyway on the window test itself."""
+        request = _request(document=_document(texts=((QUESTION, CLINICIAN),)))
+        provider = ExtractiveNoteProvider()
+        words = request.transcript_utterances[0].transcript_words
+        assert provider._opens_answer_window(request, CLINICIAN, (words,), RED)
+        for owned in sorted(CLINICIAN_OWNED_SECTIONS):
+            assert not provider._opens_answer_window(request, CLINICIAN, (words,), owned)
+
+    def test_a_joined_line_is_an_ordinary_quoted_line(self) -> None:
+        """D3: a joined reply is field for field what a carried line is — the
+        same ``transcript`` assertion with an ``x`` id, the whole utterance at
+        its contiguous coordinates, no new field — and it reconstructs."""
+        document = _document(texts=((QUESTION, CLINICIAN), (REPLY, PATIENT)))
+        sections = ExtractiveNoteProvider().generate_sections(_request(document=document))
+        (section,) = sections
+        question, joined = section.note_assertions
+        words = document.transcript_segments[1].transcript_words
+        assert joined == whole_utterance_assertion(
+            provider_assertion_id(1), RED, segment_index=1, speaker=PATIENT, words=words
+        )
+        assert joined.assertion_id == provider_assertion_id(1)
+        assert joined.note_span.provenance == "transcript"
+        assert joined.note_span.source_coords == SourceCoords(1, 0, len(words) - 1)
+        assert (question.text, joined.text) == (QUESTION, REPLY)
+        carried_document = _document(texts=((_SPLIT_OPEN, SPEAKER_1), (_SPLIT_REST, SPEAKER_1)))
+        (carried_section,) = ExtractiveNoteProvider().generate_sections(
+            _request(document=carried_document)
+        )
+        _first, carried = carried_section.note_assertions
+        per_line = {"assertion_id", "section_key", "speaker", "note_span"}
+        assert joined.model_dump(exclude=per_line) == carried.model_dump(exclude=per_line)
+        per_span = {"span_text", "source_coords"}
+        assert joined.note_span.model_dump(exclude=per_span) == carried.note_span.model_dump(
+            exclude=per_span
+        )
+        errors = [
+            warning
+            for warning in reconstruction_warnings(_note(note_sections=sections), document)
+            if warning.severity == "error"
+        ]
+        assert errors == []
+
+    @pytest.mark.parametrize(
+        ("text", "last"),
+        [
+            ("Any numbness?", "Any numbness?"),
+            ("My knee is sore. Any numbness?", "Any numbness?"),
+            ("Any numbness? It was sore.", "It was sore."),
+            ("Any numbness? It was sore", "It was sore"),
+            ('Is it "sore?" Yes it is', "Yes it is"),
+            ("Tell Dr. how it is", "how it is"),
+            ("Any numbness… at all", "Any numbness… at all"),
+            ("Any numbness, at all", "Any numbness, at all"),
+            ("", ""),
+        ],
+    )
+    def test_the_guards_sentence_cut(self, text: str, last: str) -> None:
+        """D2's cut, as Task 0.6 measured it: after a word ending in ``.``,
+        ``?`` or ``!`` once closing quotes and brackets are peeled; no
+        abbreviation handling; an ellipsis character or a comma cuts
+        nothing; a line with no such word is one sentence."""
+        assert note_module._last_sentence_text(_words(text)) == last
 
 
 _VALIDATION_CONFIG_DIR = Path(__file__).resolve().parents[2] / "validation" / "config"
