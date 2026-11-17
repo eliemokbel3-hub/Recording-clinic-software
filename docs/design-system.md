@@ -175,7 +175,17 @@ view patterns · tokens · microcopy.
   `FLAGGED_FILTER_EMPTY_LINE`; note-routing-omissions plan D4). Since 0.3.5 a line the
   recogniser split into pieces, each but the last ending mid-sentence, draws ONE "A line you said is not
   in the note", so that review row counts left-out LINES; every piece is still marked
-  `[flagged]` and the count line's text is unchanged (validation-run7 plan D1).
+  `[flagged]` and the count line's text is unchanged (validation-run7 plan D1). Since
+  0.3.7 (answers-follow-question plan D4, D5) the mark also reaches the ANSWER to a
+  left-out question: after a flagged line of the clinician's that holds a question, the
+  next speaker's whole turn (when that speaker is not the clinician; lines already in the
+  note excepted), and the same after a question the clinician added with Add line to
+  section — a pointer only, with no review row of its own, so it never holds back Save.
+  The count line then says "N flagged lines are not in the note (a line you said, an
+  answer to a question you asked, or a side, negation, number, dose, name or medication
+  someone said)." (`flagged_segments` / `replies_after`). That wording, and the hint
+  clause below, were approved as drafted by the practitioner on 2026-11-17
+  (the answers-follow-question plan's Task D.4).
 - **Lines after a possible next patient are marked, not hidden (since 0.3.3).** When
   the note stops at a possible next patient (Check 6, `possible_next_patient`), every
   Line chooser entry from that line on carries `[next patient?]` at the
@@ -457,7 +467,9 @@ view patterns · tokens · microcopy.
   `clinician_line_omitted` ("A line you said is not in the note"; its hint: "Check the
   transcript beside the note, tick 'Show flagged lines only' to find it, add it with Add
   line to section if it belongs, then acknowledge." — since 0.3.6 naming the tick 'Show
-  flagged or suggested lines only'), an omission like the first
+  flagged or suggested lines only', and since 0.3.7 adding "(if it was a question, its
+  answer is flagged too)" after "to find it", approved by the practitioner on
+  2026-11-17), an omission like the first
   (validation-run6 plan D1). The button's tooltip names every code of the set
   from the same mapping, so the two cannot drift apart: "Acknowledges every review
   warning except those that each need their own Acknowledge: something said that is not
@@ -916,7 +928,12 @@ provenance tags, pre-filled marks or "[includes …]" lines reach the chart.
   tick 'Show flagged lines only' to find it, add it with Add line to section if it
   belongs, then acknowledge." (`WARNING_COPY["clinician_line_omitted"]`, 0.3.4). Since
   0.3.6 both hints name the widened tick, 'Show flagged or suggested lines only', and say
-  nothing else new.
+  nothing else new. Since 0.3.7 the sibling's hint reads "Check the transcript beside
+  the note, tick 'Show flagged or suggested lines only' to find it (if it was a question,
+  its answer is flagged too), add it with Add line to section if it belongs, then
+  acknowledge." — approved as drafted by the practitioner on 2026-11-17 (the
+  answers-follow-question plan's Task D.4); its short form in the Acknowledge-all tooltip,
+  "a line you said that is not in the note (check its flagged lines)", is unchanged.
 - The draft write's lines (`ui/models.py` `WRITE_LINES`, the ONE source; no id,
   patient or practitioner name, answer text or key is ever formatted into one). Each
   refusal gives its next step, and offers Copy where copying the note is the way

@@ -2305,8 +2305,8 @@ WARNING_COPY: Final[Mapping[str, WarningCopy]] = {
     # Its line is marked ``[flagged]`` in the chooser like the first code's, and
     # only this row's own Acknowledge clears it. Answers-follow-question plan
     # D4/D5 (Task 1.2): the hint's bracket points to the reply flagged after a
-    # left-out question (``replies_after``) — the executor's wording, a draft
-    # until D.4 (the practitioner's wording replaces it, with its pins).
+    # left-out question (``replies_after``) — the wording approved as drafted by
+    # the practitioner on 2026-11-17 (D.4).
     "clinician_line_omitted": WarningCopy(
         "A line you said is not in the note",
         None,
@@ -3048,8 +3048,7 @@ def flagged_count_line(
         count = len(flagged)
         # Answers-follow-question plan D5 (Task 1.2): the parenthesis also
         # names the reply flagged after a question (``replies_after``) — the
-        # executor's wording, a draft until D.4 (the practitioner's wording
-        # replaces it, with its pins).
+        # wording approved as drafted by the practitioner on 2026-11-17 (D.4).
         text = (
             f"{count} flagged {'line is' if count == 1 else 'lines are'} not in the note (a "
             "line you said, an answer to a question you asked, or a side, negation, number, "

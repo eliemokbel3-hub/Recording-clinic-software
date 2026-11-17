@@ -269,8 +269,10 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
    word is byte-identical to 0.3.1's). Downstream, Check 4, the autofill and
    pre-fill triggers, phrase learning, the spoken pause and the
    new-consultation warning (flow 14) skip suspect words, and the bounded
-   carry never starts from a segment holding one; the router and Check 2
-   still read them.
+   carry never starts from a segment holding one; since 0.3.7 the answer hop
+   neither opens after nor joins a segment holding one, and the validation
+   harness's reply credit skips them (the chooser's reply flag still marks
+   such a reply; flow 10); the router and Check 2 still read them.
    **The trim — a second, clinician-confirmed writer of `transcript.enc`
    (validation-pass plan D9, decision 0.6 (a); 0.3.3; threat model Phase 3A
    surface 2, THE TRIM).** When a live session's transcript shows a possible
@@ -474,6 +476,20 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     but the last ending mid-sentence — rather than once per segment, so fewer warnings of
     the same code, with the same fields, are saved; nothing else in this flow
     changes.
+    **The answer hop and the reply flag (answers-follow-question plan D1–D5;
+    0.3.7).** The provider also places a reply no cue routes, said by someone
+    other than the confirmed clinician, in the section of the clinician's
+    cue-routed question before it (threat model, Phase 3A surface 2, THE
+    ANSWER HOP): one more in-memory routing rule over the request's own
+    segments, before the next-patient cut like every other. A joined reply is
+    an ordinary verbatim `transcript` assertion with its own coordinates, so
+    `note.enc`'s shape, fields and schema are unchanged and 0.3.6 reads it.
+    The Note tab's Line chooser also marks `[flagged]` the reply to a
+    left-out question of the clinician's (THE REPLY FLAG), computed on display
+    from the note's warnings and the transcript in memory — indices only,
+    never stored, logged or sent; the count line and the left-out-line hint
+    say so (wording approved by the practitioner 2026-11-17). No new store,
+    field, log line or network use.
     Inside the app, the plaintext note and the full transcript coexist in memory
     only for the review window (threat model, Phase 3A §3) and, since the
     privacy-professional-controls plan, while an opened Past-sessions entry is
@@ -531,8 +547,10 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     layer is package data bound by the build, not the config digest — and
     since that plan's D11 an utterance no cue matches may follow the same
     speaker's cue-routed utterance that ended mid-sentence, one hop, never into
-    a clinician-owned section; the phrases still only select verbatim
-    utterances) — falling back to shipped package defaults per
+    a clinician-owned section, and since 0.3.7 (answers-follow-question plan
+    D1) another speaker's uncued reply may follow the confirmed clinician's
+    cue-routed question, never into a clinician-owned section (flow 10); the
+    phrases still only select verbatim utterances) — falling back to shipped package defaults per
     filename. It is INTENDED as non-patient boilerplate, deliberately OUTSIDE
     the encrypted session store and the 24 h rule so it survives session
     destruction. Patient data and secrets are prohibited by policy, but the
@@ -803,7 +821,11 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     offered), from the PACKAGE's `config_defaults/clinical_equivalents.json`,
     nothing read from the data folder — and "Speaker: patient-spoken" for a
     flagged section; Check 5 folds both sides through that lexicon and admits
-    the frame (`Pt`, `patient`) for a flagged section only.
+    the frame (`Pt`, `patient`) for a flagged section only. Since 0.3.7 a
+    reply the answer hop joined (flow 10) is such a line, so a section that
+    gains one is flagged `other_voice` (the "Pt" frame) and its input digest
+    differs from the same section without the reply. Nothing else in this
+    flow changes.
     The Note tab starts ONE stage job per finalisation on its `TaskThread`
     (`ui/note.py` `_start_style_stage`; `ui/models.build_prose_stage`): the
     model is built once per process on that worker thread from the LOCAL file
@@ -1392,7 +1414,14 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       model (flow 29: one call per window, no abort, no yield), adds every
       suggestion the chooser's ownership rule accepts before the one
       finalisation, and keeps counts only — never a model answer, a line or a
-      section key in the report. It reads no voice profile, and writes no audit row, no
+      section key in the report. Since the metric amendment of 2026-11-17
+      (answers-follow-question plan D4, D5; 0.3.7) a left-out fact's
+      `warned` also holds on a non-suspect word of the reply to a flagged
+      question (the chooser's own reply-flag helper, without the replies
+      after a question added by hand), and where that credit reached a
+      segment (with the script's own reading made) the encounter's metrics
+      are computed a second time, in memory, without it; a set's report adds one residue line of counts
+      and that verdict — numbers and ids only, no column added. It reads no voice profile, and writes no audit row, no
       Past-sessions entry and nothing into either data folder. A run stopped
       with Ctrl+C prints no report and no traceback — one fixed line naming
       the temporary folder and the `scribe-speaker-eval-*` prefix for a
@@ -1491,7 +1520,10 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       path — a leftover it cannot remove, or one an interrupted run leaves,
       is ciphertext with no key anywhere, named for deletion by hand; prints a
       numbers-only drift table to standard output; writes nothing in the folder
-      and no audit row.
+      and no audit row. Since 0.3.7 its regenerated note includes the answer
+      hop's joined replies, so its note numbers drift against a replay made
+      before it by design (`docs/testing/kept-recordings.md`); nothing it
+      reads or writes changes.
     - MEASUREMENT SCRATCH (validation-run7 plan Tasks 0.3a and 0.4a; threat
       model, "Kept recordings", MEASUREMENT SCRATCH). A plan's one-off
       measurement over the same folder (`.cursor/loops/run7-measure-kept.py`,
@@ -1513,7 +1545,14 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       measured 0.3.4's per-segment code and the 14 / 12 phrase lists, so a
       re-measurement on 0.3.5 is a new scratch); `--list` still runs as
       described, and an exception it does not handle ends the run with its
-      type only.
+      type only. The answers-follow-question plan's Task 0.4a measurement
+      (`.cursor/loops/afq-measure-kept.py`, 2026-11-15, git-ignored) is a
+      scratch of the same kind under the same rules: the replay's refusals in
+      its order first, `--enrolment` and `--config` both required, each kept
+      recording re-transcribed in memory, ordinals and integers only on the
+      console, and one aggregate block — the only part written into that
+      plan; its `--list` mode prints only how many recordings are kept and
+      decrypts nothing.
 
 28. **The transcription-guard measurement (invented-text guard plan Task 1.5,
     D7, C12; BUILT 2026-10-12; developer build only, practitioner-run, zero
@@ -1570,7 +1609,12 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     as a `[suggested: <title>]` mark and a pre-selected section on the Line
     chooser; a line enters the note only by the clinician's Add, as any
     hand-add does (the verbatim transcript line, flow 10's custody from
-    there). In memory only, with the lifetimes stated exactly: the input —
+    there). Since 0.3.7 a reply the answer hop joined (flow 10) is a line the
+    note holds, so it is sent as context with its section key, not asked;
+    the hop changes the draft the suggestions are asked over, which is how
+    one more next-patient line entered the harness's every-suggestion-
+    accepted run (the threat model's "Phase 3B (coverage)" residue (s3)).
+    In memory only, with the lifetimes stated exactly: the input —
     the pre-boundary transcript lines, most of the consultation — in the
     job's frame for the job; one window's prompt and completion in the
     runtime for its `complete` call (its inference state cleared at the

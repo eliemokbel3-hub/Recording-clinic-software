@@ -355,7 +355,11 @@ note inherit exactly that posture.
    utterance's section when that one was cue-routed, was the same speaker's
    and ended mid-sentence (a comma, semicolon, colon or dash), one hop and
    never into a clinician-owned section — still verbatim, whole and with its
-   own coordinates, so a cue file still cannot author note text),
+   own coordinates, so a cue file still cannot author note text; and since
+   0.3.7 (answers-follow-question plan D1) a reply no cue of either layer
+   matches, by someone other than the confirmed clinician, follows the
+   clinician's cue-routed question's section the same way, never into a
+   clinician-owned section — THE ANSWER HOP below),
    deliberately OUTSIDE the encrypted session store and the 24 h rule — they
    are INTENDED as boilerplate, not patient data, and must survive session
    destruction (the loader validates structure only and cannot detect patient
@@ -558,7 +562,10 @@ note inherit exactly that posture.
    clinician line the speaker step gave to the
    other voice (a quiet turn under the enrolment threshold) is not the
    clinician's, so it fires nothing — and an uncued patient line with no
-   flagged word stays unwarned, as before; coverage is by quoted
+   flagged word stays unwarned, as before (since 0.3.7 such a line can
+   instead join the note under THE ANSWER HOP, or be `[flagged]` on the
+   chooser by THE REPLY FLAG when it answers a warned question — below; the
+   warning itself is unchanged and never fires on it); coverage is by quoted
    coordinates, so a line that triggered a confirmed autofill line still
    fires it (the config line quotes nothing); and, since 0.3.5, a split the
    recogniser left with no trailing mark (a bare cut) is not a join, so each
@@ -698,7 +705,10 @@ note inherit exactly that posture.
    The bounded carry (note-routing-omissions plan D11)
    widens the next patient's reach by one hop where no boundary is found: the
    next patient's uncued second line that continues
-   their own comma-ended cued first line is quoted too. CONTINUATION RESIDUE
+   their own comma-ended cued first line is quoted too (since 0.3.7 THE
+   ANSWER HOP below widens it further: where no boundary is found, the next
+   patient's whole uncued reply turn to the clinician's cue-routed question
+   is quoted, not one hop). CONTINUATION RESIDUE
    (named, D11): a patient's spoken-injection or scribe-instruction clause, or
    the content it fences off, that continues the same patient's comma-ended
    cued line is quoted into that patient section (the clinician-owned
@@ -724,7 +734,10 @@ note inherit exactly that posture.
    (a spoken request to leave something out) is quoted, like the comma carry's
    CONTINUATION RESIDUE; and the retracted statement stays in the note beside
    its correction (a mark pairing the two is deferred), so the clinician
-   removes the retracted line.
+   removes the retracted line. Since 0.3.7 a correction that follows a
+   joined reply is not carried (a join closes the carry's chain); where it
+   is the same speaker's uncued, non-question line it joins under THE ANSWER
+   HOP instead, into the same section.
    THE UNSURE MARK (0.3.3, validation-pass plan D7, decision 0.1 (a)): Check 1
    adds a REVIEW code, `hedged_source`, once per quoted line spoken by anyone
    but the confirmed clinician that holds one of the frozen hedge phrases
@@ -752,6 +765,102 @@ note inherit exactly that posture.
    confirmed clinician every speaker's hedged line is marked (the app's
    Generate always has one). It is a review aid for spoken uncertainty, not a
    detector of it.
+   THE ANSWER HOP (0.3.7, answers-follow-question plan D1–D3, in the form its
+   Task 0.6 chose on 2026-11-17: unlimited reach, guard G and switch S on;
+   `note.ExtractiveNoteProvider.generate_sections`): an utterance no cue of
+   either layer routes and the carry does not take JOINS the section of the
+   confirmed clinician's cue-routed question before it, so a patient's
+   uncued reply sits beside the question it answers. The window opens only
+   after a cue-routed line of the CONFIRMED clinician (none without one) that
+   holds no suspect word, is not in a clinician-owned section, holds a
+   question, and whose LAST sentence is itself a question that alone routes
+   to that section (guard G); a cue-routed line and its one carried piece
+   open it too, read as one line for G (switch S). A line joins when someone
+   other than the confirmed clinician said it — from the second joined line
+   on, the first reply's speaker — it holds no suspect word, is not itself a
+   question and carries no cue of either layer in any section. The window
+   stays open through every such line, so a reply the recogniser split, or a
+   correction after it, joins as a line of its own; any cue-routed line
+   closes it (and may open a new one), and anything dropped closes it; a
+   textless line is passed over. A joined line closes the carry's chain. A
+   joined line is an ordinary quoted line — verbatim, whole, with its own
+   coordinates, the same `transcript` assertion and `x` id as a cued or
+   carried one (D3) — so no field or schema is added, 0.3.6 reads every
+   0.3.7 record, and a cue file still cannot author note text. What reads a
+   joined line: Check 1 and Check 2 as any quoted line (a joined "No
+   numbness." against a pre-filled or typed line saying otherwise draws
+   `contradiction` at error grade, or `contradiction_low_confidence` at
+   review grade beside a low-probability word); Check 4 no longer flags its
+   words (it is quoted); phrase learning never learns from it (the learners
+   take the confirmed clinician's lines only); autofill, pre-fill and Check 6
+   read the transcript, not the note, so they are unchanged; the section
+   suggestions see it as a placed line; and in a prose style its section
+   becomes another speaker's ("Pt" frame) and the section's input digest
+   changes. NAMED RESIDUES (answer hop): (1) a spoken instruction
+   given as the FIRST reply ("don't write this down") is quoted — no seen
+   script holds the case (by a phrase search over every script); accepted
+   by the practitioner at Task 0.6 (2026-11-17) and pinned; (2) given as a
+   LATER line of the same reply turn it is quoted too (Phase V review round
+   15 SEC-001; pinned) — accepted by the practitioner 2026-11-17 as a named
+   residue (Task D.4), of the same class as (1) and the carry's
+   CONTINUATION RESIDUE; the app
+   honours no spoken instruction, and the clinician-owned sections are never
+   joined into; (3) a bare "No." beside its question carries no claim of
+   its own, so Check 2 never checks it against the note; (4) a phrase
+   learned from a question the clinician added by hand later routes that
+   question and so pulls its reply in; (5) a wrong speaker label works both
+   ways: a patient's cue-routed question the speaker step gave to the
+   clinician's voice opens a window and the real clinician's uncued reply
+   joins, and a clinician's own uncued line it gave to the other voice joins
+   as a "reply" (while a real reply it gave to the clinician is never
+   joined); (6) a statement the question test reads as a question by its
+   opening word (a question word such as "what" or "how", or an auxiliary
+   followed by a pronoun, "do you") opens a window when G's routing passes;
+   (7) G's
+   sentence cut has no abbreviation handling, so "Dr." ends a sentence, and
+   a line that opens with a question and ends with a statement fails G only
+   where the recogniser wrote the sentence boundary; (8) where no
+   next-patient boundary is found, the next patient's whole uncued reply
+   turn joins, wider than the carry's one hop (NEXT PATIENT residue (a));
+   (9) a third person in the room (a parent, a carer, an interpreter) who
+   answers first is the reply's speaker; and (10) a reply joins its
+   question's section even where the answer belongs elsewhere — misplaced,
+   not lost (the validation harness does not measure placement). The
+   controls are the same review, shadow mode, and the clinician's removal of
+   any line.
+   THE REPLY FLAG (0.3.7, answers-follow-question plan D4, Task 0.6's QT:
+   questions only, whole turn; `ui.models.replies_after`): the Line chooser
+   also marks `[flagged]` the reply to a left-out question — after each
+   whole joined run of an omission anchor (either Check 4 code) on a wholly
+   uncovered line of the confirmed clinician, before the next-patient cut,
+   in which some piece is a question, the wholly uncovered lines of the ONE
+   speaker other than the clinician who speaks next, through that speaker's
+   turn (a textless line passed over, a covered one passed over unmarked, a
+   speaker change ending it); and the same reply after a question that is in
+   the note solely through the clinician's own Add. Indices only — no text
+   widget, no copy path and no new warning; the count line and the
+   `clinician_line_omitted` hint say a flagged line can be an answer to a
+   question the clinician asked (wording approved by the practitioner
+   2026-11-17, Task D.4). The validation harness credits a reply's non-suspect
+   words as warned (metric amendment 2026-11-17, flow 26 of
+   `docs/security/data-flow-map.md`). NAMED RESIDUES (reply flag): (a) a
+   flagged reply has no warning row behind it, so Save is not held back by
+   it; (b) after a cue-routed question a reply the hop did not join is
+   unmarked, while after a question added by hand it is marked; (c) lines
+   that must stay out of the note are newly `[flagged]` — over the seven
+   synthetic sets, counted per fact that must stay out on a newly flagged
+   line, 2 material, 9 other and 3 at or after the next-patient tail (the
+   reply flag without the hop reads 3 / 9 / 4) — accepted by the
+   practitioner at Task 0.6 ("Accept all three (Recommended)"); (d) on real
+   speech the flag adds a median of 11-15 lines per recording (maximum 15,
+   two enrolled kept recordings, both config passes) — accepted at Task 0.6;
+   the load of the variant that follows ANY left-out clinician line, not
+   only a question ("AT", a median of 115-127), was declined; (e) the flag
+   stops only at a DETECTED next-patient cut, so where none is found a next
+   patient's reply after a flagged question is flagged; and (f) a reply holding a
+   suspect word is still flagged, while the harness never credits a suspect
+   word. A `[flagged]` mark only points to a line: it adds nothing to the
+   note, and a flagged line enters only by the clinician's own Add.
 3. **The extended in-memory transcript lifetime across the review window.** The
    full uncertainty-marked transcript now stays in process memory beside the
    note through the WHOLE Note-tab review (`ui/note.py`), longer than the
@@ -769,8 +878,11 @@ note inherit exactly that posture.
    sentence with none of those words stays unflagged — since 0.3.4 unless
    the confirmed clinician said it and no word of it is quoted (Check 4's
    second code, `clinician_line_omitted`, surface 2), so an uncued line of
-   another speaker's with none of those words is still unflagged; see the
-   honest limit below). Plaintext transcript and note
+   another speaker's with none of those words is still unflagged — since
+   0.3.7 unless it is the reply to such a left-out question of the
+   clinician's (THE REPLY FLAG, surface 2), and it may instead be in the
+   note through THE ANSWER HOP; see the honest limit below). Plaintext
+   transcript and note
    therefore coexist in memory for the review duration. This is inside
    boundary 2 (a same-user process can already read process memory); the Note
    tab's transcript panel stays display-only (`NoTextInteraction`) so casual
@@ -962,7 +1074,11 @@ note inherit exactly that posture.
      may not be speech."); the spoken pause and the new-consultation warning
      ignore it; the bounded carry
      never starts from a segment holding one; and since 0.3.3 it supplies no
-     next-patient phrase, no correction marker and no hedge (surface 2). **Readers that deliberately
+     next-patient phrase, no correction marker and no hedge (surface 2); since
+     0.3.7 the answer hop never opens a window after a line holding one nor
+     joins one (surface 2's THE ANSWER HOP), and the validation harness's reply
+     credit skips it — though the chooser's reply flag still marks a reply
+     that holds one (THE REPLY FLAG residue (f)). **Readers that deliberately
      still do** (decision 0.1 — mark, never withhold): the router and
      `whole_utterance_assertion` (a cue still routes a suspect line, marked),
      the role-evidence counter, the clinician's Add and Move, and **Check 2**
@@ -986,7 +1102,10 @@ note inherit exactly that posture.
      warning is dropped ("Rolling back below 0.3.4"). 0.3.5 writes the same
      code with the same fields, once per joined run (surface 2) — fewer of
      them, nothing new on disk — so 0.3.4 reads it as its own and 0.3.3 or
-     0.3.2 as above ("Rolling back below 0.3.5").
+     0.3.2 as above ("Rolling back below 0.3.5"). 0.3.7 writes nothing new
+     either: a joined reply is an ordinary quoted line and the reply flag is
+     computed on display, never stored, so 0.3.6 reads every 0.3.7 note as
+     its own ("Rolling back below 0.3.7").
 
    NAMED RESIDUES — the guard is a heuristic and the mark a review aid, not a
    filter:
@@ -2362,7 +2481,14 @@ RESIDUES.
   practitioner on 2026-11-09 ("(a) Keep the plan (Recommended)"): a measured
   cost, carried into predictions v6 and the findings register; the clinician
   review guide says a suggested line may be the next patient's when no
-  "[next patient?]" mark is shown.
+  "[next patient?]" mark is shown. Since 0.3.7 the answer hop changes the
+  draft the suggestions are asked over, and with every suggestion accepted one
+  more next-patient line enters this way: on `heldout-5`, `h5-17`'s line 15 (a
+  material fact wrongly present, in the hop's three measured forms, not on a
+  joined line — the hop's own joins there are the same with suggestions off,
+  which quote nothing). Accepted by the practitioner as a named residue at the
+  answers-follow-question plan's Task 0.6 (2026-11-17, "accepting the h5-17
+  next-patient quote as a named residue").
 - (s4) **The model runs on every such review.** There is no switch: a review
   with a left-out line uses the processor for up to the cap (and one window
   more) while the clinician reviews, and a suggestion window started before

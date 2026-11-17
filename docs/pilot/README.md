@@ -134,6 +134,13 @@ result is recorded there as a dated RUN line.
    --suggestions confirm-all`; that plan's D11). Run 9 (2026-11-10) did NOT
    meet the gate (`heldout-6` failed), so shadow mode stays on; its record is
    that plan's Task P.2 and run 9's entry in the validation harness document.
+   Version 0.3.7 (the answers-follow-question plan: a patient's answer placed
+   with the question it answers, and the answer to a left-out question
+   flagged) has no validation run: its measurement over the seven seen sets
+   (that plan's Phase M) is an improvement that does not meet the gate, so
+   shadow mode stays on, there is no run 10 and `exit-gate.md` is unchanged.
+   It adds the reply credit to `warned` (the metric amendment of 2026-11-17,
+   `docs/testing/validation-harness.md`), which a later run reads.
    *Amended 2026-10-09, after run 1 failed:* the shadow consultations of
    step 4 may start while run 1's findings are controlled by shadow mode (a
    shadow note never reaches Cliniko); step 5 and the exit gate still wait for

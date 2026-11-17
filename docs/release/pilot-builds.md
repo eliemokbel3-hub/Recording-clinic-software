@@ -65,6 +65,33 @@ the repository's visibility may have changed. If no attestation can be made, the
 check above can never pass, and the build of record needs a decision — never an
 install without that check.
 
+## Rolling back below 0.3.7
+
+0.3.7 (the answers-follow-question build: a patient's uncued answer placed
+with the confirmed clinician's question, and the answer to a left-out question
+flagged) has no build of record yet — its row above is added at that plan's
+Task F.3. This section applies from that build on.
+
+**Nothing at rest changes shape, and there is no data step** (that plan's D3).
+0.3.7 adds no persisted field, no schema version, no setting and no file in
+the data folder: a joined answer is an ordinary quoted transcript line, with
+the same assertion kind and id shape as any line the app placed, the note's
+provider name is unchanged, and the reply flag is worked out on screen and
+never stored. `encounter.enc`, `note.enc`, `generated.enc`,
+`saved-provenance.enc`, `write.enc`, the audit row and every Past-sessions
+entry keep the shape 0.3.6 reads; the audit row's `app_version` reads
+`0.3.7`. So no recording needs finishing first for 0.3.7's sake, and the model
+pack is unchanged (no model was added).
+
+**What an older build shows differently.** (1) A note generated on 0.3.7 that
+holds a joined answer opens on 0.3.6 with that line as an ordinary quoted
+line, kept; a note 0.3.6 generates, or generates again, leaves such an answer
+out, as before. (2) 0.3.6 flags no answer: its count line and its "A line you
+said is not in the note" hint read 0.3.6's wording, without the answer
+clause. (3) The validation harness at 0.3.6 has no reply credit, so its
+reports read as before the metric amendment of 2026-11-17
+(`docs/testing/validation-harness.md`).
+
 ## Rolling back below 0.3.6
 
 0.3.6 (the note-content-design build: the prose styles' clinical register and

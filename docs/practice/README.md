@@ -23,8 +23,11 @@ the review is relied on for once shadow mode is off) and on 2026-11-09 for versi
 (clinical shorthand in the prose writing styles, from a fixed list the practitioner
 approved on 2026-11-08; a suggested heading for a line the note left out, added only by
 the practitioner; and that a suggested line may be the next patient's — these lines
-approved by the practitioner on 2026-11-10) — each in the clinician review guide only. The
-patient documents are unchanged for 0.3.6: the transcript is still processed only on
+approved by the practitioner on 2026-11-10) and on 2026-11-17 for version 0.3.7 (the
+other person's answer to a question of the practitioner's placed with that question, and
+the answer to a left-out question marked for review — these lines approved by the
+practitioner on 2026-11-17) — each in the clinician review guide only. The
+patient documents are unchanged for 0.3.6 and 0.3.7: the transcript is still processed only on
 the practitioner's computer, nothing is sent to any cloud or online AI service, and no
 model is trained on it (since 0.3.6 the program's language model on that computer also
 reads the transcript to suggest headings; **[Reviewer: confirm the patient information's

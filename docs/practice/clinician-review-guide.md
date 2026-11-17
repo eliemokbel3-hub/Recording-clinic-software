@@ -16,7 +16,7 @@ practitioner on 2026-11-04; the longer goodbye-and-greeting list lines added 202
 the split-line line added 2026-10-27 for version 0.3.5, approved by the practitioner on
 2026-11-04; the misheard number, unit and abbreviation lines
 added after validation run 7 and the larger-model measurement, 2026-11, with no new
-version, approved by the practitioner on 2026-11-07, their counts refreshed with validation run 8's; the shadow-mode-off line added with them, approved by the practitioner on 2026-11-10 (its wording only: shadow mode stays on); the clinical-shorthand, suggested-section and suggested-next-patient lines and the renamed tick added 2026-11-09 for version 0.3.6, approved by the practitioner on 2026-11-10). For the
+version, approved by the practitioner on 2026-11-07, their counts refreshed with validation run 8's; the shadow-mode-off line added with them, approved by the practitioner on 2026-11-10 (its wording only: shadow mode stays on); the clinical-shorthand, suggested-section and suggested-next-patient lines and the renamed tick added 2026-11-09 for version 0.3.6, approved by the practitioner on 2026-11-10; the placed-answer and flagged-answer lines added 2026-11-17 for version 0.3.7, approved by the practitioner on 2026-11-17). For the
 practitioner, before saving a note and before finalising it in Cliniko.
 
 **Why this matters.** Ahpra's guidance on AI in healthcare ("Meeting your professional
@@ -106,6 +106,16 @@ where each line came from: the transcript, something you typed, or your own pre-
    was taken back. It is not placed there under the assessment, diagnosis, advice or
    management plan headings, and a correction said any other way may be left out — the
    transcript shows it.
+   **From version 0.3.7 (approved 2026-11-17):** when you ask a question the
+   app placed under a heading, the other person's answer is usually placed straight after
+   it, under the same heading, even if none of your headings' phrases is in it — often
+   several lines, up to where someone else speaks. Read it as carefully as any line: the answer
+   stays under your question's heading even where it belongs elsewhere; if the speakers
+   were mixed up, a line of yours may be placed as the answer; a bare "No" means nothing
+   without its question; and anything the patient asks you not to write down is placed
+   too — remove it. It is never placed under the assessment, diagnosis, advice or
+   management plan headings. If the app did not spot a next patient, the next patient's
+   answer can be placed this way: check the end of the transcript.
 3. **Pre-filled lines** from your own settings are marked as pre-filled. Remove any that
    are not true for this appointment; Save confirms the rest.
 4. **Marked lines.** A line quoted from the transcript that holds a number is marked
@@ -168,7 +178,13 @@ where each line came from: the transcript, something you typed, or your own pre-
    other mark is still counted once for each piece. A short reply such as "okay" can raise it
    too: acknowledge it once you have looked. A line of yours that the app labelled as the
    other speaker's raises no such warning, and neither does a line whose words are all
-   marked as possibly not speech, so still read the transcript through. The
+   marked as possibly not speech, so still read the transcript through. **From version
+   0.3.7 (approved 2026-11-17):** when a left-out line of yours is a question,
+   the other person's answer after it is marked `[flagged]` too, and so is the answer to a
+   question you added back yourself; the hint says "if it was a question, its answer is
+   flagged too". A flagged answer has no warning of its own and never stops you saving:
+   add it if it belongs. A flagged line can be one that must stay out — small talk, or
+   the next patient's words — so leave those out. The
    checks are a safety net, not a guarantee: they look for particular kinds of mismatch
    and cannot tell you the note is complete or correct.
 7. **Suggested headings (from version 0.3.6).** For the lines the note left out, the app
