@@ -2294,10 +2294,10 @@ SUGGEST which section it belongs in. This is the review trigger "the
 transcript becomes input to the local ML note model" (below), closed here.
 Under any writing style — Clean clinical included; there is no setting — each
 review with a left-out line, on a computer whose model and runtime are
-present, runs ONE suggestion job on the Note tab (`ui/note.py`
+present, runs ONE suggestion job on the Review screen (`ui/note.py`
 `_begin_suggestions`, a second `_JobSlot` beside the prose job's; the stage
 `ui/models.build_suggestion_stage`, the prose stage's cache, model and
-presence seam). With the model absent the tab names it and starts no thread.
+presence seam). With the model absent the Review screen names it and starts no thread.
 
 ENFORCED.
 - **The input** (`note_suggest.SuggestionInput.from_request`). Built from the
@@ -2339,7 +2339,7 @@ ENFORCED.
   are stripped (an unclosed, nested or pre-opened block; round 19 SEC-001) or
   an echoed list marker refuses the whole completion. Nothing the model writes is displayed, stored,
   logged, copied or written (C1); the result (`SuggestionStageResult`) holds
-  segment indices, section keys and counts only, and the Note tab keeps only
+  segment indices, section keys and counts only, and the note review keeps only
   the (segment, key) pairs.
 - **Acceptance only through the chooser's ownership rule; addition only by
   the clinician (D6).** A suggestion is a MARK, `[suggested: <title>]` after
@@ -2383,7 +2383,7 @@ ENFORCED.
   held by a pending or running suggestion (marks are advisory).
 - **The exit policy (D8, C13; codex PR-MED-002 / -003, PR-HIGH-002).** A LIVE
   suggestion job is NOT counted by `NoteScreen.is_busy`, whose readers are
-  the open-review of another recording (the Recovery tab's, and Chrome's
+  the open-review of another recording (the Recovery page's, and Chrome's
   "Open for review", which goes through it) and the window's close guard.
   Every exit — `clear()` from Complete, Discard, Cancel review, Delete note
   and complete, a new Start, an open-review of another recording — sets the
@@ -2429,7 +2429,7 @@ ENFORCED.
   line's words) are registered tripwire signatures
   (`logging_setup._PAYLOAD_SIGNATURES`), so a rendering of the input or of a
   line is dropped by the last-line filter; `note_suggest.py` holds no logger,
-  and a job that raises is named on the tab by its exception TYPE only.
+  and a job that raises is named on the Review screen by its exception TYPE only.
 
 RESIDUES.
 - (s1) **The window-long post-exit lifetime.** The job is told to stop before

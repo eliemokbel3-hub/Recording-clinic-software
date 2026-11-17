@@ -484,7 +484,7 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     segments, before the next-patient cut like every other. A joined reply is
     an ordinary verbatim `transcript` assertion with its own coordinates, so
     `note.enc`'s shape, fields and schema are unchanged and 0.3.6 reads it.
-    The Note tab's Line chooser also marks `[flagged]` the reply to a
+    The Review screen's Line chooser also marks `[flagged]` the reply to a
     left-out question of the clinician's (THE REPLY FLAG), computed on display
     from the note's warnings and the transcript in memory — indices only,
     never stored, logged or sent; the count line and the left-out-line hint
@@ -1414,10 +1414,10 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       D11 for run 9, is schema 4 too — rule v5's predicates and ceilings with
       `heldout-6` its blind gate set — and is read the same way; its file is
       written at that plan's Task F.1). With `--prose` it also runs the
-      narrative prose stage over each finalised note (flow 17, the Note tab's
+      narrative prose stage over each finalised note (flow 17, the note review's
       own stage and lexicon) and keeps its section counts only; with
       `--suggestions confirm-all` (since 0.3.6, the metric amendment of
-      2026-11-09) it builds each encounter's suggestion input as the Note tab
+      2026-11-09) it builds each encounter's suggestion input as the note review
       does and sends its pre-boundary transcript lines to the local language
       model (flow 29: one call per window, no abort, no yield), adds every
       suggestion the chooser's ownership rule accepts before the one
@@ -1589,7 +1589,7 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     C13; BUILT 2026-11-09, version 0.3.6; in-process, in memory only, zero
     network).** At the end of each review's `begin_review` — or once a
     writing-style job in flight has reported — under any writing style, the
-    Note tab builds ONE input from the draft's request
+    note review builds ONE input from the draft's request
     (`note_config.build_note_request`, cut at the next-patient boundary):
     `note_suggest.SuggestionInput.from_request`, every pre-boundary line with
     words, the lines the note leaves out ASKED and the lines it holds as
@@ -1612,7 +1612,7 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     completion stays in the stage's own frame only until the next window
     replaces it or the job returns. What crosses back to the GUI thread is
     a `SuggestionStageResult`: segment indices, section keys and counts. The
-    Note tab keeps the (segment, key) pairs beside the draft and shows each
+    note review keeps the (segment, key) pairs beside the draft and shows each
     one the chooser's ownership rule accepts (`ui/models.eligible_utterances`)
     as a `[suggested: <title>]` mark and a pre-selected section on the Line
     chooser; a line enters the note only by the clinician's Add, as any

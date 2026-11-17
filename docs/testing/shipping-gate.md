@@ -151,9 +151,9 @@ A statement of what 0.3.7 does, not a rubric change: rubric v1, its thresholds, 
 
 ## Addendum — screen names from 0.4.0 (ui-refresh plan, Task 5.2, 2026-10-17)
 
-Rubric v1, both clarifications and both addenda above are unchanged, and the text above is left as ratified (the clinic 1 smoke's addendum cites it by line number). From version 0.4.0 the desktop app's screens have new names, so read the page as follows on 0.4.0 or later; the controls, the scoring point and what is counted are the same.
+Rubric v1, its clarifications and notes and every addendum above are unchanged, and the text above is left as ratified (the clinic 1 smoke's addendum cites it by line number). From version 0.4.0 the desktop app's screens have new names, so read the page as follows on 0.4.0 or later; the controls, the scoring point and what is counted are the same.
 
-- "the Session screen" / "the Session tab" (:19, :21, :38, :44, :80, :110) is the **Record page**.
+- "the Session screen" / "the Session tab" (:19, :21, :38, :44, :80, :112) is the **Record page**.
 - "the Transcript screen" (:19, :29, :38, :42) and "the Note tab" (:5, :15, :40, :41, :44, :50, :56, :98) are the one **Review screen**: the transcript on the left and the note on the right, side by side, with Save note, Write draft to Cliniko, Copy note, Complete and Discard on one row under both. Step 1's "the Transcript screen opens" and step 3's "the Note tab opens with the draft beside the full uncertainty-marked transcript" are both the Review screen; Generate, the clinician-role radios (:29) and "Edit the note" (:56) are on it.
 - "the Past sessions tab" (:15) is the **Past sessions page**.
-- "the Practitioner tab" and "the Status tab" (:98, :116) keep their names: they are tabs of the Settings strip (the gear at the bottom of the rail opens it).
+- "the Practitioner tab" and "the Status tab" (:98, :118) keep their names: they are tabs of the Settings strip (the gear at the bottom of the rail opens it).

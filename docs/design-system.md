@@ -128,7 +128,16 @@ view patterns · tokens · microcopy.
   the handle sits where it did) so the transcript side can give way (the 2026-10-21
   re-check's F8 at 150 %, Task S.9). Its height follows every warning's wrapped height
   at the column's real width, so a narrow column makes the column longer, never a
-  warning shorter (F9, Task S.10). Under both: ONE button row —
+  warning shorter (F9, Task S.10). Since 0.3.4–0.3.7 arrived (ui-refresh plan Phase M,
+  R11) the note's side also holds, with no layout of its own: 0.3.6's
+  section-suggestion status line under the style line (hidden when empty); Check 4's
+  row "A line you said is not in the note"; and in "Edit the note" the "Show flagged
+  or suggested lines only" tick, the count line beside it and the Line chooser's front
+  marks `[flagged]`, `[next patient?]` and `[suggested: <title>]` — text only, no
+  colour (D13). The Line chooser is sized by a minimum contents length (about 40
+  characters), not by its longest entry, so a long marked entry never widens the
+  column; the closed chooser cuts an entry's end, never its number or marks (Phase M,
+  M.3). Under both: ONE button row —
   Save note, Write draft to Cliniko, Copy note, then Complete and Discard on the right,
   keyboard order left to right — and one status strip of the session's message line,
   the note's message line, the write line and the note's shadow line. Every control
