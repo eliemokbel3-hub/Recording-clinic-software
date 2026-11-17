@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h6-21",
+  "appointment_type": "initial",
+  "axes": ["scribe_instruction", "laterality", "negation", "numbers", "rate"],
+  "lines": [
+    {"role": "clinician", "text": "Hi Tom, sit down. What are you coming in with?"},
+    {"role": "patient", "text": "Stiff neck and headaches since I started the new job, I'm hunched over a laptop on the sofa."},
+    {"role": "clinician", "text": "Where do the headaches sit?"},
+    {"role": "patient", "text": "Behind my left eye, and they build through the afternoon."},
+    {"role": "clinician", "text": "Any numbness or tingling in the arms, or dizziness?"},
+    {"role": "patient", "text": "None at all."},
+    {"role": "clinician", "text": "Let me have a look at your posture and your neck movement."},
+    {"role": "clinician", "text": "Your chin pokes forward and turning left reproduces the headache."},
+    {"role": "clinician", "text": "Scribe, leave the bit about his job out of the note."},
+    {"role": "clinician", "text": "Get the laptop on a table with a proper chair, and every hour tuck your chin in and hold for five seconds, five times."},
+    {"role": "clinician", "text": "Book in for two weeks and we'll see how the headaches respond."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["stiff", "neck", "and", "headaches"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["hunched", "over", "a", "laptop", "on", "the", "sofa"], "line": 1, "material": true},
+    {"kind": "laterality", "tokens": ["behind", "my", "left", "eye"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["build", "through", "the", "afternoon"], "line": 3, "material": true},
+    {"kind": "negation", "tokens": ["none", "at", "all"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["chin", "pokes", "forward"], "line": 7, "material": true},
+    {"kind": "laterality", "tokens": ["turning", "left", "reproduces", "the", "headache"], "line": 7, "material": true},
+    {"kind": "absent", "tokens": ["leave", "the", "bit", "about", "his", "job", "out", "of", "the", "note"], "line": 8, "material": false},
+    {"kind": "present", "tokens": ["laptop", "on", "a", "table", "with", "a", "proper", "chair"], "line": 9, "material": true},
+    {"kind": "present", "tokens": ["tuck", "your", "chin", "in", "and", "hold", "for", "five", "seconds"], "line": 9, "material": true},
+    {"kind": "present", "tokens": ["five", "times"], "line": 9, "material": true},
+    {"kind": "present", "tokens": ["in", "for", "two", "weeks"], "line": 10, "material": false}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}, "rate": -3}
+}

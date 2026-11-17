@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h4-19",
+  "appointment_type": "follow_up",
+  "axes": ["contradictory", "numbers", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "How's the hip been since last time?"},
+    {"role": "patient", "text": "Since last time I can walk for twenty minutes before the outside of my hip aches."},
+    {"role": "patient", "text": "Er, no, since last time it's more like thirty minutes, I timed it on Sunday."},
+    {"role": "clinician", "text": "That's real progress. Are you still sleeping on that side?"},
+    {"role": "patient", "text": "No, I've stuck to the other side with a pillow between my knees."},
+    {"role": "clinician", "text": "Good. Let me have a look at how you stand on one leg."},
+    {"role": "clinician", "text": "Your pelvis dips less than it did, but it still drops on the left when you stand on your right leg."},
+    {"role": "clinician", "text": "Avoid crossing your legs and don't stand with all your weight hitched onto one hip, those both squash the tendon."},
+    {"role": "patient", "text": "I do that at the bus stop all the time."},
+    {"role": "clinician", "text": "Then that's your homework. Same time in three weeks."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["the", "outside", "of", "my", "hip", "aches"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["more", "like", "thirty", "minutes"], "line": 2, "material": true},
+    {"kind": "laterality", "tokens": ["drops", "on", "the", "left"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["avoid", "crossing", "your", "legs"], "line": 7, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

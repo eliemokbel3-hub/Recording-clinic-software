@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h3-04",
+  "appointment_type": "follow_up",
+  "axes": ["end_and_new_patient", "uncertain", "laterality", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "How's the neck been since last time?"},
+    {"role": "patient", "text": "Since last time the headaches have dropped to about two a week, though I haven't kept proper count."},
+    {"role": "clinician", "text": "That's real progress. Let me have a look at your turning."},
+    {"role": "clinician", "text": "You've got about seventy degrees turning to the left now, and the right is still stiff at about fifty."},
+    {"role": "clinician", "text": "Same again with the chin tucks, and set an alarm to get up from the desk every forty minutes."},
+    {"role": "clinician", "text": "Right, all done for today. See you next week."},
+    {"role": "patient", "text": "Lovely, thanks. Bye."},
+    {"role": "clinician", "text": "Bye."},
+    {"role": "patient", "text": "Oh, sorry, one more thing. Since last time I've had some tingling in my right thumb when I'm on the laptop."},
+    {"role": "clinician", "text": "Okay, good that you said. Sit back down a minute and I'll check the nerve in your arm."},
+    {"role": "clinician", "text": "Your grip and reflexes are normal, so it's most likely posture related, but tell me straight away if the thumb goes numb or weak."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["dropped", "to", "about", "two", "a", "week"], "line": 1, "material": true, "expect_uncertain": true},
+    {"kind": "laterality", "tokens": ["seventy", "degrees", "turning", "to", "the", "left"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["every", "forty", "minutes"], "line": 4, "material": true},
+    {"kind": "laterality", "tokens": ["tingling", "in", "my", "right", "thumb"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["grip", "and", "reflexes", "are", "normal"], "line": 10, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

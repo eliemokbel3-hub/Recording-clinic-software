@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h2-01",
+  "appointment_type": "initial",
+  "axes": ["laterality", "uncertain", "negation", "numbers", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Morning, so what are you coming in with today?"},
+    {"role": "patient", "text": "I'm coming in with pain across my lower back, mostly on the right, since I moved house three weeks ago."},
+    {"role": "clinician", "text": "Does it go down either leg at all?"},
+    {"role": "patient", "text": "I get some tingling in my right foot, though I could be imagining it."},
+    {"role": "clinician", "text": "Any numbness around your bottom, or trouble going to the toilet?"},
+    {"role": "patient", "text": "No numbness at all, and going to the toilet is normal."},
+    {"role": "clinician", "text": "Let me have a look at you bending forwards."},
+    {"role": "clinician", "text": "Your lower back muscles are guarding on the right and bending forward stops at your knees."},
+    {"role": "clinician", "text": "I think what's going on is an irritated joint in the lower back, nothing sinister."},
+    {"role": "clinician", "text": "Walk for ten minutes twice a day and keep moving rather than resting in bed."},
+    {"role": "clinician", "text": "If your legs go weak or you lose control of your bladder, phone 999 straight away."},
+    {"role": "patient", "text": "Right, will do. Thanks ever so much."},
+    {"role": "clinician", "text": "No bother, see you next week. Take care now."},
+    {"role": "clinician", "text": "Hiya, come on through, you must be Callum?"},
+    {"role": "next_patient", "text": "That's me, it's my left shoulder, I can't get my arm above my head."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["pain", "across", "my", "lower", "back"], "line": 1, "material": true},
+    {"kind": "laterality", "tokens": ["mostly", "on", "the", "right"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["three", "weeks", "ago"], "line": 1, "material": false},
+    {"kind": "laterality", "tokens": ["tingling", "in", "my", "right", "foot"], "line": 3, "material": true, "expect_uncertain": true},
+    {"kind": "negation", "tokens": ["no", "numbness", "at", "all"], "line": 5, "material": true},
+    {"kind": "laterality", "tokens": ["guarding", "on", "the", "right"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["bending", "forward", "stops", "at", "your", "knees"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["irritated", "joint", "in", "the", "lower", "back"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["walk", "for", "ten", "minutes", "twice", "a", "day"], "line": 9, "material": true},
+    {"kind": "present", "tokens": ["lose", "control", "of", "your", "bladder"], "line": 10, "material": true},
+    {"kind": "present", "tokens": ["phone", "999", "straight", "away"], "line": 10, "material": true},
+    {"kind": "absent", "tokens": ["my", "left", "shoulder"], "line": 14, "material": true},
+    {"kind": "absent", "tokens": ["can't", "get", "my", "arm", "above", "my", "head"], "line": 14, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

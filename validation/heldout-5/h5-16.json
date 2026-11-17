@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h5-16",
+  "appointment_type": "follow_up",
+  "axes": ["negation", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "How's the back since last time?"},
+    {"role": "patient", "text": "Since last time I've had no tingling in my leg at all."},
+    {"role": "patient", "text": "I'm sure of that, I've been writing it down every night."},
+    {"role": "clinician", "text": "Good. Your straight leg raise is up to 70 degrees now, it was 45."},
+    {"role": "clinician", "text": "I suspect we can stretch the gap to three weeks next time."},
+    {"role": "patient", "text": "Suits me."}
+  ],
+  "facts": [
+    {"kind": "negation", "tokens": ["no", "tingling", "in", "my", "leg"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["up", "to", "70", "degrees", "now"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["gap", "to", "three", "weeks"], "line": 4, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

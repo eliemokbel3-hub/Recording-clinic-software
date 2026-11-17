@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h6-14",
+  "appointment_type": "follow_up",
+  "axes": ["rate", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "How's the calf after the weekend?"},
+    {"role": "patient", "text": "Tight first thing, but I jogged for ten minutes on Saturday without it grabbing."},
+    {"role": "clinician", "text": "That's real progress. This week, add a minute every other run, and stay on the flat."},
+    {"role": "clinician", "text": "Do your heel raises on one leg, slowly, as many as you can until it burns."},
+    {"role": "patient", "text": "Okay, how many weeks before I can do the hill again?"},
+    {"role": "clinician", "text": "Leave the hills for another three weeks, at least."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["tight", "first", "thing"], "line": 1, "material": false},
+    {"kind": "present", "tokens": ["jogged", "for", "ten", "minutes", "on", "saturday"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["add", "a", "minute", "every", "other", "run"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["stay", "on", "the", "flat"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["heel", "raises", "on", "one", "leg"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["leave", "the", "hills", "for", "another", "three", "weeks"], "line": 5, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}, "rate": 4}
+}

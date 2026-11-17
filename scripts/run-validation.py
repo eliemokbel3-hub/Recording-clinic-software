@@ -10,6 +10,13 @@ installed app closed and the models downloaded by ``scripts/setup-models.py``:
 
     .venv\\Scripts\\python.exe scripts\\run-validation.py <set-folder> --config <folder> --rule validation\\rules\\option-a-proposed.json
 
+or, with a rule of sets (rule v2, ``rule-v2.json``; rule v3, ``rule-v3.json``,
+since the validation-run7 plan's D4; rule v5, ``rule-v5.json``, six sets,
+since the validation-run8 plan's D1), naming the set the folder was built
+from:
+
+    .venv\\Scripts\\python.exe scripts\\run-validation.py <set-folder> --config <folder> --rule validation\\rules\\rule-v5.json --set <name>
+
 ``<set-folder>`` holds ``<id>.json`` + ``<id>.wav`` + ``<id>.txt`` per
 encounter (``scripts\\build-validation-set.py`` makes the synthetic ones).
 ``--config`` is an explicit note-config folder, never the app's own;

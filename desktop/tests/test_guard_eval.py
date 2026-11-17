@@ -755,9 +755,11 @@ class _FakeWhisper:
     utterance's words and primer words — at the window's start."""
 
     prompts: list[str | None] = []
+    devices: list[str] = []
 
-    def __init__(self, *, model_name: str, initial_prompt: str | None) -> None:
+    def __init__(self, *, model_name: str, initial_prompt: str | None, device: str) -> None:
         type(self).prompts.append(initial_prompt)
+        type(self).devices.append(device)
 
     def transcribe_segment(self, pcm: bytes, sample_rate: int) -> list[TranscribedWord]:
         texts = [_MARKER, "Four", "out", "of", "ten.", "rotator", "cuff", "supraspinatus"]
@@ -803,8 +805,14 @@ class TestMain:
             ["--set", "unused", f"--{_MARKER.lower()}", "out"],
             ["--set", "unused", _MARKER],
             ["--set", "unused", "--candidates", f"{_MARKER},1.5,4.5,0.5,0.6"],
+            # gpu-decoding plan D7 (peer round 10 PR-LOW-011): a device the
+            # parser does not take — neither ``cpu`` nor ``cuda``.
+            ["--set", "unused", "--device", f"{_MARKER}gpu"],
         ],
-        ids=["invalid-choice", "unknown-option", "unknown-argument", "bad-candidate"],
+        ids=[
+            "invalid-choice", "unknown-option", "unknown-argument", "bad-candidate",
+            "invalid-device",
+        ],
     )
     def test_a_command_line_error_echoes_nothing_it_was_given(
         self, argv: list[str], capsys: pytest.CaptureFixture[str]
@@ -862,6 +870,110 @@ class TestMain:
         monkeypatch.setattr(guard_eval, "resolve_whisper_model", lambda: "small")
         assert guard_eval.main(self._argv(tmp_path), voices=_voices) == 2
         assert "--allow-small" in capsys.readouterr().out
+
+    @pytest.mark.parametrize("named", ["large-v3-turbo", "small"])
+    def test_a_model_named_by_model_is_used_and_never_a_fallback(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        named: str,
+    ) -> None:
+        """Larger-model D8: ``--model`` names the model checked and loaded,
+        the fallback resolution is not consulted and no ``--allow-small`` is
+        asked for — ``small`` included."""
+        self._models_present(monkeypatch)
+        checked: list[str] = []
+        built: list[str] = []
+
+        def available(name: str) -> bool:
+            checked.append(name)
+            return True
+
+        def never_resolved() -> str:
+            raise AssertionError("--model given: the fallback resolution is not consulted")
+
+        devices: list[str] = []
+
+        def provider(*, model_name: str, initial_prompt: str | None, device: str) -> object:
+            built.append(model_name)
+            devices.append(device)
+            raise RuntimeError("stop after the build")
+
+        monkeypatch.setattr(guard_eval, "resolve_whisper_model", never_resolved)
+        monkeypatch.setattr(guard_eval, "whisper_model_available", available)
+        monkeypatch.setattr(guard_eval, "SileroVad", _FakeVad)
+        monkeypatch.setattr(guard_eval, "WhisperSpeechProvider", provider)
+        argv = self._argv(tmp_path, "--model", named)
+        assert guard_eval.main(argv, voices=_voices) == 2
+        out = capsys.readouterr().out
+        assert out.strip() == "[refused] the models could not be loaded (RuntimeError)"
+        assert checked == [named] and built == [named]
+        assert devices == ["cpu"]  # gpu-decoding plan D7: the default
+
+    def test_without_model_the_resolution_is_consulted(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Larger-model D8, the other way: no ``--model`` — today's
+        behaviour, the resolved model built."""
+        self._models_present(monkeypatch)
+        built: list[str] = []
+        devices: list[str] = []
+
+        def provider(*, model_name: str, initial_prompt: str | None, device: str) -> object:
+            built.append(model_name)
+            devices.append(device)
+            raise RuntimeError("stop after the build")
+
+        monkeypatch.setattr(guard_eval, "SileroVad", _FakeVad)
+        monkeypatch.setattr(guard_eval, "WhisperSpeechProvider", provider)
+        assert guard_eval.main(self._argv(tmp_path), voices=_voices) == 2
+        assert built == [guard_eval.resolve_whisper_model()]
+        assert devices == ["cpu"]  # gpu-decoding plan D7: the default
+
+    @pytest.mark.parametrize("typed", ["..\\x", "Jane Citizen", "a/b", ".hidden", "x" * 65])
+    def test_a_model_value_not_shaped_as_a_name_is_refused_unechoed(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        typed: str,
+    ) -> None:
+        """Refused before the set folder (absent here) and before any model
+        name is looked up; never echoed."""
+
+        def never_checked(name: str) -> bool:
+            raise AssertionError("a refused name is never looked up")
+
+        monkeypatch.setattr(guard_eval, "whisper_model_available", never_checked)
+        argv = ["--set", str(tmp_path / "absent"), "--model", typed]
+        assert guard_eval.main(argv) == 2
+        captured = capsys.readouterr()
+        assert captured.out == "[refused] --model: not a Whisper model name\n"
+        assert "Jane" not in captured.out + captured.err
+
+    def test_a_model_named_by_model_but_not_installed_is_refused_unechoed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        self._models_present(monkeypatch)
+        monkeypatch.setattr(guard_eval, "whisper_model_available", lambda name: False)
+        argv = self._argv(tmp_path, "--model", "JaneCitizen")
+        assert guard_eval.main(argv, voices=_voices) == 2
+        out = capsys.readouterr().out
+        assert out.strip() == (
+            "[refused] the Whisper model named by --model is not installed in "
+            f"{install_layout.models_root()}: {install_layout.model_remedy()}"
+        )
+        assert "Jane" not in out
+
+    def test_the_model_help_names_the_default_and_the_fallback_rule(self) -> None:
+        (action,) = [a for a in guard_eval._parser()._actions if a.dest == "model"]
+        assert action.default is None
+        assert action.help == (
+            "measure with this installed Whisper model, named as its folder in the models "
+            f"folder (default: `{guard_eval.DEFAULT_WHISPER_MODEL}`, or the fallback with "
+            "--allow-small); a model named here is never a fallback, and the report names it"
+        )
 
     def test_a_non_synthetic_set_is_refused_before_any_model(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -956,6 +1068,56 @@ class TestMain:
         ]
         assert int(set_summary[1]) >= 1
         assert _temp_stores() == set()
+
+    @pytest.mark.parametrize(
+        ("extra", "device", "shown"),
+        [((), "cpu", "medium"), (("--device", "cuda"), "cuda", "medium@cuda")],
+    )
+    def test_the_device_reaches_the_provider_and_its_label_the_report(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        extra: tuple[str, ...],
+        device: str,
+        shown: str,
+    ) -> None:
+        """gpu-decoding plan D7 / D8: ``--device`` (default ``cpu``) is the
+        provider's; the run table names the model with ``@cuda`` appended."""
+        pytest.importorskip("numpy")
+        self._models_present(monkeypatch)
+        monkeypatch.setattr(guard_eval, "SileroVad", _FakeVad)
+        monkeypatch.setattr(guard_eval, "WhisperSpeechProvider", _FakeWhisper)
+        monkeypatch.setattr(guard_eval, "BED_SECONDS", 1.0)
+        monkeypatch.setattr(_FakeWhisper, "prompts", [])
+        monkeypatch.setattr(_FakeWhisper, "devices", [])
+        argv = [*self._argv(tmp_path), *extra]
+        assert guard_eval.main(argv, voices=_voices, synthesize=_fake_synthesize) == 0
+        assert _FakeWhisper.devices == [device]
+        tables = _report_lines(capsys.readouterr().out)
+        assert tables[1][:2] == [shown, "shipped"]
+        assert _temp_stores() == set()
+
+    def test_a_graphics_card_that_cannot_decode_is_refused_by_its_code(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """D7: refused before any case runs, never run on the processor."""
+        from scribe_desktop.transcription import ComputeDeviceError
+
+        self._models_present(monkeypatch)
+        monkeypatch.setattr(guard_eval, "SileroVad", _FakeVad)
+
+        def refused(**kwargs: object) -> object:
+            raise ComputeDeviceError("cuda", "no_device")
+
+        monkeypatch.setattr(guard_eval, "WhisperSpeechProvider", refused)
+        argv = [*self._argv(tmp_path), "--device", "cuda"]
+        assert guard_eval.main(argv, voices=_voices) == 2
+        captured = capsys.readouterr()
+        assert captured.out.strip().splitlines()[-1] == (
+            "[refused] --device cuda: the graphics card cannot decode (no_device)"
+        )
+        assert "# Transcription guard measurement" not in captured.out
 
     def test_a_failing_provider_prints_no_text(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -1105,8 +1267,14 @@ def test_no_ml_runtime_at_import_time() -> None:
     runtimes = (
         "onnxruntime", "faster_whisper", "ctranslate2", "llama_cpp", "av", "huggingface_hub"
     )
+    # gpu-decoding plan C12: the graphics-card seams pinned as the parent pins
+    # them, after the module (which already imports ``transcription``, so the
+    # runtimes the child prints are unchanged).
     code = (
         "import sys, scribe_desktop.guard_eval; "
+        "import scribe_desktop.transcription as transcription; "
+        "transcription.cuda_device_count = lambda: 0; "
+        "transcription.preload_cuda_libraries = lambda device: None; "
         f"print(','.join(n for n in {runtimes!r} if n in sys.modules))"
     )
     result = subprocess.run(

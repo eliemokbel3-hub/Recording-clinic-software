@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h2-20",
+  "appointment_type": "initial",
+  "axes": ["numbers", "noise", "overlap"],
+  "lines": [
+    {"role": "clinician", "text": "Congratulations, how far along are you now?"},
+    {"role": "patient", "text": "Twenty eight weeks, and the pain at the front of my pelvis has got really bad."},
+    {"role": "patient", "text": "Turning over in bed is the worst, and getting out of the car."},
+    {"role": "clinician", "text": "Any tingling, or changes going to the toilet?"},
+    {"role": "patient", "text": "Going to the toilet is fine, more often than normal, but I reckon that's just the baby."},
+    {"role": "clinician", "text": "Let me have a look. It's tender right over the pubic bone, and standing on one leg brings it on."},
+    {"role": "clinician", "text": "This looks like pelvic girdle pain, which is really common in pregnancy and usually settles after the birth."},
+    {"role": "clinician", "text": "Keep your knees together when you roll over or get in the car, like your legs are tied with a ribbon."},
+    {"role": "clinician", "text": "I'll fit you with a support belt today, wear it whenever you're up and about."},
+    {"role": "patient", "text": "Will it harm the baby?"},
+    {"role": "clinician", "text": "Not at all, it's completely safe."},
+    {"role": "clinician", "text": "See you next week."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["twenty", "eight", "weeks"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["pain", "at", "the", "front", "of", "my", "pelvis"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["turning", "over", "in", "bed", "is", "the", "worst"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["getting", "out", "of", "the", "car"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["going", "to", "the", "toilet", "is", "fine"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["tender", "right", "over", "the", "pubic", "bone"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["standing", "on", "one", "leg", "brings", "it", "on"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["pelvic", "girdle", "pain"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["keep", "your", "knees", "together"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["support", "belt"], "line": 8, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}, "snr_db": 25, "overlap_seconds": 1.0, "overlap_lines": [3, 9]}
+}

@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h6-18",
+  "appointment_type": "initial",
+  "axes": ["uncertain", "laterality", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "So you're a runner. What's been going on?"},
+    {"role": "patient", "text": "Sharp pain in my right groin when I push off, it's been building for a month."},
+    {"role": "patient", "text": "No doubt it's the hill sessions, I'd doubled them since January."},
+    {"role": "clinician", "text": "Does coughing or sneezing set it off?"},
+    {"role": "patient", "text": "Sneezing does, yeah."},
+    {"role": "clinician", "text": "Have you changed anything yet?"},
+    {"role": "patient", "text": "I'm moving a bit better since I cut the hills last week, or I like to think so."},
+    {"role": "clinician", "text": "Let me have a look. Bring your knee up to your chest and across."},
+    {"role": "clinician", "text": "That pinches deep in the groin, and squeezing my fist between your knees is sore but strong."},
+    {"role": "clinician", "text": "I think what's going on is the hip joint getting pinched at the front, probably from the extra hill load."},
+    {"role": "clinician", "text": "For the next three weeks, run on the flat only, no more than 5 kilometres, and stop if the pain goes above three out of ten."},
+    {"role": "patient", "text": "I'm positive I can stick to that."},
+    {"role": "clinician", "text": "Good. See you next week."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["right", "groin"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["when", "i", "push", "off"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["building", "for", "a", "month"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["doubled", "them", "since", "january"], "line": 2, "material": false},
+    {"kind": "present", "tokens": ["sneezing", "does"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["since", "i", "cut", "the", "hills", "last", "week"], "line": 6, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["pinches", "deep", "in", "the", "groin"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["sore", "but", "strong"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["hip", "joint", "getting", "pinched", "at", "the", "front"], "line": 9, "material": true},
+    {"kind": "present", "tokens": ["run", "on", "the", "flat", "only"], "line": 10, "material": true},
+    {"kind": "present", "tokens": ["no", "more", "than", "5", "kilometres"], "line": 10, "material": true},
+    {"kind": "present", "tokens": ["above", "three", "out", "of", "ten"], "line": 10, "material": true},
+    {"kind": "present", "tokens": ["i'm", "positive", "i", "can", "stick", "to", "that"], "line": 11, "material": false}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

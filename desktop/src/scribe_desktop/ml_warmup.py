@@ -41,10 +41,13 @@ import time
 from collections.abc import Callable
 from functools import partial
 from types import ModuleType
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 from scribe_desktop.benchmark import assert_offline_env
 from scribe_desktop.logging_setup import exception_type_name, log_event
+
+if TYPE_CHECKING:
+    from scribe_desktop.transcription import ComputeDevice
 
 # What the live worker's factories import (``speech.SileroVad``,
 # ``transcription.WhisperSpeechProvider``, ``speaker_embedding``) — faster-
@@ -65,13 +68,24 @@ def _import_module(name: str) -> ModuleType:
     return importlib.import_module(name)
 
 
-def warm_transcription_imports(importer: Importer | None = None) -> None:
+def warm_transcription_imports(
+    importer: Importer | None = None, device: ComputeDevice = "cpu"
+) -> None:
     """Import ``WARMED_MODULES`` after asserting the offline environment, and
     turn onnxruntime's telemetry events off as ``speech.SileroVad`` does.
-    ``importer`` is the test seam; None is ``importlib.import_module``."""
+    ``importer`` is the test seam; None is ``importlib.import_module``.
+    Before ``faster_whisper``, the NVIDIA libraries for ``device`` are
+    preloaded, as before every faster-whisper import (gpu-decoding plan D2):
+    on the processor — the only device the app uses until a setting exists —
+    that is a no-op, so the warm-up still only imports modules."""
     assert_offline_env()
     load = importer if importer is not None else _import_module
     for name in WARMED_MODULES:
+        if name == "faster_whisper":
+            # Resolved per call: the test conftest pins it.
+            from scribe_desktop.transcription import preload_cuda_libraries
+
+            preload_cuda_libraries(device)
         module = load(name)
         if name == "onnxruntime":
             module.disable_telemetry_events()

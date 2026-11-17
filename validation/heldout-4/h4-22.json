@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h4-22",
+  "appointment_type": "post_operative",
+  "axes": ["uncertain", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "Hello both. Three weeks since the new hip, how's it going?"},
+    {"role": "patient", "text": "Since last time I'm moving a bit better, I've ditched one crutch indoors."},
+    {"role": "partner", "text": "He's been up and down the stairs on his own, I just hover behind him."},
+    {"role": "clinician", "text": "That's perfect, stay behind him going down."},
+    {"role": "patient", "text": "Since last time the wound's had a bit of clear ooze at the bottom end, though I could be imagining it."},
+    {"role": "clinician", "text": "Let me have a look. It's dry today and the edges are knitting together nicely."},
+    {"role": "clinician", "text": "The discharge sheet says enoxaparin 40 milligrams once a day for another three weeks, so keep going with those injections."},
+    {"role": "partner", "text": "I do them for him, every evening at six."},
+    {"role": "clinician", "text": "No lifting anything heavier than a kettle, and don't bend the hip past a right angle for the first six weeks."},
+    {"role": "clinician", "text": "If the calf goes hot, red or swollen, or you get breathless, phone 111 the same day."},
+    {"role": "patient", "text": "Will do. Thanks."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["i'm", "moving", "a", "bit", "better"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["clear", "ooze", "at", "the", "bottom", "end"], "line": 4, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["the", "edges", "are", "knitting", "together"], "line": 5, "material": true},
+    {"kind": "dose", "tokens": ["enoxaparin", "40", "milligrams", "once", "a", "day"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["don't", "bend", "the", "hip", "past", "a", "right", "angle"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["phone", "111", "the", "same", "day"], "line": 9, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "partner": 1}}
+}

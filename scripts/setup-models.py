@@ -13,7 +13,8 @@ installation plan Phase 1 a source checkout is the DEV channel, so that is
 %LOCALAPPDATA%\\ClinikoScribe-dev\\models\\ (the installed app's models come
 with its installer, never from this script):
   - silero-vad ONNX model (voice activity detection)
-  - faster-whisper (CTranslate2) model candidates for the Step D6 benchmark
+  - the shipped faster-whisper (CTranslate2) model; the other benchmark
+    candidates only by ``--only <name>`` (larger-model plan D8)
   - speaker-embedding ONNX model (voice enrolment; practitioner-profile plan)
   - language-model GGUF (the 4B instruct model behind the prose writing
     styles; note-learning-and-styles plan Phase 4)
@@ -53,12 +54,20 @@ is checked but never trusted as an allocation bound); the candidate is
 promoted to ``<name>.gguf`` only after its size AND SHA-256 match the pin. A
 run without ``--only`` includes it.
 
+A whisper snapshot is fetched at its pinned commit and, since larger-model
+plan D8, only after the Hub's file sizes at that commit show room for it
+(the same free-space precondition and margin as the language model). A run
+without ``--only`` fetches the SHIPPED whisper model only
+(``benchmark.SHIPPED_WHISPER_MODEL``) and names the other candidates, which
+are fetched by ``--only <name>`` alone - so a plain run fetches exactly the
+model pack's four entries.
+
 ``--root DIR`` (installation plan Task 3.3) stages the downloads into DIR
 instead - for the release model pack, the gitignored ``build\\models`` of this
 checkout - and never touches %LOCALAPPDATA%: no folder there is created, read
 or written when ``--root`` is given. The pack needs four entries, one run
 each: ``--only silero-vad``, ``--only medium``, ``--only speaker-embedding``
-and ``--only language-model``.
+and ``--only language-model`` (or one plain run with ``--root``).
 
 Usage:
     .venv\\Scripts\\python.exe scripts\\setup-models.py [--only NAME] [--root DIR]
@@ -67,6 +76,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import os
 import shutil
@@ -83,9 +93,21 @@ SILERO_VAD_URL = (
 # Trust-on-first-download pin, computed 2026-07-26 from the v5.1.2 tag.
 SILERO_VAD_SHA256 = "2623a2953f6ff3d2c1e61740c6cdb7168133479b267dfef114a4a3cc5bdd788f"
 
-# Whisper candidates for the Step D6 benchmark (Systran CTranslate2 conversions).
-# Each pinned to an immutable commit SHA (recorded 2026-07-27) so model bytes
-# cannot change between installations without review.
+# Whisper candidates for the Step D6 benchmark (CTranslate2 conversions; the
+# first four Systran's). Each pinned to an immutable commit SHA (the first four
+# recorded 2026-07-27) so model bytes cannot change between installations
+# without review. A plain run fetches only the shipped one
+# (``SHIPPED_WHISPER_MODEL``); the others are fetched by ``--only <name>``.
+#
+# Larger-model plan D1/D8 (repos and commits read from the Hugging Face Hub API
+# 2026-11-04, written here 2026-11-05): the three larger candidates, in the
+# plan's measurement order. ``large-v3`` and ``distil-large-v3`` are Systran's;
+# ``large-v3-turbo`` is NOT - its conversion is the third party ``deepdml``'s
+# (the upstream model is OpenAI's turbo, MIT). Its bytes are trusted only
+# because the commit SHA pins them and Task 0.2 records each file's SHA-256,
+# as the ``unsloth`` Qwen quant is trusted only by its digest. All three need
+# the ``preprocessor_config.json`` the snapshot fetches (128 mel filters;
+# ``transcription.check_mel_filters`` refuses a load without it).
 WHISPER_CANDIDATES: dict[str, tuple[str, str]] = {
     "small": (
         "Systran/faster-whisper-small",
@@ -103,7 +125,22 @@ WHISPER_CANDIDATES: dict[str, tuple[str, str]] = {
         "Systran/faster-whisper-medium",
         "08e178d48790749d25932bbc082711ddcfdfbc4f",
     ),
+    "large-v3-turbo": (
+        "deepdml/faster-whisper-large-v3-turbo-ct2",
+        "4df90f75321148c3a29a9e2351b7ddf8f5b115a8",
+    ),
+    "distil-large-v3": (
+        "Systran/faster-distil-whisper-large-v3",
+        "c3058b475261292e64a0412df1d2681c06260fab",
+    ),
+    "large-v3": (
+        "Systran/faster-whisper-large-v3",
+        "edaa852ec7e145841d8ffdb056a99866b5f0a478",
+    ),
 }
+# What a whisper snapshot fetches (``snapshot_download``'s allow patterns) and
+# so what its free-space check counts.
+WHISPER_ALLOW_PATTERNS: tuple[str, ...] = ("*.bin", "*.json", "*.txt")
 
 # Snapshot completeness is defined ONCE, in scribe_desktop.benchmark (smoke
 # round 21): model.bin + config.json + (tokenizer.json OR vocabulary.txt OR
@@ -111,6 +148,7 @@ WHISPER_CANDIDATES: dict[str, tuple[str, str]] = {
 # post-download assert, the benchmark, the UI model report and the
 # transcription provider all share that checker.
 from scribe_desktop.benchmark import (  # noqa: E402
+    SHIPPED_WHISPER_MODEL,
     default_models_root,
     whisper_snapshot_complete,
     whisper_snapshot_missing,
@@ -237,6 +275,47 @@ def fetch_silero_vad(root: Path) -> None:
     print(f"[ok  ] silero-vad ({human(target.stat().st_size)}) -> {target}")
 
 
+def whisper_fetch_bytes(name: str, repo_id: str, revision: str) -> int:
+    """The bytes the free-space check demands for a snapshot fetch of
+    ``repo_id`` at ``revision``: every file the allow patterns take (matched
+    as ``snapshot_download`` matches them - ``huggingface_hub``'s
+    ``filter_repo_objects`` uses ``fnmatchcase``, case-sensitive on every
+    platform, over repo paths that always use ``/``), at the Hub's size,
+    whether or not a copy is already there. The library's reuse rule is
+    never re-implemented (review round 12: it keeps a present file only by
+    its commit, etag or SHA-256, never by size), so the count can only be
+    high: by the bytes of the files it keeps on a resumed fetch. Read from
+    the Hub's file metadata at the pinned revision - a setup-time request to
+    the same host as the fetch. A file list the Hub does not give, a list
+    with no file the patterns take, or a file whose size it does not report
+    is refused: the check cannot pass on a guess."""
+    from huggingface_hub import HfApi  # network-capable; setup-only
+
+    info = HfApi().model_info(repo_id, revision=revision, files_metadata=True)
+    fetched = [
+        sibling
+        for sibling in info.siblings or ()
+        if any(
+            fnmatch.fnmatchcase(sibling.rfilename, pattern) for pattern in WHISPER_ALLOW_PATTERNS
+        )
+    ]
+    if not fetched:
+        raise SystemExit(
+            f"whisper/{name}: the Hub listed no file to fetch at {revision[:12]}, so the "
+            "free-space check cannot be made; nothing was fetched"
+        )
+    needed = 0
+    for sibling in fetched:
+        filename = sibling.rfilename
+        if sibling.size is None:
+            raise SystemExit(
+                f"whisper/{name}: the Hub reported no size for {filename} at "
+                f"{revision[:12]}, so the free-space check cannot be made; nothing was fetched"
+            )
+        needed += int(sibling.size)
+    return needed
+
+
 def fetch_whisper(root: Path, name: str, repo_id: str, revision: str) -> None:
     from huggingface_hub import snapshot_download  # network-capable; setup-only
 
@@ -246,13 +325,17 @@ def fetch_whisper(root: Path, name: str, repo_id: str, revision: str) -> None:
         return
     if target.exists():
         print(f"[redo] whisper/{name} present but incomplete; resuming download")
-    target.parent.mkdir(parents=True, exist_ok=True)
+    # Larger-model D8: the room is checked before a byte of the snapshot is
+    # fetched (the larger candidates are 1.5-3.1 GB each).
+    _require_free_space(
+        target.parent, whisper_fetch_bytes(name, repo_id, revision), f"whisper/{name}"
+    )
     print(f"[get ] whisper/{name} <- {repo_id}@{revision[:12]}")
     snapshot_download(
         repo_id=repo_id,
         revision=revision,
         local_dir=str(target),
-        allow_patterns=["*.bin", "*.json", "*.txt"],
+        allow_patterns=list(WHISPER_ALLOW_PATTERNS),
     )
     missing = whisper_snapshot_missing(target)
     if missing:
@@ -428,16 +511,17 @@ def language_model_paths(root: Path) -> tuple[Path, Path]:
     return target, target.with_name(f"{LANGUAGE_MODEL_FILENAME}.candidate")
 
 
-def _require_free_space(directory: Path, needed: int) -> None:
+def _require_free_space(directory: Path, needed: int, label: str) -> None:
     """Refuse BEFORE a single byte is fetched unless the volume holding
     ``directory`` has room for ``needed`` bytes plus the margin: a 2.3 GiB
     download that fills the disk would leave the app unable to write a
-    session."""
+    session. ``label`` names the entry (the language model, or since
+    larger-model D8 a whisper snapshot)."""
     directory.mkdir(parents=True, exist_ok=True)
     free = shutil.disk_usage(directory).free
     if free < needed + LANGUAGE_MODEL_FREE_SPACE_MARGIN:
         raise SystemExit(
-            f"language-model needs {needed} bytes ({human(needed)}) plus a "
+            f"{label} needs {needed} bytes ({human(needed)}) plus a "
             f"{LANGUAGE_MODEL_FREE_SPACE_MARGIN} byte "
             f"({human(LANGUAGE_MODEL_FREE_SPACE_MARGIN)}) margin at {directory}, but only "
             f"{free} bytes ({human(free)}) are free; nothing was fetched"
@@ -564,7 +648,7 @@ def fetch_language_model(root: Path) -> None:
         print(f"       sha256  : {digest} (verified against the pin)")
         return
 
-    _require_free_space(target.parent, LANGUAGE_MODEL_SIZE_BYTES - have)
+    _require_free_space(target.parent, LANGUAGE_MODEL_SIZE_BYTES - have, "language-model")
     _stream_language_model(
         LANGUAGE_MODEL_URL, candidate, expected_size=LANGUAGE_MODEL_SIZE_BYTES
     )
@@ -633,9 +717,17 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.only is None or args.only == "silero-vad":
         fetch_silero_vad(root)
+    # Larger-model D8: a plain run fetches the shipped whisper model only (the
+    # pack's whisper entry); every other candidate is fetched by --only.
     for name, (repo_id, revision) in WHISPER_CANDIDATES.items():
-        if args.only is None or args.only == name:
+        if args.only == name or (args.only is None and name == SHIPPED_WHISPER_MODEL):
             fetch_whisper(root, name, repo_id, revision)
+    if args.only is None:
+        others = [name for name in WHISPER_CANDIDATES if name != SHIPPED_WHISPER_MODEL]
+        print(
+            f"[skip] whisper candidates other than the shipped {SHIPPED_WHISPER_MODEL} "
+            f"({', '.join(others)}) - fetch one with --only <name>"
+        )
     if args.only == "speaker-embedding":
         fetch_speaker_embedding(root, candidate_url=args.candidate_url)
     elif args.only is None:

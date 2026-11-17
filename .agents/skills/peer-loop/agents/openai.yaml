@@ -2,7 +2,15 @@
 #
 # peer-loop is side-effecting: it spawns paid headless cross-family peer
 # agents and drives $fix cycles that edit source files and update the
-# Findings Log in place. Require explicit $peer-loop invocation so Codex
-# does not start an automated peer-review/fix loop without a clear intent.
+# Findings Log in place. As of v34.0, implicit ($peer-loop) invocation is
+# permitted so an agent can run the cross-family check when the work calls
+# for it; safety comes from the in-skill gates (the per-pass round cap,
+# default 5, the cross-family rule that stops the run as inconclusive
+# rather than substitute a same-family peer, and the pauses $fix and the
+# executor's verification already own), not from invocation-locking. It
+# has no start confirm: it asks at most which plan to review (when none is
+# named and there is no single Active plan) and the session's model
+# family (when the harness does not report it). It can still be invoked
+# explicitly.
 policy:
-  allow_implicit_invocation: false
+  allow_implicit_invocation: true

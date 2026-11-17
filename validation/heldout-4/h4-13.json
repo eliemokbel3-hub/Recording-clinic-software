@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h4-13",
+  "appointment_type": "follow_up",
+  "axes": ["end_and_new_patient", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "How's the elbow been since last time, Fiona?"},
+    {"role": "patient", "text": "Since last time the outside of my elbow only twinges when I lift the kettle."},
+    {"role": "clinician", "text": "Grand. Keep squeezing the putty and turning the wrist down slowly with the tin of beans, every evening."},
+    {"role": "clinician", "text": "Thanks Fiona, I'll see you in three weeks. Is that Sunil? Come on in."},
+    {"role": "next_patient", "text": "Hi, yeah. I've done something to my ankle playing five-a-side last night."},
+    {"role": "clinician", "text": "Ouch. Okay, hop up on the bed and let's see."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["only", "twinges", "when", "i", "lift", "the", "kettle"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["turning", "the", "wrist", "down", "slowly", "with", "the", "tin", "of", "beans"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["see", "you", "in", "three", "weeks"], "line": 3, "material": true},
+    {"kind": "absent", "tokens": ["done", "something", "to", "my", "ankle"], "line": 4, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

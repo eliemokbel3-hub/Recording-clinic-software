@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h6-15",
+  "appointment_type": "initial",
+  "axes": ["overlap", "uncertain", "laterality", "negation", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "Hi, what's brought you in today?"},
+    {"role": "patient", "text": "I've got a stabbing pain under my left shoulder blade when I breathe in deep."},
+    {"role": "clinician", "text": "When did it start?"},
+    {"role": "patient", "text": "After a coughing fit with a cold, about ten days ago."},
+    {"role": "clinician", "text": "Any heart or lung problems in the past, or operations?"},
+    {"role": "patient", "text": "I had previous surgery on my gallbladder."},
+    {"role": "patient", "text": "At least I think it was the gallbladder."},
+    {"role": "clinician", "text": "Any shortness of breath, chest pain at rest, or coughing up blood?"},
+    {"role": "patient", "text": "None of that, no."},
+    {"role": "clinician", "text": "Let me have a look. Twist round to each side for me."},
+    {"role": "clinician", "text": "Twisting to the left gives you that sharp pain, and pressing on the seventh rib at the back brings it on too."},
+    {"role": "clinician", "text": "I think you have a strained joint where the rib meets the spine, from all that coughing."},
+    {"role": "clinician", "text": "Breathe deep into the sore side ten times every hour so your lung stays clear."},
+    {"role": "patient", "text": "Even though it catches?"},
+    {"role": "clinician", "text": "Even though it catches, yes, a little discomfort is fine. If you get breathless or start feeling hot and shivery, see a GP that day."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["under", "my", "left", "shoulder", "blade"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["when", "i", "breathe", "in", "deep"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["after", "a", "coughing", "fit"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["about", "ten", "days", "ago"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["previous", "surgery", "on", "my", "gallbladder"], "line": 5, "material": true, "expect_uncertain": true},
+    {"kind": "negation", "tokens": ["none", "of", "that"], "line": 8, "material": true},
+    {"kind": "laterality", "tokens": ["twisting", "to", "the", "left"], "line": 10, "material": true},
+    {"kind": "present", "tokens": ["pressing", "on", "the", "seventh", "rib", "at", "the", "back"], "line": 10, "material": true},
+    {"kind": "present", "tokens": ["strained", "joint", "where", "the", "rib", "meets", "the", "spine"], "line": 11, "material": true},
+    {"kind": "present", "tokens": ["breathe", "deep", "into", "the", "sore", "side", "ten", "times", "every", "hour"], "line": 12, "material": true},
+    {"kind": "present", "tokens": ["get", "breathless", "or", "start", "feeling", "hot", "and", "shivery"], "line": 14, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}, "overlap_seconds": 1.5, "overlap_lines": [2, 8, 13]}
+}

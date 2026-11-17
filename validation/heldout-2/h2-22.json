@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h2-22",
+  "appointment_type": "acute",
+  "axes": ["laterality", "contradictory", "scribe_instruction", "small_talk", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Hiya, sit down. Did you see the match last night?"},
+    {"role": "patient", "text": "Don't, we were awful. Three nil at home."},
+    {"role": "clinician", "text": "Scribe, leave the football out of the note. Right, what's up with the calf?"},
+    {"role": "patient", "text": "I felt something go in my left calf at tennis, like someone kicked me, on Sunday morning."},
+    {"role": "patient", "text": "Sorry, Saturday morning, Sunday was the club dinner."},
+    {"role": "clinician", "text": "Let me have a look. There's a tender spot in the inner calf muscle, and rising onto your toes on that leg hurts."},
+    {"role": "clinician", "text": "I think you have a calf strain, grade one or two, I'd guess two given the bruising."},
+    {"role": "clinician", "text": "Put a small heel raise in both shoes for the next couple of weeks."},
+    {"role": "clinician", "text": "No running till you can do twenty heel raises on that leg without pain."},
+    {"role": "clinician", "text": "Okey doke, have a good week, see you on the fourteenth."},
+    {"role": "clinician", "text": "Morning, Mr Osei, come through, mind the step."},
+    {"role": "next_patient", "text": "Morning. My shoulder's been catching when I reach behind my back, the left one."}
+  ],
+  "facts": [
+    {"kind": "absent", "tokens": ["three", "nil", "at", "home"], "line": 1, "material": false},
+    {"kind": "absent", "tokens": ["leave", "the", "football", "out", "of", "the", "note"], "line": 2, "material": false},
+    {"kind": "laterality", "tokens": ["my", "left", "calf"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["like", "someone", "kicked", "me"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["on", "sunday", "morning"], "line": 3, "material": false},
+    {"kind": "present", "tokens": ["saturday", "morning"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["tender", "spot", "in", "the", "inner", "calf", "muscle"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["rising", "onto", "your", "toes", "on", "that", "leg", "hurts"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["calf", "strain"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["small", "heel", "raise", "in", "both", "shoes"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["twenty", "heel", "raises", "on", "that", "leg", "without", "pain"], "line": 8, "material": true},
+    {"kind": "absent", "tokens": ["my", "shoulder's", "been", "catching"], "line": 11, "material": true},
+    {"kind": "absent", "tokens": ["the", "left", "one"], "line": 11, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

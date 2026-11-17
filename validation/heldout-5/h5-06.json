@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h5-06",
+  "appointment_type": "initial",
+  "axes": ["laterality", "numbers", "contradictory", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Good afternoon. What can I help you with?"},
+    {"role": "patient", "text": "I'm coming in with a painful right shoulder, it's been about four weeks."},
+    {"role": "patient", "text": "Er, six weeks, I mean, it started before my holiday."},
+    {"role": "clinician", "text": "Lift both arms up to the side for me. Painful between about 70 and 120 degrees on the right, that's a pinched tendon pattern."},
+    {"role": "clinician", "text": "I think what's going on is irritation of the rotator cuff tendon."},
+    {"role": "clinician", "text": "Don't sleep on that side for now, and hug a pillow so the arm isn't hanging forward."},
+    {"role": "patient", "text": "Okay, thank you."},
+    {"role": "clinician", "text": "Thank you, Mr Achterberg. Please make a follow up appointment at reception on your way out."},
+    {"role": "clinician", "text": "Mrs Delacroix-Hume? Do come in. I'm sorry you've been kept waiting."},
+    {"role": "next_patient", "text": "Not at all. It's my hip, really, it aches when I've been sitting through a long drive."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["painful", "right", "shoulder"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["six", "weeks"], "line": 2, "material": false},
+    {"kind": "present", "tokens": ["painful", "between", "about", "70", "and", "120", "degrees"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["don't", "sleep", "on", "that", "side"], "line": 5, "material": true},
+    {"kind": "absent", "tokens": ["aches", "when", "i've", "been", "sitting"], "line": 9, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

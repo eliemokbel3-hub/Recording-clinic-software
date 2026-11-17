@@ -2,8 +2,11 @@
 #
 # execute-loop is side-effecting: it spawns paid per-phase executor and
 # cross-family peer agents and drives $execute / $fix cycles and commits
-# that edit source files in place. Require explicit $execute-loop
-# invocation so Codex does not start an automated build/review/commit
-# loop without a clear intent.
+# that edit source files in place. As of v34.0, implicit ($execute-loop)
+# invocation is permitted so an agent can start a run when the task calls
+# for it; safety comes from the in-skill gates (the setup wizard, which
+# ends with the close table's one confirm before anything is spawned or
+# committed, and every MUST-PAUSE gate after it), not from
+# invocation-locking. It can still be invoked explicitly.
 policy:
-  allow_implicit_invocation: false
+  allow_implicit_invocation: true

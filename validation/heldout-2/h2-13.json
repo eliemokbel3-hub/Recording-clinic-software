@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h2-13",
+  "appointment_type": "post_operative",
+  "axes": ["laterality", "numbers", "uncertain", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Right, six weeks since the repair on your right shoulder, how's it been out of the sling?"},
+    {"role": "patient", "text": "Out of the sling since Monday, like the surgeon said."},
+    {"role": "clinician", "text": "Well, welcome to week six, this is where the real work starts."},
+    {"role": "patient", "text": "I'm still getting tingling in my little and ring fingers at night, though I'm half asleep so I can't really be sure."},
+    {"role": "clinician", "text": "Let me have a look. Lifting your arm out in front, I can take it to 90 degrees, beyond that it's guarded."},
+    {"role": "clinician", "text": "The tingling's probably from the nerve at the elbow getting squashed while you sleep, I'd suspect."},
+    {"role": "clinician", "text": "Keep your elbow straighter in bed, a towel wrapped round it overnight helps."},
+    {"role": "clinician", "text": "Now, lean on the table and let the arm swing in small circles, a minute each way, three times a day."},
+    {"role": "patient", "text": "The surgeon's letter says tramadol, is that still okay?"},
+    {"role": "clinician", "text": "Yes, tramadol 50 milligrams up to four times a day is fine, but don't drive if it makes you drowsy."},
+    {"role": "clinician", "text": "No lifting anything heavier than a cup of tea with that arm."},
+    {"role": "patient", "text": "Understood. Same time next week?"},
+    {"role": "clinician", "text": "Same time next week, yes. Take care."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["right", "shoulder"], "line": 0, "material": true},
+    {"kind": "present", "tokens": ["out", "of", "the", "sling", "since", "monday"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["tingling", "in", "my", "little", "and", "ring", "fingers", "at", "night"], "line": 3, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["to", "90", "degrees"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["nerve", "at", "the", "elbow"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["a", "towel", "wrapped", "round", "it", "overnight"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["let", "the", "arm", "swing", "in", "small", "circles"], "line": 7, "material": true},
+    {"kind": "dose", "tokens": ["tramadol", "50", "milligrams", "up", "to", "four", "times", "a", "day"], "line": 9, "material": true},
+    {"kind": "present", "tokens": ["don't", "drive", "if", "it", "makes", "you", "drowsy"], "line": 9, "material": true},
+    {"kind": "present", "tokens": ["heavier", "than", "a", "cup", "of", "tea"], "line": 10, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

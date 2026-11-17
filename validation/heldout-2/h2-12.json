@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h2-12",
+  "appointment_type": "follow_up",
+  "axes": ["numbers", "uncertain", "overlap"],
+  "lines": [
+    {"role": "clinician", "text": "Morning! How's the Achilles been since last time?"},
+    {"role": "patient", "text": "Since last time the morning stiffness has eased off, it's only about ten minutes now."},
+    {"role": "patient", "text": "The new thing since last time is it's sore going uphill on my runs."},
+    {"role": "patient", "text": "Can't swear to it though."},
+    {"role": "clinician", "text": "Let me have a look. Squeezing the tendon is still tender, about two finger widths above the heel."},
+    {"role": "clinician", "text": "Do your heel drops off the step, slowly, three sets of fifteen, every day."},
+    {"role": "clinician", "text": "Keep the running to flat routes for the next fortnight, no hills."},
+    {"role": "patient", "text": "Fair enough, I'm sure I can manage that."},
+    {"role": "clinician", "text": "See you next week."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["morning", "stiffness", "has", "eased", "off"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["only", "about", "ten", "minutes", "now"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["sore", "going", "uphill", "on", "my", "runs"], "line": 2, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["squeezing", "the", "tendon", "is", "still", "tender"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["two", "finger", "widths", "above", "the", "heel"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["heel", "drops", "off", "the", "step"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["three", "sets", "of", "fifteen"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["flat", "routes"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["no", "hills"], "line": 6, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}, "overlap_seconds": 1.5, "overlap_lines": [4, 7]}
+}

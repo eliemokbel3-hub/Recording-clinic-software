@@ -47,14 +47,22 @@ medication the note does not carry — is made FINDABLE, never reordered: the
 chooser marks each flagged line in transcript order with
 ``models.FLAGGED_LINE_MARK`` at the FRONT of its label, after its number (a
 suffix was unreadable — the closed box cuts a long label's end and the open
-list elides its middle; 2026-10-11 live smoke), "Show flagged lines only"
-filters it, and one count line says how many;
+list elides its middle; 2026-10-11 live smoke), "Show flagged or suggested
+lines only" filters it (``models.FLAGGED_FILTER_LABEL``; the name widened by
+note-content-design D6), and one count line says how many;
 a flagged line the chooser cannot offer (typed over, or only partly in the
 note) is marked on its row instead and named by number in the count line
 (PR-MED-001), never offered as a duplicate Add. "Acknowledge all review
 warnings" never clears this warning — only its own row's Acknowledge does
 (``models.SEPARATELY_ACKNOWLEDGED_CODES``); what Save, Complete, Copy and Write
-require is unchanged.
+require is unchanged. The validation-run6 plan's D1 adds Check 4's second
+code, ``clinician_line_omitted`` — a whole line the confirmed clinician said
+that is in no section and holds none of those words — flagged, filtered,
+counted and acknowledged exactly the same way (``models.OMISSION_CODES``).
+Since the validation-run7 plan's D1 that code is drawn once per joined run
+(the pieces the recogniser split one line into, ``note.joined_run``), and
+every piece of the run is still marked, filtered and offered
+(``models.flagged_segments``).
 
 Check marks (invented-text guard D5). A quoted line holding a number or a
 word the transcription guard marked ``suspect`` carries ``[check: number]`` /
@@ -63,18 +71,20 @@ editor row (after ``[flagged] ``); its review group — ``number_source`` /
 ``suspect_source`` — is in the same separately-acknowledged set. Copy renders
 the note WITHOUT the check marks (decision 0.5; the pre-filled mark stays).
 The validation-pass plan's D7 adds a third, ``[check: unsure]`` (a quoted line
-someone other than the confirmed clinician said with a spoken hedge,
-``hedged_source``), shown and left out of Copy the same way — but "Acknowledge
-all review warnings" clears its group.
+someone other than the confirmed clinician said with a spoken hedge — or,
+since the validation-run6 plan's D5, joined mid-sentence to their next or
+previous line holding one; ``hedged_source``), shown and left out of Copy the
+same way — but "Acknowledge all review warnings" clears its group.
 
 The next-patient boundary (validation-pass plan D5, D6). Check 6's
 ``possible_next_patient`` — one warning when the note stops where a new patient
 may have arrived — is in the same separately-acknowledged set: "Acknowledge
 all review warnings" never clears it, only its own row's Acknowledge does. The
 chooser marks every line from that point on with
-``models.NEXT_PATIENT_LINE_MARK`` at the front of its label, after any
-``[flagged]``. The "Acknowledge all" tooltip names every code of the set
-(``models.ACKNOWLEDGE_ALL_TOOLTIP``).
+``models.NEXT_PATIENT_LINE_MARK`` (``[next patient?]`` — short since the
+validation-run6 plan's D3, so the open list's middle elision cannot cut it) at
+the front of its label, after any ``[flagged]``. The "Acknowledge all" tooltip
+names every code of the set (``models.ACKNOWLEDGE_ALL_TOOLTIP``).
 
 Phrase learning (D9 as amended 2026-09-16, Task 5.2). After an add or a move
 of one of the practitioner's OWN lines — ``note.spoken_by_confirmed_clinician``,
@@ -138,6 +148,24 @@ fallback — language model absent or failed to load, learned style missing,
 rendering in flight — names itself on the style line under the note (C8).
 ``format_note_body`` stays the ONE rendering path: the body shown, the
 ``note.enc`` Save writes and Copy all read the same bound renderings.
+
+Section suggestions (note-content-design plan Phase C, Task C.4; D6, D8, D9;
+C1, C8, C13). With a suggestion stage (``models.build_suggestion_stage``),
+each review runs at most ONE job on a second ``_JobSlot``, under any writing
+style: the local model is asked, for the lines the note leaves out before the
+next-patient boundary, which section each belongs in, and answers with ids
+and section keys only. It starts at the end of ``begin_review`` — or, when a
+style job is in flight, once that job has reported — and waits between
+windows while a prose job is pending. What lands is a MARK on the existing
+chooser (``[suggested: <title>]``, after ``[flagged]`` and ``[next
+patient?]``), accepted only where the line's own ownership rule allows the
+section (``eligible_utterances``), and a pre-selected section when the
+clinician moves to that line; the filter tick lists those lines too and the
+count line counts them. Nothing is added without the clinician's Add, and
+nothing the model writes is shown or kept. The job never holds Save,
+Complete or Discard: every exit aborts and orphans it, and the window's close
+guard calls ``prepare_close`` first, so the most anything waits is the one
+window in flight.
 
 Where the decisions live (note-learning plan Task H6). This widget holds
 every piece of review STATE and the order it mutates it in; the DECISIONS it
@@ -242,17 +270,24 @@ from scribe_desktop.note_config import (
     NoteConfigError,
     append_learned_rules,
     append_user_cues,
+    build_note_request,
     dev_writes_allowed,
     plain_skip_reason,
     record_rule_outcomes,
     replace_learned_rule_wording,
 )
+from scribe_desktop.note_suggest import SuggestionInput
 from scribe_desktop.session_mode import SessionMode
 from scribe_desktop.transcription import TranscriptDocument
 from scribe_desktop.ui import models, note_review
 from scribe_desktop.ui.lists import NoCopyComboBox
 from scribe_desktop.ui.tasks import TaskThread
 from scribe_desktop.ui.theme import mark_card, set_role, set_variant
+
+# Note-content-design D8 (Task C.4): how often a suggestion job waiting on a
+# pending prose job looks again. Its wait is ``abort.wait`` — an exit wakes it
+# at once; a prose job's release is seen within this interval.
+_SUGGESTION_YIELD_POLL_SECONDS: Final = 0.05
 
 
 def _refused_sections(note: GeneratedNote) -> frozenset[NoteSectionKey]:
@@ -527,6 +562,80 @@ class _NotePanel(QPlainTextEdit):
         menu.deleteLater()
 
 
+class _JobSlot:
+    """One background job of the Note tab (note-content-design plan D8,
+    Task C.2 — the prose stage's lifecycle, extracted unchanged): at most one
+    CURRENT job and its abort flag. A job that reported, or was orphaned by
+    `clear()`, moves to the screen's shared `orphaned` list — and the screen
+    stays busy — until its `finished` signal reaches the screen's one
+    `dispose` (which clears it from whichever slot still holds it)."""
+
+    def __init__(
+        self,
+        parent: QWidget,
+        orphaned: list[TaskThread],
+        dispose: Callable[[TaskThread], None],
+    ) -> None:
+        self._parent = parent
+        self._orphaned = orphaned
+        self._dispose = dispose
+        self.job: TaskThread | None = None
+        self.abort: threading.Event | None = None
+
+    def start(
+        self,
+        work: Callable[[threading.Event], object],
+        on_done: Callable[[TaskThread, object], None],
+        on_failed: Callable[[TaskThread, object], None],
+    ) -> None:
+        """Run ``work`` off the GUI thread as this slot's current job."""
+        # Phase H round 24 MED-002: the job's abort flag. `orphan` (so
+        # `clear()` — Abandon, Cancel, Complete, Discard, a replacement
+        # review) sets it, and the work consults it before EACH model call:
+        # an orphaned job stops after the call in progress instead of handing
+        # the rest of a note whose review has ended — and whose session key
+        # may already be gone — to the model.
+        abort = threading.Event()
+        job = TaskThread(lambda: work(abort), self._parent)
+        self.abort = abort
+        job.succeeded.connect(lambda result, job=job: on_done(job, result))
+        job.failed.connect(lambda message, job=job: on_failed(job, message))
+        # Disposal rides the thread's OWN `finished` signal (codex round 22
+        # PR-MED-036): Qt emits it after `run` has returned, queued to this
+        # thread, so the object is deleted only once the thread has provably
+        # ended — never on the strength of a timed join.
+        job.finished.connect(lambda job=job: self._dispose(job))
+        self.job = job
+        job.start()
+
+    def release(self, job: TaskThread) -> bool:
+        """A job just REPORTED (its result or failure): stop treating it as
+        the current job. True when it was; False for an orphan (the review
+        it belonged to has ended). The thread object stays in the orphaned
+        list — and `is_busy` stays True — until its `finished` signal
+        disposes it."""
+        current = job is self.job
+        if current:
+            self.job = None
+            self.abort = None
+            self._orphaned.append(job)
+        return current
+
+    def orphan(self) -> None:
+        """`clear()`: a running job cannot be joined on the GUI thread (the
+        model may be mid-generation for seconds); keep its thread object
+        alive until it reports, then drop its result."""
+        job = self.job
+        if job is None:
+            return
+        abort = self.abort
+        if abort is not None:
+            abort.set()  # MED-002: at most the model call in progress remains
+        self.abort = None
+        self.job = None
+        self._orphaned.append(job)
+
+
 class NoteScreen(QWidget):
     """The Note tab. Driven by ``begin_review`` and its callbacks; all view
     logic lives in ``ui.models`` so this widget stays thin and its state is
@@ -558,6 +667,8 @@ class NoteScreen(QWidget):
         note_style_provider: Callable[[], models.NoteStyleChoice] | None = None,
         prose_stage_provider: Callable[[NoteStyle], models.ProseStage | None] | None = None,
         write_status_provider: Callable[[str], WriteRecordStatus] | None = None,
+        suggestion_stage: models.SuggestionStage | None = None,
+        suggestion_model_present: Callable[[], bool] | None = None,
     ) -> None:
         super().__init__(parent)
         # Draft-write D2/D5 (Task 5.2): the live session the note belongs to
@@ -629,9 +740,49 @@ class NoteScreen(QWidget):
         # and its result is dropped.
         self._prose_stage_provider = prose_stage_provider
         self._prose_stage: models.ProseStage | None = None
-        self._style_job: TaskThread | None = None
-        self._style_job_abort: threading.Event | None = None
         self._orphaned_jobs: list[TaskThread] = []
+        self._style_slot = _JobSlot(self, self._orphaned_jobs, self._dispose)
+        # Note-content-design D6 / D8 (Task C.4): the section suggestions — at
+        # most ONE job per review, on the second slot, under ANY writing style
+        # (a screen built without a stage never runs one). Its input is built
+        # once, at the end of `begin_review`, from the draft's request (the
+        # lines before the next-patient boundary; the lines then in the note
+        # are its placed context). It starts at once when no style job is in
+        # flight, else it is armed and starts once that job has reported; it
+        # yields to a pending prose job between windows (`_prose_pending`, set
+        # while a style job is current). The LIVE job is not counted by
+        # `is_busy`; every exit orphans it (abort set), and the orphan is busy
+        # until its in-flight window returns. What lands is ids and keys only
+        # (`_suggested`), re-filtered by `eligible_utterances` on every chooser
+        # rebuild against the note as it stands.
+        self._suggestion_stage = suggestion_stage
+        # The language model's presence STAT, asked once per review on this
+        # thread before a job is started (stage-2 leg x6): with the model
+        # absent the line names it and NO thread runs — the stage would only
+        # answer the same from its worker, and a thread whose result is still
+        # queued would hold `is_busy` (through `prepare_close` / an exit's
+        # orphan) for a review that never asked the model anything. None (a
+        # screen built without it) leaves the answer to the stage.
+        self._suggestion_model_present = suggestion_model_present
+        self._suggest_slot = _JobSlot(self, self._orphaned_jobs, self._dispose)
+        self._job_slots: tuple[_JobSlot, ...] = (self._style_slot, self._suggest_slot)
+        self._suggest_input: SuggestionInput | None = None
+        self._suggest_asked = 0
+        self._suggest_after_style = False
+        self._suggest_due = False
+        self._prose_pending = threading.Event()
+        self._suggest_outcome: models.SuggestionStageOutcome | None = None
+        self._suggested: dict[int, NoteSectionKey] = {}
+        # The suggestions the chooser accepted at its last rebuild, and the
+        # segment it then showed (a suggestion pre-selects its section only
+        # when the current segment CHANGED — D6).
+        self._accepted_suggestions: dict[int, NoteSectionKey] = {}
+        # Whether the job that LANDED suggested any section the chooser can
+        # mark (review round 10 LOW-001): a job whose every suggestion the
+        # ownership rule or the boundary refused says "No suggestions." (C8),
+        # while one whose marked lines were all added since stays silent.
+        self._suggest_marked = False
+        self._chooser_segment: object = None
         # D2: the input digest of the note a review first showed, while its
         # FIRST prose rendering is still to land (None otherwise). That
         # rendering replaces the kept generated body only when nothing was
@@ -708,10 +859,13 @@ class NoteScreen(QWidget):
         # with the tab; a view setting, so ticking it changes no content and
         # no acknowledgement) and one count line (PLAIN TEXT, an integer and
         # line numbers only), both inside `edit_group`.
-        self.flagged_only_checkbox = QCheckBox("Show flagged lines only")
+        # Note-content-design D6: the same tick also lists the lines the local
+        # model suggested a section for (one condition, `_rebuild_line_chooser`).
+        self.flagged_only_checkbox = QCheckBox(models.FLAGGED_FILTER_LABEL)
         self.flagged_only_checkbox.setToolTip(
             "List only the transcript lines with a side, negation, number, dose, "
-            "name or medication that is not in the note."
+            "name or medication that is not in the note, a line you said that is "
+            "not in the note, and the lines with a suggested section."
         )
         self.flagged_only_checkbox.toggled.connect(lambda *_: self._rebuild_line_chooser())
         self.flagged_count_label = QLabel()
@@ -798,6 +952,15 @@ class NoteScreen(QWidget):
         self.style_label = QLabel()
         self.style_label.setTextFormat(Qt.TextFormat.PlainText)
         self.style_label.setWordWrap(True)
+        # Note-content-design D9 (Task C.4, C8): the suggestion job's line —
+        # in flight, or why nothing was suggested. Once suggestions landed (or
+        # lines were left not assessed) the chooser's count line carries "K
+        # lines have a suggested section (M not assessed)" and this line is
+        # hidden. PLAIN TEXT, fixed strings and counts only.
+        self.suggestion_label = QLabel()
+        self.suggestion_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.suggestion_label.setWordWrap(True)
+        self.suggestion_label.hide()
 
         self.proposals_header = QLabel("Proposed additions - confirm or decline each:")
         self.proposals_header.hide()
@@ -867,6 +1030,7 @@ class NoteScreen(QWidget):
         note_layout.addWidget(QLabel("Note:"))
         note_layout.addWidget(self.note_body)
         note_layout.addWidget(self.style_label)
+        note_layout.addWidget(self.suggestion_label)
         note_layout.addWidget(self.proposals_header)
         # The proposal rows' scroll area shows and hides WITH its header
         # (Phase H live smoke, leg h1j): with no proposal it used to stay as
@@ -971,9 +1135,11 @@ class NoteScreen(QWidget):
         # generated note; a prose job started for it may replace it.
         note = self._note
         if note is not None:
-            if self._style_job is not None:
+            if self._style_slot.job is not None:
                 self._first_render_digest = note_input_digest(note)
             self.generated_shown.emit(models.generated_body(note))
+        # D8: the section suggestions, after the first rendering was started.
+        self._begin_suggestions()
         self.review_changed.emit()
 
     def clear(self) -> None:
@@ -995,10 +1161,27 @@ class NoteScreen(QWidget):
         self._write_in_flight = False
         self._write_line = None
         self._write_status_cache = None
-        self._orphan_style_job()
+        self._style_slot.orphan()
         self._first_render_digest = None
         self._prose_stage = None
         self.style_label.setText("")
+        # D8: every exit aborts the suggestion job (its remaining windows are
+        # never run and a yield wait breaks) and orphans it; its late result
+        # is dropped at landing. The suggestion stage itself is kept: it is
+        # the screen's, not the review's.
+        self._suggest_slot.orphan()
+        self._prose_pending.clear()
+        self._suggest_input = None
+        self._suggest_asked = 0
+        self._suggest_after_style = False
+        self._suggest_due = False
+        self._suggest_outcome = None
+        self._suggested = {}
+        self._accepted_suggestions = {}
+        self._suggest_marked = False
+        self._chooser_segment = None
+        self.suggestion_label.setText("")
+        self.suggestion_label.hide()
         self._resolutions.clear()
         self._rendered_excerpt.clear()
         self._state_labels.clear()
@@ -1294,18 +1477,23 @@ class NoteScreen(QWidget):
         return present
 
     def _flagged_segments(self) -> frozenset[int]:
-        """The transcript lines the current note's Check 4 flags (D4) —
-        none before finalisation."""
-        note = self._note
-        return models.flagged_segments(note.note_warnings) if note is not None else frozenset()
+        """The transcript lines the current note's Check 4 flags (D4), every
+        piece of a joined run included (validation-run7 plan D1) — none
+        before finalisation or without a transcript."""
+        note, document = self._note, self._document
+        if note is None or document is None:
+            return frozenset()
+        return models.flagged_segments(note, document)
 
     def eligible_utterances(self) -> tuple[models.UtteranceChoice, ...]:
         """The utterances the chooser offers: not already in the working
         note, with the sections each may enter (the ownership rule), each
         flagged line marked (note-routing-omissions D4) and each line from a
         possible next patient on marked (validation-pass plan D6, read from
-        the current note's Check 6 — none before finalisation) — all of
-        them, whatever the "Show flagged lines only" tick says."""
+        the current note's Check 6 — none before finalisation), and each line
+        with a landed suggestion its section allows marked and carrying it
+        (note-content-design D6) — all of them, whatever the filter tick
+        says."""
         draft, document = self._draft, self._document
         if draft is None or document is None:
             return ()
@@ -1318,6 +1506,7 @@ class NoteScreen(QWidget):
             boundary=(
                 models.next_patient_segment(note.note_warnings) if note is not None else None
             ),
+            suggested=self._suggested,
         )
 
     def editable_lines(self) -> tuple[models.EditableLine, ...]:
@@ -1848,17 +2037,24 @@ class NoteScreen(QWidget):
         # Round 34 LOW-002: the chooser is rebuilt on every re-finalise (a
         # proposal decision included), so the practitioner's current choice
         # is carried across by its data, as `refresh_devices` does. D4: with
-        # "Show flagged lines only" ticked it lists the flagged lines alone
+        # the filter ticked it lists the flagged lines alone — and, since
+        # note-content-design D6, the lines with a suggested section
         # (transcript order kept); the count line names every flagged line,
-        # and by number each one the chooser does not offer.
+        # by number each one the chooser does not offer, and how many lines
+        # have a suggested section (M not assessed).
         choices = self.eligible_utterances()
         flagged = self._flagged_segments()
+        self._accepted_suggestions = {
+            choice.segment_index: choice.suggested
+            for choice in choices
+            if choice.suggested is not None
+        }
         selected = self.utterance_combo.currentData()
         self.utterance_combo.blockSignals(True)
         self.utterance_combo.clear()
         only_flagged = self.flagged_only_checkbox.isChecked()
         for choice in choices:
-            if only_flagged and not choice.flagged:
+            if only_flagged and not choice.flagged and choice.suggested is None:
                 continue
             self.utterance_combo.addItem(choice.label, choice.segment_index)
         if selected is not None:
@@ -1866,9 +2062,15 @@ class NoteScreen(QWidget):
             if index >= 0:
                 self.utterance_combo.setCurrentIndex(index)
         self.utterance_combo.blockSignals(False)
+        outcome = self._suggest_outcome
+        result = outcome.result if outcome is not None else None
         count_line = models.flagged_count_line(
-            flagged, {choice.segment_index for choice in choices}
+            flagged,
+            {choice.segment_index for choice in choices},
+            suggested=self._accepted_suggestions.keys(),
+            not_assessed=result.lines_not_assessed if result is not None else 0,
         )
+        self._refresh_suggestion_line()
         if only_flagged and choices and self.utterance_combo.count() == 0:
             # The tick hides every offerable line: say so (it stays ticked).
             count_line = f"{count_line} {models.FLAGGED_FILTER_EMPTY_LINE}".lstrip()
@@ -2080,12 +2282,21 @@ class NoteScreen(QWidget):
         selected = self.section_combo.currentData()
         self.section_combo.clear()
         data = self.utterance_combo.currentData()
+        # Note-content-design D6: a line's accepted suggestion pre-selects its
+        # section only when the chooser's current segment CHANGED; on a rebuild
+        # that keeps the same segment (a re-finalise, a suggestion landing)
+        # the section carried over by data wins.
+        changed = data != self._chooser_segment
+        self._chooser_segment = data
         if data is None:
             return
-        for key in self._allowed_sections(int(data)):
+        segment_index = int(data)
+        for key in self._allowed_sections(segment_index):
             self.section_combo.addItem(models.section_title(key), key)
-        if selected is not None:
-            index = self.section_combo.findData(selected)
+        suggestion = self._accepted_suggestions.get(segment_index) if changed else None
+        target = suggestion if suggestion is not None else selected
+        if target is not None:
+            index = self.section_combo.findData(target)
             if index >= 0:
                 self.section_combo.setCurrentIndex(index)
 
@@ -2146,7 +2357,7 @@ class NoteScreen(QWidget):
         populated section already has a rendering bound to its current
         texts. Sets the in-flight line; `_update_controls` reads the job."""
         stage, note = self._prose_stage, self._note
-        if stage is None or note is None or self._style_job is not None:
+        if stage is None or note is None or self._style_slot.job is not None:
             return
         if not models.sections_to_render(note):
             return
@@ -2154,82 +2365,79 @@ class NoteScreen(QWidget):
         # it afterwards (the session screen's holder pattern, PR rounds
         # 18/PR6): the thread object is a child of this widget, so anything
         # the closure retained would live as long as the tab does — past
-        # `clear()`, past the review (round 20 MED-001).
+        # `clear()`, past the review (round 20 MED-001). The provider
+        # consults the slot's abort flag before EACH section's model call.
         holder = [note]
-        # Phase H round 24 MED-002: the job's abort flag. `_orphan_style_job`
-        # (so `clear()` — Abandon, Cancel, Complete, Discard, a replacement
-        # review) sets it, and the provider consults it before EACH section's
-        # model call: an orphaned job stops after the call in progress
-        # instead of handing the rest of a note whose review has ended — and
-        # whose session key may already be gone — to the model.
-        abort = threading.Event()
-        job = TaskThread(lambda: stage(holder.pop(), abort=abort.is_set), self)
-        self._style_job_abort = abort
-        job.succeeded.connect(lambda result, job=job: self._on_style_done(job, result))
-        job.failed.connect(lambda message, job=job: self._on_style_failed(job, message))
-        # Disposal rides the thread's OWN `finished` signal (codex round 22
-        # PR-MED-036): Qt emits it after `run` has returned, queued to this
-        # thread, so the object is deleted only once the thread has provably
-        # ended — never on the strength of a timed join.
-        job.finished.connect(lambda job=job: self._dispose_style_job(job))
-        self._style_job = job
         self.style_label.setText(models.rendering_in_flight_line(self._note_style))
-        job.start()
+        # D8: a running suggestion job waits before its next window while
+        # this is set, so the prose (and Save's re-enable) waits at most the
+        # window in flight. Set before the start, so no window can slip in.
+        self._prose_pending.set()
+        self._style_slot.start(
+            lambda abort: stage(holder.pop(), abort=abort.is_set),
+            self._on_style_done,
+            self._on_style_failed,
+        )
 
     def _release_style_job(self, job: TaskThread) -> bool:
         """A job just REPORTED (its result or failure): stop treating it as
         the current job. True when it was; False for an orphan (the review
-        it belonged to has ended). The thread object stays in
-        `_orphaned_jobs` — and `is_busy` stays True — until its `finished`
-        signal disposes it (`_dispose_style_job`)."""
-        current = job is self._style_job
+        it belonged to has ended). See `_JobSlot.release`.
+
+        Note-content-design D8: the one point both `_on_style_done` and
+        `_on_style_failed` pass through, so a suggestion job armed behind
+        this style job is consumed here — made DUE, and started by
+        `_start_due_suggestion` at the end of the handler, after the
+        handler's own decision to re-render. `_prose_pending` is NOT cleared
+        here (note-content-design review round 16 A-1): a re-render starts later in the same
+        handler, and a waiting suggestion worker that saw the flag clear in
+        between could start a whole window first — `_start_due_suggestion`
+        clears it once no style job holds the slot."""
+        current = self._style_slot.release(job)
         if current:
-            self._style_job = None
-            self._style_job_abort = None
-            self._orphaned_jobs.append(job)
+            if self._suggest_after_style:
+                self._suggest_after_style = False
+                self._suggest_due = True
         return current
 
-    def _dispose_style_job(self, job: TaskThread) -> None:
-        """The thread has ENDED (its `finished` signal): drop the last
-        reference — the closure holds nothing (the holder was popped), the
-        result was delivered by signal — and delete the object. Bounded
-        join first only as a formality: `finished` fires after `run`
+    def _dispose(self, job: TaskThread) -> None:
+        """The thread of a job in ANY slot has ENDED (its `finished` signal):
+        drop the last reference — the closure holds nothing (the holder was
+        popped), the result was delivered by signal — and delete the object.
+        Bounded join first only as a formality: `finished` fires after `run`
         returned."""
         job.finish()
         if not job.isFinished():
             # `finished` is emitted just before the thread ends; a join that
             # timed out leaves the object orphaned (and the tab busy) rather
             # than deleting a thread that is still running.
-            if job is not self._style_job and job not in self._orphaned_jobs:
+            held = any(job is slot.job for slot in self._job_slots)
+            if not held and job not in self._orphaned_jobs:
                 self._orphaned_jobs.append(job)
             return
-        if job is self._style_job:
-            self._style_job = None
+        for slot in self._job_slots:
+            if job is slot.job:
+                slot.job = None
+                slot.abort = None
         if job in self._orphaned_jobs:
             self._orphaned_jobs.remove(job)
+        if self._style_slot.job is None:
+            # Note-content-design review round 16 A-6: the backstop for the
+            # yield flag — `finished`
+            # is delivered after the job's own handler, so a style job whose
+            # handler never reached `_start_due_suggestion` (or that never
+            # reported) cannot leave a suggestion worker waiting for good.
+            self._prose_pending.clear()
         job.setParent(None)
         job.deleteLater()
         self._update_controls()
         self._emit_state()
 
-    def _orphan_style_job(self) -> None:
-        """`clear()`: a running job cannot be joined on the GUI thread (the
-        model may be mid-generation for seconds); keep its thread object
-        alive until it reports, then drop its result."""
-        job = self._style_job
-        if job is None:
-            return
-        abort = self._style_job_abort
-        if abort is not None:
-            abort.set()  # MED-002: at most the section call in progress remains
-        self._style_job_abort = None
-        self._style_job = None
-        self._orphaned_jobs.append(job)
-
     def _on_style_done(self, job: TaskThread, result: object) -> None:
         current = self._release_style_job(job)
         note = self._note
         if not current or note is None or self._prose_stage is None:
+            self._start_due_suggestion()
             return  # the review ended (or restarted) while the job ran
         assert isinstance(result, models.StyleStageResult)
         # Bind what still matches (a section edited meanwhile drops here),
@@ -2260,12 +2468,14 @@ class NoteScreen(QWidget):
         ):
             # Content changed during the job: render the sections it missed.
             self._start_style_stage()
+        self._start_due_suggestion()
         self._update_controls()
         self._emit_state()
 
     def _on_style_failed(self, job: TaskThread, message: object) -> None:
         current = self._release_style_job(job)
         if not current or self._note is None:
+            self._start_due_suggestion()
             return
         self._first_render_digest = None  # D2: no first rendering to keep
         # An unexpected error in the stage (a model failure is a RESULT, not
@@ -2277,6 +2487,7 @@ class NoteScreen(QWidget):
             "Clean clinical."
         )
         self.style_label.setText(models.with_retained_prose(reason, self._note))
+        self._start_due_suggestion()
         self._update_controls()
         self._emit_state()
 
@@ -2284,7 +2495,204 @@ class NoteScreen(QWidget):
     def rendering_in_flight(self) -> bool:
         """True while a prose rendering job runs for the review (Save is
         disabled meanwhile — a Save must never persist unseen wording)."""
-        return self._style_job is not None
+        return self._style_slot.job is not None
+
+    # --- the section suggestions (note-content-design Task C.4; D6, D8, D9) ---
+
+    @property
+    def suggestion_in_flight(self) -> bool:
+        """True while this review's suggestion job runs (never a reason to
+        hold Save, Complete or Discard — D8)."""
+        return self._suggest_slot.job is not None
+
+    def _begin_suggestions(self) -> None:
+        """At the end of `begin_review` (D8): build the review's ONE input —
+        the draft's request, cut at the next-patient boundary, with the lines
+        the note now holds as placed context — and start the job, or arm it
+        behind a style job in flight. No left-out line: no job, and the line
+        says so."""
+        stage, draft = self._suggestion_stage, self._draft
+        document, config = self._document, self._config
+        if stage is None or draft is None or document is None or config is None:
+            return
+        try:
+            request = build_note_request(
+                document,
+                config,
+                draft.template_profile_id,
+                clinician_speaker=draft.clinician_speaker,
+            )
+        except NoteConfigError as exc:
+            # C8: named by its type only (the draft was composed under this
+            # same config, so this is not expected).
+            self._suggest_outcome = models.SuggestionStageOutcome(
+                None, models.SUGGESTION_FAILED_LINE.format(reason=type(exc).__name__)
+            )
+            self._refresh_suggestion_line()
+            return
+        working = self._working
+        placed = models.placed_segments(working.note_sections) if working is not None else {}
+        suggestion_input = SuggestionInput.from_request(
+            request, in_note=placed, clinician_speaker=draft.clinician_speaker
+        )
+        if not suggestion_input.lines_asked:
+            self._suggest_outcome = models.SuggestionStageOutcome(
+                None, models.SUGGESTION_NOTHING_LINE
+            )
+            self._refresh_suggestion_line()
+            return
+        present = self._suggestion_model_present
+        if present is not None and not present():
+            # The stage's own order (nothing to suggest, then presence) and
+            # its C8 line; presence is a stat asked per review, never kept.
+            self._suggest_outcome = models.SuggestionStageOutcome(
+                None, models.suggestion_model_absent_line()
+            )
+            self._refresh_suggestion_line()
+            return
+        self._suggest_input = suggestion_input
+        self._suggest_asked = suggestion_input.lines_asked
+        if self._style_slot.job is not None:
+            self._suggest_after_style = True
+            self._refresh_suggestion_line()
+            return
+        self._start_suggestion_job()
+
+    def _start_due_suggestion(self) -> None:
+        """Start the suggestion job a style job's release made due (D8) —
+        the last step of every style handler, so it is also where the yield
+        flag is cleared, once the handler has decided not to re-render (no
+        style job holds the slot; note-content-design review round 16 A-1)."""
+        if self._style_slot.job is None:
+            self._prose_pending.clear()
+        if self._suggest_due:
+            self._suggest_due = False
+            self._start_suggestion_job()
+
+    def _start_suggestion_job(self) -> None:
+        stage, suggestion_input = self._suggestion_stage, self._suggest_input
+        self._suggest_input = None
+        if stage is None or suggestion_input is None or self._suggest_slot.job is not None:
+            self._refresh_suggestion_line()
+            return
+        # The prose stage's holder pattern (round 20 MED-001): the closure
+        # hands the input to the stage and keeps no reference to it.
+        holder = [suggestion_input]
+        pending = self._prose_pending
+
+        def work(abort: threading.Event) -> object:
+            def yield_to() -> None:
+                # D8: before each window, wait while a prose job is pending —
+                # or until the abort, which wakes the wait at once.
+                while pending.is_set() and not abort.is_set():
+                    abort.wait(_SUGGESTION_YIELD_POLL_SECONDS)
+
+            return stage(holder.pop(), abort=abort.is_set, yield_to=yield_to)
+
+        self._suggest_slot.start(work, self._on_suggest_done, self._on_suggest_failed)
+        self._refresh_suggestion_line()
+
+    def _on_suggest_done(self, job: TaskThread, result: object) -> None:
+        current = self._suggest_slot.release(job)
+        if not current or self._draft is None:
+            return  # an exit orphaned the job: its result is dropped
+        assert isinstance(result, models.SuggestionStageOutcome)
+        self._suggest_outcome = result
+        landed = result.result
+        # Ids and keys only; `eligible_utterances` re-filters them against
+        # the note as it stands on every rebuild (D6).
+        self._suggested = dict(landed.suggestions) if landed is not None else {}
+        # Round 10 LOW-001: whether any suggestion is one the chooser can mark
+        # — its section allowed by the line's ownership rule and before the
+        # boundary — counting no line as in the note, so a line added by hand
+        # meanwhile (marked again on its Undo) still counts.
+        document, note = self._document, self._note
+        self._suggest_marked = document is not None and any(
+            choice.suggested is not None
+            for choice in models.eligible_utterances(
+                document,
+                clinician_speaker=self._draft.clinician_speaker,
+                in_note=(),
+                boundary=(
+                    models.next_patient_segment(note.note_warnings) if note is not None else None
+                ),
+                suggested=self._suggested,
+            )
+        )
+        self._rebuild_line_chooser()
+
+    def _on_suggest_failed(self, job: TaskThread, message: object) -> None:
+        current = self._suggest_slot.release(job)
+        if not current or self._draft is None:
+            return
+        # C8: the exception's TYPE name only (`TaskThread` sends "Type: text",
+        # and the text could carry an input value).
+        reason = str(message).split(":", 1)[0]
+        self._suggest_outcome = models.SuggestionStageOutcome(
+            None, models.SUGGESTION_FAILED_LINE.format(reason=reason)
+        )
+        self._refresh_suggestion_line()
+
+    def _refresh_suggestion_line(self) -> None:
+        """D9's line under the note: in flight (or armed behind a style job),
+        or why nothing was suggested — no job ran (the C8 reason), nothing
+        was left out, or the job suggested nothing the chooser could mark
+        (none at all, or only sections the ownership rule refused — round 10
+        LOW-001). Once the job marked a line or left lines not assessed, the
+        count line carries the count and this line is hidden (so a review
+        whose marked lines were all added never reads "No suggestions.")."""
+        line = ""
+        if self._suggest_slot.job is not None or self._suggest_after_style or self._suggest_due:
+            line = models.suggestion_in_flight_line(self._suggest_asked)
+        elif (outcome := self._suggest_outcome) is not None:
+            landed = outcome.result
+            if landed is None or not (self._suggest_marked or landed.lines_not_assessed):
+                line = models.suggestion_stage_line(
+                    outcome, accepted=len(self._accepted_suggestions)
+                )
+        self.suggestion_label.setText(line)
+        self.suggestion_label.setVisible(bool(line))
+
+    def prepare_close(self) -> None:
+        """D8 (codex PR-HIGH-002): the window's close guard calls this BEFORE
+        it reads `is_busy`. An accepted close ends the process without a
+        `clear()`, and after Save the review no longer holds the close — so a
+        live suggestion job is aborted and orphaned here (its remaining
+        windows never run, a yield wait breaks), and `is_busy` stays True
+        only until its in-flight window returns (destroying a running
+        QThread would abort the process). The review itself is untouched;
+        the line says why no suggestions will come.
+
+        Note-content-design review round 16 A-3: a review still open and unsaved refuses the
+        close on its own (`is_busy`'s `reviewing`), so nothing is aborted
+        then — the close cannot be accepted, and the review keeps its
+        suggestions; D8's step is for the review that no longer holds it.
+        Since D8's amendment (review round 19 Q1 (b)) Save itself stops the
+        job, so after Save this finds nothing live: it stays as the close
+        guard's backstop."""
+        if self._draft is not None and not self._note_saved:
+            return
+        self._stop_suggestions(models.SUGGESTION_STOPPED_LINE)
+
+    def _stop_suggestions(self, line: str) -> None:
+        """D8 as amended 2026-11-09 (the practitioner's decision on review
+        round 19 Q1 (b)): abort and orphan the suggestion job through the
+        slot's own `orphan` — the path `clear()` takes — and drop an armed
+        job's input, leaving the review itself untouched; `line` says why no
+        suggestions will come (only when a job was running or armed). The
+        orphan then counts as busy until its in-flight window returns. Called
+        by the close guard's `prepare_close`, by `save` once the note is
+        saved (the chooser and Add are closed from then on, so nothing the
+        job could suggest can be used), and by `abandon` BEFORE its callback
+        destroys the session key."""
+        live = self._suggest_slot.job is not None or self._suggest_after_style or self._suggest_due
+        self._suggest_slot.orphan()
+        self._suggest_input = None
+        self._suggest_after_style = False
+        self._suggest_due = False
+        if live:
+            self._suggest_outcome = models.SuggestionStageOutcome(None, line)
+            self._refresh_suggestion_line()
 
     def _refresh_proposal_states(self) -> None:
         for proposal_id, label in self._state_labels.items():
@@ -2353,7 +2761,7 @@ class NoteScreen(QWidget):
                 "warning before saving."
             )
             return
-        if self._style_job is not None:
+        if self._style_slot.job is not None:
             # Click-time re-check (fail closed): the note under the button
             # would be the pre-rendering one, never shown with its prose.
             self.message_label.setText(models.SAVE_WHILE_RENDERING_MESSAGE)
@@ -2366,6 +2774,10 @@ class NoteScreen(QWidget):
             self.message_label.setText(f"Save failed: {models.custody_refusal_text(exc)}")
             return
         self._note_saved = True
+        # D8 as amended (review round 19 Q1 (b)): Save released the lease, so
+        # Complete and Discard — refused while it is held — can now destroy
+        # the key; the job is told to stop first, in this same call.
+        self._stop_suggestions(models.SUGGESTION_SAVED_LINE)
         self.message_label.setText(
             "Note saved. Acknowledge any review warnings, then Complete on the "
             "Review screen."
@@ -2501,6 +2913,10 @@ class NoteScreen(QWidget):
         Every blocking state reaches this: it needs no clean note."""
         if self._on_abandon is None:
             return
+        # D8 as amended (review round 19 Q1 (b)): the callback completes the
+        # session and destroys its key, so the suggestion job is told to stop
+        # BEFORE it (a failed completion keeps the review, without them).
+        self._stop_suggestions(models.SUGGESTION_DELETE_LINE)
         try:
             self._on_abandon()
         except Exception as exc:  # noqa: BLE001
@@ -2686,10 +3102,10 @@ class NoteScreen(QWidget):
             self.write_button.setToolTip("")
             self.write_label.setText("")
             return
-        busy = self._write_in_flight or self._style_job is not None
+        busy = self._write_in_flight or self._style_slot.job is not None
         self.write_button.setEnabled(control.ready and not busy)
         standing = None if control.ready else control.line
-        if standing is None and not self._write_in_flight and self._style_job is not None:
+        if standing is None and not self._write_in_flight and self._style_slot.job is not None:
             # A rendering in flight says what is waiting on it (design system).
             standing = models.rendering_in_flight_line(self._note_style)
         self.write_button.setToolTip(standing or "")
@@ -2719,7 +3135,7 @@ class NoteScreen(QWidget):
             self._update_controls()
             self.write_label.setText(control.line or "")
             return
-        if self._style_job is not None:
+        if self._style_slot.job is not None:
             self.write_label.setText(models.rendering_in_flight_line(self._note_style))
             return
         self.write_requested.emit(binding.session_id)
@@ -2788,7 +3204,7 @@ class NoteScreen(QWidget):
             and state.unacknowledged_reviews == 0
             # Task 4.4 (codex PR-MED-015): never while a rendering is in
             # flight — Save snapshots `_note`, which must be what is shown.
-            and self._style_job is None
+            and self._style_slot.job is None
         )
         self.save_button.setEnabled(save_ready)
         # D5: the button SAYS how many pre-filled lines this Save confirms —
@@ -2837,11 +3253,17 @@ class NoteScreen(QWidget):
         PR-MED-036). Closing must wait: the in-progress note would be lost,
         and destroying a running QThread aborts the process (the PR-round-18
         PR6 hazard the window's close guard exists for) — OR while a Cliniko
-        draft write holds the bound session (draft-write D9, Task 5.2)."""
+        draft write holds the bound session (draft-write D9, Task 5.2).
+
+        Note-content-design D8: a LIVE suggestion job is NOT counted (an
+        advisory never holds a review open — its readers are the Recovery
+        tab's open-review and the close guard, which calls `prepare_close`
+        first); an orphaned one is, through the shared orphan list, until
+        its in-flight window returns."""
         reviewing = self._draft is not None and not self._note_saved
         return (
             reviewing
-            or self._style_job is not None
+            or self._style_slot.job is not None
             or bool(self._orphaned_jobs)
             or self._write_in_flight
         )

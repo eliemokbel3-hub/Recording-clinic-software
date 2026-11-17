@@ -1,12 +1,14 @@
-# Threat Model (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot, kept recordings)
+# Threat Model (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot, kept recordings, note content design)
 
 Scope: the implemented system — extension shell, native-messaging host,
 registration chain, logging, credential/session-crypto foundations (Phase 1),
 plus local recording, encrypted session stores with DPAPI key custody, and
 local transcription (Phase 2), plus the local note pipeline — template
 mapping, autofill/prefill proposals, per-assertion confirmation, content
-checking, and the note review UI (Phase 3A; the ML note model itself is
-Phase 3B and stays out of scope below), plus the practitioner-profile and
+checking, and the note review UI (Phase 3A; PLAN.md's original 3B note
+model was never built — since 0.3.6 its re-derived form, the clinical
+register of the prose styles and the indices-only section suggestions, is
+covered under surface 17 and "Phase 3B (coverage)" below), plus the practitioner-profile and
 note-learning surfaces, plus the Cliniko workflow safeguards (PLAN.md Phase 5,
 built before Phase 4): the Cliniko API client and the clinic keys,
 recording consent and the encounter record, the host↔app named pipe with
@@ -34,7 +36,11 @@ the kept recordings (the development-recordings plan, 0.3.0, built
 2026-10-07 → 2026-10-08): a consultation's audio kept beside its Past-sessions
 entry under the patient's written consent, Delete recording, Export
 recording (WAV) and the developer-build replay tool ("Kept recordings"
-below). Every
+below); plus the note content design (the note-content-design plan, 0.3.6,
+built 2026-11-08 → 2026-11-09): the prose styles' clinical register under
+Check 5 (surface 17) and the UNCONFIRMED transcript as input to the local
+language model for section suggestions only ("Phase 3B (coverage)" below;
+confirmed note lines already reached it through the prose styles). Every
 `%LOCALAPPDATA%\ClinikoScribe` path in this document is the installed
 (production) app's data folder; a source checkout — the developer build —
 keeps the same layout under `%LOCALAPPDATA%\ClinikoScribe-dev`, plus its own
@@ -190,7 +196,23 @@ remains an accepted residual.
    polling).** The ML stack (silero-VAD ONNX, faster-whisper/CTranslate2)
    loads only explicit local paths with `local_files_only=True`;
    `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, `HF_HUB_DISABLE_TELEMETRY=1`
-   are set AND asserted at startup and before every ML import; the
+   are set AND asserted at startup and before every ML import; the refused
+   overrides (`benchmark.FORBIDDEN_NATIVE_OVERRIDES`,
+   `FORBIDDEN_TLS_OVERRIDES`) are deleted and refused by name; since the
+   gpu-decoding plan (D2, Task A.2) the nine GPU variables of
+   `benchmark.POPPED_GPU_VARIABLES` — `CUDA_PATH`, `HIP_PATH`, the six
+   cuDNN / cuBLAS logging variables and `CUDA_CACHE_PATH` — are POPPED at the
+   same step (never refused: they are ordinary on a graphics-card host), and
+   the build audit's offline self-check proves them gone. A graphics-card
+   decode (developer tooling only until a setting exists: the tools' and the
+   benchmark's `--device cuda`) loads the NVIDIA cuBLAS / cuDNN libraries by
+   ABSOLUTE path from the wheels' own folders before any CUDA model exists
+   (`transcription.preload_cuda_libraries`), never from a folder an
+   environment variable or `PATH` names; named residues: the driver's
+   compiled-kernel cache under `%APPDATA%\NVIDIA\ComputeCache` (kernels, never
+   audio), CTranslate2's CUDA context and the preloaded libraries resident
+   for the life of the process, and the loader's own redirection (side-by-side
+   manifests, a same-named module loaded first by path). The
    real-model tests run entirely under the enforced-offline env, and the
    Phase-2 completion gate (plan Step 13) adds a test proving transcription
    succeeds with network stubbed to fail plus socket polling during capture
@@ -333,7 +355,11 @@ note inherit exactly that posture.
    utterance's section when that one was cue-routed, was the same speaker's
    and ended mid-sentence (a comma, semicolon, colon or dash), one hop and
    never into a clinician-owned section — still verbatim, whole and with its
-   own coordinates, so a cue file still cannot author note text),
+   own coordinates, so a cue file still cannot author note text; and since
+   0.3.7 (answers-follow-question plan D1) a reply no cue of either layer
+   matches, by someone other than the confirmed clinician, follows the
+   clinician's cue-routed question's section the same way, never into a
+   clinician-owned section — THE ANSWER HOP below),
    deliberately OUTSIDE the encrypted session store and the 24 h rule — they
    are INTENDED as boilerplate, not patient data, and must survive session
    destruction (the loader validates structure only and cannot detect patient
@@ -499,6 +525,57 @@ note inherit exactly that posture.
    review warnings" leaves it and only its own Acknowledge clears it, and the
    Line chooser marks each flagged line `[flagged]` with a "Show flagged lines
    only" filter — a review aid that adds no text widget and no copy path.
+   Since 0.3.4 (validation-run6 plan D1) Check 4 has a SECOND review code,
+   `clinician_line_omitted` ("A line you said is not in the note"): once per
+   segment the confirmed clinician spoke, with text, of which NO word is
+   quoted by any transcript line of the note, holding at least one content
+   word that is not suspect (fillers alone never fire it), that does not
+   already draw `high_risk_omission`, and that lies before the next-patient
+   boundary (`note_config.next_patient_boundary`) — the uncued advice, plan
+   or safety-netting line that no cue routes and no flagged word names. It
+   never fires without a confirmed clinician, on another speaker's line or on
+   a partly quoted line (the clinician's partial choice; the first code still
+   flags words there). Its line is marked `[flagged]` like the first code's,
+   both codes are counted on the one count line, and "Acknowledge all review
+   warnings" leaves it too. It never deletes or re-routes a line (C4).
+   Since 0.3.5 (validation-run7 plan D1) it is judged per JOINED RUN, not per
+   segment: where the recogniser split one line into adjacent pieces of the
+   same speaker, each piece but the last ending mid-sentence (a trailing
+   comma, semicolon, colon or en or em dash) and the next piece holding text,
+   the wholly unquoted pieces draw ONE warning together, anchored on the
+   first piece (`note.joined_run`, the one function the checker, the Line
+   chooser and the validation harness share). A partly quoted piece, a
+   speaker change, a textless segment or the next-patient boundary breaks a
+   run (a run reaching the boundary is cut there, never dropped), and a run
+   any piece of which draws `high_risk_omission` draws none. Every piece of
+   such a run stays `[flagged]` — no line 0.3.4 marked loses its mark, pinned
+   over a fixture matrix with 0.3.4's per-segment rule as the oracle — and
+   the warning's stored coordinates name its first piece, so no field is
+   added and 0.3.3 and 0.3.4 read it as before. The review row's count is
+   therefore of LINES, as its text says; its own one click still clears it.
+   NAMED RESIDUES (second code): a one-word acknowledgement the clinician said
+   ("okay", "yeah"; a one-word "right" or "no" is a side or a negation, so
+   it draws the first code instead) fires it — no exemption list was added (decision 0.3
+   (b): only two enrolled kept recordings existed, fewer than the three the
+   budget's real-speech test needed, so the test fell back to the synthetic
+   counts; on those two its load was above the budget's maximum); a
+   clinician line the speaker step gave to the
+   other voice (a quiet turn under the enrolment threshold) is not the
+   clinician's, so it fires nothing — and an uncued patient line with no
+   flagged word stays unwarned, as before (since 0.3.7 such a line can
+   instead join the note under THE ANSWER HOP, or be `[flagged]` on the
+   chooser by THE REPLY FLAG when it answers a warned question — below; the
+   warning itself is unchanged and never fires on it); coverage is by quoted
+   coordinates, so a line that triggered a confirmed autofill line still
+   fires it (the config line quotes nothing); and, since 0.3.5, a split the
+   recogniser left with no trailing mark (a bare cut) is not a join, so each
+   such piece still draws its own warning — on the two enrolled kept
+   recordings measured, bare cuts outnumbered marked ones among the
+   clinician's adjacent pairs of pieces (28 to 6), and the code's load per recording
+   fell only from a median of 3.5 and a maximum of 6 to 3 and 5: the budget's
+   maximum (5) met, its median (2) not, provisional at two recordings
+   (validation-run7 plan Task 0.3a; joining a bare cut, any adjacent pieces,
+   was excluded because it would merge two unrelated lines).
    NEXT PATIENT (0.3.3, validation-pass plan D1–D6 and D9; until 0.3.3 the
    NEXT-PATIENT RESIDUE of 0.3.1): routing tries the practitioner's cues and
    then the shipped cues, so a next patient's words recorded before the
@@ -515,10 +592,19 @@ note inherit exactly that posture.
    punctuation or the segment's end follows it; a closing BEFORE a greeting in
    ONE segment cuts at the next spoken segment, or nowhere when none follows;
    the FIRST such pair wins. The phrase lists are the live new-consultation
-   warning's (14 closings, 12 greetings; HANDS-FREE AND WARNINGS below), moved
-   unchanged into one dated commit and pinned exactly (decision 0.2 (a)), and
-   a word the transcription guard marked suspect supplies no phrase (surface
-   5). Where the boundary is found: the provider's request holds only the
+   warning's (HANDS-FREE AND WARNINGS below): 30 closings and 26 greetings
+   since the dated vocabulary commit of 2026-10-26, shipping in 0.3.5 — the
+   2026-09-28 lists of 14 and 12, moved unchanged into one dated commit in
+   0.3.3 (decision 0.2 (a)), then widened by 16 closings and 14 greetings
+   (validation-run7 plan D2, Task 0.4 (c): proposed by an isolated session
+   that saw no failing script, each attributed — from memory, unchecked — to
+   a named published source family, and kept by
+   mechanical rules written before it ran — no new one-word phrase, no hedge
+   or correction marker, no cue greeting, no false cut on a seen synthetic
+   script or on the kept recordings measured; the record of every phrase
+   class accepted and rejected, with each rule's counts, is on that task) —
+   pinned exactly, and a word the transcription guard marked suspect
+   supplies no phrase (surface 5). Where the boundary is found: the provider's request holds only the
    segments before it (indices stay absolute; the transcript digest stays the
    whole document's), so every provider stops there; autofill and pre-fill
    ignore triggers and keywords after it; and Check 6 `possible_next_patient`
@@ -529,22 +615,49 @@ note inherit exactly that posture.
    withheld lines' side, number, dose, negation and medication words (decision
    0.5 (a)), Check 3 and the role preselection still read the whole
    transcript, and the Line chooser marks every line it offers from the
-   boundary on `[after possible next patient]` (after any `[flagged]`), so a
-   withheld line that belongs to this patient is added back by hand. The
+   boundary on `[next patient?]` (after any `[flagged]`; `[after possible
+   next patient]` until 0.3.4, shortened so the chooser's middle elision
+   cannot cut it), so a withheld line that belongs to this patient is added
+   back by hand; Check 4's second code stops at the boundary. The
    boundary NEVER deletes anything: only the clinician's confirmed trim does
    (THE TRIM, below). NAMED RESIDUES (next patient): (a) it is a phrase
-   heuristic over two short lists — a next patient greeted, or a consultation
+   heuristic over two lists — a next patient greeted, or a consultation
    closed, in other words gives no boundary, and the lines reach the draft as
-   before 0.3.3 (validation run 4's `syn-38` and `syn-46` are two; the
-   practitioner's own phrases are a later dated amendment); (b) a FALSE
-   boundary — a goodbye then a greeting inside one consultation, such as a
-   phone call or someone arriving at the door — withholds real content behind
-   a review warning only its own Acknowledge clears: the withheld lines are
-   marked in the chooser and their flagged words still raise Check 4, but an
-   uncued line with no flagged word is named by nothing but Check 6's row (a
-   one-click undo is deferred); (c) when the recogniser puts the end of one
-   consultation and the start of the next in ONE segment, the cut falls at the
-   next segment, so that segment's next-patient words stay in the note; (d)
+   before 0.3.3 (validation run 4's `syn-38` and `syn-46` are two, still
+   unlisted after the 2026-10-26 widening; over the reference documents of
+   every seen synthetic script and the held-out edge cases, 16 next-patient
+   cases still miss their expected boundary, 24 before the widening; the
+   practitioner's own phrases are a later dated amendment); the phrase tokens
+   fold no typographic apostrophe, so a transcript writing "What’s new"
+   misses the four apostrophe phrases — in effect three greetings, since the
+   closing among them, "i'll see you next week", holds two closings with no
+   apostrophe in them — and a missed greeting can move the cut one segment
+   EARLIER (a later greeting in its segment lost, a closing before it no
+   longer pairs there and the window pairs at that segment instead), any
+   number of segments later, or remove it (both directions pinned in
+   `tests/test_consultation_boundary.py`); (b) a FALSE boundary — a
+   goodbye then a greeting inside one consultation, such as a phone call or
+   someone arriving at the door — withholds real content behind a review
+   warning only its own Acknowledge clears: the withheld lines are marked in
+   the chooser and their flagged words still raise Check 4, but an uncued line
+   with no flagged word is named by nothing but Check 6's row (a one-click
+   undo is deferred); since the 2026-10-26 widening the lists hold phrases
+   also said mid-visit ("thank you", "see you", "is there anything else", "how
+   are you doing", "what's new"), and three greetings ("nice to see you",
+   "good to see you", "nice to see you again") hold the closing "see you", so
+   ONE greeting line can now make the pair with no goodbye said: someone
+   joining the room mid-visit greeted "Oh, nice to see you, come on in" cuts
+   the note at the next segment, and "It's nice to see you walking" can be
+   the closing for a later "How are you doing with the exercises?" (both
+   pinned) — still only after clinical content; no seen synthetic negative
+   was cut, nor either of the two kept recordings measured (each assumed one
+   patient, the practitioner's decision 2026-10-26): weak evidence; (c) when
+   the recogniser puts the end of one consultation and the start of the next
+   in ONE segment, the cut falls at the next segment, so that segment's
+   next-patient words stay in the note — and since the widening a next
+   patient greeted "Nice to see you, come on in" after a goodbye is cut one
+   segment LATER than before (the greeting's own "see you" pairs in its
+   segment first), so the greeting line stays in the note (pinned); (d)
    the look-back counts recognised segments, not seconds or lines; (e) a real
    greeting or closing the guard wrongly marked suspect gives no boundary
    (toward inclusion); (f) Check 6's coordinates mark the first WITHHELD
@@ -592,7 +705,10 @@ note inherit exactly that posture.
    The bounded carry (note-routing-omissions plan D11)
    widens the next patient's reach by one hop where no boundary is found: the
    next patient's uncued second line that continues
-   their own comma-ended cued first line is quoted too. CONTINUATION RESIDUE
+   their own comma-ended cued first line is quoted too (since 0.3.7 THE
+   ANSWER HOP below widens it further: where no boundary is found, the next
+   patient's whole uncued reply turn to the clinician's cue-routed question
+   is quoted, not one hop). CONTINUATION RESIDUE
    (named, D11): a patient's spoken-injection or scribe-instruction clause, or
    the content it fences off, that continues the same patient's comma-ended
    cued line is quoted into that patient section (the clinician-owned
@@ -618,23 +734,133 @@ note inherit exactly that posture.
    (a spoken request to leave something out) is quoted, like the comma carry's
    CONTINUATION RESIDUE; and the retracted statement stays in the note beside
    its correction (a mark pairing the two is deferred), so the clinician
-   removes the retracted line.
+   removes the retracted line. Since 0.3.7 a correction that follows a
+   joined reply is not carried (a join closes the carry's chain); where it
+   is the same speaker's uncued, non-question line it joins under THE ANSWER
+   HOP instead, into the same section.
    THE UNSURE MARK (0.3.3, validation-pass plan D7, decision 0.1 (a)): Check 1
    adds a REVIEW code, `hedged_source`, once per quoted line spoken by anyone
-   but the confirmed clinician that holds one of 16 frozen hedge phrases
-   (`note_check.HEDGE_PHRASES` — "i think", "probably", "maybe", "i guess" …),
-   after its reconstruction check; it marks the line `[check: unsure]` the
+   but the confirmed clinician that holds one of the frozen hedge phrases
+   (`note_check.HEDGE_PHRASES` — "i think", "probably", "maybe", "i guess" …;
+   16 in 0.3.3, 33 since 0.3.4 from named published sources, validation-run6
+   plan Task 0.9), or — since 0.3.4 (D5, `note.segment_hedged`) — whose
+   segment is joined mid-sentence to an adjacent segment of the same speaker
+   that holds one (the earlier of the two ends in a comma, semicolon, colon
+   or en or em dash, never a hyphen: the recogniser cut one sentence in two),
+   after its reconstruction
+   check; it marks the line `[check: unsure]` the
    way surface 5's marks are shown (after a Clean line, inside the verbatim
    label, at the front of the line editor's row, counted on a prose section's
    "[includes …]" line). "Acknowledge all review warnings" clears it, and no
    copy or Cliniko draft carries it (surface 4). SCOPE AND COARSENESS (named):
-   a hedge outside the list ("not sure", "I don't know", "I reckon") marks
-   nothing; the mark is per LINE, so a hedge about one clause, or about the
-   cause rather than the clinical fact, marks the whole line; the clinician's
+   a hedge outside the list (a bare "not sure", "not too sure", "I dunno",
+   an idiom, or doubt carried by tone alone) marks nothing; a hedge the
+   recogniser split off after a full stop, behind a bare cut with no
+   trailing mark, or with a segment between (a textless one included) is not
+   joined, and a listed hedge with other words inside it ("I don't really
+   know") is not found; the mark is per LINE, so a hedge about one clause, or about the
+   cause rather than the clinical fact, marks the whole line, and a joined
+   hedge marks both halves; the clinician's
    own hedges are never marked; a suspect word supplies no hedge; and with no
    confirmed clinician every speaker's hedged line is marked (the app's
    Generate always has one). It is a review aid for spoken uncertainty, not a
    detector of it.
+   THE ANSWER HOP (0.3.7, answers-follow-question plan D1–D3, in the form its
+   Task 0.6 chose on 2026-11-17: unlimited reach, guard G and switch S on;
+   `note.ExtractiveNoteProvider.generate_sections`): an utterance no cue of
+   either layer routes and the carry does not take JOINS the section of the
+   confirmed clinician's cue-routed question before it, so a patient's
+   uncued reply sits beside the question it answers. The window opens only
+   after a cue-routed line of the CONFIRMED clinician (none without one) that
+   holds no suspect word, is not in a clinician-owned section, holds a
+   question, and whose LAST sentence is itself a question that alone routes
+   to that section (guard G); a cue-routed line and its one carried piece
+   open it too, read as one line for G (switch S). A line joins when someone
+   other than the confirmed clinician said it — from the second joined line
+   on, the first reply's speaker — it holds no suspect word, is not itself a
+   question and carries no cue of either layer in any section. The window
+   stays open through every such line, so a reply the recogniser split, or a
+   correction after it, joins as a line of its own; any cue-routed line
+   closes it (and may open a new one), and anything dropped closes it; a
+   textless line is passed over. A joined line closes the carry's chain. A
+   joined line is an ordinary quoted line — verbatim, whole, with its own
+   coordinates, the same `transcript` assertion and `x` id as a cued or
+   carried one (D3) — so no field or schema is added, 0.3.6 reads every
+   0.3.7 record, and a cue file still cannot author note text. What reads a
+   joined line: Check 1 and Check 2 as any quoted line (a joined "No
+   numbness." against a pre-filled or typed line saying otherwise draws
+   `contradiction` at error grade, or `contradiction_low_confidence` at
+   review grade beside a low-probability word); Check 4 no longer flags its
+   words (it is quoted); phrase learning never learns from it (the learners
+   take the confirmed clinician's lines only); autofill, pre-fill and Check 6
+   read the transcript, not the note, so they are unchanged; the section
+   suggestions see it as a placed line; and in a prose style its section
+   becomes another speaker's ("Pt" frame) and the section's input digest
+   changes. NAMED RESIDUES (answer hop): (1) a spoken instruction
+   given as the FIRST reply ("don't write this down") is quoted — no seen
+   script holds the case (by a phrase search over every script); accepted
+   by the practitioner at Task 0.6 (2026-11-17) and pinned; (2) given as a
+   LATER line of the same reply turn it is quoted too (Phase V review round
+   15 SEC-001; pinned) — accepted by the practitioner 2026-11-17 as a named
+   residue (Task D.4), of the same class as (1) and the carry's
+   CONTINUATION RESIDUE; the app
+   honours no spoken instruction, and the clinician-owned sections are never
+   joined into; (3) a bare "No." beside its question carries no claim of
+   its own, so Check 2 never checks it against the note; (4) a phrase
+   learned from a question the clinician added by hand later routes that
+   question and so pulls its reply in; (5) a wrong speaker label works both
+   ways: a patient's cue-routed question the speaker step gave to the
+   clinician's voice opens a window and the real clinician's uncued reply
+   joins, and a clinician's own uncued line it gave to the other voice joins
+   as a "reply" (while a real reply it gave to the clinician is never
+   joined); (6) a statement the question test reads as a question by its
+   opening word (a question word such as "what" or "how", or an auxiliary
+   followed by a pronoun, "do you") opens a window when G's routing passes;
+   (7) G's
+   sentence cut has no abbreviation handling, so "Dr." ends a sentence, and
+   a line that opens with a question and ends with a statement fails G only
+   where the recogniser wrote the sentence boundary; (8) where no
+   next-patient boundary is found, the next patient's whole uncued reply
+   turn joins, wider than the carry's one hop (NEXT PATIENT residue (a));
+   (9) a third person in the room (a parent, a carer, an interpreter) who
+   answers first is the reply's speaker; and (10) a reply joins its
+   question's section even where the answer belongs elsewhere — misplaced,
+   not lost (the validation harness does not measure placement). The
+   controls are the same review, shadow mode, and the clinician's removal of
+   any line.
+   THE REPLY FLAG (0.3.7, answers-follow-question plan D4, Task 0.6's QT:
+   questions only, whole turn; `ui.models.replies_after`): the Line chooser
+   also marks `[flagged]` the reply to a left-out question — after each
+   whole joined run of an omission anchor (either Check 4 code) on a wholly
+   uncovered line of the confirmed clinician, before the next-patient cut,
+   in which some piece is a question, the wholly uncovered lines of the ONE
+   speaker other than the clinician who speaks next, through that speaker's
+   turn (a textless line passed over, a covered one passed over unmarked, a
+   speaker change ending it); and the same reply after a question that is in
+   the note solely through the clinician's own Add. Indices only — no text
+   widget, no copy path and no new warning; the count line and the
+   `clinician_line_omitted` hint say a flagged line can be an answer to a
+   question the clinician asked (wording approved by the practitioner
+   2026-11-17, Task D.4). The validation harness credits a reply's non-suspect
+   words as warned (metric amendment 2026-11-17, flow 26 of
+   `docs/security/data-flow-map.md`). NAMED RESIDUES (reply flag): (a) a
+   flagged reply has no warning row behind it, so Save is not held back by
+   it; (b) after a cue-routed question a reply the hop did not join is
+   unmarked, while after a question added by hand it is marked; (c) lines
+   that must stay out of the note are newly `[flagged]` — over the seven
+   synthetic sets, counted per fact that must stay out on a newly flagged
+   line, 2 material, 9 other and 3 at or after the next-patient tail (the
+   reply flag without the hop reads 3 / 9 / 4) — accepted by the
+   practitioner at Task 0.6 ("Accept all three (Recommended)"); (d) on real
+   speech the flag adds a median of 11-15 lines per recording (maximum 15,
+   two enrolled kept recordings, both config passes) — accepted at Task 0.6;
+   the load of the variant that follows ANY left-out clinician line, not
+   only a question ("AT", a median of 115-127), was declined; (e) the flag
+   stops only at a DETECTED next-patient cut, so where none is found a next
+   patient's reply after a flagged question is flagged; and (f) a reply holding a
+   suspect word is still flagged, while the harness never credits a suspect
+   word. A `[flagged]` mark only points to a line: it adds nothing to the
+   note, and a flagged line enters only by the clinician's own Add.
 3. **The extended in-memory transcript lifetime across the review window.** The
    full uncertainty-marked transcript now stays in process memory beside the
    note through the WHOLE note review on the Review screen (`ui/note.py`), longer than the
@@ -649,8 +875,14 @@ note inherit exactly that posture.
    medications in the clinician's segments only; and since 0.3.2 never a word
    the transcription guard marked suspect, surface 5 — but it is a token
    heuristic, not a low-confidence or materiality detector: an uncued
-   sentence with none of those words stays unflagged; see the honest limit
-   below). Plaintext transcript and note
+   sentence with none of those words stays unflagged — since 0.3.4 unless
+   the confirmed clinician said it and no word of it is quoted (Check 4's
+   second code, `clinician_line_omitted`, surface 2), so an uncued line of
+   another speaker's with none of those words is still unflagged — since
+   0.3.7 unless it is the reply to such a left-out question of the
+   clinician's (THE REPLY FLAG, surface 2), and it may instead be in the
+   note through THE ANSWER HOP; see the honest limit below). Plaintext
+   transcript and note
    therefore coexist in memory for the review duration. This is inside
    boundary 2 (a same-user process can already read process memory); the Review
    screen's transcript (and the note engine's hidden copy of it, until 0.4.1
@@ -829,8 +1061,9 @@ note inherit exactly that posture.
      row and as a count on a prose section's "[includes …]" line.
      "Acknowledge all review warnings" never clears either
      (`ui/models.py` `SEPARATELY_ACKNOWLEDGED_CODES`, beside 0.3.1's
-     `high_risk_omission` and, since 0.3.3, Check 6's `possible_next_patient`
-     — surface 2's NEXT PATIENT; the button's tooltip names all four from the
+     `high_risk_omission`, since 0.3.3 Check 6's `possible_next_patient`
+     — surface 2's NEXT PATIENT — and since 0.3.4 Check 4's second code
+     `clinician_line_omitted`; the button's tooltip names all five from the
      same mapping, `SEPARATELY_ACKNOWLEDGED_NAMES`), so Save, Complete and
      Copy wait for each group's own Acknowledge. 0.3.3's `[check: unsure]`
      (surface 2's THE UNSURE MARK) is shown the same way but IS cleared by
@@ -842,7 +1075,11 @@ note inherit exactly that posture.
      may not be speech."); the spoken pause and the new-consultation warning
      ignore it; the bounded carry
      never starts from a segment holding one; and since 0.3.3 it supplies no
-     next-patient phrase, no correction marker and no hedge (surface 2). **Readers that deliberately
+     next-patient phrase, no correction marker and no hedge (surface 2); since
+     0.3.7 the answer hop never opens a window after a line holding one nor
+     joins one (surface 2's THE ANSWER HOP), and the validation harness's reply
+     credit skips it — though the chooser's reply flag still marks a reply
+     that holds one (THE REPLY FLAG residue (f)). **Readers that deliberately
      still do** (decision 0.1 — mark, never withhold): the router and
      `whole_utterance_assertion` (a cue still routes a suspect line, marked),
      the role-evidence counter, the clinician's Add and Move, and **Check 2**
@@ -858,7 +1095,18 @@ note inherit exactly that posture.
      unknown error code is still refused), so a later rollback to 0.3.2 opens
      those notes — 0.3.3's `possible_next_patient` and `hedged_source`
      included, which 0.3.2's "Acknowledge all" then clears
-     (`docs/release/pilot-builds.md`, "Rolling back below 0.3.3").
+     (`docs/release/pilot-builds.md`, "Rolling back below 0.3.3"). 0.3.4's
+     `clinician_line_omitted` reads the same way on 0.3.3 or 0.3.2: each
+     warning kept with its coordinates, all grouped as one newer-version row
+     that the older build's "Acknowledge all" clears, so the
+     separately-acknowledged control is lost after a rollback while no
+     warning is dropped ("Rolling back below 0.3.4"). 0.3.5 writes the same
+     code with the same fields, once per joined run (surface 2) — fewer of
+     them, nothing new on disk — so 0.3.4 reads it as its own and 0.3.3 or
+     0.3.2 as above ("Rolling back below 0.3.5"). 0.3.7 writes nothing new
+     either: a joined reply is an ordinary quoted line and the reply flag is
+     computed on display, never stored, so 0.3.6 reads every 0.3.7 note as
+     its own ("Rolling back below 0.3.7").
 
    NAMED RESIDUES — the guard is a heuristic and the mark a review aid, not a
    filter:
@@ -1689,10 +1937,20 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     `benchmark.apply_offline_env` deletes it at app startup and
     `assert_offline_env` — the first thing `LocalLanguageModel` runs —
     refuses while it is present, naming the variable and never reading its
-    value as a path (`benchmark.FORBIDDEN_NATIVE_OVERRIDES`); `CUDA_PATH` /
-    `HIP_PATH` are left alone (the runtime only ADDS them as DLL search
-    directories, and the CPU wheel's bundled library has no CUDA/HIP
-    dependency) — named as residue, not defended.
+    value as a path (`benchmark.FORBIDDEN_NATIVE_OVERRIDES`). `CUDA_PATH` /
+    `HIP_PATH` are POPPED, not refused, since the gpu-decoding plan (D2, Task
+    A.2; ordinary variables on a graphics-card host): the runtime ADDS
+    `%CUDA_PATH%\bin` and `\lib` as DLL search folders when it is imported,
+    which beside graphics-card decoding would let a folder they name supply a
+    CUDA library to a later decode — so `benchmark.apply_offline_env` pops them
+    with the six cuDNN / cuBLAS logging variables and `CUDA_CACHE_PATH`
+    (`benchmark.POPPED_GPU_VARIABLES`, nine in all), `app.run_offline_self_check`
+    checks each is gone, and the release audit runs it with all nine set
+    (`build-release.HOSTILE_ENV`). The first line is the preload: a
+    graphics-card decode loads its NVIDIA libraries by ABSOLUTE path first
+    (`transcription.preload_cuda_libraries`), and a later by-name load returns
+    the module already loaded. The CPU wheel's own library has no CUDA/HIP
+    dependency.
     THE MODEL. `scribe_desktop/language_model.py` pins `LANGUAGE_MODEL_NAME =
     "Qwen3-4B-Instruct-2507-Q4_K_M"`, `LANGUAGE_MODEL_SIZE_BYTES =
     2_497_281_120` (2.33 GiB) and `LANGUAGE_MODEL_SHA256`, recorded from the
@@ -1721,17 +1979,31 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     `<name>.gguf` only after size AND digest match.
     THE INPUT. `prose_style.ProseInput.from_note` is the ONLY way in and it
     takes a FINALISED `GeneratedNote`: a `TranscriptDocument` or a `NoteDraft`
-    is refused by TYPE, so the model never sees transcript text and never sees
-    a pending proposal (C4, D6). `build_section_prompt` takes text lines only,
-    and each section is ONE model call whose prompt is the section title, the
-    confirmed lines between `PROMPT_LINES_HEADER` and `PROMPT_LINES_END`, and
-    `NARRATIVE_INSTRUCTION` — own voice adds the `StyleProfile`'s measures,
+    is refused by TYPE, so the PROSE stage's calls never see transcript text
+    and never see a pending proposal (C4, D6). (Narrowed 2026-11-09 for 0.3.6:
+    this is true of the prose stage only. The transcript reaches the same
+    resident model through ONE other path since then, the section
+    suggestions, as data whose answer is read back as line numbers and
+    section keys only — "Phase 3B (coverage)" below.) `build_section_prompt`
+    takes text lines only, and each section is ONE model call whose prompt is
+    the section title, the confirmed lines between `PROMPT_LINES_HEADER` and
+    `PROMPT_LINES_END`, and the style's fixed instruction
+    (`prose_style.style_instruction`: `NARRATIVE_INSTRUCTION`, or — since
+    prompt `narrative-v5` (note-content-design plan Task R.5) —
+    `OWN_VOICE_INSTRUCTION` for own voice, the same four rules with the data
+    rule first); since `narrative-v7` (0.3.6) the user text also carries,
+    AFTER the lines' end marker (so `language_model.prompt_lines` never reads
+    either back as a line), a per-section "Shorthand:" line and, for a section
+    holding another voice's line, "Speaker: patient-spoken" (CHECK 5 below) —
+    own voice also adds the `StyleProfile`'s measures,
     shorthand and at most 30 exemplars as CONDITIONING, never training, read
     per job and never on a poll, and BUDGETED against the model's window with
     the model's OWN token count (`LanguageModel.count_tokens` — the runtime's
     tokenizer; codex round 30 PR-MED-046 replaced Phase H round 28's
     character cap): `prose_style.conditioning_allowance` reserves the fixed
-    instruction, the section's user text, the completion the section may
+    instruction, the section's user text (its Shorthand and Speaker lines
+    included — they are never trimmed, so a long section reaches `too_long`
+    slightly sooner), the completion the section may
     need and a framing margin, and the conditioning block is trimmed to what
     remains (exemplars from the end, then shorthand); a section whose lines
     alone overflow the window is refused BEFORE any call as `too_long`,
@@ -1744,9 +2016,29 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     that repeats the line AND obeys it keeps every token and passes the token
     gate — the practitioner's reading before Save is the control, and both
     shapes are pinned in `tests/test_prose_style.py`.
-    `parse_section_prose` strips a `<think>` block, refuses an unclosed one
-    and an echoed marker, drops a title line or markdown heading, and bounds
-    the result at `MAX_SECTION_PROSE_CHARS`.
+    THE PROSE PROMPT IS NOT MADE PROMPT-SAFE (the note-content-design plan's
+    Step H review round 19 SEC-002). "Never see transcript text" means the
+    UNCONFIRMED document: a transcript-provenance confirmed line is a
+    verbatim quote of it, and the prose prompt writes every confirmed line
+    (`- <text>`), and own voice's shorthand tokens and exemplars, as they
+    are — unlike the suggestion prompt, there is no `_prompt_safe` step. The
+    runtime tokenises the chat prompt with `special=True`, so a line spelling
+    a chat-template marker (`<|im_end|>`, `<|im_start|>`) would become a
+    live control token; `parse_section_prose` does NOT refuse such a run (its
+    echo refusal is for the two list markers only). The bound: Check 5 reads
+    the `ProseInput`, never the prompt, so a forged turn, "Speaker:" or
+    "Shorthand:" line cannot widen the gate; the recogniser's words cannot
+    spell `<|` (its special tokens are excluded); a typed line, a learned
+    shorthand token or a pasted past note is the practitioner's own. The
+    guard on the prose builder is a deferred item of that plan — a prompt
+    change, so a new `PROMPT_VERSION` with its paired timing and the 50
+    repeated.
+    `parse_section_prose` strips a `<think>` block, refuses one left open,
+    nested or opened before the completion (a `<think>` or `</think>` left
+    once the closed blocks are stripped — `language_model.strip_think_blocks`,
+    shared with the section suggestions; round 19 SEC-001) and an echoed
+    marker, drops a title line or markdown heading, and bounds the result at
+    `MAX_SECTION_PROSE_CHARS`.
     CHECK 5. `note_check.fidelity_warnings` (with `fidelity_verdict` /
     `fidelity_verdicts`) compares a section's confirmed inputs with its prose
     on four rules: (a) `missing_fact` — every non-connective input token is
@@ -1775,6 +2067,117 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     practitioner's reading of the shown prose before Save is the control,
     which is why Check 5 is not part of `check_note` but is run by the prose
     stage over what it is about to show.
+    THE CLINICAL REGISTER (note-content-design plan D1, D2, D4, Task R.0;
+    BUILT at its Phase R, 2026-11-08 → 2026-11-09; 0.3.6). The two prose
+    styles may write in a clinical register — "Pt reports LBP 3/52" — and
+    Check 5 admits it ONLY through a shipped, practitioner-ratified lexicon,
+    as it admits the connectives: `config_defaults/clinical_equivalents.json`
+    (schema 1; 93 entries ratified on 2026-11-08 — each an abbreviation and
+    its one standard expansion, a lay and a clinical name for the same body
+    part, or a week count `1/52` … `12/52`), read from the PACKAGE only (no
+    user layer, nothing at rest) by `note_config.CLINICAL_EQUIVALENTS`, which
+    refuses a malformed file, a repeated term or JSON key and every
+    structural overlap (a phrase in two entries or another entry's term, a
+    phrase a prefix of another entry's, a one-word phrase that is a
+    connective, `patient` or `pain`, a term folding to a connective, to a
+    side abbreviation or to the case twin of a shipped abbreviation of
+    another meaning, a week count outside the `duration` class or beyond
+    twelve weeks) as a broken install. The SEMANTIC invariants are
+    refused at `note_check` import (`_refuse_register_overlap`): no term folds
+    to an ORDINARY word — the file's pinned set of 86, function words such as
+    `as` / `us` and every shipped abbreviation whose folded form is an
+    everyday word (`SOB`, `MET`, `Post`, `Traps` …) — because the fold is
+    symmetric and such a term would let an invented expansion pass over an
+    everyday use of the word; nor to a connective, a filler or a frame token;
+    and no entry holds a negation or polarity-bearing word, a side, a
+    medication, a number or date outside the `duration` class, a
+    first-person token, or one of the 23 EXCLUDED degree, quality and
+    sensation words ("sore" never becomes "pain", "swelling" never
+    "effusion"). The list changes only with a `PROMPT_VERSION` bump, so the
+    audit's `prompt_version` names the list a note's prose passed under.
+    THE FOLD. Check 5 folds BOTH sides through ONE `note_check.canonicalise`
+    before rules (a)–(d), which run unchanged: left-to-right longest match
+    over `content_tokens`, each match replaced by its entry's canonical token
+    SET (the first phrase's tokens — `LBP` and "lower back pain" both →
+    lower, back, pain; "three weeks", "3 weeks" and "3/52" all → 3, weeks),
+    never by the bare abbreviation; each input line folds alone and the prose
+    as one text; polarity and protected counts are taken on the folded
+    tokens. So an interrupted spoken phrase ("pain in my lower back") still
+    covers a prose `LBP`, the rules being set tests, while its
+    polarity-bearing `in` must still appear; and a prose `3/7` for "three
+    weeks" fails `missing_fact`. Equivalence is symmetric: a prose expansion
+    of an input abbreviation passes too.
+    THE FRAME. `SPEAKER_FRAME_TOKENS` (`pt`, `patient`) are admitted as ADDED
+    tokens in rule (b) only, and only for a section `note.section_other_voice`
+    flags — a transcript-provenance line not spoken by the confirmed clinician
+    (no confirmed clinician, or a line with no speaker: never; fail-closed); a
+    spoken `patient` in an input line stays a fact rule (a) requires. Under
+    the frame, by Task R.0 decided (a) "the swap" by the practitioner on
+    2026-11-08 (a gate widening, theirs under the plan's C2), the first-person
+    tokens `i`, `i've`, `i'm`, `me`, `my`, `mine`, `we`, `we've`, `our`
+    (`note_check.FIRST_PERSON_TOKENS`) become droppable in rule (a): the frame
+    replaces the first person and nothing else — the modal contractions
+    `i'd`, `i'll`, `we'd`, `we'll` stay facts, their would / will being
+    polarity-bearing. The flag is folded into the section's input digest
+    (`note.input_texts_digest(texts, other_voice=)`, stamped by the stage and
+    recomputed on every binding), so a rendering judged WITH the frame never
+    binds to a section that has since lost its other voice, nor the reverse.
+    THE PROMPT'S SHORTHAND LINE (`prose_style.shorthand_line`, through the
+    same `canonicalise`, each line alone) offers only the entries whose
+    PHRASES occur in the section. Since `narrative-v7` it does not offer a
+    duration's `<phrase> = <term>` pair when that exact phrase is directly
+    followed by a point-in-time word (`prose_style.POINT_IN_TIME_WORDS`: ago,
+    earlier, later, before, after, prior), because offered it, the model
+    folded the word into the shorthand ("six weeks ago" → "6/52") and Check
+    5 rightly refused the lost fact (the plan's R.6, `syn-05`); it narrows
+    what the prompt offers, never what Check 5 admits (a prose "6/52 ago"
+    still folds and passes), and another phrase of the same entry elsewhere
+    in the section is still offered. The prompt may describe more than the
+    gate admits — the safe direction.
+    RESIDUES OF THE REGISTER (named; no code change — consequences of the
+    locked D2 and of R.0 (a); the practitioner's reading of the shown prose
+    before Save stays the control). (r1) Equivalence is symmetric and
+    TOKEN-level, so the token-not-attachment residue above reaches a folded
+    term: a lexicon phrase split across two lines never folds on the input
+    side, yet the section's token set still holds a prose `LBP`'s expansion,
+    and it passes. (r2) The frame is per SECTION: in a section holding a
+    patient line and a clinician line, the clinician's own first-person words
+    are droppable and `Pt` addable too, so a clinician's "I tested the knee"
+    can pass as "Pt tested the knee" — the residue now reaches who did what.
+    (r3) "Other voice" is anyone but the confirmed clinician, while the frame
+    says "Pt" or "patient": a carer's, parent's or interpreter's first-person
+    line — already merged into the patient's label by the two-speaker step —
+    can be framed as the patient's. (r4) The duration fold makes a spelled
+    week count the same token as its numeral, so a spelled duration joins the
+    number-swap form of the residue: "3 sets for two weeks" → "2 sets for
+    3/52" passes, where under `narrative-v2` the spelled "two" had to stay.
+    (r5) A spoken `PT` (a physiotherapy referral) re-purposed as the frame —
+    "PT twice a week" → "Pt reports twice a week" — passes: the folded `pt`
+    is on both sides and `reports` is a connective. (r6) Seven ratified terms
+    have a rarer second meaning: `ANS` and `PNS` (also anterior and posterior
+    nasal spine), `Cx` (cervix), `C/O` ("care of"), `RC` (remote control),
+    `ROM` (read-only memory), `SLR` (single-lens reflex) — accepted with
+    record at the plan's Task 0.1 review (round 4 LOW-003, codex
+    PR-LOW-013); the ratified list was not edited. Two more were found at the
+    plan's Step H (review round 16 LOW-013) and accepted the same way: `Inv`
+    (also "investigations" — a typed "Inv: bloods, X-ray" can pass as
+    "Inversion: bloods, X-ray") and `AP` (also "assessment and plan").
+    (r7) A one-word abbreviation folds to its phrase's SEPARATE words, so the
+    token-not-attachment residue reaches one line: a swap between sibling
+    entries whose words the section already holds passes — "UMN signs, lower
+    limb" → "LMN signs, upper limb", "FWB, partial ROM" → "PWB, full ROM",
+    "NWB R leg, smoker" → "Weight bearing R leg, non smoker" (`non` is not a
+    negation word) — where under `narrative-v2` the whole abbreviation was a
+    fact token rule (a) required (review round 16 LOW-008). (r8) The frame's
+    tokens are admitted ANYWHERE in a framed section's prose, any number of
+    times, not only as its opening "Pt reports": "back hurts when lifting at
+    work" → "Pt reports back hurts when lifting patient at work" passes, and
+    so does a clinician's "Refer for therapy" in a mixed section → "Refer for
+    PT therapy" ((r5) the other way; review round 16 LOW-009). (r7), (r8) and
+    the two second meanings were accepted with record by the practitioner on
+    2026-11-09 ("(a) Accept and record (Recommended)"): no code or lexicon
+    change; the clinician's reading of every prose section before Save stays
+    the control.
     CUSTODY OF A RENDERING. A failed section's `StyleRendering` carries NO
     prose (C4, the schema validator) but does carry the section's
     `input_digest`, so the same lines are never re-asked inside one review; a
@@ -1843,7 +2246,9 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     refused at import by `_parse_shipped_vocabulary` if the packaged file is
     emptied, malformed or key-missing).
     LOGS (C9). `prose_text`, `style_renderings` and now `section_texts` (the
-    prose input's own field) are registered tripwire signatures, so a repr or
+    prose input's own field) are registered tripwire signatures — since 0.3.6
+    with `asked_lines` and `suggestion_text`, the suggestion input's ("Phase
+    3B (coverage)" below) — so a repr or
     dump of a rendering, of a note carrying renderings, or of the stage's
     input is dropped by the last-line filter; no module on this path holds a
     logger.
@@ -1869,10 +2274,233 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     at the end of EVERY call (`LocalLanguageModel._clear_inference_state`,
     codex round 22 PR-MED-034), so what remains is the weights plus the
     runtime's own un-enumerated scratch (batch and logits arrays), with the
-    same best-effort scrubbing residual as every other plaintext here. (4)
+    same best-effort scrubbing residual as every other plaintext here — in
+    the RUNTIME; the stage's own frame keeps that section's prompt and
+    completion strings past the call, until the next section's call replaces
+    them or `render` returns (the note-content-design plan's Step H codex
+    round 20 PR-LOW-300; the retention schedule's prose row). (4)
     llama-cpp-python's native code runs outside the Python socket stub,
     exactly as onnxruntime does — the OS-level socket polls of the real leg
     are what covers it, when that leg runs.
+
+## Phase 3B (coverage): the transcript as input to the local language model (note-content-design plan D6–D10, C1, C7, C8, C13; BUILT at its Phase C, 2026-11-09; 0.3.6)
+
+Since 0.3.6 the UNCONFIRMED transcript is input to the local language model
+(surface 17's resident Qwen3-4B model) for the FIRST time — confirmed note
+lines, often verbatim transcript quotes, already reached it through the prose
+styles (surface 17; codex round 20 PR-LOW-330) — for one purpose only: for each
+line the note leaves out before the next-patient boundary, the model may
+SUGGEST which section it belongs in. This is the review trigger "the
+transcript becomes input to the local ML note model" (below), closed here.
+Under any writing style — Clean clinical included; there is no setting — each
+review with a left-out line, on a computer whose model and runtime are
+present, runs ONE suggestion job on the Note tab (`ui/note.py`
+`_begin_suggestions`, a second `_JobSlot` beside the prose job's; the stage
+`ui/models.build_suggestion_stage`, the prose stage's cache, model and
+presence seam). With the model absent the tab names it and starts no thread.
+
+ENFORCED.
+- **The input** (`note_suggest.SuggestionInput.from_request`). Built from the
+  draft's request through the sanctioned constructor
+  (`note_config.build_note_request`), so it is cut at the next-patient
+  boundary exactly as the draft was (a boundary given is applied again).
+  Every pre-boundary line with words goes in, in transcript order: each line
+  the note leaves out is ASKED (`<n>? <speaker> <text>`), and each line the
+  working note already holds is CONTEXT with its section (`<n> <speaker>
+  [placed: <key>] <text>`; the practitioner's Task C.0 decision (a), context
+  on). The speaker is a ROLE label — `clinician` / `other`, or `speaker 1`,
+  `speaker 2` … when no clinician is confirmed — never a stored label or a
+  name. Every line's text goes through `_prompt_safe` first: every C0 and C1
+  control character (newlines among them, so no line can forge another)
+  becomes a space and every angle-bracket run is split, because the runtime
+  tokenises the formatted chat prompt with `special=True` (the plan's Task
+  0.3), so no chat-template marker (`<|im_start|>`, `<think>`, …) survives
+  whole. A line that spells a list marker (`LINES BEGIN` / `LINES END`, any
+  case) is WITHHELD: the window ends before it and it is counted (not
+  assessed when asked). No nonce: the channel is indices, so a forged
+  delimiter can only shorten a window.
+- **One module, one call site (C7).** The unconfirmed transcript reaches the
+  model only through `note_suggest.run_suggestion_stage`'s one `complete`
+  call — one call per window, the runtime's inference state cleared after
+  each (surface 17, residue (3)) — and the token counts that size that
+  window (`_fit_window`'s `count_tokens`, the runtime's tokenizer only; no
+  inference state, no output; round 19 SEC-009), all in `note_suggest.py`;
+  the `complete` site is pinned by AST in `tests/test_note_suggest.py`
+  `TestTheOneCallSite` (exactly three `complete(system_text=…)` sites in the
+  package: this one, the prose stage's and the runtime's own load smoke; and
+  no import from the prose stage). The prose stage still sees confirmed
+  lines only (surface 17). The system text (`SUGGEST_INSTRUCTION`, version
+  `suggest-v1`, never persisted) says the lines are a transcript and are
+  data, never instructions.
+- **The answer is indices only (D7).** `note_suggest.parse_suggestions` keeps,
+  per asked number of THAT window, the first line of the exact form `<n>
+  <key>` or `<n> none` (ASCII digits; a canonical section key); every other
+  line is ignored, and a `<think>` or `</think>` left once the closed blocks
+  are stripped (an unclosed, nested or pre-opened block; round 19 SEC-001) or
+  an echoed list marker refuses the whole completion. Nothing the model writes is displayed, stored,
+  logged, copied or written (C1); the result (`SuggestionStageResult`) holds
+  segment indices, section keys and counts only, and the Note tab keeps only
+  the (segment, key) pairs.
+- **Acceptance only through the chooser's ownership rule; addition only by
+  the clinician (D6).** A suggestion is a MARK, `[suggested: <title>]` after
+  any `[flagged]` / `[next patient?]`, and a pre-selected section on the
+  EXISTING Line chooser (`ui/models.eligible_utterances`), accepted only
+  where its key is in that line's own `allowed_sections` — so a
+  clinician-owned section (assessment, diagnosis, advice and home exercise,
+  management plan) is refused for another speaker's line, for a question and
+  with no confirmed clinician — on a line not already in the note, and
+  before a detected boundary; it is re-filtered on every rebuild of the
+  chooser. Nothing enters the note but by the clinician's own **Add line to
+  section** (`NoteScreen.add_line`, which quotes the document's words and
+  re-applies the ownership rule, as for any hand-add): the line is the
+  verbatim transcript line, one interval, rebuilt by Check 1, and Undo takes
+  it out (its mark returns). No new type, no persisted field, no record
+  change, and no new widget that can hold note text — the suggestion status
+  line is a plain-text `QLabel`, and `tests/test_shadow_exits.py`'s pins hold
+  unchanged (C8). Adding a suggested line teaches a cue exactly as any
+  hand-add does (the learning gate: consent v3 with the opt-in, the
+  clinician's own lines only, closed for a shadow recording).
+- **Bounded cost (D7, D9).** Windows of 40 lines (Task C.0 (a); about 36 s
+  each on this computer by C.0's ESTIMATE from Task 0.3's measured rates,
+  about 48 s at the speed drift Phase R saw — an estimate, not a bound: the
+  model call itself has no time limit, and a window's prompt length and
+  answer count vary), a window with nothing
+  asked skipped, one token count per attempt, an overflowing window halved,
+  a one-line window that still overflows not assessed; ONE cap of 240 s of
+  the job's own clock (wall time of its windows, yield waits excluded, the
+  model's lock waits included), checked BEFORE each window, so a job may end
+  up to one window past it. Lines past the cap are "not assessed" and stay
+  as before: left out, with any omission warning they already drew (many
+  draw none — Check 4's warning is not a list of the unassessed lines).
+- **The shared model, the lock and the yield (D8).** The job shares the
+  prose stage's one resident model and its one non-FIFO lock. Before each
+  window it waits while a prose job is pending (`NoteScreen._prose_pending`)
+  — or until its abort, which wakes the wait at once — so after an Add and a
+  re-render, the prose job waits at most the window in flight. The flag
+  stays set across a style job's report into its own re-render (cleared only
+  once no style job holds the slot, and again when a style thread ends; plan
+  Step H review round 16 A-1, A-6). Save is never
+  held by a pending or running suggestion (marks are advisory).
+- **The exit policy (D8, C13; codex PR-MED-002 / -003, PR-HIGH-002).** A LIVE
+  suggestion job is NOT counted by `NoteScreen.is_busy`, whose readers are
+  the open-review of another recording (the Recovery tab's, and Chrome's
+  "Open for review", which goes through it) and the window's close guard.
+  Every exit — `clear()` from Complete, Discard, Cancel review, Delete note
+  and complete, a new Start, an open-review of another recording — sets the
+  job's abort (no further window runs; a yield wait is broken, and the
+  abort is checked again after the window's token counts, which may wait on
+  the model's lock — the plan's Step H review round 16 A-2) and orphans
+  it; the close guard calls `NoteScreen.prepare_close()` BEFORE its busy
+  check, which does the same, because an accepted close never calls
+  `clear()` — except while the review is still open and unsaved, which
+  refuses the close on its own, so nothing is aborted then and the review
+  keeps its suggestions (Step H round 16 A-3). Since D8's amendment of
+  2026-11-09 (the practitioner's decision on the plan's Step H review round
+  19 Q1 (b)) the job is ALSO aborted and orphaned, through the same
+  `NoteScreen._stop_suggestions`, when the note is SAVED — in the same
+  call, once the save went through (the Line chooser and Add are closed from
+  then on, so nothing it could suggest can be used; a refused Save keeps it)
+  — and at the START of Delete note and complete, before its callback
+  completes the session and destroys the key (a refused one keeps the
+  review without it). Complete and Discard are refused while the review
+  holds its generation lease (`SessionController._refuse_while_generating`),
+  which only Save, Delete note and complete or Cancel review releases, so
+  neither can destroy the key before the job has been told to stop; after
+  Save the close guard's `prepare_close` finds it already stopped (it stays
+  as a backstop). The orphan counts as busy until its in-flight window returns
+  (`complete` is non-streaming) — or, orphaned while the model is still
+  loading on its thread (`ui/models.build_suggestion_stage` loads it before
+  the stage can read the abort), until that load ends (residue (s1); codex
+  round 20 PR-LOW-331) — so the close guard and an open-review wait at most
+  that one window or the rest of that load — right after Save too — and its
+  result is dropped; Complete and Discard never read it and are never held.
+  A Chrome `discard`
+  never reaches a note under review: it discards the LIVE recording only,
+  and a note is reviewed only on a queued session (pinned in
+  `tests/test_ui_suggestions.py` `TestThroughTheWindow`).
+- **Zero network.** The ENFORCING control is the no-sockets integration
+  test, as for the prose runtime (surface 17, residue (2)):
+  `tests/test_integration_no_sockets.py::test_section_suggestions_no_sockets_with_the_mock_model`
+  runs everywhere, polled while provably inside a model call;
+  `test_section_suggestions_no_sockets_with_the_real_model` covers the real
+  runtime's load and one suggestion window under continuous OS-level polls,
+  and skips by name until the runtime and the model file exist.
+- **Logs.** `asked_lines` (the input's field) and `suggestion_text` (one
+  line's words) are registered tripwire signatures
+  (`logging_setup._PAYLOAD_SIGNATURES`), so a rendering of the input or of a
+  line is dropped by the last-line filter; `note_suggest.py` holds no logger,
+  and a job that raises is named on the tab by its exception TYPE only.
+
+RESIDUES.
+- (s1) **The window-long post-exit lifetime.** The job is told to stop before
+  any action can destroy the session key (since D8's amendment of
+  2026-11-09: at Save, and at the start of Delete note and complete; Complete
+  and Discard are refused until Save), but a window already in flight
+  cannot be interrupted: when Complete or Discard after Save
+  (`MainWindow._on_transcript_closed` runs `note_screen.clear()` after the
+  key is gone, as for the prose job — surface 17's custody order) or Delete
+  note and complete destroys the key before that window returns, then until
+  its ONE in-flight window returns — about 36 s by
+  C.0's estimate, about 48 s at Phase R's speed drift, and no seconds upper
+  bound is claimed (the model call has no time limit) — the orphan's
+  suspended frame still holds the whole input (the pre-boundary transcript
+  lines, most of the consultation) and the runtime one window of them,
+  after the key is gone; the result is then dropped. (In a live job the
+  runtime's inference state is cleared at the end of each `complete` call,
+  but the window's prompt and completion strings stay referenced in the
+  stage's frame past that call — through the next window's yield wait —
+  until the next window replaces them or the job returns.) A job orphaned
+  while the model is still LOADING on its own thread (the first review of a
+  run under `clean`, where no prose job loaded it first, or a wait on a prose
+  job's load) has no window in flight: its frame keeps the whole input until
+  the load ends — tens of seconds — and the abort then stops it before any
+  call (review round 19 SEC-006). The prose orphan's
+  frame likewise holds its WHOLE input (the whole confirmed note, every
+  populated section — surface 17), its runtime one section; this one's
+  frame holds the whole pre-boundary TRANSCRIPT, its runtime one window of
+  up to 40 transcript lines — wider in kind, since it is the transcript
+  rather than the confirmed note. Never a reason
+  to hold Complete or Discard (C13); named in the retention schedule
+  ("In-memory suggestion state") and flow 29 of the data-flow map.
+- (s2) **A spoken instruction can at most MIS-ROUTE.** A transcript line that
+  tells the model where to put lines can change which sections are
+  suggested for the asked lines of its window; each such line is still
+  shown with its mark, accepted only under the ownership rule, and added
+  only by the clinician. No text can reach the note, the screen or a record
+  through the channel.
+- (s3) **An undetected next patient** (the plan's Task C.6, review round 10
+  LOW-002). `eligible_utterances` refuses a suggestion only at or past a
+  DETECTED next-patient boundary, and the input is cut only there; where
+  Check 6 finds no boundary, a next patient's line is asked and can carry a
+  suggestion — the residue rule v5's R3 ceiling already exists for, made
+  visible. Measured with every suggestion accepted (`--suggestions
+  confirm-all --prose`) over the six seen synthetic sets: three facts wrongly
+  present through a suggestion (`h3-13`, `h3-18`, `h5-12`), `heldout-3` PASS →
+  FAIL and `heldout-5` R3 2 over its ceiling of 1; and two misheard lines,
+  left out before, entered through a suggestion (`h2-15`, `h3-13`): a
+  suggested line carries its mishearing with it. Decided (a) by the
+  practitioner on 2026-11-09 ("(a) Keep the plan (Recommended)"): a measured
+  cost, carried into predictions v6 and the findings register; the clinician
+  review guide says a suggested line may be the next patient's when no
+  "[next patient?]" mark is shown. Since 0.3.7 the answer hop changes the
+  draft the suggestions are asked over, and with every suggestion accepted one
+  more next-patient line enters this way: on `heldout-5`, `h5-17`'s line 15 (a
+  material fact wrongly present, in the hop's three measured forms, not on a
+  joined line — the hop's own joins there are the same with suggestions off,
+  which quote nothing). Accepted by the practitioner as a named residue at the
+  answers-follow-question plan's Task 0.6 (2026-11-17, "accepting the h5-17
+  next-patient quote as a named residue").
+- (s4) **The model runs on every such review.** There is no switch: a review
+  with a left-out line uses the processor for up to the cap (and one window
+  more) while the clinician reviews, and a suggestion window started before
+  a re-render holds the model's lock until it returns (the yield works only
+  between windows).
+- (s5) **Routing quality is unmeasured on real speech.** The mark can be
+  wrong (a plausible but wrong section, or a line that belongs nowhere);
+  where an added line lands within its section is not measured. The
+  harness measures what `confirm-all` would add on synthetic sets only
+  (`docs/testing/validation-harness.md`, the metric amendment of
+  2026-11-09).
 
 ## Cliniko API client (Cliniko workflow safeguards plan, D9; BUILT at Task 1.1, 2026-09-27; its one draft write BUILT by the cliniko-draft-write plan, 2026-09-29)
 
@@ -2892,9 +3520,28 @@ The panel shows only warning codes it knows, as text. Since 0.3.3 (the
 validation-pass plan, D1, C7) the SAME lists also decide where a note stops
 (Phase 3A surface 2, NEXT PATIENT): they moved unchanged in one dated commit,
 and a change to them now changes what a note withholds, so it is a new dated
-decision with a repeated validation run (C3). The live warning's behaviour
-is unchanged: live, a greeting counts wherever it sits in a window, while
+decision with a repeated validation run (C3). The live warning's rule is
+unchanged: live, a greeting counts wherever it sits in a window, while
 the note's boundary applies the one-word position rule and counts segments.
+Its VOCABULARY changed once, by the dated commit of 2026-10-26 (validation-run7
+plan D2, Task 0.4 (c); shipping in 0.3.5; that plan's C7: the warning changes
+only by that commit): 14 closings and 12 greetings became 30 and 26, so the
+warning now fires on more goodbye-then-greeting pairs. It still never acts.
+No new phrase is one word (rule 2), because live a one-word greeting would
+count anywhere. Three new greetings ("nice to see you", "good to see you",
+"nice to see you again") hold the new closing "see you", so such a greeting
+followed by another greeting, in the same window or the next three — "Nice
+to see you, come on in" — raises the warning at the START of a
+consultation, where the note's boundary, needing clinical content first,
+cuts nothing (pinned in `tests/test_hands_free.py`; mid-visit the same line
+can cut the note — Phase 3A surface 2, NEXT PATIENT residue (b)). The
+warning is raised ONCE per recording and stays raised until the next Start,
+so an early false warning uses it up: a real next patient later in the same
+recording is then not warned. Its effect on real speech is estimated only: a
+replay of the two kept recordings measured, fed one segment per window — a
+SURROGATE of the live feed, whose windows the replay cannot rebuild — raised
+it on 0 of 2 under the old lists and 0 of 2 under the new; its live
+magnitude is unmeasured.
 RESIDUE: (1) the hotkey is a GLOBAL input: anyone at this Windows session's
 keyboard can press it from any window, and any program of this user can
 send the app's window a `WM_HOTKEY`; either does exactly what the Pause and
@@ -2913,7 +3560,10 @@ does not pause (the hotkey and the buttons remain). A phrase begun within
 about a second of a Resume is ignored (the cutoff's one-chunk margin), and
 Whisper's word times are estimates. (3) The warning is a phrase heuristic: it misses
 consultations that end or begin in other words and can fire on a goodbye
-then a greeting within one consultation — a cue, never a control; the pause
+then a greeting within one consultation (more often since the 2026-10-26
+widening, the greeting that holds "see you" included), and once it has
+fired, falsely or not, it says nothing more until the next Start — a cue,
+never a control; the pause
 rule's patient-change reasons and the practitioner's Finish are the
 controls. The same lists' offline use, the note's next-patient boundary,
 has its own named residues there (Phase 3A surface 2).
@@ -3904,7 +4554,12 @@ a DPAPI blob (`measure-speakers.py`, `run-validation.py`); with
 `replay-kept-recordings.py`) no key file is ever written — the key lives only
 in the process's memory, so a hard kill or power loss mid-run leaves
 ciphertext with no key anywhere (round 5 PR-HIGH-051). The harness reads no voice profile, writes no audit row and no
-Past-sessions entry and reads none, and opens no connection: nothing it runs
+Past-sessions entry and reads none (since the metric amendment of 2026-10-23,
+validation-run6 plan D11, it enrols each synthetic clinician voice from the
+set folder's own `enrolment/slot-<n>.wav` into a vector held in memory for the
+run only — never the practitioner's profile, never written or printed; a WAV
+that cannot be enrolled is refused by error type, with the WAV format's fixed
+help or the enrolment's own fixed text and never its path), and opens no connection: nothing it runs
 calls the Cliniko client or any network interface, and the offline
 environment is applied and asserted before any model loads (network-capable
 modules are still imported indirectly, as in the app). Its report holds ids,
@@ -3922,7 +4577,23 @@ peer round 27 for the rest), and models that cannot be loaded are refused by
 error type (round 26). A refusal names the rule file only as "the rule file"
 (peer round 27); folder paths given on the command line are echoed as typed.
 The rule file (64 KiB), the label track (4 MiB)
-and the script (256 KiB) are read capped. The SET
+and the script (256 KiB) are read capped. A rule of sets (schema 2 since
+validation-run6 plan D17; schema 3, rule v3, since validation-run7 plan D4;
+schema 4, rule v5, since validation-run8 plan D1)
+needs `--set <name>`, one of the sets the rule holds: a missing or unknown
+name is refused before any model loads, naming the rule's sets and never
+echoing what was typed. A schema-3 report prints three verdicts on the same
+outcomes — rule v3, rule v3 without its R1 exemption, and rule v1 — so the
+exemption's one loosening is visible in the printout, and it names each line
+the exemption excuses only as `<id>/line <n> (segment <i>)`: ids and integers,
+never the line. A schema-4 report prints four — rule v5, rule v5 with marked
+R1 counted, rule v5 without its R1 exemption, and rule v1 — and one more
+residue line naming the marked R1 facts as `<id>/f<n>`, ids and integers
+only. Its one new loosening is a named residue: on the blind row a misheard
+material fact under a review mark no longer fails the R1 ceiling at any
+count, and its control is the review mark and the clinician's reading of
+every marked number, unit and abbreviation, the worst case a wrong dose under
+`[check: number]`, which every quoted number carries. The SET
 BUILDER (`build-validation-set.py`) speaks the repository's invented scripts
 with the installed Windows (SAPI) voices into a temporary folder
 (`scribe-validation-set-*`, removed after each turn), resamples, mixes and
@@ -3964,7 +4635,13 @@ folder without its sidecar passes the copy check. Writing the cue file fresh,
 never copying it (rule v1, call 1, `docs/testing/validation-harness.md`), is
 the practitioner's operating rule, not an enforced control — and the file is
 committed to the public repository, so a copied one would publish the
-practitioner's learned phrases.
+practitioner's learned phrases; (7) THE ENROLMENT WAVS ARE TRUSTED AS
+BUILT: the harness enrols whatever `enrolment/slot-<n>.wav` it finds, so a
+file replaced by hand would be measured as that voice — a build rewrites (or,
+on a failure, removes) only the slots its built encounters use, so another
+slot's earlier file stays, and a removal that itself fails is reported for
+deletion by hand before the harness runs; the run of record is built whole into an empty
+folder (`docs/testing/validation-harness.md`, Runs of record).
 
 ## Kept recordings (development-recordings plan; 0.3.0; BUILT 2026-10-07 → 2026-10-08, live smokes PASS on the developer build)
 
@@ -4316,6 +4993,77 @@ user (residue (i)); an agent shell's MSIX-virtualized HKCU proves nothing
 (residue (l)); and a dump written by anything other than Windows Error
 Reporting (an attached debugger, for example) is outside it.
 
+MEASUREMENT SCRATCH (validation-run7 plan Tasks 0.3a and 0.4a; the class the
+validation-run6 plan's kept-recording measurement began). A plan's one-off
+measurement over the kept recordings — `.cursor/loops/run7-measure-kept.py`
+— is a git-ignored script outside the app's package: never shipped, never in
+the test suite, and practitioner-run only, from a normal terminal with both
+builds closed (the agent never runs it, C1). A MEASURING run, as Tasks 0.3a
+and 0.4a ran it (the record below), reproduces the
+replay tool's refusal chain in its order before any recording is decrypted
+or any model loads (composer-read, 2026-10-27): the developer channel, its
+own argument checks (the candidate file and `--negatives` when given, the
+practitioner's enrolment WAV required and a file), the folder holding an
+entry key, the crash-report exclusion of the running interpreter, and the
+instance exclusion, held for the whole run; it then lists ids with nothing
+decrypted, re-transcribes each kept recording as the replay tool does, and
+composes and checks its note under the config folder it is given — by
+default the repository's `validation/config`; another folder is accepted, so
+not naming the app's own is an operating rule, not a refusal. Its `--list`
+mode checks only the channel and that the path is a folder, then lists the
+kept ordinals and the day each was kept, from the encrypted audio file's
+time on disk — nothing decrypted, no model loaded — without the
+crash-report check or the instance exclusion. It prints session ORDINALS
+(oldest kept first), integers and indices into the candidate phrase list
+(public once committed) — never a session id, a name, a phrase's text or a
+line; the plan records only aggregates (n, median, maximum — its C8), the
+per-ordinal rows staying in the practitioner's console. RETIRED since
+2026-10-27 (that plan's review round 25): a measuring run now refuses as
+retired straight after the channel check, before any argument check, file
+read or model load — the scratch measured 0.3.4's per-segment code and the
+14 / 12 phrase lists, so a re-measurement on 0.3.5 is a new scratch; `--list`
+still runs as described; and any exception the scratch does not handle ends
+the run with its type only, printed after the handler, never a traceback
+or a message. RESIDUE: it is a
+scratch, not a tested tool — its content-free output is checked by reading
+it (that plan's H3), not by a pin; and `--list` reads the folder while
+either build may be running (it stats files and decrypts nothing).
+The answers-follow-question plan's Task 0.4a measurement (2026-11-15) —
+`.cursor/loops/afq-measure-kept.py`, with the shared synthetic library
+`.cursor/loops/afq_lib.py` — is the same class under the same rules:
+git-ignored, never shipped or tested, and a MEASURING run is
+practitioner-run only, from a normal terminal with both builds closed (the
+agent never runs it over kept recordings, C1). A measuring run refuses in
+the replay tool's order before any recording is decrypted: the developer
+channel, its own argument checks (the forms named, the practitioner's
+enrolment WAV required and a file, an existing config folder required (an
+absent one would load every file as the shipped default) — the plan's two
+passes name the repository's `validation/config` and then the installed
+app's own), the folder holding an entry key, the crash-report exclusion of
+the running interpreter, and the instance exclusion, held to the end; then,
+with the offline switches applied, the models folder and models, the config,
+and the enrolment WAV loaded. Each kept recording is re-transcribed in memory
+over a memory-keyed temporary store (`persist_key=False`), never from the
+stored transcript, and that one document is composed with suggestions off
+and no prose, once with no answer hop (checked equal to the shipped
+provider's note, else that recording fails) and once per measured form; a
+recording whose clinician was not enrolled is counted and not composed. It
+prints session ORDINALS (oldest kept first), form names and integers — never
+a session id, a name, a line or a note — then one aggregate block (expected,
+measured, failed by error type name, `COMPLETE` or `INCOMPLETE`, how many
+were enrolled and not, medians and maxima over the enrolled recordings),
+the only part the plan records. It exits 0 only on `COMPLETE`; a custody
+stop or an interrupt prints one fixed line naming the temporary-folder
+prefix to look for, and no aggregate block; an exception it does not handle
+ends the run with its type only. Its `--list` mode checks only the channel
+and that the path is a folder, then prints how many recordings are kept
+(nothing decrypted, no model loaded, no crash-report or instance check).
+Its `--dry-run-docs` mode runs the same per-document function over the
+plan's SYNTHETIC saved documents (`C:\afq-sets\docs`) for the composer's
+check, reading no kept recording. RESIDUE: as above, a scratch checked by
+reading it (the plan's `/review-loop` and one codex slice) and by the
+synthetic dry run, not by a pin.
+
 OLDER BUILDS (D14). 0.2.0 opens a kept entry's transcript and notes and
 ignores the audio (listing and reading test only `key.dpapi` and `pending`);
 its Delete now and expiry still destroy the audio (the key under the entry
@@ -4401,10 +5149,17 @@ Past-sessions entry already written kept no audio and is unaffected.
 
 ## Out of scope (tracked in PLAN.md phases)
 
-Transcript prompt-injection resistance of the local ML note model (Phase 3B —
-3A's provenance check already derives speaker roles from COORDINATES, never the
+Prompt-injection resistance OF THE LOCAL LANGUAGE MODEL ITSELF (narrowed
+2026-11-09 for 0.3.6: the unconfirmed transcript now reaches the model, but
+only through the section suggestions (a confirmed line the prose stage sends
+is a verbatim quote of it: surface 17's "THE PROSE PROMPT IS NOT MADE
+PROMPT-SAFE"), where no reliance is placed on the model resisting —
+the indices-only answer, the ownership rule and the clinician's own Add bound
+what an obeyed instruction can do, "Phase 3B (coverage)" above, residue (s2);
+3A's provenance check still derives speaker roles from COORDINATES, never the
 assertion's display `speaker` field, as the spoken-injection defence for
-clinician-owned sections; the ML model's own injection resistance is 3B),
+clinician-owned sections; a model that WRITES note text from the transcript
+was rejected and is not built),
 clinic 2's draft write (its template is unverified until its own test write;
 the write-time template match is the check there — THE DRAFT WRITE residue
 (j)), backup/restore of Past sessions (deferred by the
@@ -4418,8 +5173,15 @@ installation (the pilot plan).
 ## Review triggers
 
 Re-review this model when: the practitioner revises Task 4.3's decision (b)
-(the Chrome link, covered above, was built on it); the transcript becomes input to the local ML note model
-(Phase 3B — 3A's non-ML template/autofill pipeline is covered above); clinic
+(the Chrome link, covered above, was built on it); any widening of the
+transcript's one path to the local language model (the trigger "the transcript
+becomes input to the local ML note model" is closed by "Phase 3B (coverage)"
+above, 0.3.6) — a model answer read as anything beyond window line numbers and
+section keys, model text shown, stored, copied or written, a second call site
+or the transcript reaching the prose stage, a suggestion placed without the
+clinician's Add, or a change of the window size or the 240 s cap; a change to
+the shipped clinical lexicon (a `PROMPT_VERSION` bump, surface 17's THE
+CLINICAL REGISTER); clinic
 2's Cliniko key is first stored, or its first note report reaches note
 verification (clinic 1's first Validate and first verified note report were
 the Cliniko workflow safeguards plan's live smoke, passed on clinic 1 by
@@ -4473,4 +5235,10 @@ validation pass (0.3.3): a change to the closing or greeting phrases, the
 correction markers or the hedge phrases (each a new dated decision with a
 repeated validation run), a boundary the note acts on without the
 clinician (an automatic trim), a second writer of the shortened transcript,
-an audit fact for the trim, or a rollback below 0.3.3 (residue (20)).
+an audit fact for the trim, or a rollback below 0.3.3 (residue (20)). For
+0.3.4: a change to Check 4's second code's predicate (an exemption list, an
+other-voice line), a widened hedge scope, or a rollback below 0.3.4. For
+0.3.5: a change to the joined-run unit (joining a bare cut or any adjacent
+pieces), a further change to the closing or greeting phrases (a new dated
+decision, validation-run7 plan D2's rules its precedent), a change to rule
+v3's R1 exemption, or a rollback below 0.3.5.

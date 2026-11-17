@@ -281,6 +281,8 @@ class _Seams:
         self.exclusion = _Exclusion(state)
         self.acquired = 0
         self.loaded = 0
+        # gpu-decoding plan D7: the device each load was asked for.
+        self.devices: list[str] = []
         self.enrolment: speaker_eval.EnrolmentInputs | None = None
         # Every entry key the run unwrapped, by session id (round 29 MED-001:
         # only a replayed entry is opened).
@@ -301,13 +303,20 @@ class _Seams:
         def open_store(folder: Path) -> PastSessionStore:
             return PastSessionStore(folder, wrap_key=_fake_wrap, unwrap_key=unwrap)
 
-        def load(model_name: str, enrolment_wav: Path | None) -> replay_kept.ReplayModels:
+        def load(
+            model_name: str, enrolment_wav: Path | None, device: str
+        ) -> replay_kept.ReplayModels:
             assert_offline_env()  # no model is built before the switches are on
             # Round 31 MED-004: the exclusion is HELD while the run works.
             assert not self.exclusion.released, "the exclusion was released mid-run"
             self.loaded += 1
+            self.devices.append(device)
             return replay_kept.ReplayModels(
-                _ReplayProvider(_ScriptedProvider()), amplitude_vad, model_name, self.enrolment
+                _ReplayProvider(_ScriptedProvider()),
+                amplitude_vad,
+                model_name,
+                self.enrolment,
+                device,  # type: ignore[arg-type]
             )
 
         def no_key_file(*args: object, **kwargs: object) -> None:
@@ -480,12 +489,84 @@ class TestNoteDrift:
     ) -> None:
         """Round 29 LOW-014: a non-zero error count reaches the row (the
         synthetic content draws no error-severity warning of its own)."""
-        warnings = [SimpleNamespace(severity=s) for s in ("error", "review", "error")]
+        warnings = [
+            SimpleNamespace(severity=s, note_warning_code=c)
+            for s, c in (("error", "contradiction"), ("review", "mapping_drop"), ("error", "x"))
+        ]
         monkeypatch.setattr(replay_kept, "check_note", lambda note, document, config: warnings)
         drift = replay_kept.note_drift(
             _document("a" * 32), self._config(tmp_path), None, clinician_speaker=None, now=NOW
         )
-        assert (drift.errors, drift.reviews) == (2, 1)
+        assert (drift.errors, drift.reviews, drift.clinician_lines_omitted) == (2, 1, 0)
+
+    def test_the_clinician_line_omitted_count_is_kept_apart_and_among_the_reviews(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Validation-run6 plan Task 1.4: the new code's warnings are counted
+        by code name, and each is still one of the reviews."""
+        codes = ("clinician_line_omitted", "high_risk_omission", "clinician_line_omitted")
+        warnings = [SimpleNamespace(severity="review", note_warning_code=c) for c in codes]
+        monkeypatch.setattr(replay_kept, "check_note", lambda note, document, config: warnings)
+        drift = replay_kept.note_drift(
+            _document("a" * 32), self._config(tmp_path), None, clinician_speaker=None, now=NOW
+        )
+        assert drift == replay_kept.NoteDrift(
+            errors=0, reviews=3, sections_missing=None, clinician_lines_omitted=2
+        )
+
+    def test_a_real_uncued_clinician_line_is_counted(self, tmp_path: Path) -> None:
+        """End to end through the shipped checker: the clinician's line no
+        shipped cue routes, left out of the note, counts once."""
+        # "Please" opens it: a capitalised non-starter would be name-like and
+        # draw `high_risk_omission` instead.
+        document = _document("a" * 32, clinician="Please keep walking every morning.")
+        drift = replay_kept.note_drift(
+            document, self._config(tmp_path), None, clinician_speaker="speaker_1", now=NOW
+        )
+        assert drift.clinician_lines_omitted == 1
+        assert drift.reviews >= 1
+
+    @pytest.mark.parametrize(
+        ("first_piece", "count"), [("Please keep walking,", 1), ("Please keep walking", 2)]
+    )
+    def test_one_split_line_counts_once(
+        self, tmp_path: Path, first_piece: str, count: int
+    ) -> None:
+        """Validation-run7 plan Task 1.4: the same uncued line, split by the
+        recogniser after its comma, is ONE joined run of the confirmed
+        clinician's — counted once (0.3.4 counted each piece, 2); a bare cut
+        keeps two pieces, two lines (the named residue)."""
+        segments = (
+            TranscriptSegment(
+                start_seconds=1.0,
+                end_seconds=2.0,
+                speaker="speaker_1",
+                transcript_words=_words(first_piece),
+            ),
+            TranscriptSegment(
+                start_seconds=2.2,
+                end_seconds=3.0,
+                speaker="speaker_1",
+                transcript_words=_words("every morning."),
+            ),
+            TranscriptSegment(
+                start_seconds=3.5,
+                end_seconds=5.0,
+                speaker="speaker_2",
+                transcript_words=_words(PATIENT_KEPT),
+            ),
+        )
+        document = TranscriptDocument(
+            session_id="a" * 32,
+            created_at=NOW,
+            model_name="small",
+            sample_rate=SAMPLE_RATE,
+            transcript_segments=segments,
+        )
+        drift = replay_kept.note_drift(
+            document, self._config(tmp_path), None, clinician_speaker="speaker_1", now=NOW
+        )
+        assert drift.clinician_lines_omitted == count
 
     def test_the_detected_prefill_is_passed_to_the_draft(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -656,7 +737,10 @@ class TestReport:
         assert "DRIFT, not accuracy" in report
         assert "shipped defaults - drift includes your learned cues" in report
         assert "unresolved (no --enrolment" in report
-        row = f"| {'a' * 32} | 6.0 | small | medium | 10 | 9 | 1 | 0.100 | 1.000 | - | 0 | 2 | 0 |"
+        row = (
+            f"| {'a' * 32} | 6.0 | small | medium | 10 | 9 | 1 | 0.100 | 1.000 | - | 0 | 2 | 0 "
+            "| 0 |"
+        )
         assert row in report
         assert "pooled drift WER 0.100 (1 edits over 10 kept words)" in report
 
@@ -668,12 +752,27 @@ class TestReport:
             folder=Path("X:/f"), model_name="medium", enrolled=False, errors=0, skipped=0,
         )
         table = [line for line in report.splitlines() if line.startswith("|")]
-        assert table[0].endswith("| Check reviews | Suspect segments |")
+        assert table[0].endswith("| Check reviews | Suspect segments | Clinician lines omitted |")
         for line in table:
-            assert len(line.strip().strip("|").split("|")) == 13
-        assert table[2].endswith("| 0 | 2 | 3 |")
-        assert table[3].endswith("| 0 | 2 | 0 |")
+            assert len(line.strip().strip("|").split("|")) == 14
+        assert table[2].endswith("| 0 | 2 | 3 | 0 |")
+        assert table[3].endswith("| 0 | 2 | 0 | 0 |")
         assert "Suspect segments in the new transcripts: 3." in report
+
+    def test_the_clinician_lines_omitted_column_and_its_total(self) -> None:
+        """Validation-run6 plan Task 1.4: one more column, last, an integer
+        under the code's own name, and its total on the totals line."""
+        note = replay_kept.NoteDrift(0, 4, None, clinician_lines_omitted=2)
+        report = replay_kept.render_report(
+            [self._row(note=note), self._row(session_id="b" * 32)],
+            folder=Path("X:/f"), model_name="medium", enrolled=False, errors=0, skipped=0,
+        )
+        table = [line for line in report.splitlines() if line.startswith("|")]
+        assert table[2].endswith("| 0 | 4 | 0 | 2 |")
+        assert table[3].endswith("| 0 | 2 | 0 | 0 |")
+        assert (
+            "Clinician lines omitted (clinician_line_omitted, among the reviews): 2." in report
+        )
 
     def test_the_count_reads_the_new_transcripts_suspect_segments(self) -> None:
         def word(text: str, *, suspect: bool = False) -> TranscriptWord:
@@ -740,6 +839,26 @@ def _load_launcher() -> ModuleType:
     return module
 
 
+class TestTheModelLabel:
+    """gpu-decoding plan D8: a model is printed through ``MODEL_LABEL_RE`` —
+    a name, or a name and ``@cuda`` — else ``(unnamed)``."""
+
+    @pytest.mark.parametrize(
+        ("name", "shown"),
+        [("medium", "medium"), ("large-v3@cuda", "large-v3@cuda"), ("medium@cpu", "(unnamed)"),
+         ("medium@cuda@cuda", "(unnamed)"), ("Jane Citizen", "(unnamed)")],
+    )
+    def test_printed_through_the_label_shape(self, name: str, shown: str) -> None:
+        assert replay_kept._model(name) == shown
+
+    def test_the_models_label_follows_the_device(self) -> None:
+        provider = _ReplayProvider(_ScriptedProvider())
+        models = replay_kept.ReplayModels(provider, amplitude_vad, "medium")
+        assert (models.device, models.label) == ("cpu", "medium")
+        cuda = replay_kept.ReplayModels(provider, amplitude_vad, "large-v3", None, "cuda")
+        assert cuda.label == "large-v3@cuda"
+
+
 class TestMain:
     def test_the_launcher_is_thin_and_prints_usage(
         self, capsys: pytest.CaptureFixture[str]
@@ -792,6 +911,68 @@ class TestMain:
         [(config_dir, contents)] = configs
         assert config_dir.name.startswith(replay_kept.CONFIG_TEMP_PREFIX)
         assert contents == [] and not config_dir.exists()
+        assert seams.devices == ["cpu"]  # gpu-decoding plan D7: the default
+
+    @pytest.mark.parametrize(("extra", "suffix"), [((), ""), (("--device", "cuda"), "@cuda")])
+    def test_the_device_reaches_the_models_and_its_label_the_report(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        extra: tuple[str, ...],
+        suffix: str,
+    ) -> None:
+        """gpu-decoding plan D7 / D8: ``--device`` (default ``cpu``) reaches
+        the ``_load_models`` seam; the header and the row name the NEW model
+        with ``@cuda`` appended — on the processor both are unchanged, and the
+        kept model is printed as the kept transcript names it."""
+        pytest.importorskip("numpy")
+        folder = tmp_path / "past_sessions"
+        sid = _kept_entry(_store(folder))
+        seams = _Seams(monkeypatch)
+        assert replay_kept.main([str(folder), *extra]) == 0
+        out = _output(capsys)
+        assert seams.devices == ["cuda" if suffix else "cpu"]
+        assert f"- Whisper model (new): medium{suffix}; VAD: silero" in out
+        assert f"| {sid} | {SECONDS:.1f} | small | scripted{suffix} | " in out
+        _no_content(out)
+
+    def test_a_graphics_card_that_cannot_decode_is_refused_by_its_code(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """D7: refused before any recording is read, never replaced by the
+        processor; the line carries the code and fixed text only."""
+        from scribe_desktop.transcription import ComputeDeviceError
+
+        pytest.importorskip("numpy")
+        folder = tmp_path / "past_sessions"
+        _kept_entry(_store(folder))
+        seams = _Seams(monkeypatch)
+
+        def refuse(
+            model_name: str, enrolment_wav: Path | None, device: str
+        ) -> replay_kept.ReplayModels:
+            raise ComputeDeviceError(device, "library_missing")
+
+        monkeypatch.setattr(replay_kept, "_load_models", refuse)
+        assert replay_kept.main([str(folder), "--device", "cuda"]) == 2
+        out = _output(capsys)
+        assert out.strip().splitlines()[-1] == (
+            "[refused] the models could not be loaded (library_missing): --device cuda: the "
+            "graphics card cannot decode"
+        )
+        assert _run_lines(out) == []
+        assert seams.unwrapped == []
+        assert (seams.acquired, seams.released) == (1, 1)
+
+    def test_a_device_the_parser_does_not_take_is_fixed_text(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as info:
+            replay_kept.main([str(tmp_path), "--device", "Jane Citizen"])
+        assert info.value.code == 2
+        captured = capsys.readouterr()
+        assert "Jane" not in captured.out + captured.err
 
     @pytest.mark.parametrize("one_kept_speaker", [True, False])
     def test_the_row_compares_the_kept_labels_with_the_new_and_the_note_uses_the_new(
@@ -876,9 +1057,10 @@ class TestMain:
         out = _output(capsys)
         assert "the practitioner-attributed label (--enrolment)" in out
         line = next(line for line in out.splitlines() if line.startswith(f"| {sid} |"))
-        # Nothing missing from the saved note; the last cell is the suspect
-        # count (invented-text guard D8).
-        assert line.endswith("| 1.000 | 0 | 0 | 0 | 0 |")
+        # Nothing missing from the saved note; the last two cells are the
+        # suspect count (invented-text guard D8) and the clinician lines
+        # omitted (validation-run6 Task 1.4).
+        assert line.endswith("| 1.000 | 0 | 0 | 0 | 0 | 0 |")
         _no_content(out)
         # Round 31 MED-003: the note is made from the ENROLLED document (the
         # plain one names no enrolled speaker), its clinician that speaker.
@@ -927,7 +1109,8 @@ class TestMain:
         line = next(
             line for line in _output(capsys).splitlines() if line.startswith(f"| {sid} |")
         )
-        assert line.endswith("| - | 0 | 0 | 0 |")  # the last cell: suspect segments (D8)
+        # The last two cells: suspect segments (D8), clinician lines omitted (Task 1.4).
+        assert line.endswith("| - | 0 | 0 | 0 | 0 |")
 
     def test_the_suspect_count_is_the_new_transcripts_own(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -950,7 +1133,7 @@ class TestMain:
         assert replay_kept.main([str(folder)]) == 0
         out = _output(capsys)
         line = next(line for line in out.splitlines() if line.startswith(f"| {sid} |"))
-        assert line.endswith("| 7 |")
+        assert line.endswith("| 7 | 0 |")  # then the clinician lines omitted (Task 1.4)
         assert "Suspect segments in the new transcripts: 7." in out
         assert len(counted) == 1
 
@@ -1106,7 +1289,9 @@ class TestMain:
         _kept_entry(_store(folder))
         seams = _Seams(monkeypatch)
 
-        def interrupted(model_name: str, enrolment_wav: Path | None) -> replay_kept.ReplayModels:
+        def interrupted(
+            model_name: str, enrolment_wav: Path | None, device: str
+        ) -> replay_kept.ReplayModels:
             raise KeyboardInterrupt
 
         monkeypatch.setattr(replay_kept, "_load_models", interrupted)
@@ -1432,7 +1617,9 @@ class TestRefusals:
         _kept_entry(_store(folder))
         seams = _Seams(monkeypatch)
 
-        def refuse(model_name: str, enrolment_wav: Path | None) -> replay_kept.ReplayModels:
+        def refuse(
+            model_name: str, enrolment_wav: Path | None, device: str
+        ) -> replay_kept.ReplayModels:
             raise raised
 
         monkeypatch.setattr(replay_kept, "_load_models", refuse)
@@ -1462,7 +1649,9 @@ class TestRefusals:
         _kept_entry(_store(folder))
         seams = _Seams(monkeypatch)
 
-        def refuse(model_name: str, enrolment_wav: Path | None) -> replay_kept.ReplayModels:
+        def refuse(
+            model_name: str, enrolment_wav: Path | None, device: str
+        ) -> replay_kept.ReplayModels:
             raise WavFormatError("Jane Citizen.wav: 44100 Hz stereo")
 
         monkeypatch.setattr(replay_kept, "_load_models", refuse)

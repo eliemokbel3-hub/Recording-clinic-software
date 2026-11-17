@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h2-02",
+  "appointment_type": "follow_up",
+  "axes": ["laterality", "contradictory", "numbers", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "How's the knee been since last time?"},
+    {"role": "patient", "text": "Since last time the right knee has stopped clicking when I squat."},
+    {"role": "patient", "text": "Um, sorry, the left knee, the right one's never been the problem."},
+    {"role": "clinician", "text": "Good, and you've kept up the exercises I gave you?"},
+    {"role": "patient", "text": "Every day, twice a day like you said."},
+    {"role": "clinician", "text": "Great, step up onto a higher box now, holding for five seconds at the top, three sets of ten."},
+    {"role": "clinician", "text": "See you next week."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["stopped", "clicking", "when", "i", "squat"], "line": 1, "material": true},
+    {"kind": "laterality", "tokens": ["the", "left", "knee"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["twice", "a", "day"], "line": 4, "material": false},
+    {"kind": "present", "tokens": ["holding", "for", "five", "seconds", "at", "the", "top"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["three", "sets", "of", "ten"], "line": 5, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

@@ -324,10 +324,11 @@ class TestFinaliseAndCheck:
         self, tmp_path: Path
     ) -> None:
         """A note holding ONLY pre-filled lines: no ``clinician_asserted``,
-        no blocking warning, two unrelated reviews (the omission of the
+        no blocking warning, four unrelated reviews (the omission of the
         patient's "left" — Check 4 widened by the note-routing-omissions plan
-        D2 — and of "2 weeks"), and it writes and reads back with its config
-        decisions."""
+        D2 — and of "2 weeks"; and, since the validation-run6 plan's D1, the
+        clinician's two unquoted lines without a flagged word, segments 1 and
+        2), and it writes and reads back with its config decisions."""
         draft = _draft(_auto_confirmed())
         note = finalise_note(draft, list(draft.config_decisions), _document(), _CONFIG)
         assertions = [a for s in note.note_sections for a in s.note_assertions]
@@ -339,7 +340,18 @@ class TestFinaliseAndCheck:
         counts = {a.proposal_id: a.confirmation.confirmation_count for a in assertions}  # type: ignore[union-attr]
         learned = _by_rule(draft.note_proposals)[LEARNED_ID].proposal_id
         assert counts[learned] == 3 and all(v is None for k, v in counts.items() if k != learned)
-        assert _codes(note.note_warnings) == ["high_risk_omission", "high_risk_omission"]
+        # Re-walked for validation-run7 plan D1 (one per joined run): segment
+        # 1 ends with no mark (a bare cut), so segments 1 and 2 are two runs —
+        # still two warnings.
+        assert _codes(note.note_warnings) == [
+            "high_risk_omission",
+            "high_risk_omission",
+            "clinician_line_omitted",
+            "clinician_line_omitted",
+        ]
+        assert [
+            w.source_coords and w.source_coords.segment_index for w in note.note_warnings
+        ] == [0, 3, 1, 2]
         assert note.blocking_warnings() == ()
         body = models.format_note_body(note)
         assert f"[{models.PREFILLED_MARK} - autofill (clinician-authored)]" in body

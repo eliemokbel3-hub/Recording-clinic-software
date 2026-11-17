@@ -34,6 +34,10 @@ Covered:
   keeps the candidate for the next resume; plus the shipped pin itself
   (a real ``https://huggingface.co/unsloth/...`` URL, the recorded size, a
   64-hex digest) and its single-sourcing with ``scribe_desktop.language_model``.
+- the whisper candidates (larger-model plan D1, D8): the three larger
+  entries pinned by repo and commit, a plain run fetching the shipped model
+  only (the others by ``--only``), and ``fetch_whisper``'s free-space check
+  over the Hub's file sizes at the pinned commit (a faked hub and disk).
 - the smoke: since Task 1.1 its front-end, loader and embed step are
   ``scribe_desktop.speaker_embedding``'s (pinned by identity here; their
   behaviour is tested in ``test_speaker_embedding.py``); its cosine matrix
@@ -45,6 +49,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import io
+import sys
 import wave
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -53,6 +58,7 @@ from typing import Any
 import pytest
 
 from scribe_desktop import language_model
+from scribe_desktop.benchmark import SHIPPED_WHISPER_MODEL
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPTS = REPO / "scripts"
@@ -265,9 +271,10 @@ class TestSetupModelsCli:
         assert setup_models.main([]) == 0
         assert "speaker" not in calls
         assert calls[0] == "silero"
-        assert {c for c in calls if c.startswith("whisper/")} == {
-            f"whisper/{n}" for n in setup_models.WHISPER_CANDIDATES
-        }
+        # Larger-model D8: the shipped whisper model only.
+        assert [c for c in calls if c.startswith("whisper/")] == [
+            f"whisper/{SHIPPED_WHISPER_MODEL}"
+        ]
         out = capsys.readouterr().out
         assert "[skip] speaker-embedding" in out and "--only speaker-embedding" in out
         assert not (tmp_path / "speaker-embedding").exists()
@@ -371,6 +378,314 @@ class TestSetupModelsCli:
         argv = ["--only", "speaker-embedding", "--candidate-url", "https://example.invalid/m"]
         assert setup_models.main(argv) == 0
         assert calls == [f"speaker:https://example.invalid/m:{tmp_path}"]
+
+
+# --- the whisper candidates (larger-model plan D1, D8) ----------------------------
+
+
+def _record_fetches(
+    setup_models: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> list[tuple[str, str, str]]:
+    """Every whisper fetch ``main`` makes, as ``(name, repo, revision)``; the
+    other entries are stubbed out."""
+    fetched: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(setup_models, "models_root", lambda: tmp_path)
+    monkeypatch.setattr(setup_models, "fetch_silero_vad", lambda root: None)
+    monkeypatch.setattr(
+        setup_models,
+        "fetch_whisper",
+        lambda root, name, repo, rev: fetched.append((name, repo, rev)),
+    )
+    monkeypatch.setattr(setup_models, "fetch_speaker_embedding", lambda root, **kw: None)
+    monkeypatch.setattr(setup_models, "fetch_language_model", lambda root: None)
+    return fetched
+
+
+class TestWhisperCandidates:
+    """D1/D8: the three larger candidates pinned by repo and commit exactly
+    as the plan's External / API Findings record them; a plain run fetches
+    the shipped model only, every other candidate by ``--only``."""
+
+    def test_the_three_larger_candidates_are_pinned(self, setup_models: ModuleType) -> None:
+        candidates = setup_models.WHISPER_CANDIDATES
+        assert candidates["large-v3-turbo"] == (
+            "deepdml/faster-whisper-large-v3-turbo-ct2",
+            "4df90f75321148c3a29a9e2351b7ddf8f5b115a8",
+        )
+        assert candidates["distil-large-v3"] == (
+            "Systran/faster-distil-whisper-large-v3",
+            "c3058b475261292e64a0412df1d2681c06260fab",
+        )
+        assert candidates["large-v3"] == (
+            "Systran/faster-whisper-large-v3",
+            "edaa852ec7e145841d8ffdb056a99866b5f0a478",
+        )
+        # The benchmark history kept, then D1's measurement order.
+        assert list(candidates) == [
+            "small",
+            "distil-small.en",
+            "distil-medium.en",
+            "medium",
+            "large-v3-turbo",
+            "distil-large-v3",
+            "large-v3",
+        ]
+        for repo, revision in candidates.values():
+            assert len(revision) == 40 and int(revision, 16) >= 0, repo
+
+    def test_the_shipped_model_is_a_candidate(self, setup_models: ModuleType) -> None:
+        # Else a plain run would fetch no whisper model at all.
+        assert SHIPPED_WHISPER_MODEL in setup_models.WHISPER_CANDIDATES
+        assert setup_models.SHIPPED_WHISPER_MODEL is SHIPPED_WHISPER_MODEL
+
+    def test_a_plain_run_fetches_the_shipped_model_only_and_names_the_rest(
+        self,
+        setup_models: ModuleType,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        fetched = _record_fetches(setup_models, monkeypatch, tmp_path)
+        assert setup_models.main([]) == 0
+        assert fetched == [
+            (SHIPPED_WHISPER_MODEL, *setup_models.WHISPER_CANDIDATES[SHIPPED_WHISPER_MODEL])
+        ]
+        others = [n for n in setup_models.WHISPER_CANDIDATES if n != SHIPPED_WHISPER_MODEL]
+        assert (
+            f"[skip] whisper candidates other than the shipped {SHIPPED_WHISPER_MODEL} "
+            f"({', '.join(others)}) - fetch one with --only <name>"
+        ) in capsys.readouterr().out.splitlines()
+
+    @pytest.mark.parametrize(
+        "name", ["large-v3-turbo", "distil-large-v3", "large-v3", "small", "medium"]
+    )
+    def test_only_fetches_exactly_that_candidate(
+        self,
+        setup_models: ModuleType,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        name: str,
+    ) -> None:
+        fetched = _record_fetches(setup_models, monkeypatch, tmp_path)
+        assert setup_models.main(["--only", name]) == 0
+        assert fetched == [(name, *setup_models.WHISPER_CANDIDATES[name])]
+        assert "[skip] whisper candidates" not in capsys.readouterr().out
+
+
+def _hub(
+    monkeypatch: pytest.MonkeyPatch, siblings: list[tuple[str, int | None]]
+) -> list[tuple[str, Any]]:
+    """A ``huggingface_hub`` stand-in: ``HfApi().model_info`` reports
+    ``siblings`` as ``(name, size)`` and ``snapshot_download`` writes a
+    complete snapshot. Returns every call, in order."""
+    calls: list[tuple[str, Any]] = []
+
+    class _HfApi:
+        def model_info(self, repo_id: str, **kwargs: Any) -> SimpleNamespace:
+            calls.append(("model_info", (repo_id, kwargs)))
+            return SimpleNamespace(
+                siblings=[SimpleNamespace(rfilename=n, size=s) for n, s in siblings]
+            )
+
+    def _snapshot_download(**kwargs: Any) -> str:
+        calls.append(("snapshot_download", kwargs))
+        target = Path(kwargs["local_dir"])
+        target.mkdir(parents=True, exist_ok=True)
+        for filename in ("model.bin", "config.json", "tokenizer.json"):
+            (target / filename).write_bytes(b"x")
+        return str(target)
+
+    fake = ModuleType("huggingface_hub")
+    fake.HfApi = _HfApi  # type: ignore[attr-defined]
+    fake.snapshot_download = _snapshot_download  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake)
+    return calls
+
+
+_TURBO = (
+    "large-v3-turbo",
+    "deepdml/faster-whisper-large-v3-turbo-ct2",
+    "4df90f75321148c3a29a9e2351b7ddf8f5b115a8",
+)
+_TURBO_FILES: list[tuple[str, int | None]] = [
+    ("model.bin", 1_617_884_929),
+    ("config.json", 2263),
+    ("preprocessor_config.json", 340),
+    ("tokenizer.json", 2_710_337),
+    ("vocabulary.json", 1_068_114),
+    ("README.md", 5_000),  # not in the allow patterns
+    (".gitattributes", 1_519),
+]
+_TURBO_BYTES = 1_617_884_929 + 2263 + 340 + 2_710_337 + 1_068_114
+
+
+class TestWhisperFreeSpace:
+    """D8: ``fetch_whisper`` checks the room for the snapshot's bytes - the
+    files its allow patterns take, by the Hub's sizes at the pinned commit -
+    before a byte is fetched, as the language model's download does."""
+
+    def test_the_bytes_counted_are_the_allow_patterns_files(
+        self, setup_models: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = _hub(monkeypatch, _TURBO_FILES)
+        name, repo, revision = _TURBO
+        assert setup_models.whisper_fetch_bytes(name, repo, revision) == _TURBO_BYTES
+        assert calls == [("model_info", (repo, {"revision": revision, "files_metadata": True}))]
+        assert setup_models.WHISPER_ALLOW_PATTERNS == ("*.bin", "*.json", "*.txt")
+
+    def test_every_selected_file_is_counted_present_or_not(
+        self, setup_models: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Review round 12 PR-MED-001: the library keeps a present file only
+        by its commit, etag or SHA-256 - never by its size - so a same-sized
+        wrong file is replaced, and the count never subtracts a copy that is
+        already there."""
+        _hub(monkeypatch, [("model.bin", 1000), ("config.json", 20), ("tokenizer.json", 30)])
+        target = tmp_path / "whisper" / "x"
+        assert setup_models.whisper_fetch_bytes("x", "r/x", "0" * 40) == 1050  # nothing there
+        target.mkdir(parents=True)
+        (target / "config.json").write_bytes(b"c" * 20)  # full size
+        (target / "model.bin").write_bytes(b"w" * 1000)  # same size, other content
+        (target / "tokenizer.json").write_bytes(b"t" * 7)  # partial
+        assert setup_models.whisper_fetch_bytes("x", "r/x", "0" * 40) == 1050
+
+    def test_the_match_is_case_sensitive_as_the_hubs(
+        self, setup_models: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Review round 11 LOW-001: ``snapshot_download`` filters with
+        ``fnmatchcase``, so a file whose suffix differs only in case is not
+        fetched - and not counted (``fnmatch.fnmatch`` would count it on
+        Windows)."""
+        _hub(monkeypatch, [("model.bin", 1000), ("Model.BIN", 7), ("NOTES.TXT", 5)])
+        assert setup_models.whisper_fetch_bytes("x", "r/x", "0" * 40) == 1000
+
+    def test_the_count_selects_what_the_hubs_own_filter_selects(
+        self, setup_models: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The names ``whisper_fetch_bytes`` counts are the names
+        ``huggingface_hub.utils.filter_repo_objects`` keeps with the same
+        patterns (the real library's filter, when it is installed). Each
+        name's size is its own power of two, so the total says exactly which
+        were counted."""
+        hub_paths = pytest.importorskip("huggingface_hub.utils")
+        names = [
+            "model.bin",
+            "Model.BIN",
+            "config.json",
+            "preprocessor_config.json",
+            "vocabulary.txt",
+            "NOTES.TXT",
+            "README.md",
+            ".gitattributes",
+            "sub/x.bin",
+        ]
+        kept = list(
+            hub_paths.filter_repo_objects(
+                names, allow_patterns=list(setup_models.WHISPER_ALLOW_PATTERNS)
+            )
+        )
+        assert kept == [
+            "model.bin",
+            "config.json",
+            "preprocessor_config.json",
+            "vocabulary.txt",
+            "sub/x.bin",
+        ]
+        _hub(monkeypatch, [(name, 1 << index) for index, name in enumerate(names)])
+        counted = setup_models.whisper_fetch_bytes("x", "r/x", "0" * 40)
+        assert counted == sum(1 << names.index(name) for name in kept)
+
+    @pytest.mark.parametrize(
+        "siblings", [None, [], [("README.md", 5), (".gitattributes", 10)]]
+    )
+    def test_no_file_to_fetch_is_refused(
+        self,
+        setup_models: ModuleType,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        siblings: list[tuple[str, int | None]] | None,
+    ) -> None:
+        """Review round 11 LOW-002: a missing or empty file list (or one the
+        patterns take nothing from) never passes the check as zero bytes."""
+        calls = _hub(monkeypatch, siblings or [])
+        if siblings is None:
+            monkeypatch.setattr(
+                sys.modules["huggingface_hub"].HfApi,
+                "model_info",
+                lambda self, repo_id, **kwargs: SimpleNamespace(siblings=None),
+            )
+        with pytest.raises(SystemExit, match="the Hub listed no file to fetch at 4df90f753211"):
+            setup_models.fetch_whisper(tmp_path, *_TURBO)
+        assert "snapshot_download" not in [call for call, _ in calls]
+
+    def test_a_size_the_hub_does_not_report_is_refused(
+        self, setup_models: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        calls = _hub(monkeypatch, [("model.bin", None), ("config.json", 20)])
+        with pytest.raises(SystemExit, match="reported no size for model.bin"):
+            setup_models.fetch_whisper(tmp_path, *_TURBO)
+        assert [call for call, _ in calls] == ["model_info"]
+
+    def test_too_little_room_is_refused_before_any_fetch(
+        self, setup_models: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        calls = _hub(monkeypatch, _TURBO_FILES)
+        margin = setup_models.LANGUAGE_MODEL_FREE_SPACE_MARGIN
+        free = _TURBO_BYTES + margin - 1
+        monkeypatch.setattr(setup_models.shutil, "disk_usage", _fake_disk_usage(free))
+        with pytest.raises(SystemExit) as exc:
+            setup_models.fetch_whisper(tmp_path, *_TURBO)
+        message = str(exc.value)
+        assert message.startswith(f"whisper/large-v3-turbo needs {_TURBO_BYTES} bytes")
+        assert f"only {free} bytes" in message and message.endswith("nothing was fetched")
+        assert [call for call, _ in calls] == ["model_info"], "snapshot_download never ran"
+        assert not (tmp_path / "whisper" / "large-v3-turbo").exists()
+
+    def test_enough_room_fetches_the_pinned_revision(
+        self,
+        setup_models: ModuleType,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        calls = _hub(monkeypatch, _TURBO_FILES)
+        margin = setup_models.LANGUAGE_MODEL_FREE_SPACE_MARGIN
+        monkeypatch.setattr(
+            setup_models.shutil, "disk_usage", _fake_disk_usage(_TURBO_BYTES + margin)
+        )
+        setup_models.fetch_whisper(tmp_path, *_TURBO)
+        name, repo, revision = _TURBO
+        assert calls[1] == (
+            "snapshot_download",
+            {
+                "repo_id": repo,
+                "revision": revision,
+                "local_dir": str(tmp_path / "whisper" / name),
+                "allow_patterns": ["*.bin", "*.json", "*.txt"],
+            },
+        )
+        assert "[ok  ] whisper/large-v3-turbo" in capsys.readouterr().out
+
+    def test_a_complete_folder_is_skipped_without_the_hub(
+        self, setup_models: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        calls = _hub(monkeypatch, _TURBO_FILES)
+        target = tmp_path / "whisper" / "large-v3-turbo"
+        target.mkdir(parents=True)
+        for filename in ("model.bin", "config.json", "tokenizer.json"):
+            (target / filename).write_bytes(b"x")
+        monkeypatch.setattr(setup_models.shutil, "disk_usage", _fake_disk_usage(0))
+        setup_models.fetch_whisper(tmp_path, *_TURBO)
+        assert calls == []
+
+    def test_the_language_models_refusal_still_names_it(
+        self, setup_models: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr(setup_models.shutil, "disk_usage", _fake_disk_usage(10))
+        with pytest.raises(SystemExit) as exc:
+            setup_models._require_free_space(tmp_path, 100, "language-model")
+        assert str(exc.value).startswith("language-model needs 100 bytes")
 
 
 class TestShippedSpeakerEmbeddingPin:

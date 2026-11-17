@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h6-07",
+  "appointment_type": "discharge",
+  "axes": ["laterality", "negation", "numbers", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "So this is our last session. How are you finding the hip on your walks?"},
+    {"role": "patient", "text": "I did four miles on Sunday with no pain at all."},
+    {"role": "clinician", "text": "Excellent. Your single leg balance is up to 30 seconds on the right, which matches the left."},
+    {"role": "clinician", "text": "Carry on with the bridges and side lying leg lifts, three times a week."},
+    {"role": "clinician", "text": "If it flares, drop back to half the distance for a few days, and ring us if it's not settled within a month."},
+    {"role": "patient", "text": "Lovely. Thanks for everything, honestly."},
+    {"role": "clinician", "text": "You're very welcome. Take care."},
+    {"role": "patient", "text": "Oh, one more thing, sorry, I forgot. Is it alright to go back to my dance class?"},
+    {"role": "clinician", "text": "Yes, go for it, just keep the high kicks out for now."},
+    {"role": "patient", "text": "Perfect. Bye then."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["four", "miles", "on", "sunday"], "line": 1, "material": true},
+    {"kind": "negation", "tokens": ["no", "pain", "at", "all"], "line": 1, "material": true},
+    {"kind": "laterality", "tokens": ["30", "seconds", "on", "the", "right"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["three", "times", "a", "week"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["drop", "back", "to", "half", "the", "distance"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["ring", "us", "if", "it's", "not", "settled", "within", "a", "month"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["dance", "class"], "line": 7, "material": false},
+    {"kind": "present", "tokens": ["keep", "the", "high", "kicks", "out"], "line": 8, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

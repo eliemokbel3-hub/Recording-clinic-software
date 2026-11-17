@@ -1,4 +1,4 @@
-# Data-Flow Map (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot, kept recordings, invented-text guard, validation pass)
+# Data-Flow Map (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot, kept recordings, invented-text guard, validation pass, validation runs 6 and 7, note content design)
 
 Every place data lives or moves in the implemented system. Since Phase 2 the
 desktop app carries **clinical data**: consultation audio, transcripts, and —
@@ -54,7 +54,8 @@ and a source checkout uses the same layout under `ClinikoScribe-dev`. The
 installed app has been in clinical use on this computer since its Phase P
 install, 2026-10-03 (0.1.2 since 2026-10-04; `docs/release/pilot-builds.md`). The note pipeline (flows 10–11) is in-process
 and adds no network surface and no new logging channel, and so is the prose
-rendering the language model does (flow 17). Since the pilot plan (PLAN.md
+rendering the language model does (flow 17), and — since 0.3.6 — the
+section suggestions it makes from transcript lines (flow 29). Since the pilot plan (PLAN.md
 Phase 7's pilot half) a recording started while "Shadow mode (pilot)" is
 ticked is a SHADOW recording, whose note never leaves the app by Copy or by
 the draft write (flow 25), and the developer build carries an offline
@@ -268,8 +269,10 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
    word is byte-identical to 0.3.1's). Downstream, Check 4, the autofill and
    pre-fill triggers, phrase learning, the spoken pause and the
    new-consultation warning (flow 14) skip suspect words, and the bounded
-   carry never starts from a segment holding one; the router and Check 2
-   still read them.
+   carry never starts from a segment holding one; since 0.3.7 the answer hop
+   neither opens after nor joins a segment holding one, and the validation
+   harness's reply credit skips them (the chooser's reply flag still marks
+   such a reply; flow 10); the router and Check 2 still read them.
    **The trim — a second, clinician-confirmed writer of `transcript.enc`
    (validation-pass plan D9, decision 0.6 (a); 0.3.3; threat model Phase 3A
    surface 2, THE TRIM).** When a live session's transcript shows a possible
@@ -306,7 +309,9 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
    2026-09-15) and, for the prose styles (note-learning-and-styles plan Phase
    4), `language-model\Qwen3-4B-Instruct-2507-Q4_K_M.gguf` (~2.33 GiB; size
    and SHA-256 verified again at every load, flow 17) — so the whole cache is
-   ~5.3 GiB with all four benchmark candidates and the language model (of the
+   ~5.3 GiB with all four benchmark candidates and the language model; the
+   larger-model plan's three candidates, measured in 2026-11 and not chosen,
+   add ~6.0 GiB while they are kept (of the
    whisper models, the installed app's model pack holds only `medium`; it
    also carries the speaker model's CC BY 4.0 attribution notice). Static
    program data, no clinical content. Written ONLY by flow 9 (a source
@@ -323,15 +328,21 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
    starting itself as the worker (`scribe-app.exe --benchmark-worker …`); a
    source checkout starts `python -m scribe_desktop.benchmark`.
 
-9. **The TWO setup-time network steps (separate processes the user runs;
-   the app's own network use is flow 18 alone) — plus, since the installation
-   plan, the build-time steps in (c).**
+9. **The setup-time network steps — (a) and (b), and since the gpu-decoding
+   plan (d) on a computer with an NVIDIA graphics card (separate processes the
+   user runs; the app's own network use is flow 18 alone) — plus, since the
+   installation plan, the build-time steps in (c).**
    (a) `scripts/setup-models.py`. Explicit one-time HTTPS downloads into
    the model cache of a source checkout (`ClinikoScribe-dev\models`, flow
    24) or, with `--root DIR`, into a staging folder for the release model
    pack (nothing under `%LOCALAPPDATA%` is then touched): silero-vad from its pinned GitHub release tag
    (SHA-256-verified), whisper snapshots from Hugging Face pinned to
-   immutable commit SHAs, the speaker-embedding model (WeSpeaker
+   immutable commit SHAs (since the larger-model plan, 2026-11-05, a plain
+   run fetches only the shipped `medium`; every other candidate, including
+   the three larger ones, the turbo one a conversion by
+   `deepdml/faster-whisper-large-v3-turbo-ct2` rather than Systran and trusted
+   by its commit pin and recorded digests, only by `--only <name>`, after a
+   free-space check against the Hub's sizes at that commit), the speaker-embedding model (WeSpeaker
    VoxCeleb ResNet34-LM ONNX export, `Wespeaker/wespeaker-voxceleb-resnet34-LM`
    on Hugging Face) pinned by SHA-256 exactly like silero — a
    trust-on-first-download digest recorded from the practitioner's own
@@ -387,6 +398,26 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
    and `--model-pack` read and copy local model files only — no network.
    None of these carries clinical data: they read the repository, the
    package indexes and the model files.
+   (d) The graphics-card libraries (gpu-decoding plan D2, Task A.1,
+   2026-11-07; a developer venv on a computer with an NVIDIA card only — NOT
+   part of `[ml]`, so CI never downloads them, and not yet in the build lock or
+   the bundle). `pip install --require-hashes --no-deps` of two PyPI wheels
+   pinned by version AND SHA-256 (`nvidia-cublas-cu12==12.9.2.10`,
+   `nvidia-cudnn-cu12==9.10.2.21`; the lines are in `AGENTS.md`'s run step 2),
+   run once BY THE USER from a normal terminal, like (a) and (b). At run time
+   nothing is downloaded: a graphics-card decode loads their DLLs by ABSOLUTE
+   path from the venv's `site-packages\nvidia\cublas\bin` and
+   `…\cudnn\bin` (`install_layout.native_library_dirs`,
+   `transcription.preload_cuda_libraries`; NVIDIA's own `cudnn64_9.dll` is
+   never loaded — CTranslate2's shim of that name stays), never from a folder
+   an environment variable or `PATH` names, and every process pops the nine
+   GPU variables at its offline step (`benchmark.POPPED_GPU_VARIABLES`:
+   `CUDA_PATH`, `HIP_PATH`, the six cuDNN / cuBLAS logging variables, whose
+   files would otherwise be written, and `CUDA_CACHE_PATH`). The driver keeps
+   its compiled-kernel cache in `%APPDATA%\NVIDIA\ComputeCache` (kernels,
+   never audio or text — a named residue). Only the developer build's tools
+   decode on the card (`--device cuda`, flow 24); the app has no setting for
+   it yet.
 
 10. **Note pipeline (Phase 3A, in-process, zero network).** After transcription,
     `scribe-app` composes a draft note from the immutable transcript
@@ -428,6 +459,37 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     each reader and never logged or sent; Check 6's warning, which names its
     segment by position (no text), is saved with the note's other warnings in
     `note.enc`.
+    **Check 4's second code and the hedge scope (validation-run6 plan D1, D5;
+    0.3.4).** Check 4 also raises `clinician_line_omitted`, a review warning,
+    once per segment the confirmed clinician said that no part of the note
+    quotes (before the next-patient cut; the same in-memory reads as the first
+    code); Check 1's `hedged_source` also reads the adjacent segment of the
+    same speaker for a hedge joined mid-sentence (`note.segment_hedged`). Both
+    are pure functions of the note and transcript already in memory: no new
+    store, field, log line or network use. The new warning names its segment
+    by position (`source_coords`, no text) and is saved with the note's other
+    warnings in `note.enc` — the stored note's only change; 0.3.3 or 0.3.2
+    reads it as a review warning from a newer version, and a build below
+    0.3.2 refuses the note (threat model, Phase 3A surface 5, "Rolling
+    back"). Since 0.3.5 (validation-run7 plan D1) the second code is raised
+    once per joined run — the pieces of one line the recogniser split, each
+    but the last ending mid-sentence — rather than once per segment, so fewer warnings of
+    the same code, with the same fields, are saved; nothing else in this flow
+    changes.
+    **The answer hop and the reply flag (answers-follow-question plan D1–D5;
+    0.3.7).** The provider also places a reply no cue routes, said by someone
+    other than the confirmed clinician, in the section of the clinician's
+    cue-routed question before it (threat model, Phase 3A surface 2, THE
+    ANSWER HOP): one more in-memory routing rule over the request's own
+    segments, before the next-patient cut like every other. A joined reply is
+    an ordinary verbatim `transcript` assertion with its own coordinates, so
+    `note.enc`'s shape, fields and schema are unchanged and 0.3.6 reads it.
+    The Note tab's Line chooser also marks `[flagged]` the reply to a
+    left-out question of the clinician's (THE REPLY FLAG), computed on display
+    from the note's warnings and the transcript in memory — indices only,
+    never stored, logged or sent; the count line and the left-out-line hint
+    say so (wording approved by the practitioner 2026-11-17). No new store,
+    field, log line or network use.
     Inside the app, the plaintext note and the full transcript coexist in memory
     only for the review window (threat model, Phase 3A §3) and, since the
     privacy-professional-controls plan, while an opened Past-sessions entry is
@@ -485,8 +547,10 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     layer is package data bound by the build, not the config digest — and
     since that plan's D11 an utterance no cue matches may follow the same
     speaker's cue-routed utterance that ended mid-sentence, one hop, never into
-    a clinician-owned section; the phrases still only select verbatim
-    utterances) — falling back to shipped package defaults per
+    a clinician-owned section, and since 0.3.7 (answers-follow-question plan
+    D1) another speaker's uncued reply may follow the confirmed clinician's
+    cue-routed question, never into a clinician-owned section (flow 10); the
+    phrases still only select verbatim utterances) — falling back to shipped package defaults per
     filename. It is INTENDED as non-patient boilerplate, deliberately OUTSIDE
     the encrypted session store and the 24 h rule so it survives session
     destruction. Patient data and secrets are prohibited by policy, but the
@@ -608,7 +672,9 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     reads live in `consultation_phrases.py` (re-exported by
     `voice_commands`), unchanged, and the note's next-patient boundary reads
     the same lists over the final transcript (flow 10); neither changes what
-    this flow holds. Finish seals capture as before and the TAIL DRAIN
+    this flow holds. The lists were widened once, by the dated vocabulary
+    commit of 2026-10-26 (validation-run7 plan D2, Task 0.4 (c): 30 closings
+    and 26 greetings) — more phrases matched, nothing more held or written. Finish seals capture as before and the TAIL DRAIN
     (the last open span and any queued windows) runs on the processing
     `TaskThread` inside the transcriber callable (`ui/models._live_transcript`
     via `claim_live_transcriber`), never on the GUI thread, and writes
@@ -738,6 +804,28 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     FINALISED note, grouped by section — never the transcript and never a
     pending proposal, refused BY TYPE (`prose_style.ProseInput.from_note`
     takes a `GeneratedNote`; a `TranscriptDocument` or a `NoteDraft` raises).
+    (Narrowed 2026-11-09 for 0.3.6: "never the transcript" is true of THIS
+    stage, and means the transcript DOCUMENT — a transcript-provenance
+    confirmed line is a verbatim quote of it, written into the prompt
+    unchanged (the threat model's surface 17, "THE PROSE PROMPT IS NOT MADE
+    PROMPT-SAFE"; codex round 20 PR-LOW-330). The same resident model is
+    also given UNCONFIRMED transcript lines by the section suggestions, flow
+    29, whose answer is read back as line numbers and section keys only.)
+    Since 0.3.6 (prompt `narrative-v7`, the
+    note-content-design plan's Phase R) the input also carries one flag per
+    section, `ProseInput.other_voice` (a transcript line of the section not
+    spoken by the confirmed clinician; a flag, never a speaker label), and
+    each section's user text adds, after its lines, a "Shorthand:" line —
+    the shipped lexicon's entries whose phrases occur in the section (a week
+    count directly before ago, earlier, later, before, after or prior is not
+    offered), from the PACKAGE's `config_defaults/clinical_equivalents.json`,
+    nothing read from the data folder — and "Speaker: patient-spoken" for a
+    flagged section; Check 5 folds both sides through that lexicon and admits
+    the frame (`Pt`, `patient`) for a flagged section only. Since 0.3.7 a
+    reply the answer hop joined (flow 10) is such a line, so a section that
+    gains one is flagged `other_voice` (the "Pt" frame) and its input digest
+    differs from the same section without the reply. Nothing else in this
+    flow changes.
     The note review (`ui/note.py`) starts ONE stage job per finalisation on its `TaskThread`
     (`ui/note.py` `_start_style_stage`; `ui/models.build_prose_stage`): the
     model is built once per process on that worker thread from the LOCAL file
@@ -760,9 +848,13 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     per-session key (flow 10) — so a rendering has exactly the note's custody,
     lifetime and deletion, and Copy shows the same bytes. In memory only, with
     the lifetimes stated exactly (codex round 22 PR-MED-034): one section's
-    prompt and completion for that `complete` call, at whose end the runtime's
-    inference state — token buffers and KV cache — is cleared
-    (`LocalLanguageModel._clear_inference_state`); every section's parsed
+    prompt and completion in the runtime for that `complete` call, at whose
+    end the runtime's inference state — token buffers and KV cache — is
+    cleared (`LocalLanguageModel._clear_inference_state`), and as strings in
+    the stage's own frame past that call (`ProseStyleProvider.render`'s
+    `system_text` / `user_text` and `raw`) until the next section's call
+    replaces them or `render` returns (note-content-design Step H codex round
+    20 PR-LOW-300; flow 29 states the same for the suggestions); every section's parsed
     prose, refused prose included, for the one `render` call that judges the
     batch (the refused text is dropped before the result is built); the loaded
     model stays resident for the life of the process (~2.5 GiB of process
@@ -1215,7 +1307,26 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     `ClinikoScribe/<clinic id>` (entries apart only because clinic ids are
     random per data folder; the self-test's `test` entry is common) and the
     DPAPI key descriptions — the same Windows user either way (threat model,
-    "Installation").
+    "Installation"). Since the gpu-decoding plan (D7, Task A.2) the developer
+    build's measurement tools — the validation harness, the transcription-guard
+    measurement, the kept-recordings replay — and the hardware benchmark's
+    command line (`python -m scribe_desktop.benchmark`; the Microphone panel's
+    run stays on the processor) take `--device cpu|cuda` (default `cpu`):
+    `cuda` decodes on the NVIDIA graphics card with the libraries of flow 9 (d)
+    preloaded first, and a card that cannot decode is REFUSED — by the tools
+    with a code (no device, a missing or refused library, a failed load or warm
+    decode), by the benchmark as a failed run — never replaced by the
+    processor, so a measurement is always what it says. The three measurement
+    tools' reports name a graphics-card model as `<model>@cuda` (a label in
+    the existing model string — no new field: the harness's run-information
+    line, the guard measurement's run table, the replay's header and its new
+    model column); their processor reports are unchanged. The benchmark
+    instead prints the device in a column of its own (`BenchmarkResult.device`,
+    carried in the worker's JSON on stdout; nothing is stored): its table gains a `device` column after the
+    model's, filled on every row, only when at least one result was decoded
+    off the processor — a processor-only table, the Microphone panel's
+    included, is unchanged. The app itself, either channel, still decodes on
+    the processor only.
 
 25. **Shadow mode (pilot plan D1–D5, D13; BUILT 2026-10-04; in-process, zero
     network).** The Status tab's "Shadow mode (pilot)" box writes
@@ -1256,14 +1367,22 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       repository; each file is written to `<name>.tmp` and moved into place.
       A script file not named as an encounter id writes nothing and is
       reported without its name; a set folder inside either app data folder
-      is refused (round 26).
+      is refused (round 26). Since the metric amendment of 2026-10-23
+      (validation-run6 plan D11) it last writes `enrolment/slot-<n>.wav` into
+      the set folder for each clinician voice slot the built encounters use:
+      a fixed invented passage (`validation_set.ENROLMENT_PASSAGE`) spoken by
+      that voice the same way, written whole and moved into place.
       Since the clinic-smoke plan (2026-10-09, D1, D5) the set folder holds
       the synthetic set only and is deleted after the run: no recording is
       added to it by hand. (Until then mock role-play recordings, with their
       own scripts and label tracks, were to be added to it under decision
       3.6 — retired before any was recorded.)
     - RUN. `scripts/run-validation.py <set-folder> --config <folder> --rule
-      <file>` applies and asserts the offline environment, reads the rule
+      <file>` (and, with a schema-2 rule since validation-run6 plan D17, a
+      schema-3 rule since validation-run7 plan D4 or a schema-4 rule since
+      validation-run8 plan D1, `--set <name>`, a name the
+      rule holds) applies and asserts the offline
+      environment, reads the rule
       file, the explicit config folder (never the app's own) and the models,
       and for each encounter reads its WAV, label track and script, then
       transcribes it in a temporary encrypted session store
@@ -1271,11 +1390,46 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       `transcript.enc`, under a fresh DPAPI-wrapped key — the
       speaker-measurement store, retention schedule) torn down key-first on
       every path; the transcript document, the composed and finalised note
-      and the metrics live in memory for that encounter only. It reads the
+      and the metrics live in memory for that encounter only. Since
+      validation-run6 plan D8 and D14 it also composes, checks and judges a
+      second note, in memory and before the label track is read, over the
+      script's own invented words (`validation.reference_reading` over
+      `reference_document`: no audio, no store, nothing written), for the
+      residue classes; only fact indices, a boundary, a tail start and one
+      flag are kept from it. Under the
+      default `--attribution enrolment` (since 2026-10-23) it first reads
+      each needed `enrolment/slot-<n>.wav` and enrols it with the
+      speaker-embedding model into an enrolment vector held in memory for
+      the run only — never written, never a voice profile, never logged — and
+      transcribes each encounter with its clinician voice's vector. It reads the
       commit from `.git` and hashes `packaging/models-manifest.json`, and
       prints a text-free Markdown report (ids, numbers, flags, closed
       vocabularies) to standard output, which the practitioner may redirect
-      to a file. It reads no voice profile, and writes no audit row, no
+      to a file; under a schema-3 rule (rule v3, validation-run7 plan D4) it
+      also prints the verdict without the R1 exemption and rule v1's, and
+      names each line the exemption excuses by id, line number and segment
+      index only; under a schema-4 rule (rule v5, validation-run8 plan D1) it
+      also prints the verdict with marked R1 counted and names each marked R1
+      fact by id and fact index only (rule v6, the note-content-design plan's
+      D11 for run 9, is schema 4 too — rule v5's predicates and ceilings with
+      `heldout-6` its blind gate set — and is read the same way; its file is
+      written at that plan's Task F.1). With `--prose` it also runs the
+      narrative prose stage over each finalised note (flow 17, the Note tab's
+      own stage and lexicon) and keeps its section counts only; with
+      `--suggestions confirm-all` (since 0.3.6, the metric amendment of
+      2026-11-09) it builds each encounter's suggestion input as the Note tab
+      does and sends its pre-boundary transcript lines to the local language
+      model (flow 29: one call per window, no abort, no yield), adds every
+      suggestion the chooser's ownership rule accepts before the one
+      finalisation, and keeps counts only — never a model answer, a line or a
+      section key in the report. Since the metric amendment of 2026-11-17
+      (answers-follow-question plan D4, D5; 0.3.7) a left-out fact's
+      `warned` also holds on a non-suspect word of the reply to a flagged
+      question (the chooser's own reply-flag helper, without the replies
+      after a question added by hand), and where that credit reached a
+      segment (with the script's own reading made) the encounter's metrics
+      are computed a second time, in memory, without it; a set's report adds one residue line of counts
+      and that verdict — numbers and ids only, no column added. It reads no voice profile, and writes no audit row, no
       Past-sessions entry and nothing into either data folder. A run stopped
       with Ctrl+C prints no report and no traceback — one fixed line naming
       the temporary folder and the `scribe-speaker-eval-*` prefix for a
@@ -1374,7 +1528,39 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       path — a leftover it cannot remove, or one an interrupted run leaves,
       is ciphertext with no key anywhere, named for deletion by hand; prints a
       numbers-only drift table to standard output; writes nothing in the folder
-      and no audit row.
+      and no audit row. Since 0.3.7 its regenerated note includes the answer
+      hop's joined replies, so its note numbers drift against a replay made
+      before it by design (`docs/testing/kept-recordings.md`); nothing it
+      reads or writes changes.
+    - MEASUREMENT SCRATCH (validation-run7 plan Tasks 0.3a and 0.4a; threat
+      model, "Kept recordings", MEASUREMENT SCRATCH). A plan's one-off
+      measurement over the same folder (`.cursor/loops/run7-measure-kept.py`,
+      git-ignored, outside the app's package, practitioner-run from a normal
+      terminal with both builds closed): a measuring run refuses in the
+      replay's order (the crash-report exclusion and the held instance
+      exclusion included) before any recording is decrypted, lists ids with
+      nothing decrypted, re-transcribes each kept recording as the replay does
+      and composes and checks its note in memory under the config folder it
+      is given (by default the repository's `validation/config`); its
+      `--list` mode only stats each entry's encrypted audio file for the day
+      it was kept, with neither exclusion; it prints session
+      ordinals, integers and indices into the candidate phrase list to the
+      console only — no id, name, phrase text or line — and writes nothing in
+      the folder and no audit row. Only aggregates reach the plan (its C8).
+      That is how Tasks 0.3a and 0.4a ran it; since 2026-10-27 (that plan's
+      review round 25) a measuring run refuses as retired straight after the
+      channel check, before any argument check, file read or model load (it
+      measured 0.3.4's per-segment code and the 14 / 12 phrase lists, so a
+      re-measurement on 0.3.5 is a new scratch); `--list` still runs as
+      described, and an exception it does not handle ends the run with its
+      type only. The answers-follow-question plan's Task 0.4a measurement
+      (`.cursor/loops/afq-measure-kept.py`, 2026-11-15, git-ignored) is a
+      scratch of the same kind under the same rules: the replay's refusals in
+      its order first, `--enrolment` and `--config` both required, each kept
+      recording re-transcribed in memory, ordinals and integers only on the
+      console, and one aggregate block — the only part written into that
+      plan; its `--list` mode prints only how many recordings are kept and
+      decrypts nothing.
 
 28. **The transcription-guard measurement (invented-text guard plan Task 1.5,
     D7, C12; BUILT 2026-10-12; developer build only, practitioner-run, zero
@@ -1397,6 +1583,84 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     standard output — no word, line or primer text; errors by type name only.
     `guard_eval.py` opens no file itself and logs nothing. Its tables were
     decision 0.4's evidence (the plan's Task 3.1).
+
+29. **Section suggestions: transcript lines → the local language model →
+    line numbers and section keys (note-content-design plan D6–D9, C1, C7,
+    C13; BUILT 2026-11-09, version 0.3.6; in-process, in memory only, zero
+    network).** At the end of each review's `begin_review` — or once a
+    writing-style job in flight has reported — under any writing style, the
+    Note tab builds ONE input from the draft's request
+    (`note_config.build_note_request`, cut at the next-patient boundary):
+    `note_suggest.SuggestionInput.from_request`, every pre-boundary line with
+    words, the lines the note leaves out ASKED and the lines it holds as
+    context with their section key, each under a role label (`clinician` /
+    `other`, or `speaker N`), its text made prompt-safe (control characters
+    spaced, angle-bracket runs split); a line spelling a list marker is
+    withheld. Nothing asked, or the model or runtime absent: no job, no
+    load, no call. Otherwise the job runs on a worker thread
+    (`ui/models.build_suggestion_stage`: the prose stage's ONE resident model,
+    built once from the LOCAL file as in flow 17), window by window — 40
+    lines a window, one token count per attempt, an overflowing window
+    halved, one `complete` call per window from ONE call site
+    (`note_suggest.run_suggestion_stage`), the runtime's inference state
+    cleared after each call, ONE 240 s cap over the job's own clock, a wait
+    before each window while a prose job is pending. The completion is read
+    by `note_suggest.parse_suggestions` as `<n> <key>` / `<n> none` lines for
+    THAT window's asked numbers only; nothing else is taken from it (nothing
+    at all when it echoes a list marker or leaves a `<think>` or `</think>`
+    once the closed blocks are stripped), and the
+    completion stays in the stage's own frame only until the next window
+    replaces it or the job returns. What crosses back to the GUI thread is
+    a `SuggestionStageResult`: segment indices, section keys and counts. The
+    Note tab keeps the (segment, key) pairs beside the draft and shows each
+    one the chooser's ownership rule accepts (`ui/models.eligible_utterances`)
+    as a `[suggested: <title>]` mark and a pre-selected section on the Line
+    chooser; a line enters the note only by the clinician's Add, as any
+    hand-add does (the verbatim transcript line, flow 10's custody from
+    there). Since 0.3.7 a reply the answer hop joined (flow 10) is a line the
+    note holds, so it is sent as context with its section key, not asked;
+    the hop changes the draft the suggestions are asked over, which is how
+    one more next-patient line entered the harness's every-suggestion-
+    accepted run (the threat model's "Phase 3B (coverage)" residue (s3)).
+    In memory only, with the lifetimes stated exactly: the input —
+    the pre-boundary transcript lines, most of the consultation — in the
+    job's frame for the job; one window's prompt and completion in the
+    runtime for its `complete` call (its inference state cleared at the
+    call's end), and as strings in the stage's frame past that call —
+    through the next window's yield wait — until the next window replaces
+    them or the job returns; the pairs beside
+    the draft until the review ends (`clear()`) or the window closes. Every
+    exit of the review aborts the job (no further window runs) and orphans
+    it — and since the plan's D8 amendment of 2026-11-09 (review round 19
+    Q1 (b)) so does Save, once the note is saved, and Delete note and
+    complete BEFORE it destroys the key; Complete and Discard are refused
+    until Save, so the job has always been told to stop before a key goes.
+    A window already in flight cannot be stopped: when the key is destroyed
+    before it returns (Complete or Discard after Save, Delete note and
+    complete), the orphan's
+    frame keeps the whole input, and the runtime one window of it, until its
+    ONE in-flight window returns — about 36 s by the plan's Task C.0
+    estimate, about 48 s at the speed drift Phase R saw; an estimate, not a
+    bound, since the model call has no time limit — after the key is gone
+    (a job orphaned while the model is still LOADING on its thread — the
+    first review of a run under `clean` — keeps the input until the load
+    ends, then stops before any call; review round 19 SEC-006), and its
+    result is then dropped (the threat model's
+    "Phase 3B (coverage)" residue (s1); the retention schedule's "In-memory
+    suggestion state"). Nothing here is written to any file — no store, no
+    record, no log — nothing reaches Copy, the Cliniko write, the audit row
+    or Past sessions but a line the clinician added; `asked_lines` and
+    `suggestion_text` are registered tripwire markers, and no socket is
+    opened — pinned by the suggestion legs of
+    `desktop/tests/test_integration_no_sockets.py`. The validation harness's
+    `--suggestions confirm-all` makes the same call over synthetic sets
+    (flow 26), and so does `scripts/measure-suggestions.py` (the
+    suggestion-repair plan's Task 0.2; developer build, synthetic sets only,
+    a set holding any other script refused before the model loads) at text
+    level, through a recorder held in the script, not a second call site
+    in the package. It prints counts, ids and section keys only, writes no
+    file and calls no logger; its `--verbose` prints the raw completions,
+    which are synthetic text, to the console.
 
 ## Explicit non-flows
 
@@ -1530,11 +1794,17 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
   default, and unlinks exactly the listed paths through
   `sample_notes.delete_sample_files` (a directory is refused, never walked;
   `TestDeleteSampleFiles::test_exactly_the_listed_paths_go`).
-- No transcript text to the language model (note-learning-and-styles plan, D6,
-  D8; BUILT, Phase 4). The prose stage's ONLY input is
+- No transcript text to the language model FROM THE PROSE STAGE
+  (note-learning-and-styles plan, D6, D8; BUILT, Phase 4; narrowed 2026-11-09
+  for 0.3.6 — until then it read "No transcript text to the language model":
+  since the note-content-design plan the section suggestions give the model
+  pre-boundary transcript lines through ONE other call site and read its
+  answer back as line numbers and section keys only, flow 29). The prose stage's ONLY input is
   `prose_style.ProseInput.from_note`, which takes a FINALISED `GeneratedNote`
   and refuses a `TranscriptDocument` or a `NoteDraft` BY TYPE — so neither
-  transcript text nor a pending proposal can reach the model — and
+  the unconfirmed transcript nor a pending proposal can reach the model (a
+  CONFIRMED transcript-provenance line does, a verbatim quote of the
+  transcript; codex round 20 PR-LOW-330) — and
   `build_section_prompt` takes text LINES only (a section title, the confirmed
   lines, the fixed narrative instruction, and for Own voice the style
   profile's measures, shorthand and exemplars as conditioning). Flow 17.

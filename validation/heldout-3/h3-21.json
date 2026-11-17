@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h3-21",
+  "appointment_type": "initial",
+  "axes": ["laterality", "uncertain", "contradictory", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "Hello, come in, take a seat. I'm Tom, one of the physios."},
+    {"role": "patient", "text": "Hi, I'm Lorna."},
+    {"role": "clinician", "text": "So, Lorna, what are you coming in with?"},
+    {"role": "patient", "text": "I'm coming in with my right knee giving way on the stairs, it's happened three times this month."},
+    {"role": "clinician", "text": "And when did it start, the giving way?"},
+    {"role": "patient", "text": "It started after the last operation, I've had previous surgery on it twice."},
+    {"role": "patient", "text": "Sorry, three previous surgeries, I forgot the keyhole one when I was nineteen."},
+    {"role": "clinician", "text": "Three operations, okay. Do you get any swelling after it gives way?"},
+    {"role": "patient", "text": "It puffs up for a day each time if you want to have a look at my photos."},
+    {"role": "patient", "text": "Not sure I've timed it properly, mind."},
+    {"role": "clinician", "text": "Let me have a look at the knee. Can you lie back?"},
+    {"role": "clinician", "text": "There's a small amount of fluid, and when I push the shin forward it moves further than on the left."},
+    {"role": "clinician", "text": "The thigh muscle on the right is visibly smaller too, by about two centimetres."},
+    {"role": "patient", "text": "Is that bad? I'm positive it's the cartilage again, my surgeon said so last year."},
+    {"role": "clinician", "text": "It might be the ligament rather than the cartilage, I can't be certain without a scan, so I'd like you to see a GP about a referral to the knee team."},
+    {"role": "clinician", "text": "Until then, wear the knee brace for stairs and uneven ground, and build the thigh up with the sit to stands we'll go through now."},
+    {"role": "patient", "text": "Okay. Should I stop going to the gym?"},
+    {"role": "clinician", "text": "Keep going, but stick to the bike and the leg press, nothing with jumping or sudden turns."},
+    {"role": "clinician", "text": "Right, let's do those sit to stands before you go."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["right", "knee", "giving", "way"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["three", "previous", "surgeries"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["puffs", "up", "for", "a", "day", "each", "time"], "line": 8, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["ligament", "rather", "than", "the", "cartilage"], "line": 14, "material": true},
+    {"kind": "present", "tokens": ["wear", "the", "knee", "brace", "for", "stairs"], "line": 15, "material": true},
+    {"kind": "present", "tokens": ["nothing", "with", "jumping", "or", "sudden", "turns"], "line": 17, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

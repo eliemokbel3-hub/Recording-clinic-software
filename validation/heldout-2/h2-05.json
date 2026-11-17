@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h2-05",
+  "appointment_type": "chronic",
+  "axes": ["laterality", "numbers", "uncertain", "negation", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Good afternoon, Mrs Adeyemi, how has the neck been from last time?"},
+    {"role": "patient", "text": "Well, from last time the headaches have come back three times a week, I'd guess, though I haven't kept a diary like you asked, and they always start at the back of my head on the left."},
+    {"role": "clinician", "text": "Do you get any numbness or tingling in your hands?"},
+    {"role": "patient", "text": "No tingling, no."},
+    {"role": "clinician", "text": "Let me have a look at your neck movements. Turning to the left is about half what it should be."},
+    {"role": "clinician", "text": "The muscles at the top of your shoulders are pretty tight, especially on the left."},
+    {"role": "clinician", "text": "My hunch is that the joints in the upper neck are setting off the headaches, but it may be partly posture as well."},
+    {"role": "clinician", "text": "I'll do some massage to those muscles now."},
+    {"role": "clinician", "text": "How does that feel?"},
+    {"role": "patient", "text": "Easier, I'm moving a bit better already."},
+    {"role": "clinician", "text": "Tuck your chin in gently as if you're making a double chin, ten times every hour you're at the desk."},
+    {"role": "clinician", "text": "Thank you, Mrs Adeyemi, that concludes today's session; we'll see you again in a fortnight."},
+    {"role": "clinician", "text": "Mr Fitzgerald? Good afternoon, do come through and take a seat."},
+    {"role": "next_patient", "text": "Thank you. I've had a pain in my right hip for about a month, it's worse when I walk any distance."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["three", "times", "a", "week"], "line": 1, "material": true, "expect_uncertain": true},
+    {"kind": "laterality", "tokens": ["back", "of", "my", "head", "on", "the", "left"], "line": 1, "material": true},
+    {"kind": "negation", "tokens": ["no", "tingling"], "line": 3, "material": true},
+    {"kind": "laterality", "tokens": ["turning", "to", "the", "left", "is", "about", "half"], "line": 4, "material": true},
+    {"kind": "laterality", "tokens": ["especially", "on", "the", "left"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["joints", "in", "the", "upper", "neck"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["massage", "to", "those", "muscles"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["moving", "a", "bit", "better"], "line": 9, "material": true},
+    {"kind": "present", "tokens": ["tuck", "your", "chin", "in", "gently"], "line": 10, "material": true},
+    {"kind": "present", "tokens": ["ten", "times", "every", "hour"], "line": 10, "material": true},
+    {"kind": "present", "tokens": ["in", "a", "fortnight"], "line": 11, "material": true},
+    {"kind": "absent", "tokens": ["pain", "in", "my", "right", "hip"], "line": 13, "material": true},
+    {"kind": "absent", "tokens": ["worse", "when", "i", "walk", "any", "distance"], "line": 13, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h4-09",
+  "appointment_type": "acute",
+  "axes": ["contradictory", "laterality", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Hi Marek, you said on the phone it's your upper back this time?"},
+    {"role": "patient", "text": "Yeah, I'm coming in with a sharp pain between my shoulder blades when I breathe in deep."},
+    {"role": "clinician", "text": "Did anything set it off?"},
+    {"role": "patient", "text": "I was carrying a sofa up three flights of stairs on Friday."},
+    {"role": "clinician", "text": "Okay. Let me have a look at your back."},
+    {"role": "receptionist", "text": "Sorry to barge in, your half past three has phoned to say they're stuck in traffic."},
+    {"role": "clinician", "text": "Thanks Jen, tell them not to worry."},
+    {"role": "clinician", "text": "There's a tender joint on the right side at the level of your shoulder blades, and your ribs move fine when you breathe."},
+    {"role": "clinician", "text": "I'm going to mobilise that joint now, then we'll book you back in."},
+    {"role": "patient", "text": "Sounds good."},
+    {"role": "clinician", "text": "Right, I can see you again on Thursday at ten."},
+    {"role": "clinician", "text": "Er, no, sorry, Thursday at half past two, I've got a meeting at ten."},
+    {"role": "patient", "text": "Half two's fine."},
+    {"role": "clinician", "text": "Keep breathing deeply every hour or so, even if it catches, so the ribs keep moving."},
+    {"role": "patient", "text": "Will that stop it catching when I sneeze?"},
+    {"role": "clinician", "text": "It should ease over the next week or so, and a pillow hugged to your chest helps when you sneeze."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["sharp", "pain", "between", "my", "shoulder", "blades"], "line": 1, "material": true},
+    {"kind": "absent", "tokens": ["stuck", "in", "traffic"], "line": 5, "material": false},
+    {"kind": "laterality", "tokens": ["tender", "joint", "on", "the", "right", "side"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["thursday", "at", "half", "past", "two"], "line": 11, "material": true},
+    {"kind": "present", "tokens": ["breathing", "deeply", "every", "hour"], "line": 13, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "receptionist": 1}}
+}

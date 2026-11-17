@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h6-05",
+  "appointment_type": "chronic",
+  "axes": ["small_talk", "laterality", "numbers", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Hello again. How's the neck been treating you?"},
+    {"role": "patient", "text": "Up and down. My husband's just parking, he wanted to come in and hear what you say."},
+    {"role": "partner", "text": "Sorry I'm late, the car park's heaving."},
+    {"role": "clinician", "text": "No problem at all, grab that chair."},
+    {"role": "patient", "text": "The headaches have crept back, three or four a week, always starting at the base of my skull."},
+    {"role": "partner", "text": "She's been sleeping on two pillows again, I've told her about it."},
+    {"role": "clinician", "text": "Let me have a look at your turning. Look over your left shoulder for me."},
+    {"role": "clinician", "text": "Turning left is pretty tight, about half what you get to the right."},
+    {"role": "clinician", "text": "It might be that the desk setup has slipped since you went back to the office, but I'd want to see how it responds before I'm sure."},
+    {"role": "clinician", "text": "Drop to one pillow, and set your screen so the top edge is level with your eyes."},
+    {"role": "clinician", "text": "If you get a headache that's sudden and the worst of your life, or any double vision, call an ambulance."},
+    {"role": "partner", "text": "We'll keep an eye on that."},
+    {"role": "clinician", "text": "Same time in two weeks, then."}
+  ],
+  "facts": [
+    {"kind": "absent", "tokens": ["car", "park's", "heaving"], "line": 2, "material": false},
+    {"kind": "present", "tokens": ["three", "or", "four", "a", "week"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["base", "of", "my", "skull"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["sleeping", "on", "two", "pillows"], "line": 5, "material": true},
+    {"kind": "laterality", "tokens": ["turning", "left", "is", "pretty", "tight"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["desk", "setup", "has", "slipped"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["drop", "to", "one", "pillow"], "line": 9, "material": true},
+    {"kind": "present", "tokens": ["top", "edge", "is", "level", "with", "your", "eyes"], "line": 9, "material": true},
+    {"kind": "present", "tokens": ["sudden", "and", "the", "worst", "of", "your", "life"], "line": 10, "material": true},
+    {"kind": "present", "tokens": ["call", "an", "ambulance"], "line": 10, "material": true},
+    {"kind": "present", "tokens": ["in", "two", "weeks"], "line": 12, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "partner": 1}}
+}

@@ -559,8 +559,11 @@ def test_save_freezes_every_editor_control_and_refuses_a_new_editor(
             screen.confirm_proposal(proposal.proposal_id)
     screen._acknowledge_all()
     # Invented-text guard D5: "two weeks" draws a `number_source`, which
-    # Acknowledge all leaves open (`SEPARATELY_ACKNOWLEDGED_CODES`).
+    # Acknowledge all leaves open (`SEPARATELY_ACKNOWLEDGED_CODES`); so does
+    # Check 4's second code (validation-run6 plan D1) for the clinician's two
+    # unquoted lines ("Please use an ice pack tonight", "The knee felt steady").
     screen._acknowledge("number_source")
+    screen._acknowledge("clinician_line_omitted")
     routed = _first_routed(screen)
     screen.open_editor(routed.assertion_id, _working_text(screen, routed.assertion_id))
     assert screen._editor is not None

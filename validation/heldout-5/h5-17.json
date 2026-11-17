@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h5-17",
+  "appointment_type": "initial",
+  "axes": ["laterality", "numbers", "uncertain", "small_talk", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Hello, I'm Siobhan, one of the physios. What's brought you in?"},
+    {"role": "patient", "text": "I'm coming in with a stiff neck and headaches that sit behind my eyes."},
+    {"role": "clinician", "text": "When did it start?"},
+    {"role": "patient", "text": "Maybe a fortnight ago, maybe longer."},
+    {"role": "clinician", "text": "Any tingling or numbness down the arms?"},
+    {"role": "patient", "text": "There's been some tingling into my right thumb, which I first noticed when I was up a ladder painting the ceiling, although now that I think about it I'm not totally sure it wasn't my left, and it comes and goes."},
+    {"role": "clinician", "text": "Okay. Let me have a look at the neck. Turn your head to the right for me."},
+    {"role": "clinician", "text": "Turning right is down to about half, and pressing on the joint at the bottom of the neck on that side brings on the thumb symptoms."},
+    {"role": "clinician", "text": "Reflexes and strength in both arms are normal, which is reassuring."},
+    {"role": "clinician", "text": "If you get weakness in the hand, or you start dropping things, come back sooner or call 111."},
+    {"role": "clinician", "text": "You're going to take paracetamol 1 gram up to four times a day while it's flared."},
+    {"role": "patient", "text": "Thanks, I'll get some on the way home."},
+    {"role": "clinician", "text": "Right, that's us. See you in a week, take it easy."},
+    {"role": "patient", "text": "Will do, cheers."},
+    {"role": "clinician", "text": "Mr Petrakis? Lovely, come on in. Bit grim out there, isn't it?"},
+    {"role": "next_patient", "text": "Grim isn't the word. Anyway, it's my wrist, I came off my bike on the ice on Monday and it's still really swollen."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["tingling", "into", "my", "right", "thumb"], "line": 5, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["pressing", "on", "the", "joint", "at", "the", "bottom", "of", "the", "neck"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["reflexes", "and", "strength", "in", "both", "arms", "are", "normal"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["come", "back", "sooner", "or", "call", "111"], "line": 9, "material": true},
+    {"kind": "dose", "tokens": ["paracetamol", "1", "gram", "up", "to", "four", "times", "a", "day"], "line": 10, "material": true},
+    {"kind": "absent", "tokens": ["still", "really", "swollen"], "line": 15, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

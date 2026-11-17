@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h3-16",
+  "appointment_type": "acute",
+  "axes": ["negation", "contradictory", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "What are you coming in with?"},
+    {"role": "patient", "text": "I'm coming in with neck pain since a car shunt on Monday morning."},
+    {"role": "patient", "text": "No, sorry, I'm coming in with it since Sunday evening, Monday was when I went to the walk-in centre."},
+    {"role": "clinician", "text": "Any tingling in your arms or hands?"},
+    {"role": "patient", "text": "There's no tingling, and I've not lost any strength that I've noticed."},
+    {"role": "clinician", "text": "Let me have a look. Turning is limited both ways, but your arm reflexes and sensation are normal."},
+    {"role": "patient", "text": "Can you just do the thing where you click it? I'm up for a crack if it helps."},
+    {"role": "clinician", "text": "I'd rather not manipulate a neck this soon after a crash, it might well settle with gentle movement first."},
+    {"role": "clinician", "text": "Turn your head gently side to side ten times every hour you're awake, and keep the warm compress on before bed."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["since", "sunday", "evening"], "line": 2, "material": true},
+    {"kind": "negation", "tokens": ["no", "tingling"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["arm", "reflexes", "and", "sensation", "are", "normal"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["up", "for", "a", "crack"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["rather", "not", "manipulate"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["ten", "times", "every", "hour"], "line": 8, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

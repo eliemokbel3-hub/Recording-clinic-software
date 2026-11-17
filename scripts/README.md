@@ -66,8 +66,9 @@ set up and build it, and make releases; the installed app needs none of them.
   is reported by path). Run by the practitioner from a normal terminal; prints a
   Markdown table for Task 2.3, never transcript text.
 - `build-validation-set.py <scripts-dir> <set-folder> [--only <id> ...]` and
-  `run-validation.py <set-folder> --config <folder> --rule <file>` (pilot plan
-  Phase 2) — thin launchers for `scribe_desktop.validation_set` and
+  `run-validation.py <set-folder> --config <folder> --rule <file> [--set <name>]
+  [--model <name>] [--prose] [--suggestions off|confirm-all]`
+  (pilot plan Phase 2) — thin launchers for `scribe_desktop.validation_set` and
   `scribe_desktop.validation`. The first speaks each synthetic script with the
   installed Windows voices into `<id>.wav` + `<id>.txt` plus a copy of
   `<id>.json`, with an `<id>.built` ownership mark (needs three voices in the
@@ -75,11 +76,49 @@ set up and build it, and make releases; the installed app needs none of them.
   from the `[ml]` extra; the set folder must be outside the repository and
   holds synthetic files only since the clinic 1 smoke retired the role-plays;
   a recorded ("role-play") encounter in it — its `<id>.json`, or its WAV or
-  label track without the mark — is never overwritten); the
-  second runs every encounter through the shipped pipeline in a temporary
+  label track without the mark — is never overwritten; since the metric
+  amendment of 2026-10-23 it also writes `enrolment/slot-<n>.wav`, a fixed
+  passage spoken by each clinician voice the set uses); the
+  second (`--attribution enrolment`, the default, enrols each clinician voice
+  from those WAVs in memory with the speaker-embedding model, as the app
+  enrols the practitioner; `--attribution clustering` is runs 1–5's reading)
+  runs every encounter through the shipped pipeline in a temporary
   encrypted store torn down key-first and prints a text-free report, pass or
-  fail against the rule. Developer build only, from a normal terminal; see
-  `docs/testing/validation-harness.md`.
+  fail against the rule. A rule of sets — rule v2 (`validation/rules/rule-v2.json`)
+  or, since the validation-run7 plan's D4, rule v3 (`validation/rules/rule-v3.json`,
+  whose report prints its verdict beside the verdict without its R1 exemption
+  and rule v1's) — also needs `--set <name>`, the set the folder was built from
+  (one the rule names: `scripts`, `heldout`, `heldout-2`, `heldout-3`, under
+  rule v3 `heldout-4`, and under rule v4 — `validation/rules/rule-v4.json`,
+  rule v3's predicates with a new set schedule, the larger-model plan's D5 —
+  `heldout-4` and `heldout-5`; rule v5 — `validation/rules/rule-v5.json`, the
+  rule of validation run 8, the validation-run8 plan's D1 — keeps rule v4's six
+  sets and ceilings, counts only the silent R1 facts under R1's ceiling on
+  `heldout-5` with the misheard ones under a review mark reported beside it,
+  and prints four verdicts; rule v6 — `validation/rules/rule-v6.json`, the
+  rule of validation run 9, the note-content-design plan's D11 — keeps rule
+  v5's predicates and ceilings and adds a seventh set, `heldout-6`, the gate
+  set beside `scripts`, with `heldout-5` reported). `--model <name>` (the larger-model plan's D8;
+  also on `measure-transcription-guard.py`) measures with that installed
+  Whisper model instead of the shipped one: the report names it, it is never
+  a fallback, and a name not shaped as a model folder name is refused without
+  being echoed. `--device cpu|cuda` (the gpu-decoding plan's Task A.2; also on
+  `measure-transcription-guard.py`, `replay-kept-recordings.py` and the
+  benchmark's command line; default `cpu`) decodes on the NVIDIA graphics card
+  with its libraries preloaded first: the three measurement tools' reports
+  name `<model>@cuda` and the benchmark prints a separate `device` column;
+  a card that cannot decode is refused (by the benchmark, as a failed run),
+  never replaced by the processor. `--prose` also runs the narrative prose
+  stage (since 0.3.6 in the clinical register) and reports its section counts
+  only; `--suggestions confirm-all` (the note-content-design plan's D10, the
+  metric amendment of 2026-11-09; default `off`, the report unchanged) asks the
+  local language model for a section for every left-out line before the
+  next-patient boundary, adds every
+  suggestion the chooser's ownership rule accepts before the note is
+  finalised, and prints six more count columns. Both need the language model
+  and are refused without it; validation run 9 uses both under rule v6
+  (written at that plan's Task F.1). Developer
+  build only, from a normal terminal; see `docs/testing/validation-harness.md`.
 - `replay-kept-recordings.py <past_sessions folder> [--only <session id> ...]
   [--enrolment <wav>] [--model <name>]` (development-recordings plan Phase 4) —
   thin launcher for `scribe_desktop.replay_kept`: replays every recording kept
@@ -89,10 +128,12 @@ set up and build it, and make releases; the installed app needs none of them.
   transcript, note or name text — the new transcript against the
   kept one, and a note regenerated under the shipped default config against the
   clinician's saved note. Reads the folder and writes nothing there; holds the
-  app's single-instance lock for its run (close Clinic Scribe first). Developer
+  app's single-instance lock for its run (close Clinic Scribe first). From
+  0.3.5 its "Clinician lines omitted" count is one per joined run of a split
+  line, so it can fall against a 0.3.4 replay. Developer
   build only, from a normal terminal; see `docs/testing/kept-recordings.md`.
 - `measure-transcription-guard.py --set <set-folder> [--candidates <set> ...]
-  [--primer shipped|0.3.1] [--allow-small] [--all-rows]` (invented-text-guard
+  [--primer shipped|0.3.1] [--allow-small] [--model <name>] [--all-rows]` (invented-text-guard
   plan Task 1.5) — thin launcher for `scribe_desktop.guard_eval`: runs sound
   that is not speech (digital silence, noise at three levels, a chord bed and a
   sung-vowel bed, each alone and one second after a spoken line), short lines
@@ -108,6 +149,27 @@ set up and build it, and make releases; the installed app needs none of them.
   speech. No word, line or primer text is printed. Developer build only, from
   a normal terminal with the installed app closed; the tables go onto the
   plan's Task 3.1 (decision 0.4).
+- `measure-suggestions.py <set folder> [<set folder> ...] --config <folder>
+  [--timing] [--source-root <folder>] [--verbose]` (suggestion-repair plan Task
+  0.2) — runs the shipped section-suggestion stage at text level. For each
+  synthetic script it builds the note from the script's own words as the
+  harness's `--suggestions confirm-all` pass does, asks the stage about every
+  left-out line through a recorder held in this script (the package's
+  call-site pin is unchanged), accepts every suggestion the chooser's
+  ownership rule accepts, and prints counts, ids and section keys only: the
+  answer lines by shape and how they were read, the lines holding a silently
+  lost material fact, the facts still silent after every suggestion, the
+  facts wrongly present through a suggestion, the suggestions on a next
+  patient's lines with no boundary, the stage's own counts and the
+  answer-budget table. `--timing` instead times one completion over a 40-line
+  window and prints the module file, the stage version and the window's
+  SHA-256, so two runs (one with `--source-root` a detached worktree's
+  `desktop/src`) make a paired timing. `--verbose` also prints the raw
+  completions (synthetic text): foreground only. A set holding a script
+  without synthetic conditions is refused whole before any model loads; it
+  writes no file and calls no logger. Developer build only; needs the
+  language model; close the installed app first. Results of record:
+  `docs/testing/validation-harness.md` "Suggestion-stage measurement".
 - `speaker-embedding-smoke.py --model <path> <wav> [<wav> ...]` (practitioner-profile
   plan Task 0.3) — loads a speaker-embedding ONNX model from an explicit path (the
   `SileroVad` contract: offline kill-switches asserted before onnxruntime is
@@ -121,6 +183,34 @@ set up and build it, and make releases; the installed app needs none of them.
   Task 0.4 matrix), and prints the model's I/O shapes, the embedding dimension
   and the cosine matrix. Text-free: file names, durations and numbers only. Run
   by the practitioner from a normal terminal (Task 0.4).
+- `lint-held-out-set.py <set-folder> [--log-dir DIR] [--timeout SECONDS]
+  [--verbose]` (validation-run6 plan Task 0.17, C12) — runs the desktop test
+  suite while a blind held-out set is in the tree (no set is blind now, and
+  the suite runs plain again; the runner still works with no set blind, as
+  CI runs it: `validation/heldout-6` — in the fixture's table since the
+  note-content-design plan's Task F.2, its scripts authored in that task —
+  was blind until that plan's Task P.5 wrote its cases; `validation/heldout-5` until its cases
+  were written after run 8 (in the table since the larger-model plan's Task
+  0.1 (d), authored in the validation-run8 plan's Task 0.5),
+  `validation/heldout-4` until its cases were written after run 7, and
+  `validation/heldout-3` until its cases were written after run 6):
+
+      .venv\Scripts\python.exe scripts\lint-held-out-set.py validation\heldout-6
+
+  The set folder must exist (a missing one is refused,
+  `refused set-missing`) and only names the log — the child lints every set
+  in the fixture's table. The suite runs
+  in a child pytest whose output goes only to a log under
+  `.cursor/loops/held-out-lint/` that nobody opens; `lint_held_out_plugin.py`
+  (with its `RunnerGuard`, which refuses any configuration the runner did not
+  set) reports through a separate file, and this console gets fixed lines
+  only: test node ids with their outcome, problem codes from a closed
+  grammar, the counts, `FAIL <code>` for a run that cannot be trusted, and
+  the exit code. While any script of a set whose cases are not written (an
+  `h6-` script) is in the tree, run pytest only this way (the conftest
+  refuses a bare run); with no such script in the tree (as before
+  `validation/heldout-6` is authored, and again once its cases are written)
+  a bare run goes ahead.
 - `probe-cliniko.py` (Cliniko workflow safeguards plan Task 1.3, run at Task
   P.1) — read-only feasibility check of one clinic through the app's own Cliniko
   client (`scribe_desktop.cliniko_client`: GET only, host pinned from the key's

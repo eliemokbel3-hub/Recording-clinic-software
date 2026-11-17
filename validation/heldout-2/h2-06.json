@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h2-06",
+  "appointment_type": "discharge",
+  "axes": ["laterality", "numbers", "small_talk", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Last session today, so how's the right shoulder been since last time?"},
+    {"role": "patient", "text": "Since last time I can reach the top shelf again, and I'm back swimming twice a week."},
+    {"role": "clinician", "text": "Brilliant, lift your arm up for me. That's full movement, and no pain at the top."},
+    {"role": "clinician", "text": "Keep doing the band work three times a week for another month, then you can stop."},
+    {"role": "patient", "text": "Will do. I waved hello to my neighbour over the fence yesterday with that arm, first time in months!"},
+    {"role": "clinician", "text": "Ha, lovely. Right, you're discharged, give us a ring if it flares up again, take care."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["right", "shoulder"], "line": 0, "material": true},
+    {"kind": "present", "tokens": ["reach", "the", "top", "shelf", "again"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["swimming", "twice", "a", "week"], "line": 1, "material": false},
+    {"kind": "present", "tokens": ["full", "movement"], "line": 2, "material": true},
+    {"kind": "negation", "tokens": ["no", "pain", "at", "the", "top"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["three", "times", "a", "week", "for", "another", "month"], "line": 3, "material": true},
+    {"kind": "absent", "tokens": ["waved", "hello", "to", "my", "neighbour"], "line": 4, "material": false},
+    {"kind": "present", "tokens": ["give", "us", "a", "ring", "if", "it", "flares", "up", "again"], "line": 5, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

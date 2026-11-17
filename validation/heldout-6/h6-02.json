@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h6-02",
+  "appointment_type": "follow_up",
+  "axes": ["laterality", "contradictory", "numbers", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "How's the knee been since last time?"},
+    {"role": "patient", "text": "Better on the stairs. The left one still clicks when I squat down."},
+    {"role": "patient", "text": "Sorry, the right one. I always mix them up."},
+    {"role": "clinician", "text": "You're moving a bit better, and the right kneecap tracks nicely now."},
+    {"role": "clinician", "text": "Keep doing the wall sits, building up to 45 seconds, and we'll leave it there for today."},
+    {"role": "patient", "text": "Brilliant, thanks. See you."},
+    {"role": "clinician", "text": "Bye for now, mind the step on the way out."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["better", "on", "the", "stairs"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["still", "clicks", "when", "i", "squat", "down"], "line": 1, "material": true},
+    {"kind": "laterality", "tokens": ["the", "right", "one"], "line": 2, "material": true},
+    {"kind": "laterality", "tokens": ["right", "kneecap", "tracks", "nicely"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["building", "up", "to", "45", "seconds"], "line": 4, "material": true},
+    {"kind": "absent", "tokens": ["mind", "the", "step"], "line": 6, "material": false}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

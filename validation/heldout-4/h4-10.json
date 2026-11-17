@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h4-10",
+  "appointment_type": "follow_up",
+  "axes": ["end_and_new_patient", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "Hi Grace, how's the heel since last time?"},
+    {"role": "patient", "text": "Since last time the first steps out of bed are still agony, but it eases after ten minutes."},
+    {"role": "clinician", "text": "Okay. Take a seat on the bed and pop your sock off. Come in!"},
+    {"role": "clinician", "text": "Sorry, that's just my colleague grabbing the ultrasound gel. Hello, welcome, don't mind us."},
+    {"role": "clinician", "text": "Right, where were we. Pull your toes back towards you for me."},
+    {"role": "patient", "text": "Ooh, I feel that right under my arch."},
+    {"role": "clinician", "text": "That's the band under your foot, it's tight right through to the heel bone, the calf is tight too."},
+    {"role": "clinician", "text": "Before you get out of bed, pull a towel round the ball of your foot and draw your toes back for thirty seconds, three times."},
+    {"role": "clinician", "text": "Wear the trainers with the thicker heel around the house rather than going barefoot."},
+    {"role": "patient", "text": "Fair enough, the slippers are going in the bin."},
+    {"role": "clinician", "text": "Good. Same time in a fortnight."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["first", "steps", "out", "of", "bed", "are", "still", "agony"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["the", "calf", "is", "tight", "too"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["draw", "your", "toes", "back", "for", "thirty", "seconds"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["wear", "the", "trainers", "with", "the", "thicker", "heel"], "line": 8, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

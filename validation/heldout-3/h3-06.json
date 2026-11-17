@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h3-06",
+  "appointment_type": "chronic",
+  "axes": ["end_and_new_patient", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "Good morning. Tell me about the stiffness."},
+    {"role": "patient", "text": "Since last time the morning stiffness lasts about two hours before I can bend down to my socks."},
+    {"role": "patient", "text": "And since last time I get evening pain in the low back after tea most nights."},
+    {"role": "clinician", "text": "Morning stiffness that long, easing as you get moving, plus pain in the evenings, I'd like your GP to check your bloods for an inflammatory cause."},
+    {"role": "patient", "text": "Afternoons are my best time, I'm fine by then."},
+    {"role": "clinician", "text": "I'll write to the GP today. In the meantime, do the spinal stretches as soon as you get up, before your shower, and put a hot water bottle on the low back in the evening."},
+    {"role": "clinician", "text": "If the pain starts waking you every night or you're losing weight without trying, ring me before your next appointment."},
+    {"role": "patient", "text": "Will do."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["morning", "stiffness", "lasts", "about", "two", "hours"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["evening", "pain", "in", "the", "low", "back"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["afternoons", "are", "my", "best", "time"], "line": 4, "material": false},
+    {"kind": "present", "tokens": ["write", "to", "the", "gp", "today"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["losing", "weight", "without", "trying"], "line": 6, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

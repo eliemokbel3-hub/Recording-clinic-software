@@ -13,12 +13,23 @@ A LEAF module: it imports only ``note`` and ``transcription`` (C6).
 through ``draft_write``, so the note modules can never import the lists
 from there; they import them from here.
 
-THE VOCABULARY IS FROZEN (C3): these lists are the ones the safeguards plan
-shipped on 2026-09-28, moved unchanged on 2026-10-13 (the practitioner's
-decision 0.2 (a): no phrases of their own yet). Every phrase is lower-case
-and already in ``phrase_tokens``'s whole-word form. Any change is a new
-dated decision with a repeated validation run, and the exact pins in
-``tests/test_vocabulary.py`` move with it.
+THE VOCABULARY IS FROZEN (C3): each list is the one the safeguards plan
+shipped on 2026-09-28 (14 closings, 12 greetings; moved unchanged on
+2026-10-13 — the practitioner's decision 0.2 (a): no phrases of their own
+yet) followed by the dated widening of 2026-10-26 (validation-run7 plan D2,
+Task 0.4 (c)): 16 closings and 14 greetings proposed by an isolated session
+that saw no failing script, each attributed — from memory, unchecked — to a
+named published source family, and kept by
+mechanical rules written before it ran (whole words, no new one-word
+phrase, no hedge, correction marker, enrolment-passage or cue greeting, no
+false cut on a seen synthetic script, none on the kept recordings measured
+— two, assumed one patient each), so 30 closings and 26 greetings. Every
+phrase is lower-case and already in ``phrase_tokens``'s whole-word form.
+Some phrases hold another ("see you" is inside "see you next week" and
+inside the greeting "nice to see you"): each is an event of its own kind at
+its own position. Any change is a new dated decision with a repeated
+validation run, and the exact pins in ``tests/test_vocabulary.py`` move with
+it.
 
 THE BOUNDARY (D2). ``consultation_boundary`` returns the absolute index of
 the first segment to WITHHOLD from the note — a possible next patient starts
@@ -90,6 +101,23 @@ CLOSING_PHRASES: Final[tuple[str, ...]] = (
     "have a nice day",
     "have a great day",
     "have a good weekend",
+    # Validation-run7 plan Task 0.4 (c) (2026-10-26, D2).
+    "bye bye",
+    "thank you",
+    "is there anything else",
+    "any other questions",
+    "come back and see me",
+    "i'll see you next week",
+    "see you",
+    "see you later",
+    "nice talking to you",
+    "bye for now",
+    "see ya",
+    "see ya later",
+    "catch you later",
+    "ta ta",
+    "cheers mate",
+    "look after yourself",
 )
 GREETING_PHRASES: Final[tuple[str, ...]] = (
     "hello",
@@ -104,6 +132,21 @@ GREETING_PHRASES: Final[tuple[str, ...]] = (
     "what brings you in",
     "what brings you here",
     "how have you been",
+    # Validation-run7 plan Task 0.4 (c) (2026-10-26, D2).
+    "hi how are you",
+    "what can i do for you",
+    "what can i do for you today",
+    "what brings you in today",
+    "what's new",
+    "how can i help",
+    "how can i help you today",
+    "how are you doing",
+    "how's it going",
+    "nice to see you",
+    "good to see you",
+    "nice to see you again",
+    "pleased to meet you",
+    "g'day mate",
 )
 
 # The next-patient boundary's look-back (D1, D2 condition 2): a closing phrase

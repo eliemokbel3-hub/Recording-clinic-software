@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h6-04",
+  "appointment_type": "post_operative",
+  "axes": ["numbers", "uncertain", "contradictory", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Good morning. So it's four weeks since the knee replacement, is that right?"},
+    {"role": "patient", "text": "Five weeks on Friday."},
+    {"role": "clinician", "text": "How has it been from last time?"},
+    {"role": "patient", "text": "The morning stiffness is the worst bit, it takes a good hour to ease off."},
+    {"role": "patient", "text": "And I've had some tingling around the scar, on the outer side."},
+    {"role": "patient", "text": "Mind you, I couldn't swear to that."},
+    {"role": "clinician", "text": "Let me have a look at the bend. Lie back for me."},
+    {"role": "clinician", "text": "Bend is 95 degrees and it straightens to within 5 degrees of flat."},
+    {"role": "patient", "text": "I'm taking the codeine 30 milligrams four times a day."},
+    {"role": "patient", "text": "Um, three times a day, I mean. I cut one out last week."},
+    {"role": "clinician", "text": "That's fine. Keep icing for 15 minutes after each walk, and swap to the single crutch in the house from tomorrow."},
+    {"role": "clinician", "text": "If the calf goes hot, red or swollen, ring the ward the same day."},
+    {"role": "clinician", "text": "See you next week."},
+    {"role": "patient", "text": "Thanks, see you then."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["five", "weeks", "on", "friday"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["morning", "stiffness", "is", "the", "worst", "bit"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["takes", "a", "good", "hour", "to", "ease", "off"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["tingling", "around", "the", "scar"], "line": 4, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["bend", "is", "95", "degrees"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["within", "5", "degrees", "of", "flat"], "line": 7, "material": true},
+    {"kind": "dose", "tokens": ["codeine", "30", "milligrams"], "line": 8, "material": true},
+    {"kind": "dose", "tokens": ["three", "times", "a", "day"], "line": 9, "material": true},
+    {"kind": "present", "tokens": ["keep", "icing", "for", "15", "minutes", "after", "each", "walk"], "line": 10, "material": true},
+    {"kind": "present", "tokens": ["single", "crutch", "in", "the", "house"], "line": 10, "material": true},
+    {"kind": "present", "tokens": ["calf", "goes", "hot", "red", "or", "swollen"], "line": 11, "material": true},
+    {"kind": "present", "tokens": ["ring", "the", "ward", "the", "same", "day"], "line": 11, "material": true},
+    {"kind": "present", "tokens": ["see", "you", "next", "week"], "line": 12, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h3-07",
+  "appointment_type": "acute",
+  "axes": ["end_and_new_patient", "uncertain", "negation", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "So you've had low back pain since Thursday?"},
+    {"role": "patient", "text": "That's it, I'm coming in with it after bending down for the cat, or possibly after the gardening the day before."},
+    {"role": "clinician", "text": "Any numbness in the saddle area, or problems going to the toilet?"},
+    {"role": "patient", "text": "No, nothing like that, no numbness or tingling anywhere."},
+    {"role": "partner", "text": "Sorry I'm late, the car park's heaving. Has he told you he's coming in with a limp on the right side as well?"},
+    {"role": "patient", "text": "I'm not limping, I'm just careful."},
+    {"role": "clinician", "text": "Let me have a look at you walking. Yes, you're taking a shorter step on the right, which is common when the back's sore."},
+    {"role": "clinician", "text": "I think what's going on is a muscle spasm around the joints of the low back, nothing sinister."},
+    {"role": "clinician", "text": "Keep moving little and often, a short walk every couple of hours, and avoid sitting for more than half an hour at a stretch."},
+    {"role": "partner", "text": "I'll make sure he does."},
+    {"role": "clinician", "text": "See you next week."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["after", "bending", "down", "for", "the", "cat"], "line": 1, "material": true, "expect_uncertain": true},
+    {"kind": "negation", "tokens": ["no", "numbness", "or", "tingling", "anywhere"], "line": 3, "material": true},
+    {"kind": "laterality", "tokens": ["limp", "on", "the", "right", "side"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["muscle", "spasm"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["a", "short", "walk", "every", "couple", "of", "hours"], "line": 8, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "partner": 1}}
+}

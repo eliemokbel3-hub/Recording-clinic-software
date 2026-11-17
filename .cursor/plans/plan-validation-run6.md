@@ -1,0 +1,2875 @@
+# Feature Implementation Plan
+**Feature:** validation-run6 — version 0.3.4, the fix that run 6 must pass before shadow mode can be turned off (`plan-pilot.md` P.5 decision (a), 2026-10-22):
+- Check 4's omission warning on any uncovered clinician line;
+- a new review warning where speech was detected but no words were transcribed;
+- hedge scope and lexicon, through one function shared with the harness;
+- the greeting gap, decided as a dated vocabulary question;
+- a written decision, BEFORE run 6, on the recogniser-level and tone-level residues (rule v1 kept, or a ratified rule v2);
+- a fresh held-out set by an independent author, written predictions before the build, and run 6 as the run of record.
+
+**Overall Progress:** `100%` (28 of 30 buildable tasks done, 2 declined; `[2026-10-25]` P.3 done — the register's rows F-102–F-140 and the Encounter pattern; H5 and P.2 declined by the practitioner ("i'll wait for .3.5"): 0.3.4 is not built of record and not installed; `[2026-10-25]` P.4 done — the `heldout-3` diagnosis, the blind rule ended; `[2026-10-25]` P.1 done — run 6, the run of record, does not meet the gate; `[2026-10-24, stage-5]` H1–H4 done — H1 round 50 (suite 8615 collected, 8606 passed, 0 failed, 9 skipped), H2 round 51 (suite 8614 collected, 8605 passed, 0 failed, 9 skipped), H3 round 52 clean, H4 codex rounds 53 (code, 0) and 54 (docs, 1 LOW, fixed); 26 of 38 checkboxes ticked; `[2026-10-24, stage-4]` Tasks 5.1 and 5.2 built and verified (suite 8614 collected, 8605 passed, 0 failed, 9 skipped, `npm run qa` 313 / 313, review round 48, codex peer round 49 applied); `[2026-10-24, stage-3]` Tasks 4.1–4.4 built and verified (suite 8605 passed, review rounds 44–45, codex peer round 46 applied, simplify round 47 clean); `[2026-10-24, stage-2]` Task 3.1 built and verified (suite 8504 passed, review round 41, codex peer round 42 converged); `[2026-10-24, stage-1]` Tasks 1.1–1.4 built and verified (suite 8425 passed, review round 38, codex peer round 39 converged); `[2026-10-24, peer round 25]` the convention, stated: the 8 `[decision]` tasks — all taken — are outside the count; 38 checkboxes in all, 22 ticked)
+
+## Lifecycle State
+- Completed — Follow-ups Retained
+
+## Completion Status
+- Completion timestamp: 2026-10-25
+- Main implementation complete: Yes (built, run 6 recorded; the gate NOT met; H5 and P.2 declined)
+- Ready for archive: No (retained: the exit-gate wording, the review guide's 0.3.4 lines, the owed live smoke of Phases 1 and 3 — all to the 0.3.5 plan)
+
+## Plan Lineage
+- **Parent plans:**
+  - `plan-pilot.md`: its P.5 decided (a) on 2026-10-22 — shadow mode stays on until a validation run passes; "the fix is a new 0.3.4 plan". This is that plan. The clinic 1 exit gate's "Validation passed" also waits on it.
+  - `plan-validation-pass.md` (0.3.3, Completed — Follow-ups Retained): run 5 at `1e5707d` FAILED as predicted (44 / 6; held-out 14 / 8). Its retained item "the chooser's middle-elided labels cut a front mark short" is taken here (Task 1.2). Its other four retained items stay there (Deferred below).
+- **Related plans:**
+  - `plan-invented-text-guard.md` (0.3.2): the suspect mark, `line_marks`, the forward-tolerant reader `unknown_review_warning`, and its C2 (constants decided once, never tuned after a run of record) — which this plan's missed-speech thresholds were to follow (the warning and its constants dropped by decision 0.4 (2), 2026-10-23).
+  - `plan-ui-refresh.md` (0.4.0, branch `claude/ui-refresh-bf9282`, its own worktree, NOT merged): its Review screen reads warning codes, the separately-acknowledged set and the chooser marks as data. **Integration note (Step 3.5, 2026-10-22: "at its merge"):** nothing here touches that branch; at its merge the Review screen adopts this plan's new code (one since 2026-10-23), its copy, its place in the separately-acknowledged set and the shortened chooser marks (the `[gap?]` mark was dropped with the missed-speech warning, 2026-10-23).
+  - `plan-clinic-smoke.md`: D9 (nothing tuned after a run), D12 (nothing per consultation in a tracked file). Its kept recordings are the real-speech measurement source of Task 0.2 (integers only).
+  - `plan-cliniko-workflow-safeguards.md` D8: the live new-consultation warning shares `consultation_phrases`' lists (C7).
+- **Follow-up plans:** none yet; candidates under Deferred / Excluded.
+
+## Goal
+Make 0.3.4 the build whose run of record (run 6) can honestly PASS the gate the practitioner ratified in Task 0.8, so that `plan-pilot.md` P.5's shadow-off question can be put again. The rule, the cue file and the scripts' facts are never changed to make a run pass (pilot Constraint 12); a rule change is allowed only as the practitioner's written, dated decision BEFORE any prediction (Task 0.7 — taken).
+- `[2026-10-24]` **The gate was re-decided after Task 0.12's predictions and before the build (D15):** rule v2's pass requirement applies to the 50 and to a blind `heldout-3`; `heldout` and `heldout-2` are run and reported in full. The prediction, not the run, showed the ratified gate unreachable — `heldout`'s two confident recogniser errors fail by design, and the `heldout-2` brief asked for behaviour outside 0.3.4's decided scope. Stated here because the sentence above still names the Task 0.8 gate.
+
+What failed in run 5 and the held-out run, and what this plan does about each:
+
+| Group | Encounters (run 5 / held-out) | Cause | This plan |
+|---|---|---|---|
+| (1) Uncued clinician line | held-out: 5 silent omissions (F-089…); shadow use: F-100, F-101 | No cue routes the line and Check 4 flags no word in it, so nothing warns | Phase 1: the new code `clinician_line_omitted` (decision 0.3: (b)) |
+| (2) Dropped clause | `syn-22` (F-087) | The recogniser dropped a clause; the words never existed in the transcript | R1 under rule v2 (the missed-speech warning added 2026-10-22 was DROPPED 2026-10-23, decision 0.4 (2): untestable on the synthetic sets, over budget on real speech) |
+| (3) Misheard word | `syn-28` (F-071, F-072); held-out: 2 one-word errors (F-091, F-097) | Recogniser accuracy | R1 under rule v2 (decision 0.7: (b)); a larger model is Excluded |
+| (4) Doubt by tone or elsewhere | `syn-30`, `syn-35`; held-out: 3 hedges (F-095, F-096, F-098) | Unlisted hedge, a hedge in a neighbouring segment, or no spoken hedge at all | Phase 3: lexicon and scope (decision 0.6); R2 for doubt carried by tone only |
+| (5) Unlisted greeting | `syn-38`, `syn-46`; held-out: 1 (F-092) | The greeting is not on the frozen list | Decision 0.5: (a), lists frozen, R3 (2026-10-22) |
+
+### Honest forecast
+Written before any measurement and not tuned toward:
+- **Widening Check 4 changes NONE of run 5's six failures.** On the 50 seen scripts a pass can come only from decisions 0.5–0.7 (residue classes, vocabulary) — `syn-22` is R1 (Task 0.2's diag: its words dropped on an equal-cost alignment; the missed-speech warning was dropped 2026-10-23).
+- **The 50 scripts and the first held-out set are no longer blind.** This plan targets their failures, so a pass on them is regression evidence, not proof. The blind test is `validation/heldout-2/` (Task 0.10). The gate chosen in 0.8 therefore includes it. `[2026-10-24]` `heldout-2` is no longer blind either: Task 0.12 read it for the `h2-NN` cases and the predictions. The blind test is now `heldout-3` (D16), which no leg reads before run 6.
+- **The 50's ceilings are fitted.** Rule v2's ceiling of 2 per class on the 50 EQUALS run 5's R1 count (`syn-22`, `syn-28`) and R3 count (`syn-38`, `syn-46`): zero headroom, set knowing the failures. That is why the 50's pass counts for nothing on its own.
+- **A `heldout-2` failure is a finding, never a tuning target.** Budget for a `heldout-3` and a 0.3.5 if it fails. `[2026-10-24]` It failed in the predictions (47 silent, 9 R2, 2 wrong, 3 unsurfaced outside R2). The practitioner chose the re-plan over the 0.3.5 cycle this line budgeted: D12–D18, with the loosenings named as such in D15 and D17.
+- **The first held-out set's two one-word recogniser errors** would each be R1 at best; under its ceiling of 1 they breach it unless a review mark covers one (the missed-speech warning is gone, 2026-10-23) — and for a numeric fact the review-mark term is nearly always met (D8). Stated so the ceiling is read knowing it.
+- A PASS is an outcome to report, never a target. `[2026-10-24]` Stands beside D18's predicted PASS: D18 pre-registers falsifiers and bands, not a target — the gate was re-cut on the prediction (D15, disclosed), and the sets that failed it are still run and printed in full.
+- `[2026-10-23]` **D1's premise did not survive Task 0.2 at audio level:** the five held-out silent facts sit on clinician lines the harness's UNENROLLED speaker step gives to the other voice, so the new code as designed credits none of them. The honest reading is that the harness measured a path the app does not run (it attributes with an enrolment). D11 makes the harness measure the live condition — and whether that rescues the five is measured (Task 0.2a) before anything is built, against a gate written first (Task 0.13). If it does not, run 6 is expected to fail on `heldout`, and the plan says so there. **Measured 2026-10-23 (Task 0.2a):** under enrolment none of the five stays silent — the enrolment alone clears four and (b) the fifth (`hld-19`); decision 0.13's gate is met. (b)'s own measured credit is therefore one held-out fact; its cost on real speech (median 3.5, max 6, n = 2) is above the budget's maximum.
+
+## Planning Extraction Summary
+Populated 2026-10-22 from:
+- the Plan Mode draft (Opus 5.5, approved by the practitioner through ExitPlanMode);
+- the planning brief from the session "0.3.4 planning" (the practitioner's scope decisions 1–5, relayed);
+- a design critique of the first draft (a Plan subagent) and an exploration of the code (an Explore subagent);
+- the first `/review-plan` pass (Opus 5.5; Step 3.5 gate answered by the practitioner) and the decisions 0.1–0.8 ("take all the recommendations");
+- a second `/review-plan` pass on Fable 5.1 the same day: three read-only lenses (coverage, practicality, simplicity and risk) as subagents over the plan and the real code, 36 findings reconciled into this version, and one practitioner answer (the hedge scope reuses `note.ends_mid_sentence`);
+- a scoped `/review-plan` of D1 on Fable 5.1 (2026-10-23), after Task 0.2's numbers and the practitioner's two pause decisions: the harness's attribution path read against the app's (`evaluate_encounter`, `transcribe_in_temporary_store`, `attribute_speakers`, `speaker_eval.enrolment_inputs`, `validation_set.build_set`, the scripts' `voice_slots`), two practitioner answers (enrolment in the harness, measured first; the builder's passage per voice slot), and decision 0.4 (2)'s sibling sweep applied in the same pass.
+- `[2026-10-24]` a Plan Mode re-plan on Fable 5.1 after Task 0.12's predictions (approved through ExitPlanMode; two practitioner decisions in chat — the gate, D15; doubt reported on the blind set, D17), a read-only Plan-subagent critique of the draft, and a scoped `/review-plan` the same day (three lens subagents; two more practitioner answers — D13/D14 in the gate, disclosed; `heldout-3`'s narrower scope accepted), every finding checked against the code at `519b5dd`.
+- `[2026-10-24]` the codex plan peer pass over the re-plan (`/peer-loop` plan-review mode, `gpt-6-astra` high, read-only, prompt files under `.cursor/loops/validation-run6-plan-peer-r2N-*`): rounds 25–31, the cap raised 5 → 6 → 7 by the practitioner and the pass accept-closed at 7 — 20 findings, all applied; the last five rounds shaped D16's displayed-output boundary from a `--tb=line` convenience into the console-owning runner.
+
+Every file:line was checked against `0be35d7`; HEAD moved to `4ff5f26` during planning (a one-file edit to `plan-clinic-smoke.md`), so `desktop/src` is unchanged and every reference holds. No `/explore` scratch was consumed: the two existing ones (`explore-cliniko-integration.md`, `explore-practitioner-profile.md`) are unrelated.
+
+**Workflow Schema:** v22
+
+**Executor tier:** entirely premium — planned on Opus 5.5 (Plan Mode and the first `/review-plan`), re-hardened on Fable 5.1 (the second `/review-plan`). The build runs through `/execute-loop`: executor `claude-opus-5-5` high, cross-family peer codex `gpt-6-astra` medium, verify=composer, isolation none. Every measurement over kept recordings, the audio diagnosis if the agent shell cannot see the models, run 6, the install and the smoke are run by the PRACTITIONER from a normal terminal (`docs/lessons.md`, MSIX). Tier-gap dosing applied: the decisions' options and outcomes, the new code's predicate, the attribution policy, the anchor rules, the residue classes' mechanical tests, the measurement outputs, the pin inventory and the rollback behaviour are locked here.
+
+### Agreed Scope (Build Now — 0.3.4)
+- **Phase 0:** the warning budget (0.1, taken); the measurement (0.2); six practitioner decisions (0.3–0.8, taken; 0.4 decided 2026-10-23 as option (2): the missed-speech warning dropped); one dated commit for the lexicons (0.9); fixtures and lints parameterised over a set table (0.11, BEFORE the set exists); a fresh held-out set by an independent author (0.10); the diagnosis, the `h2-NN` cases and the written predictions (0.12); `[2026-10-23]` the same audio counts under an enrolment (0.2a), the D1 decision on them (0.13) and the harness's enrolment path as its own dated commit (0.14). `[2026-10-24]` 0.15 (the coherence amendments' deltas, predictions v2), 0.16 (D18's bands, the pre-registration commit), 0.17 (`heldout-3`, blind) — D12–D18.
+- **Phase 1:** the new code `clinician_line_omitted`, its copy, acknowledgement and count line, and short chooser front marks (the P.2 observation; Step 3.5: Include in plan).
+- **Phase 2:** DROPPED 2026-10-23 (decision 0.4 (2)) — see Excluded; D2 is kept as history.
+- **Phase 3:** hedge scope through one shared function, in the product and the harness (decision 0.6).
+- **Phase 4:** the harness — the warned amendments, `reference_document`, the residue classifiers, rule v2's set layer, the report.
+- **Phase 5:** documents and version 0.3.4, the rollback line.
+- **Hardening H1–H5**, then **Phase P:** run 6 on the four sets (`[2026-10-24]` the gate on the 50 and `heldout-3`, D15), install and smoke, the register and the P.5 question, then P.4 (the `heldout-3` diagnosis after the run).
+
+### Deferred — Actionable Later
+- **The practitioner's own greetings and closings** (the later amendment they described on 2026-10-13, repeated 2026-10-22). A new dated vocabulary decision with a repeated run, after they have listened for their phrases in shadow use. `Risk if deferred: minor` (Start per patient is the primary control) · `Revisit by: when the practitioner can name their phrases`.
+- Carried from `plan-validation-pass.md`, unchanged and still owned there: the one-click undo of a false boundary; the transcript divider at the possible next patient (its home is the ui-refresh Review screen); the mark pairing a retracted statement with its carried correction; the carry's question-answer hop.
+- **The ui-refresh adoption** of the new code and the shortened marks — at that branch's merge (integration note in Plan Lineage). `Risk if deferred: correctness` (the Review screen would show the new codes as unknown review warnings until adopted) · `Revisit by: the ui-refresh merge`.
+
+### Excluded — Revisit Only If Needed
+- **A larger Whisper model / a new model pack** (Step 3.5, 2026-10-22: "Excluded, own plan later"). Revisit if run 6, `heldout` or `heldout-2` exceeds the R1 ceiling.
+- Any edit to rule v1's file, `validation/config/section_cues.json`, or the 50 scripts' and the first held-out set's facts (C2).
+- Widening the hedge list or the greeting list from the seen failures (C3: only a blind, sourced widening is allowed).
+- Changing the invented-text guard's constants (its own C2).
+- A turn-level carry or any change to routing (the omission is warned, never re-routed).
+- Folding `clinician_line_omitted` into `high_risk_omission` with a sub-reason field: `NoteWarning` is `extra="forbid"`, so a new field would make 0.3.3 refuse every note 0.3.4 writes, and it would change what the harness's 0.3.3 `warned` comparison and the existing copy mean.
+- A per-warning line number in the review list's copy: `WarningCopy` is per code and `summarise_warnings` groups by code; the anchor is shown by a mark instead (D2).
+- `[2026-10-23]` **The missed-speech warning `speech_without_words`** (decision 0.4 (2), after Task 0.2: the synthetic sets hold no textless segment, so the harness cannot exercise it; on real speech no threshold pair keeps it within the 0.1 budget; it credits none of the measured failures). D2, D7's deletion-edge term and Phase 2 stay in the plan as history only. Revisit as its own plan if a dropped clause (F-087) recurs in shadow use.
+- `[2026-10-23]` A narrow other-voice predicate for `clinician_line_omitted` (real speech holds ~110 uncovered other-voice lines with content per consultation; anything narrow enough is routing by content). Tuning `ATTRIBUTION_THRESHOLD` (the app's own constant; D-S1 territory, decided from the clinic 1 smoke's measured recordings).
+
+### Accepted Assumptions — Revalidate Later
+- The practitioner presses Start per patient from that patient's Cliniko note (stated 2026-10-13 and 2026-10-22), so the next-patient boundary is a backstop. Revalidate if shadow use shows a forgotten switch (a register row).
+- The provider routes whole segments (`note._assemble_note_request` builds one `NoteUtterance` per segment, `note.py:1338`), so "an uncovered clinician word" and "an uncovered clinician line" differ only for partly-quoted segments. Revalidate in Task 0.2's counts.
+- A dropped clause usually leaves either a textless VAD segment or a gap between word timestamps. Unproven: Whisper may stretch neighbouring word stamps over the gap. Task 0.12 records whether `syn-22`'s gap is visible. `[2026-10-23]` Moot: the missed-speech warning was dropped; `syn-22` is R1.
+- There are enough consented kept recordings WITH an enrolled speaker to measure the clinician-line count. If fewer than 3 exist, decision 0.3's (c) test falls back to the synthetic counts, and the plan records that the budget was not tested on real speech. [2026-10-23: n = 2 — the fallback applied; (c) not added.]
+- `[2026-10-23]` The synthetic clinician voices, RMS-normalised by the builder, are ATTRIBUTED under an enrolment of the same voice, as the two kept recordings were under the practitioner's. This validates the attribution OUTCOME, not threshold clearance: with no segment at or above `ATTRIBUTION_THRESHOLD` `attribute_speakers` falls back to the 2-means and still names the higher-similarity cluster (`transcription.py:932`, `enrolled_cluster` at `:1461`; peer round 8 PR-LOW-004). Revalidated by Task 0.2a's n(attribution failed) and the two attribution-seconds columns; if it fails, the threshold is NOT tuned (Excluded) — decision 0.13 applies. `[2026-10-23]` Revalidated: n(attribution failed) 0 on both sets; enrolment's maxima 3.8 s / 2.9 s (`scripts`) and 0.7 s / 0 s (`heldout`) against clustering's 6.2 / 9.5 and 9.4 / 11.6.
+- **Named residues accepted 2026-10-22 (the second pass's gate):** (i) a hedge in a same-speaker neighbour after a BARE recogniser cut (no trailing punctuation) is not "joined" under `note.ends_mid_sentence` and stays the existing named residue; (ii) a VAD segment left textless because `assign_words_to_segments` gave its words to a packed-window neighbour (`transcription.py:569`, `:606-638`) can draw a false missed-speech warning — the 0.1 budget bounds how often, and Task 2.1 pins the case. `[2026-10-23]` (ii) is moot: the warning was dropped.
+
+### Key Design Decisions
+D1–D18 below (`[2026-10-24]` D12–D18 are the re-plan after Task 0.12's predictions; the practitioner's two decisions of 2026-10-24 are D15 and D17). Practitioner-owned choices are `[decision]` tasks 0.1 and 0.3–0.8 (all taken 2026-10-22; 0.4 decided 2026-10-23 as option (2)) and 0.13 (decided 2026-10-23: gate met).
+
+## Key Findings
+
+### Files / Symbols Involved
+- `desktop/src/scribe_desktop/note_check.py`
+  - `_omission_flag_token(text, *, first_in_segment, clinician)` :1561-1581 — any speaker: side, number, dose, strength unit, negation, medication; the clinician only: name-like words.
+  - `omission_warnings(note, document)` :1584-1634 — `()` without a confirmed clinician; covered = (segment, word) pairs from each transcript assertion's `note_span.source_coords`; per segment, the uncovered non-suspect flagged words → one `NoteWarning("high_risk_omission", "review", source_coords=SourceCoords(seg, min, max))`; runs past the next-patient boundary (pinned `test_consultation_boundary.py:656`). Its docstrings at :136 and :192 describe the code list.
+  - `check_note` :1830-1868 — Checks 1–4 then Check 6 (`next_patient_warnings` :1802-1818, anchored `SourceCoords(boundary, 0, len(words) - 1)`).
+  - `HEDGE_PHRASES` :513-532 (16 entries); Check 1 `reconstruction_warnings` :540-613 calls `line_marks(span words, …)` at :603 and emits `hedged_source` on the assertion's own coords, the clinician excluded through `spoken_by_confirmed_clinician` (`note.py:1540`).
+- `desktop/src/scribe_desktop/note.py` — `_FILLER_TOKENS` :232-234 (10 disfluencies; "okay", "yeah", "right", "no" are CONTENT) and `content_tokens(text)` :258; `NOTE_WARNING_SEVERITY` :298 (18 codes; `high_risk_omission` = review :351); `text_holds_hedge` :396-415 (contiguous whole-token match over `content_tokens`); `words_hold_hedge` :418; `line_marks(words, *, clinician)` :425-444 (span words in, no document); `SourceCoords(segment_index, first_word_index, last_word_index)` :447; `NoteWarning` :681 (`extra="forbid"`; `source_coords: SourceCoords | None`; the forward-tolerant `_read_stored_unknown_review` reader :703-727); the Clean body reads warnings :964-981; `ends_mid_sentence(words)` :1676-1688 (True only for a trailing `,` `;` `:` or dash after closing marks are peeled; "a bare cut is a named residue").
+- `desktop/src/scribe_desktop/transcription.py` — `TranscriptWord` (absolute start/end seconds, probability, uncertain, suspect) :318-337; `TranscriptSegment` (one VAD segment: start/end seconds, speaker, words) :340; `segment_has_text` :372 / `words_have_text` (used to label speakers, never to filter); `assemble_transcript` :1462-1479 builds one segment per VAD segment, textless ones INCLUDED (both drivers append every segment: :1596 batch, :2522 live); `assign_words_to_segments` :606-638 gives a word to the segment holding its midpoint or the nearest one, so a word's stamps can overhang its segment; `pack_transcription_windows` :569; `GuardFeatures` / `guard_features` :1262-1320.
+- `desktop/src/scribe_desktop/ui/models.py` — `WarningCopy(title, blocks, clear_hint)` :2156-2162 (per code; no line number); `WARNING_COPY["high_risk_omission"]` :2283; `WarningGroup` :2326, `summarise_warnings` :2360-2389 (groups by code); `SEPARATELY_ACKNOWLEDGED_NAMES` :2404-2414 (its `possible_next_patient` entry quotes "[after possible next patient]") / `_CODES` (4 codes); `ACKNOWLEDGE_ALL_TOOLTIP` :2419-2422; `FLAGGED_LINE_MARK` :2685, `NEXT_PATIENT_LINE_MARK` :2691; `flagged_segments` :2694-2714; `flagged_count_line` :2801-2820 (fixed wording "side, negation, number, dose, name or medication"; "replaced or partly in the note"); `eligible_utterances` :2839-2878 (`_lead_words` cuts at 60 characters; the middle elision is Qt's default); `_row_marks(document, assertion, state, *, clinician_speaker)` :3042-3071 (calls `line_marks(span, …)` at :3071; reads no warnings).
+- `desktop/src/scribe_desktop/ui/note.py` — `_flagged_segments` :1262-1266, the `[flagged]` rows :1304, the count line :1821-1841, the review rows render `{group.title} ({group.count})` :2290/:2301; the module docstring :44-77 names the marks.
+- `desktop/src/scribe_desktop/validation.py` — imports `_omission_flag_token` :101-121; `_Alignment` (forward and backward tables; `on_optimal`, `diagonal`, `deletion`, `insertion`) ~:780-810; `align_transcripts` :866 (ONE path; not for R1); `_FactState` 8-tuple :901; `_fact_end_states` :924-954 (walks EVERY co-optimal alignment over a fact's rows, carrying `all_matched` / `all_deleted`); `_judge` :966-991 (`credited = hedged and script_hedged and verdict == "correct"`); the segment-index credit :1337-1341; the hedge re-derivation :1350-1366 (`words_hold_hedge(marked)` on the warning's coords :1360); the `warned` predicate in `word_info` :1368-1395 (the 0.3.3 all-speaker predicate; `warned_v1` beside it is run 1's clinician-only one, `:693-696`); `script_hedged = text_holds_hedge(script.lines[fact.line].text)` :1425 → `_judge` :1433; silent omission :1460-1465 and :602-623; `PassRule` :1511 (`schema_version: Literal[1]` :1520, `extra="forbid"`); `rule_failures(rule, outcome)` :1615-1640 (per encounter); `run_passed` :1901-1904 (every encounter passes); `render_report` :1915-2058 (the one-verdict heading :1921-1923; separator `"---|" * 25` :1943; `cells = ["-"] * 18` :1956; `cells.insert(17, …)` :2009; the TOTAL row :2017-2025; the 9-column Facts table :2044-2046); `evaluate_encounter` :1761-1817; `main` :2175 (`set_dir`, `--config`, one `--rule` per run, `--template-profile`, `--allow-small`, `--prose`); `load_script`.
+- `desktop/src/scribe_desktop/consultation_phrases.py` — `CLOSING_PHRASES` (14), `GREETING_PHRASES` (12), `BOUNDARY_SEGMENTS = 3`, `phrase_events`, `consultation_boundary` :244-281; `note_config.next_patient_boundary` :2907-2918 (the one accessor, C5); `voice_commands` re-exports the lists :47-55.
+- `desktop/src/scribe_desktop/replay_kept.py` — `note_drift` :301-336 (runs `check_note`; counts reviews together; `clinician_speaker` comes only from `enrolled.enrolled_speaker`, :367-373, None otherwise); `_replay_entry` :339-390 (`store.read_recording` + `transcribe_in_temporary_store` for a fresh transcript); `main` :529-600 holds the refusals INLINE and in order — `install_layout.channel()`, `check_tool_wer(_windows_layer, sys.executable)`, the private `_acquire_exclusion()` / `_release_exclusion()`. `past_sessions.PastSessionStore.kept_session_ids(self) -> list[str]` :952 and `read_replay_inputs(self, session_id) -> tuple[TranscriptDocument, GeneratedNote | None]` :1494 (the OLD kept transcript and saved note; never the label).
+- `desktop/src/scribe_desktop/speaker_eval.py` (D11) — `EnrolmentInputs` (embedder + an in-memory `PractitionerProfile`, both `repr=False`) :812-824; `enrolment_inputs(pcm, embedder, frame_probability)` :827-851 (the shipped `enrolment.enrol`, `HARNESS_DEVICE_NAME`, `HARNESS_CONSENT_VERSION`); `transcribe_in_temporary_store(..., enrolment=, persist_key=)` :1066-1148 returns `(plain, enrolled)` — the enrolled pass replays the plain pass's words through `_ReplayProvider` :1123-1132, so word-level numbers are identical by construction; `transcription.attribute_speakers` :894 (a segment MATCHES at cosine ≥ `ATTRIBUTION_THRESHOLD` 0.50, `speaker_embedding.py:82`; matched → `speaker_1`, the whole remainder `speaker_2`; no match → the 2-means with `enrolled_cluster`), the document's `enrolled_speaker` / `enrolment_similarity` set at `transcription.py:1476-1478`; `speaker_embedding.build_speaker_embedder` :606 and `speaker_model_available` :249; `replay_kept._load_models` :213-223 is the existing loader shape; `validation.clinician_speaker(document, track)` :1643-1680 (the label-track confirmation D11 keeps); `validation.find_encounters` :463-468 reads files of `_SET_SUFFIXES` only and skips directories; `validation_set.render_encounter` :339 / `sapi_synthesize(text, voice_index, rate)` :150 / the RMS normalisation :198; the scripts' `conditions.voice_slots["clinician"]` is 0 on 33 of the 50 and on all 22 held-out scripts, 2 on the other 17; `desktop/tests/test_speaker_eval.py` `_FrequencyEmbedder` :1568-1590 is the model-free enrolment fake; `test_validation_harness.py` `_ScriptedProvider` :413 and `_inputs` :484.
+- `validation/rules/option-a-proposed.json` — rule v1 (schema 1, `max_material_wrong` 0, `max_silent_omissions` 0, `require_uncertainty_surfaced`, `max_word_error_rate` null); amendments are recorded in prose in `docs/testing/validation-harness.md` (call 3 amended 2026-10-09; "Amended 2026-10-13 (2)" at :92) and cited in the report header (pinned `test_validation_harness.py:1198`; positional pins :1184-1209).
+- `validation/heldout/` (22 scripts); `desktop/tests/fixtures/heldout_transcripts.py` (imports `validation.load_script` :59; `HELDOUT_DIR` :62; `SCRIPT_CASE_PREFIX = "hld-"` :63; `Turn`; `build_document` :85-120 — one segment per turn, 300 ms per word and 600 ms between segments, so it can never show a gap; `HeldOutCase` :130-163 with boundary, corrections and unsure expectations; `SCRIPT_CASES` :163-300 (22 hand-written, reasons quoted from script text); `EDGE_CASES` 10; `HELD_OUT_CASES` :433). `desktop/tests` has no `__init__.py`: tests import `fixtures.…` through pytest's rootdir insertion.
+- `desktop/tests/test_validation_scripts.py` — `HELDOUT` :62 (also read at :464); lints :329-348 (routed uncertain clauses, no autofill trigger); the prefix asserts :354, :386, :388; `test_one_case_per_held_out_script_and_the_rest_are_edge_cases` :383-390 (one case per script stem).
+- Per-set divergence dicts, each `case_id -> (expected, frozen result)`: `_PREDICTED_BOUNDARY_DIVERGENCES` `test_consultation_boundary.py:103` (7, count pinned :354), `_PREDICTED_CORRECTION_DIVERGENCES` `test_note.py:~2947`, `_PREDICTED_UNSURE_DIVERGENCES` `test_note_check.py:~2242`.
+- **Note-level exact-code-list tests that change once `clinician_line_omitted` fires on a fully uncovered clinician line** (through `check_note` / `finalise_note`; each re-checked, re-pinned where the new code fires): `test_save_as_ratification.py:342`; `test_ui_screens.py:5693-5749` (`unacknowledged_reviews == 1` after Acknowledge all); `test_note_matrix`; `test_ui_models.py:1979-1985` (the tooltip, word for word) and `:2025-2055` (exact chooser labels). **Unchanged regression pins, kept as they are** (peer round 2 PR-LOW-001): `test_note_check.py:1791`, `:1828`, `:1882`, `:2291` and `test_note_schema_v2.py:893` call `omission_warnings` directly, which D1 leaves unchanged; `test_transcript_trim.py:459-483` asserts only Check 6's presence.
+- Pins: `test_vocabulary.py` (lists :47-80, hedges :181-199); `test_hands_free.py:358-361`; `test_install_layout.py:867` `test_the_version_is_the_same_everywhere`; `test_pilot_docs.py` (vocabularies :112-123; the both-ways Encounter test :266-292 has no `h2-` case); `test_shadow_exits.py` (counts placements, text widgets, clipboard/drag, mode keywords, list/combo classes, sends, WAV writers and the plaintext kept-recording readers :840-852 — NOT check functions or transcript-word readers, so C11 holds for this plan).
+- Version 0.3.3 in `desktop/pyproject.toml:7`, `desktop/src/scribe_desktop/__init__.py:3`, `extension/package.json:4`, `extension/package-lock.json:3` and `:9`, `extension/src/manifest.ts:29`.
+
+### Codebase Integration Notes
+- The note pipeline is compose → confirm → CHECK → write; checks are pure functions of `(note, document, config)` and run at every compose or regenerate, so a new check code needs no stored field (only `note.enc`'s `note_warnings` list gains entries). A SAVED note reopened from the Unreviewed section is shown as saved — its stored `note_warnings` kept, the checks not rerun (`ui/note.py:1018-1050`; peer round 5 PR-LOW-002).
+- A build older than 0.3.4 reads each unknown REVIEW code as `unknown_review_warning`, keeping every warning's own fields (`note.py:705-727`); the review list groups them under that one code with their combined count (`ui/models.py:2360-2388`), and its Acknowledge all clears the group — so the separately-acknowledged control is lost after a rollback, though no warning is dropped (peer round 5 PR-LOW-002). The rollback line says so (Task 5.2).
+- The harness evaluates through the product's own functions; any widening of the product's predicate changes what `warned` means unless the harness reads it (D7). One shared function per rule keeps product and harness from drifting (C5).
+- Textless VAD segments are present in the stored document, so the missed-speech trigger 1 reads them directly (no pipeline change).
+- `_row_marks` already receives the document, so the hedge scope can be computed there without a signature change; `line_marks` keeps its signature for the per-span marks and the new hedge test is a separate function.
+
+### External / API Findings
+None. No Cliniko, network or model change.
+
+## Planned Workflow Summary
+
+### Flow 1 — An uncued clinician line (0.3.4)
+The clinician says something no cue routes and no Check 4 word flags (for example an advice line). Today: nothing warns. 0.3.4: the review list shows "A line you said is not in the note (1)"; the chooser marks the line `[flagged]`; Acknowledge all leaves it; the per-code click clears it.
+
+### Flow 2 — Speech with no words
+**Dropped 2026-10-23 (decision 0.4 (2)); kept as history.** A stretch of detected speech holds no transcribed words (a textless VAD segment, or a gap between words inside one), longer than the frozen threshold. The review list shows "Speech was heard but no words were written for part of it (1)"; the chooser and the line editor mark the anchor line `[gap?]`; the clinician listens back or checks their memory and adds the missing fact by typing.
+
+### Flow 3 — A hedge in the next sentence
+A patient says "It was about 40 mg," then, in the next segment, "I think." The earlier segment ends in a comma, so under 0.6 (ii) the fact's line is marked `[check: unsure]`. The same two lines in a script earn the harness credit.
+
+### Flow 4 — The practitioner's runs
+Task 0.2: counts on rebuilt sets and on kept recordings (integers only) → 0.2a: the same audio counts under an enrolment of the synthetic clinician voice (D11) → 0.13: the D1 decision on them → 0.9's commit → 0.14 (the harness enrols; its own dated commit) → 0.11 (the fixtures ready for a second set) → `heldout-2` authored blind (0.10) → 0.12's diagnosis, cases and predictions → the build → P.1: run 6 on three sets, read against the predictions. `[2026-10-24]` → 0.15 (predictions v2 under D13–D14) → 0.16 (D18's bands, the pre-registration commit) → 0.17 (`heldout-3` authored blind; lints only) → the build → P.1: run 6 on FOUR sets, the gate read on the 50 and `heldout-3` (D15) → P.4: the `heldout-3` diagnosis.
+
+## Design Decisions
+
+### D1 — Check 4 on any uncovered clinician line (decision 0.3: (b), 2026-10-22)
+- **A new review code `clinician_line_omitted`.** Fires once per segment when ALL of: a confirmed clinician exists; the segment is spoken by the confirmed clinician; it holds text; no word of it is covered by any transcript assertion's `source_coords`; at least one non-suspect word is a content token (`note.content_tokens`, whose filler set is `_FILLER_TOKENS`); it does not already draw `high_risk_omission`; it lies before the next-patient boundary (`note_config.next_patient_boundary`, C5). Anchor: `SourceCoords(seg, 0, len(words) - 1)`. Severity review; separately acknowledged (added to `SEPARATELY_ACKNOWLEDGED_CODES` / `_NAMES`). `high_risk_omission` is unchanged, including over the tail.
+- Why a new code: the existing copy names "a side, negation, number, dose, name or medication", which an advice line is not; a distinct code keeps the existing warning's meaning, gives honest copy, and lets the harness, the replay and the register count the two apart.
+- **One-word acknowledgements fire under (b):** "okay", "yeah", "right" and "no" are content tokens. This is exactly the case option (c)'s exemptions remove, so Task 0.2 counts lines of ≤ 2 content tokens separately; (c) is added only if (b)'s real-speech counts exceed the 0.1 budget on either bound (median or maximum; peer round 1 PR-MED-003). **(c)'s two exemptions, defined now and measured exactly as written** (peer round 2 PR-MED-014): (c-q) a QUESTION line — the segment's last non-suspect word ends in `?` (Whisper's punctuation); (c-a) an ACKNOWLEDGEMENT line — the segment's non-suspect content tokens number at most 2 AND every one is in the candidate set `ACKNOWLEDGEMENT_TOKENS` = {okay, ok, alright, yeah, yes, yep, right, sure, good, great, fine, cool, thanks, thank, you, no}. Task 0.2 scores (c) as both exemptions together and each alone; under (c) the predicates and the set are frozen in Task 0.9 exactly as measured (a changed set is a new dated decision with Task 0.2 repeated).
+- **Partly quoted segments** are out of scope for the new code (a segment with any covered word is the clinician's partial choice); the existing predicate still covers flagged words there.
+- **Rejected:** widening `_omission_flag_token`'s clinician branch under the one code (it changes the existing warning's meaning, its copy and the harness's 0.3.3 `warned` comparison, and floods the tail); re-routing the line into a section; a sub-reason field (Excluded).
+- **`[2026-10-23]` Premise re-examined after Task 0.2 (scoped `/review-plan`, Fable 5.1).** At audio level the five held-out silent facts (`hld-06`, `-12`, `-15`, `-19`, `-22`) sit on clinician lines the harness's speaker step gives to the other voice, so the predicate above credits none of them — but the harness attributes WITHOUT an enrolment (`evaluate_encounter` → `transcribe_in_temporary_store(pcm, provider, vad)`: a plain 2-means, the label track then naming the clinician cluster), while the app in clinical use attributes WITH the practitioner's enrolment (`attribute_speakers`, threshold 0.50) — and the kept-recordings measurement ran enrolled and attributed both recordings. The harness is stricter than the product on exactly this surface. **Decision (the practitioner, 2026-10-23): the predicate is UNCHANGED; the harness measures under the app's live condition (D11), and Task 0.2's audio counts are repeated under it FIRST (Task 0.2a); D1 stands only when decision 0.13's gate — written before the numbers — is met.** `[2026-10-23]` Met (Task 0.2a; decision 0.13). Rejected: a narrow other-voice predicate (real speech holds ~110 uncovered other-voice lines with content per consultation; anything narrow enough is routing by content, Excluded); naming the five an attribution residue now, unmeasured (kept as 0.13's fallback (i)).
+
+### D2 — The missed-speech warning (Step 3.5, 2026-10-22: Include in plan; constants by decision 0.4 — rule chosen 2026-10-22, values after Task 0.2)
+- **`[2026-10-23]` Dropped from 0.3.4 by decision 0.4 option (2)** — kept below as history; the D1 re-plan (2026-10-23) moved it to Excluded with its siblings (D3's `[gap?]`, D7's deletion-edge term, Phase 2).
+- **Code `speech_without_words`, review severity, separately acknowledged, role-free** (speaker labels of textless segments are unreliable). Computed in `note_check.py` from the document alone (a new `missed_speech_warnings(document, config)`, run in `check_note` after Check 4 and before Check 6).
+- **Triggers, per segment before the next-patient boundary:**
+  Both triggers read ONE indexed view per segment (peer round 3 PR-MED-019: `segment_has_text` counts suspect words, `transcription.py:351-357`, `:372-374`): the segment's SURVIVING words — non-blank and not `suspect` — each kept with its ORIGINAL word index.
+  1. a textless VAD segment — its surviving view is EMPTY (no word, only blank words, or only suspect words) — with `end_seconds - start_seconds ≥ MISSED_SPEECH_EMPTY_SECONDS`;
+  2. inside a segment whose view is not empty, a gap ≥ `MISSED_SPEECH_GAP_SECONDS` between one surviving word's `end_seconds` and the NEXT SURVIVING word's `start_seconds` (suspect words between them are skipped, so a gap over them still counts), or between the segment's start and its first surviving word, or its last surviving word and its end. A negative gap (a word's stamps overhang the segment, `assign_words_to_segments`) counts as 0. ONE warning per anchor line: several textless segments that anchor on the same preceding line, or a textless segment plus an in-segment gap on the same line, give one warning (the largest gap's coordinates).
+- **Anchor (no schema change), in original word indices:** a segment with a surviving view → `SourceCoords(seg, i, k)` where `i` and `k` are the ORIGINAL indices of the two surviving words around the largest gap (not necessarily adjacent: suspect words between them lie inside the span); for a leading or trailing gap, the first or last surviving word, twice; a textless segment → the nearest PRECEDING segment with a non-empty view, on its last surviving word (the following one's first surviving word if none precedes); no segment with a non-empty view → no warning (an empty transcript already says so).
+- **How it is shown:** the review list's copy is per code with no line number (`WarningCopy`), so the copy reads "Speech was heard but no words were written for part of it" with a clear hint "Check the line marked [gap?]". The anchor line carries a new short mark `[gap?]`, computed by a new helper `gap_segments(warnings)` beside `flagged_segments` (the anchors' segments from the warnings' `source_coords`, carried as independent segment annotations — NOT through `_row_marks`, which returns no marks for a removed or replaced row, `ui/models.py:3043-3071`; peer round 4 PR-MED-021). It shows on every line-editor row state the omission flag shows on (`ui/models.py:2976`, `:3009`: all but `removed`), `replaced` INCLUDED, so a typed replacement never hides it; in the chooser (`eligible_utterances`) a replaced anchor segment is not offered (`ui/note.py:1250-1276` counts it present) and a removed one returns with `[gap?]`. The anchor is NOT added to `flagged_segments` ("flagged" means "not in the note", which a fully quoted anchor line is not), so the count line is untouched by this code.
+- **Constants** `MISSED_SPEECH_EMPTY_SECONDS`, `MISSED_SPEECH_GAP_SECONDS` (`Final`, in `note_check.py`) are decided ONCE in 0.4 from Task 0.2's threshold-grid scores against the 0.1 budget, frozen in 0.9, and never tuned after a run of record (the guard's C2 rule; a change is a new dated decision with the measurement repeated).
+- **Known limits, named:** Whisper may stretch word timestamps over a dropped clause, leaving no gap — such a drop stays silent (R1 under rule v2). A cough or noise the VAD calls speech, or a packed-window artefact that leaves a segment textless, draws a false warning; the budget bounds how often.
+- **Rejected:** a decode-level signal (Whisper's `no_speech_prob`) — per decode window and already the guard's; one combined trigger ("the longest uncovered stretch ≥ T") — simpler, but it removes decision 0.4's option (x) of dropping only the in-segment trigger.
+
+### D3 — Chooser marks that survive the elision (Step 3.5: Include in plan)
+- The front marks become short, fixed tokens so Qt's middle elision cannot cut them: `FLAGGED_LINE_MARK` `[flagged]` stays; `NEXT_PATIENT_LINE_MARK` `[after possible next patient]` becomes `[next patient?]`; the new omission code reuses `[flagged]`. (The `[gap?]` mark went with the missed-speech warning, 2026-10-23.)
+- **The rename ripples:** `SEPARATELY_ACKNOWLEDGED_NAMES["possible_next_patient"]` quotes the old mark and feeds `ACKNOWLEDGE_ALL_TOOLTIP`; both are pinned word for word (`test_ui_models.py:1979-1985`, `:2025-2055`); `ui/note.py`'s module docstring :75 and three documents quote it (Task 5.1).
+- `eligible_utterances` places all marks before the speaker and `_lead_words`' 60-character cut applies to the words only, after the marks. Exact strings are pinned; the design system and the review guide quote them.
+- Rejected for now: turning off Qt's elision or eliding on the right — a widget change that `test_shadow_exits.py` would count (C11).
+
+### D4 — The greeting gap (decision 0.5: (a), 2026-10-22)
+- **(a)** The lists stay frozen; an unbroken next patient with an unlisted greeting is residue class R3 under rule v2 (D8). Controlled by Start per patient and the patient-change block. The practitioner's own phrases come later (Deferred).
+- Rejected: (b) blind widening now (false-cut risk, C4; "morning stiffness"); (c) the practitioner's own phrases now (they cannot name them yet; a later change would force another repeated run).
+- `[2026-10-24]` R3 now covers a closing gap as well as a greeting gap, by the reference boundary (D14); the lists stay frozen (C3).
+
+### D5 — Hedges: one scope function and a blind lexicon (decision 0.6: lexicon (b), scope (ii), 2026-10-22; "joined" = `note.ends_mid_sentence`, 2026-10-22)
+- **Lexicon (b):** widened by a BLIND session from named published sources (Task 0.10's author method), with a contamination note; "not sure", "i don't know" and "i reckon" are already known from the failures, so they enter only if a named source holds them. The selection rule of the 0.3.3 list (whole phrases about the speaker's own certainty; no bare modal verbs) is unchanged.
+- **Scope (ii):** a segment is hedged if its own words hold a hedge, OR a same-speaker neighbour (previous or next) holds one and the two are joined mid-sentence — the EARLIER of the two satisfies the existing `note.ends_mid_sentence` (a trailing comma, semicolon, colon or dash). A bare cut with no trailing mark is not joined (an accepted residue, as the helper's docstring already says). Non-contiguous hedges ("not, I think, sure") stay a named residue. (iii) any adjacent same-speaker segment — rejected as too wide.
+- **One function, two inputs.** `note.segment_hedged(document, segment_index) -> bool` (name final in Task 3.1) applies the rule over transcript segments; `validation.script_line_hedged(script, line_index) -> bool` applies the SAME rule over script lines (speaker and trailing punctuation of the earlier line), pinned against `segment_hedged` on documents built from those scripts. Callers: Check 1's `reconstruction_warnings` (`note_check.py:603`) — the segment of the assertion's coords; the line editor's `_row_marks` (`ui/models.py:3071`, already holds the document); the harness's mark re-derivation (`validation.py:1360`) AND its script term (`:1425` `script_hedged`). Without the script term a scope-(ii) mark is never credited (`_judge` :976). `line_marks` keeps its signature and its per-span uses.
+- Whether (ii) fixes `syn-30` fact 0 depends on 0.12 (split off or misheard).
+
+### D6 — The measurement before design (Task 0.2)
+- **One synthetic script, two modes** (agent, in the gitignored `.cursor/loops/`): `run6-measure.py` — text mode reads scripts through `validation.load_script` and builds documents through `validation.reference_document` (D8; the fixture's turn-level builder moves there as `document_from_turns`), then `compose_draft` → `finalise_note` → `check_note`, with each Check 4 variant ((a), (b), (c)) as a scratch function (the product is not changed in Phase 0); `--audio <set folder>` transcribes a BUILT set's WAVs itself, in memory, through the harness's own path (`read_label_track`, `read_wav_pcm`, `transcribe_in_temporary_store`, as `evaluate_encounter` does at `validation.py:1768-1773`; the runner saves no transcript — peer round 2 PR-MED-012) and reads (per encounter: textless-segment durations and in-segment gaps as histograms — bucket counts only — plus the same variant counts) AND scores a GRID of candidate threshold pairs (textless 1.0–3.0 s and gap 0.5–2.0 s, 0.25 s steps) with a scratch reference of D2's exact triggers, anchoring and one-per-anchor-line de-duplication, printing per pair the combined new-warning median and maximum per encounter with each (b)/(c) variant. It also prints, for every textless threshold and every variant, the scores with trigger 2 DISABLED (trigger 1 alone, the same de-duplication), so decision 0.4's option (x) is read off a printed row, never reconstructed from combined counts (peer round 2 PR-MED-013). Histograms alone cannot choose the pair: two gaps on one anchor give one warning, on two anchors two (peer round 1 PR-MED-002). Prints per variant: uncovered clinician segments; warnings per encounter (mean, max); lines of ≤ 2 content tokens among them (D1); how many of the five held-out silent facts the variant warns; uncovered patient lines with content but no flaggable word (the next exposure). **Text-level counts are a parser-contract number, not a model number** (`docs/lessons.md` 2026-09-24): the budget is judged on the audio-level and real-speech counts; both are recorded.
+- **Audio level, synthetic** (practitioner, normal terminal, developer build, installed app closed — or the agent if its shell can see the models; `docs/lessons.md`): rebuild `validation/scripts` and `validation/heldout` deterministically into empty folders outside the repository (kept until Task 0.12 ends), run `run-validation.py` on each for the premise check (its report), and `run6-measure.py --audio` on each for the measurements — two transcriptions of the same built set on the same commit and models, deterministic as the premise check against run 5 already assumes; the measurement's document lives in memory only and its temporary store is removed as the harness removes it (peer round 2 PR-MED-012).
+- **Real speech, a SEPARATE script** (practitioner only): `run6-measure-kept.py` reproduces `replay_kept.main`'s refusal order — `install_layout.channel()`, `check_tool_wer(_windows_layer, sys.executable)` (exit 2 without the exclusion), the exclusion lock for its run — reads ids through `PastSessionStore.kept_session_ids`, re-transcribes each kept recording as `_replay_entry` does (`read_recording` + `transcribe_in_temporary_store`; the stored transcript cannot show fresh gaps), runs the pipeline as `note_drift` does with `--config validation\config`, and prints per session ORDINAL only integers: per-code counts per variant, the threshold-grid scores (as the synthetic `--audio` mode) and the gap/textless histograms, with the enrolled-speaker flag. **`--enrolment <WAV>` is REQUIRED** (peer round 1 PR-MED-004): the replay finds the clinician only through a supplied enrolment WAV (`replay_kept.py:213-223`, `:355-368`), so without it every session would read as not enrolled. The script refuses (exit 2) when the option is absent or the file is not a usable WAV (`replay_kept`'s `WavFormatError` / `EnrolmentError` handling), before reading any entry. The WAV is the practitioner's own enrolment WAV under the clinic 1 smoke's custody (its D14 and D16: kept in the measurement folder outside the user profile, never committed). A session whose fresh transcript has no `enrolled_speaker` despite the WAV counts as "attribution failed" and is printed as such, kept apart from "no enrolment given", which cannot occur. The (b) median is taken over enrolled sessions only; n, n(enrolled) and n(attribution failed) are recorded. No id, text or name; the record in the plan is aggregates (n, median, max) only (C1, C8). It is a separate entry point so no real-data path can share the id-printing code.
+- **Never measured on `heldout-2`** (that would spend it).
+
+### D7 — The warned amendments (harness; ratified inside decision 0.7, 2026-10-22)
+- `warned` for a silent-omission fact becomes: today's predicate (the current `warned`, `validation.py:1385-1389`, the all-speaker 0.3.3 predicate) OR the fact's aligned segment carries `clinician_line_omitted` — the deletion-edge term below was DROPPED 2026-10-23 with the missed-speech warning (decision 0.4 (2)) and is kept as history. Today's `warned` is kept as a walk flag `warned_v033` (on `_WordInfo` and `_FactState`, like `warned_v1`), and the 0.3.3 silent-omission predicate is kept ACROSS EVERY ALTERNATIVE as run 1's is (`validation.py:617-623`, `:1460-1464`; peer round 2 PR-MED-016): `_Judged` gains `warned_v033`, `FactOutcome` gains `silently_omitted_v033` (any judged alternative `omitted` and not `warned_v033`) and a `silent_omission_v033` property, `EncounterMetrics` a `silent_omissions_v033` count, printed as "Silent (0.3.3 predicate)"; the ambiguity set strips `warned_v033` as it strips `warned_v1` (`:1446`); `warned_v1` stays run 1's clinician-only predicate with its existing run-1 label (`validation.py:693-696`). Pins: a patient-side omission warned by 0.3.3 but not by run 1 (peer round 1 PR-MED-006); a fact reported `wrong` whose other co-optimal alignment is omitted, silent under 0.3.3 and now warned, counts in the 0.3.3 column (peer round 2 PR-MED-016).
+- **The deletion-edge term — DROPPED 2026-10-23 (decision 0.4 (2)), history only** (peer round 1 PR-MED-001; separate from D2's display anchors). `_FactState` gains two FLAGS, never histories (peer round 2 PR-MED-011: the walk stays bounded only because equal states merge, `validation.py:896-900`): `some_deleted` (at least one of the fact's reference tokens took a deletion step on that alignment) and `edge_covered` (at least one such deletion step had a covered edge). Before the walk a per-column table `deletion_edge_covered[j]` is precomputed: a deletion at alignment column `j` sits between hypothesis words `j - 1` and `j` (the edge words; at the transcript's start or end, one edge), and the entry is true when a `speech_without_words` warning's `source_coords` covers either edge word, compared in ORIGINAL `(segment, word)` coordinates through `hypothesis.consumed` (so suspect-filtered and joined tokens map back correctly); `_after_deletion` is called with `j` and reads the table. The term holds only when EVERY reached state has `some_deleted` AND `edge_covered` (a substitution-only alignment earns nothing). This covers a singleton anchor `(i, i)` on a first or last word, and an edge in another segment than the fact's. A segment-wide credit was rejected: it would count a transcribed, uncued line as warned whenever its segment also held a pause. Pins: partial deletion credited vs. substitution not credited; first-word and last-word edges; a cross-segment edge; a suspect word between the edge and the anchor; a transcribed uncued line beside a pause NOT credited; a repeated-token ambiguity case whose per-cell state count stays within 2^12 (the eight existing flags, the two above, `warned_v033` and D8's `marked`).
+- These are METRIC amendments (the warning the clinician sees now covers the line), dated and cited in the report header like 2026-10-13 (2).
+- `[2026-10-24]` Amended by D13: the credit also holds on a wholly uncovered, flagged, confirmed-clinician segment before the boundary by EITHER omission code (a subset of the chooser's `[flagged]` lines — D13 as amended in round 26, `[2026-10-24, peer round 27]`); the 0.3.3 column is unchanged.
+
+### D8 — Residue classes and rule v2 (decision 0.7: (b), 2026-10-22)
+- **Rule v2:** `validation/rules/rule-v2.json`, `PassRule` schema 2 (`Literal[1, 2]`; schema 1 files read unchanged; a schema-1 file carrying ceiling fields is refused by `extra="forbid"` — pinned; an older `run-validation.py` refuses a schema-2 file, exit 2 — fine). It ratifies mechanical residue CLASSES — never encounter ids — each with a ceiling, and the report prints the v1 verdict beside the v2 verdict:
+  - **R1 recogniser.** For a fact on which a failing predicate holds — `material_wrong` with verdict `wrong`, or `silent_omission` (reported, or on any co-optimal alternative, `validation.py:603-614`); a nonmaterial fact consumes no allowance (peer round 2 PR-MED-009): on EVERY co-optimal alignment (`_fact_end_states`: no reached state has `all_matched`) a word error falls on the fact's own tokens; AND the same pipeline gets the fact right on `reference_document(script)` (the script's own words); AND, for a `wrong` fact, the product put a review mark on the rendering judged wrong — defined over the TRANSCRIPT, never the script line (peer round 4 PR-MED-020: `fact.line` indexes the script, `validation.py:1423`, while Check 1's marks address assertion spans, `note_check.py:589-610`): `_WordInfo` gains `review_marked` (the hypothesis word lies inside the `source_coords` of a `number_source`, low-confidence, `suspect_source` or `hedged_source` warning on the measured document, compared in ORIGINAL `(segment, word)` coordinates through `hypothesis.consumed`), and `_FactState` gains one more FLAG, `marked` (some hypothesis word aligned to one of the fact's reference tokens, by match or substitution, is `review_marked`); the term holds only when EVERY reached end state judged `wrong`, across EVERY occurrence of the fact, has `marked` — one marked alternative never excuses an unmarked wrong one. **Honest limit:** `number_source` marks every line holding a number, so for a numeric fact the mark term is nearly always met — a dose error like `syn-28` always qualifies. A confidently misheard NON-numeric word on an unmarked line still FAILS.
+  - **R2 tone only.** An `expect_uncertain` fact whose uncertainty is NOT surfaced (`uncertainty_surfaced is False`) and whose script line, under the D5 scope over script lines, holds no hedge from `validation.REFERENCE_HEDGES` — a harness-only reference lexicon chosen blind, frozen in 0.9, pinned as a SUPERSET of `HEDGE_PHRASES`; the membership of the phrases already known from the failures ("not too sure", "i dunno", "i reckon"…) is recorded either way. A fact whose script holds a reference hedge the product misses is NOT R2 (it fails). An already-surfaced fact is never R2 and consumes no ceiling (peer round 1 PR-HIGH-001).
+  - **R3 unbroken next patient.** A MATERIAL `absent` fact judged `wrongly_present` (so `material_wrong` holds; a nonmaterial one consumes nothing — peer round 2 PR-MED-009) in a script with axis `end_and_new_patient`, whose line lies AT OR AFTER the script's reference tail start, where the product found NO boundary on the measured document (`note_config.next_patient_boundary` is None — an encounter-level fact, so no aligned segment or alternative is needed; a boundary that fired anywhere, even after the fact, leaves the fact failing, the conservative reading — peer round 3 PR-MED-018), and the frozen lists find no greeting (`phrase_events`) on the script's reference GREETING line. **Two frozen reference tables, never one** (peer round 2 PR-MED-010; peer round 3 PR-MED-017: a closing and a greeting can share a line, so the greeting line and the first withheld line differ — `heldout_transcripts.py:214-217`, `note_check.py:1805-1807`): `validation.REFERENCE_GREETING_LINES` (encounter id → the line holding the next patient's greeting) and `validation.REFERENCE_TAIL_STARTS` (encounter id → the first line withheld, equal to `HeldOutCase.boundary` wherever a held-out case has one), for every script carrying the axis (axes are per script, and neither facts nor roles mark the switch — `syn-38` and `syn-46` voice their next patient as `patient`). They are reference provenance like a fact, not class membership; the scripts and their facts are unchanged (C2). Written in Task 0.9 for the 50 and `heldout` and in Task 0.12 for `heldout-2`, before the predictions. A script with the axis and no entry in either table is a harness error, never an R3. Pins: an unrelated `absent` fact before the tail start in the same encounter is NOT R3; a boundary that fired after the fact is NOT R3; a closing and a greeting sharing one line (greeting line = tail start − 1) reads the greeting line, not the tail start.
+  - **The set layer (new in the harness):** ceilings are LITERAL per-set integers in the one rule file, keyed by set name (`scripts`, `heldout`, `heldout-2`), and count FACTS, not encounters. **Each class excuses only its own failure predicates** (peer round 1 PR-HIGH-001; peer round 2 PR-MED-008): R1 clears `material_wrong` when the verdict is `wrong` AND, independently, `silent_omissions` when `silent_omission` holds — one fact reported `wrong` with a silently omitted co-optimal alternative counts in BOTH by design (`validation.py:603-614`); R2 clears `uncertainty_missed` only; R3 clears `material_wrong` (verdict `wrongly_present`) only. A fact's other failures stand: an R1 fact whose uncertainty is also unsurfaced still fails that count unless it is separately R2, and a fact meeting R2 that is also `wrong` or silently omitted still fails unless separately R1. The predicates are not all disjoint (`material_wrong` and `silent_omission` overlap), but each class names the predicates it may clear, so no ordering rule is needed; a fact counts ONCE against a class's ceiling however many of that class's predicates it clears, and once against each class it meets. **The raw counts never change** (peer round 2 PR-MED-007): `EncounterMetrics.material_wrong`, `silent_omissions` and `uncertainty_missed` stay rule-independent, because `rule_failures` (`validation.py:1629-1634`) and the report totals (`:1965-1970`) read them for the v1 verdict. The class is a field on `FactOutcome`; NEW residue-adjusted counts skip the excused facts and only schema-2 evaluation reads them. Pin: the same outcomes give v1 FAIL and v2 PASS. `run_passed` becomes: every encounter passes AND every class is within its ceiling for the named set; `rule_failures` stays per encounter and a new set-level failure names the class and its count. The report gains per-set class counts and a class column in the Facts table.
+  - **Ceilings (chosen 2026-10-22):** 2 per class on the 50, 1 on `heldout`, 1 on `heldout-2` — fixed integers, not a formula (a formula over measured encounters would move if a build error lowered n). The 50's 2 equals run 5's R1 and R3 counts (Honest forecast).
+- **The override, stated:** a rule change after a seen failure collides with pilot Constraint 12 and the 2026-10-09 stop rule ("the cue file and the rule are not changed to make it pass"). The practitioner overrode those lines on Task 0.7 on 2026-10-22; the v1 verdict stays printed, so nothing is hidden.
+- **One turn-level builder, two adapters** (peer round 5 PR-MED-022: the fixture's `build_document` takes `tuple[Turn, ...]` and reads `.speaker` / `.text`, `heldout_transcripts.py:85-110`, and `HeldOutCase.document()` passes explicit edge-case turns, `:146-152`, so a script-only function cannot replace it): `validation.document_from_turns(turns)` is the moved builder, over any sequence of `(speaker, text)` items (a small `Protocol` the fixture's `Turn` satisfies); `validation.reference_document(script)` adapts a script's lines through it; the fixture's `build_document` becomes a thin call of `document_from_turns` (one implementation, no drift). Pin: the moved builder gives the SAME document as today's fixture for every scripted held-out case AND every explicit-turns case (compared field by field, captured before the move).
+- Rejected: (a) no rule change; the reference-transcript test alone for R1 (a fact lost to a segmentation or routing change would then land in R1 with no error on its tokens); a single global ceiling (2 would loosen the blind set, 1 fails the 50).
+- `[2026-10-24]` Amended by D14 (R3 by the reference boundary, per encounter; `REFERENCE_GREETING_LINES` removed) and D17 (a per-set `require_uncertainty_surfaced`, false for `heldout-3`). R1 and R2 are unchanged (R3's encounter unit is the one exception to "a fact counts ONCE against a class", PR-HIGH-001); a hedge the recogniser split from its fact and a bare-modal hedge stay fails (D17's rejected items). Ceilings: the 50 R1 2 / R2 2 / R3 2 encounters; `heldout` and `heldout-2` 1 / 1 / 1 encounter (reported sets); `heldout-3` R1 1 / R3 1 encounter, uncertainty reported (D15).
+
+### D9 — The pass gate (decision 0.8: all three sets, 2026-10-22)
+A pass under rule v2 on all THREE sets — the 50 scripts, `heldout`, `heldout-2` — with the v1 verdict recorded beside each. Any `heldout-2` failure is a finding for a `heldout-3` / 0.3.5 cycle, never a tuning target.
+- `[2026-10-24]` **Superseded by D15** (the practitioner, 2026-10-24): the pass requirement applies to the 50 and `heldout-3`; `heldout` and `heldout-2` are reported in full. The text above is kept as the ratified history.
+
+### D10 — Version, runs and documents
+- Version 0.3.4 in the six places (Task 5.2). Built of record after P.1 on the H4 commit (H5).
+- Documents (Task 5.1): the threat model's Phase 3A surface 2 and Check 4 paragraph (:524, :532, :831, :858); data-flow flow 7 (and flow 10 where the note request's warnings are stored); "Rolling back below 0.3.4" in `docs/release/pilot-builds.md` (:73); `docs/testing/validation-harness.md` (the amendments, rule v2, `heldout-2`, the run of record); `docs/testing/shipping-gate.md:102` (the review rows cleared only by their own Acknowledge); `docs/testing/kept-recordings.md:40-52` (the replay's per-code counts); `docs/design-system.md` (:155, :169-172, :399, :409, :848 — copy, marks, the tooltip); `docs/practice/clinician-review-guide.md` (:101, :106, :113; the 0.3.4 lines, practitioner-approved); `docs/pilot/README.md:161` and the register's prose (:20, :33) for `h2-` ids; `docs/architecture/phase-history.md` (:51, :55 quote the old mark); `validation/README.md`; CHANGELOG; AGENTS.md.
+
+### D11 — The harness attributes with an enrolment (metric amendment 4; decided 2026-10-23, measured first)
+- **Policy.** The declared "Clinician speaker" policy becomes: the enrolled pass's `enrolled_speaker` is the clinician, CONFIRMED by the label track — `clinician_speaker(enrolled_document, track)` must return that same label (the cluster whose duration-weighted majority truth is `clinician`); AND, on the enrolled path only, the enrolled cluster's ACTUAL label-track overlap seconds (each segment's per-label overlaps summed per cluster, never its whole duration under the winning label) give `clinician` a strict majority beyond `ROLE_TIE_SECONDS` (peer round 8 PR-MED-027: `clinician_speaker` totals whole segment durations under each segment's winning label, `validation.py:1657` over `speaker_eval.align_segments`, so a cluster of one 10 s segment at 5.1 / 4.9 clinician / patient and a 9 s patient segment confirms as 10 vs 9 while holding 5.1 vs 13.9; the `clustering` path keeps `clinician_speaker` exactly as runs 1–5 read it); any other outcome (no `enrolled_speaker`, a different cluster, a tie, an overlap majority that is not the clinician) is `role_unresolved`, never a guess. The enrolled pass replays the plain pass's words (`speaker_eval._ReplayProvider`), so WER and every word-level number are unchanged by construction; only the segment labels — and through them routing, the checks and the facts — change.
+- **The enrolment audio: the builder's passage per clinician voice slot.** `validation_set` gains `ENROLMENT_PASSAGE: Final` — a fixed passage of everyday, non-clinical sentences, long enough that `enrolment.enrol` holds well over its usable minimum (about 40 s spoken); no number token, strength unit, medication, shipped cue phrase, hedge, closing or greeting phrase (pinned like the primer's `TestClinicalPrompt`) — and `build_set` writes `<set>/enrolment/slot-<n>.wav` (true 16 kHz mono PCM16, the same synthesis and RMS normalisation as a spoken turn, at the builder's standard rate) for EVERY clinician voice slot the built scripts use (slots 0 and 2 on the 50; 0 on `heldout`), written whole and moved into place like the triples. `find_encounters` is unchanged (it skips directories, so the subfolder is never a "badly named file"); `--only` builds the slots its scripts need.
+- **The harness.** `HarnessInputs` gains `enrolments: Mapping[int, EnrolmentInputs]` (voice slot → the in-memory profile from `speaker_eval.enrolment_inputs` over the slot's WAV, with `build_speaker_embedder()`; it lives in this process only, never a store — the existing text-free contract) and `attribution: Literal["enrolment", "clustering"]` (default `enrolment`). `evaluate_encounter` looks up the script's `conditions.voice_slots["clinician"]`, passes `enrolment=` to `transcribe_in_temporary_store` and judges the ENROLLED document; under `clustering` it runs exactly today's path (runs 1–5's reading, pinned equal on the same fake inputs). `main` gains `--attribution {enrolment,clustering}`; three refusals BEFORE any encounter runs, by name, in the existing order's model block: the speaker model not installed (`speaker_model_available`), a slot WAV the set's scripts need missing from `<set>/enrolment/` ("rebuild the set"), one that cannot be enrolled (`WavFormatError` / `EnrolmentError`, by type).
+- **The report.** The header names the attribution policy and cites this amendment (pinned beside `test_validation_harness.py:1198`); two recorded, never-failing columns, "Clinician speech labelled other (s)" — the label track's clinician seconds on segments not labelled as the confirmed clinician — and "Other speech labelled clinician (s)" — its other speakers' seconds on segments labelled as the confirmed clinician (peer round 7 PR-MED-025: `attribute_speakers` gives EVERY matching segment to `speaker_1`, `transcription.py:929`, and `clinician_speaker` accepts a clinician-MAJORITY cluster, `validation.py:1643`, so an all-match enrolment hides patient speech labelled clinician from the first column), both rounded — so the attribution residue is visible per encounter, both ways, under either policy. No companion verdict column: the two readings are two runs of the same deterministic build.
+- **Why this is not masking.** The product in clinical use attributes with an enrolment; a harness without one measures a path the pilot does not run. The `clustering` flag keeps runs 1–5 reproducible; the new column shows how much attribution the amendment changes; the budget (0.1) and the gate (0.13) are set before the numbers; a fact the enrolled path still misattributes stays a silent omission unless 0.13 (i) names the class.
+- **Named residues.** (i) `ATTRIBUTION_THRESHOLD` 0.50 is the app's own constant and is not tuned here: when some segment matches, a quiet turn below it stays the other voice (the 2026-10-03 observation); when none matches, the no-match fallback clusters and names the higher-similarity cluster (`transcription.py:932`; peer round 8 PR-LOW-004); (ii) a synthetic voice is not the practitioner's — the kept-recordings measurement stays the real-speech reading; (iii) `heldout-2`'s clinician slot must be one the builder can enrol (any installed slot; its spec says 0).
+- **Rejected:** leave-one-out pooling of the set's own clinician spans (differs per encounter and with `--only`; a slot with one encounter cannot be measured); oracle attribution from the label track for the verdict (the app has no truth track); a companion verdict column (two full evaluations per run for a number the flag gives).
+
+### D12 — The diagnosis read after Task 0.12 (2026-10-24; record only)
+Task 0.12's frozen predictions ("predictions v1") say the Task 0.8 gate is not met. The residue, measured with the scratch reference (counts only; `C:\run6-sets-012\`, the scratch in `.cursor/loops/run6-012-*.py`):
+- **`heldout-2`'s 47 silent omissions are two things.** 22 facts sit on wholly uncovered CONFIRMED-CLINICIAN lines that already draw `high_risk_omission` on another word — D1's new code excludes such lines and D7 credits only the new code, so the chooser shows `[flagged]` while the harness counts the fact silent. 25 facts sit on unrouted PATIENT lines with no flaggable word — the product warns on clinician lines only (D1 rejected an other-voice predicate 2026-10-23), and the `heldout-2` brief, written by the composer, asked for "uncued patient lines carrying a material fact, at least 5 scripts": behaviour outside 0.3.4's decided scope. On the 50 and `heldout` no silent fact sits on an already-flagged clinician line.
+- **`heldout-2`'s 12 unsurfaced doubts:** 9 R2 (idioms in no lexicon); 1 hedged by a bare modal the product excludes by its selection rule (`_REFERENCE_ONLY_HEDGES`) — a fail under D8 by design; 2 with a product-listed hedge on the script line that the recogniser split into a segment not joined under scope (ii) (a full stop; a segment in between) — D5's named residue, surfaced by the reference pipeline. 13 of the 19 held-out `expect_uncertain` facts (both sets) are phrased outside any lexicon; the 50's are 9 of 10 listed.
+- **`heldout-2`'s 2 wrong facts (`h2-05` f11, f12):** the next patient's lines reached the note; the frozen lists hold the greeting but not the closing, so no boundary fired — and D8's R3 read only the greeting line.
+- **`heldout`:** `hld-14` f1 and `hld-21` f3 are confidently misrecognised words on unmarked lines — rule v2 fails them by design (the Honest forecast said so); R2 4 facts against a ceiling of 1; `hld-07` R1; `hld-14` f2 R3.
+- The new code's load on `heldout-2` is median 5 / max 9 per script — synthetic; the 0.1 budget is for real speech.
+No rule, predicate or prediction is changed by D12; predictions v1 stay frozen. A read-only design critique (Plan subagent, 2026-10-24) was taken before D13–D18 were written; what it dropped and what it objected to is recorded on D15 and D17.
+
+### D13 — The flagged-line credit (D7 amended; harness only; metric amendment, 2026-10-24)
+- `warned` for a silently omitted fact ALSO holds when the fact's aligned segment is (i) anchored by an omission warning of EITHER code — `high_risk_omission` or `clinician_line_omitted`, by `source_coords.segment_index` — (ii) spoken by `note.clinician_speaker`, (iii) wholly uncovered (no word of it in any transcript assertion's coords) and (iv) before the boundary (`next_patient_segment(note.note_warnings)` is None or later). That is a SUBSET of the `[flagged]` lines the clinician sees (`[2026-10-24, peer round 26]`: the chooser marks every `high_risk_omission` segment by its coordinates — `ui/models.flagged_segments`, any speaker, any coverage — while the credit holds only where the clinician's remedy restores the fact: a partly covered line's remedy is a word, a patient line's fact is outside D1's scope, a line past the boundary is withheld), read from the note alone: folded into `_WordInfo.warned` as one predicate (no new walk flag), and it SUBSUMES D7's new-code term (a `clinician_line_omitted` segment is wholly uncovered by construction). `ui/models.py` is already imported by `validation.py` (:180, no Qt at module level), but the harness does not depend on Task 1.2's `flagged_segments` change.
+- Stated plainly: this narrows the 2026-10-09 rule "a warning elsewhere in the segment never counts" (`validation.py:1518-1521`) for the one case where the whole line is absent and marked, because the clinician's remedy (add the line) restores the fact. The "Silent (0.3.3 predicate)" column is printed unchanged. Predicted deltas: `heldout-2` silent 47 → 25; the 50 and `heldout` unchanged (verified in Task 0.15). It applies to `heldout-3` too — a loosening named in D15.
+- **Rejected:** deleting D1's exclusion so the new code fires on already-flagged lines (the critic's narrower alternative) — it changes the product and the measured budget (the real-speech maximum was already above the budget at n = 2) and double-warns one line. `[2026-10-24, scoped /review-plan]` Rejected: printing the credit as a report column only (offered by the simplicity lens; the practitioner chose the gate, disclosed — a coherence failure would otherwise fail `heldout-3` for a line the clinician saw marked).
+
+### D14 — R3 by the reference boundary, per encounter (D4 and D8 amended, 2026-10-24)
+- R3 holds for a material `absent` fact judged `wrongly_present`, at or after the script's reference tail start, in a script with axis `end_and_new_patient`, when the measured document has no boundary AND `note_config.next_patient_boundary(reference_document(script), config)` is None — the product's COMPLETE boundary rule finds no boundary in the script's own words — no closing within `BOUNDARY_SEGMENTS` of a greeting with cued content spoken before the pair (`consultation_phrases.py:256-280`) — so a closing gap, a greeting gap, two listed phrases too far apart, or no cued content before them (`[2026-10-24, peer round 25]`; D4 named only the greeting gap). The reference boundary is computed in `evaluate_encounter` from the run's `--config` (`encounter_metrics` takes no config) and passed down; `reference_document` keeps the script's punctuation and `consultation_boundary` reads no speaker label, so the call is well-formed.
+- **The unit is the encounter:** one unbroken next patient is one event however many absent facts the author placed after it (R1 and R2 stay per fact; the set ceiling for R3 counts distinct encounter ids, and the residue-adjusted count drops every R3 fact of that encounter). This is an R3-only exception to D8's "a fact counts ONCE against a class" (peer round 1 PR-HIGH-001), stated here. Looser than the fact unit for a tail holding two or more absent facts — named in D15.
+- `REFERENCE_GREETING_LINES` is deleted with its pins (`test_validation_scripts.py:664-676`) as a dated change — `[2026-10-24, scoped /review-plan]` in Task 0.17, not 4.1, because the table tests require a greeting row for every axis script and writing `h3-` greeting rows would mean reading the set. This supersedes the two-table design of peer round 3 PR-MED-017 (and round 2 PR-MED-010; Task 0.9's record defends it): the reference-document boundary makes the greeting-line case moot, and a closing and a greeting sharing a line (`hld-11`) needs no second table. `REFERENCE_TAIL_STARTS` stays.
+- `[2026-10-24, scoped /review-plan]` **No lint, a recorded check.** "Reference boundary None or equal to the tail" is NOT asserted: `hld-10`'s reference boundary (5) already differs from its tail (4), and on `heldout-3` a mismatch fed back to the author would filter the product's false boundaries out of the blind set. Instead, for every axis script of every set, Task 0.15 (seen sets) and P.4 (`heldout-3`) record `(id, reference boundary, tail)` as integers; a mismatch is not R3 (the fact fails honestly) and is a finding.
+- Predicted deltas: `h2-05` → R3 (1 encounter); the 50 R3 = 2 encounters (`syn-38`, `syn-46`); `heldout` 1 (`hld-14`).
+
+### D15 — The gate (D9 superseded; the practitioner's decision, 2026-10-24)
+- **Decided (in chat, the recommended option):** rule v2's pass requirement applies to the 50 (fitted; regression evidence) and to `heldout-3` (blind, D16). `heldout` and `heldout-2` are built, run and reported in full in run 6 (v1, v2, every class, the attribution columns); their failures become register findings with controls at P.3. `heldout-3` is reported as covering a NARROWER scope than `heldout-2` (D16: patient facts routed by rule) — never as "held-out passed" without that qualifier.
+- **Disclosure, repeated in `docs/testing/validation-harness.md`, `plan-pilot.md` (P.5 and Constraint 12) and the run-of-record entry:** a gate change made after a predicted failure and before the run. The reason: the `heldout-2` brief asked for behaviour outside 0.3.4's decided scope (unrouted patient facts), and `heldout`'s two confident recogniser errors fail by design with nothing in 0.3.4 to mark them. The Honest forecast's own line is quoted: "A `heldout-2` failure is a finding, never a tuning target. Budget for a `heldout-3` and a 0.3.5 if it fails." The practitioner chose the re-plan over that cycle.
+- **The critic's objection, recorded:** a replaced gate is credible only if it is no looser than the one that failed. `[2026-10-24, scoped /review-plan]` **Every loosening, listed:** (1) D13's flagged-line credit applies to `heldout-3`; (2) D14 widens R3 from the greeting gap to any miss of the complete boundary rule — closing gap, greeting gap, distance, no prior cued content (`[2026-10-24, peer round 25]`); (3) D14 counts R3 per encounter, not per fact; (4) D17 reports uncertainty on `heldout-3` instead of gating it. Unchanged from the gate that failed: R1 1 fact and R3 1 (now encounter) on `heldout-3`; silent omissions 0 and material wrong 0 for every speaker as rule v2 counts them — after the R1 and R3 adjustments (`[2026-10-24, peer round 25]`); the R1 mark requirement (a confident unmarked error fails). The brief's routing rule (D16) is a scope statement, not a ceiling. The v1 verdict and the seen sets' full results stay printed.
+- Options not taken: keep D9 and plan a 0.3.5 after a known-fail run (the critic's least-bad path for credibility; the practitioner declined a known-fail build-and-run cycle); re-set the three sets' ceilings to the predictions (tuning a gate to a seen failure — refused); print D13/D14 as columns only (declined 2026-10-24, scoped review: coherence in the gate, disclosed).
+
+### D16 — `heldout-3`, the blind set for run 6 (C12 extended, 2026-10-24)
+- **Never read before run 6 by any leg:** no `HeldOutCase` entries, no divergence entries, no 0.12-style diagnosis, no predictions beyond D18's pre-registered bands. Its cases and entries are written AFTER run 6 (Task P.4). The set table gains `tails_by_role: bool` and `routed_material: bool` beside `cases_written`.
+- **The tail comes from the roles, not a sidecar** (`[2026-10-24, scoped /review-plan]`: the simplicity lens; a `boundaries.json` beside the scripts would also be picked up by `script_paths()` and the builder as a script). The brief names the next patient's role `next_patient`; for a `tails_by_role` set the reference tail start of an axis script IS the index of its first `next_patient` line, derived by a script in the gitignored `.cursor/loops/` that prints ids and integers only and is copied into `REFERENCE_TAIL_STARTS` for axis scripts only (a `next_patient` line without the axis is a lint failure; `[2026-10-24, peer round 27]` an axis script with no `next_patient` line is a boundary NEGATIVE — its row is None, as the existing contract has it — not a failure). Cost, stated: an absent fact on the clinician's welcome line lies before the tail and is never R3. A `next_patient` line before any welcome is consistent (the tail is that line). A test pins the table rows equal to the role-derived tails, so the copy is machine-checked. `[2026-10-24, peer round 25]` For a `tails_by_role` set the lint `test_every_material_absent_fact_lies_in_a_tail` (`test_validation_scripts.py:678-683`) is NOT applied — a material absent fact on the clinician's welcome line may precede the role tail (it is then never R3, as stated); "every fact at or after the tail is `absent`" still applies.
+- **The brief** = `validation/heldout-2/SPEC.md` with these changes, the diff recorded on Task 0.17 and the brief re-checked against every frozen list (closings, greetings, correction markers, both hedge lists) as Task 0.10's attempt 2 was: (1) the "uncued patient lines" item is removed, and the sentence "that is the main gap this set measures" (`SPEC.md:9`) is rewritten — the main gap this set measures is the uncued CLINICIAN line; a new rule says every material fact on a non-clinician line sits in a routed clause, worded for the author as "say it with one of the cue phrases of a section open to that speaker" (the cue table was already in heldout-2's brief, so nothing new leaks) — uncued CLINICIAN lines stay (D1's test), as do varied closings and greetings, their negatives, fixes, doses, afterthought clauses and free-phrased doubt; (2) the next patient's role is `next_patient`, used for no one else; (3) 3 to 6 facts per script (the ceilings count facts; `heldout` had 76 facts over 22 scripts, `heldout-2` 233); (4) 20–25 scripts (`[2026-10-24, peer round 25]`: both bounds — 20–25 scripts, 3–6 facts per script — are metadata-only lints on Task 0.17, since the composer never inspects the scripts), ids `h3-NN`, the author invocation exactly as Task 0.10's record (`claude -p`, `--restricted --safe-mode --strict-mcp-config --disallowedTools WebSearch Agent --permission-mode acceptEdits`, `--output-format stream-json --verbose`, an empty folder outside the repository, `author-prompt.txt` and the log kept with the set, the user name redacted).
+- **Lints, the only readers before run 6:** the existing script lints; `_uncertain_facts_in_unrouted_clauses` generalised to every material `present` / `negation` / `laterality` / `dose` fact on a non-clinician line for `routed_material` sets (its result stays `(encounter id, fact index)` pairs); `[2026-10-24, peer round 26]` content-free failure output BY CONSTRUCTION, not by assumption — pytest's rewritten assertion explains a failure through the objects in the expression (`where None = EncounterScript(...).conditions` prints the script's lines, truncated, even under `-q`), and a `load_script` failure's pydantic message carries a truncated `input_value`; so every held-out lint asserts on a collected list of id-stamped codes (a test-side `_script_problems(path) -> list[str]`: `h3-07:no-conditions`, `h3-07:fact-3-unrouted`, …), never on a `script`, `fact` or `line` object, and a load failure is reported as `load_script`'s own `ScriptError` text (`[2026-10-24, peer round 27]`: already sanitised — `hide_input_in_errors`, unknown keys and `voice_slots` roles masked as `<key>` by `_validation_error_text`, `validation.py:411-424`, pinned by `test_an_unknown_key_is_never_printed`; never a raw `ValidationError`, whose `loc` can hold an author-typed key); `[2026-10-24, peer round 30]` the displayed boundary is a RUNNER, not a rule over the test module's syntax (rounds 27–30 each found a sink or a binding the previous rule missed — `assert a == b`, `pytest.fail`, a helper outside any test, `warnings.warn`, `logging`, a `parametrize` `ids=` callback, a list appended to after an allow-listed helper returned it — and a syntax rule always has a next one): whenever an `h3-` script is in the tree the composer runs the suite ONLY through `scripts/lint-held-out-set.py <set folder>` (a C1 operating rule; the shell history is its evidence), which runs pytest in a child process whose stdout and stderr are redirected at the OS level to a gitignored `.cursor/loops/lint-<set>-<timestamp>.log` the composer never opens (the author-session log's treatment), with `-p no:terminal -p no:cacheprovider` and a plugin that writes to the parent's console ONLY each test's node id (a param id that is not a `syn-` / `hld-` / `h2-` / `h3-` stem or a set name is replaced by its index), its outcome, and the `problems` entries of `user_properties` — the helpers' id-stamped codes, recorded by the lints through `record_property` — each validated at the console boundary against the closed grammar `<encounter id>:<code>[:<int>]` (`[2026-10-24, peer round 31]`: `record_property` appends ANY object and a failed report keeps it, so the channel is closed by the plugin, not by the lints: the id a `syn-` / `hld-` / `h2-` / `h3-` stem, the code from the fixed set the plugin ships, the optional integer a fact or line index; anything else prints the fixed line `problems-malformed <node id>` and fails the run); a failure carries no longrepr, captured section, warning or log record to the console; and the parent prints fixed status lines — `collected <n>`, `ran <n>`, `passed <n> failed <n> errored <n>`, `exit <code>` — propagates the child's exit status as its own, and treats a missing or short count, a collection error, a plugin exception (caught and reported as `plugin-error`) or premature termination as a failure with a fixed code (`[2026-10-24, peer round 31]`: a configuration, collection or internal error ends the child without per-test reports, so outcomes alone never establish that the suite ran). Pinned by: a plugin test fed constructed reports (a sentinel in the longrepr, a captured section, a warning, a log record, a param id, a non-`problems` property, `[2026-10-24, peer round 31]` a sentinel INSIDE `problems` and a helper result mutated before `record_property` — none printed; valid `problems` codes printed, on a FAILED report too) and an end-to-end subprocess test over a `tmp_path` set with a generated test module whose assert, `warnings.warn`, `logging.warning`, `print`, `ids=` callback and appended helper result all carry the sentinel at three positions — absent from the child's console bytes, present in the log file; `[2026-10-24, peer round 31]` the same test asserts the generated module's expected node ids, outcomes and exit status, and three abnormal runs — a collection error, a plugin exception, a killed child — each visibly failing with a fixed code and no diagnostic text; removing any sentinel case from the generated module fails the test; and the in-process sentinel test over the helpers themselves (the codes are content-free): a `tmp_path` set broken four ways (an unknown key that IS the sentinel, conditions omitted, a material patient fact unrouted, a fact whose tokens are absent from its line), a reference-document mismatch fed to `_reference_mismatches`, a tail row that disagrees with the roles fed to `_tail_problems`, the sentinel at the start, middle and end of lines — the sentinel absent from every returned string and from each `ScriptError`'s text; the role lint (`[2026-10-24, peer round 27]`: three one-way rules — a `next_patient` line ⇒ the axis `end_and_new_patient`; a non-null tail ⇔ a `next_patient` line; an axis script with NO `next_patient` line is a boundary NEGATIVE, which the brief requires (`SPEC.md`'s "Negatives for the next patient") and the existing table contract keeps as a None row — it stays in D14's recorded reference-boundary comparison, where a non-None reference boundary on it is a false-boundary event; at least one axis script with a tail, else recorded as a finding that makes the R3 prior vacuous); the table test (rows equal the role-derived tails). A lint failure goes back to the author as the lint's message, never a script edit by the composer. The D14 reference-boundary check is recorded, never fed back. `[2026-10-24, as built in Task 0.17, review round 32]` The runner as built differs from the words above in six places, each recorded on Task 0.17: the child runs `-v -rA -p no:cacheprovider` and KEEPS pytest's terminal report, which the OS-level redirect sends to the log only (with `-p no:terminal` pytest writes a failure's text nowhere, so the log could not be the diagnostic record and the end-to-end test could not show the sinks diverted there); a load failure is the code `<id>:load-error`, never `ScriptError` text, and tokens missing from their line fail the loader (there is no `fact-tokens-absent` code); the grammar's id is a stem OR a set name (`heldout(-N)?`, `scripts`: the set-level codes `size-out-of-bounds` and `bad-id`); the malformed line is printed `FAIL problems-malformed <node id>`; the status lines add `skipped <n>` and a first line `log <file name>`; a passing test's node id is printed only with `--verbose` (the counts prove completion). Since round 32 the log lives in `.cursor/loops/held-out-lint/`, the plugin is loaded by its full path, `--tests` refuses an entry starting with `-`, and a child killed at the timeout exits 9.
+- **Why a PASS still means something, and what it does not mean:** the set is linted into the product's routing scope for PATIENT facts, so it no longer tests unrouted patient speech — that residue is `heldout-2` (reported) and shadow use (the practitioner accepted this scope 2026-10-24, scoped review); it still tests D1 on uncued clinician lines, the boundary on free closings and greetings, the carry, doses, afterthought clauses and the hedge mark on free phrasing — and D18 pre-registers its falsifiers.
+
+### D17 — Uncertainty on the blind set is reported, not gated (the practitioner's decision, 2026-10-24)
+- **Decided (in chat, the recommended option):** rule v2's set layer gains a per-set `require_uncertainty_surfaced` that OVERRIDES the existing top-level field (`PassRule.require_uncertainty_surfaced`, `validation.py:1740`; default: the top-level value; false for `heldout-3`); `[2026-10-24, scoped /review-plan]` the set row reaches `rule_failures`, `run_passed` and `render_report`, which today take no set — under schema 2 `main` requires `--set {scripts,heldout,heldout-2,heldout-3}` (P.1 builds into arbitrary folders, so the name cannot come from the path) and refuses an unknown name. The report prints "Surfaced / expected" per set. Reason: 13 of 19 held-out doubts were phrased outside any lexicon; the mechanism is gated on the 50 (9 of 10 listed). Recorded as a loosening relative to the gate that failed, controlled by the register row (the clinician's review of the note).
+- **Rejected (critic, HIGH):** deciding "tone only" by the product lexicon instead of `REFERENCE_HEDGES` — circular ("whatever the product cannot see"); the bare-modal fact stays a fail with D5's reason. **Rejected (critic, MED):** a new residue class for a hedge the recogniser split from its fact — the reference-transcript differential D8 rejected; the two facts stay D5's named residue, reported.
+- Options not taken: a literal R2 ceiling for `heldout-3` of 75% of its `expect_uncertain` facts, fixed after its lints; the ceiling of 1 as ratified (fails on phrasing alone).
+
+### D18 — Pre-registered expectations for `heldout-3`, committed before the author runs (Task 0.16)
+`[2026-10-24, scoped /review-plan]` Rewritten as falsifiable bands. **The pre-registration is the commit that carries D12–D18 and Task 0.16; its hash is recorded on Task 0.17 before the author session starts.** The set is unread, so nothing names an id.
+- **Gate falsifiers (each one FAILS the v2 gate on `heldout-3`):** any silently omitted material fact, on ANY speaker's line, that R1 does not clear (`[2026-10-24, peer round 25]`: a fact whose tokens took a word error on every alignment and that the reference pipeline gets right is R1 and consumes R1's ceiling of 1 — `max_silent_omissions` 0 applies to the residue-adjusted count; expected 0 after R1); any material fact `wrong` without a review mark — a confident recogniser error (expected 0–2 over the set: `heldout` had 2, `heldout-2` 0); R1 above 1 fact (expected 0–1); R3 above 1 encounter (expected 0–1); any `wrongly_present` material fact outside R3 (expected 0).
+- **Reported, not gating (outside the band = a finding, never a rule edit):** the new code's load median 1–5 and maximum ≤ 9 per script; the surfaced-doubt rate 15–40% of `expect_uncertain` facts; the D14 reference-boundary mismatches 0–2 scripts; R2 any count (reported under D17).
+- **The prediction:** v1 FAIL (any R1 or R3 event fails v1; expected ≥ 1 event); v2 PASS only if no falsifier fires — a draw on the recogniser, stated in advance: a v2 FAIL caused ONLY by unmarked confident errors leads to the larger-model plan (Excluded here, "revisit if run 6 exceeds the R1 ceiling") and to NO rule change; a FAIL on a silent fact is a finding whose component P.4 establishes from the evidence (`[2026-10-24, peer round 26]`) — the warning predicate (D1), the routing rule (D16), the recogniser losing the routing cue while keeping the fact's tokens (neither R1 nor a lint failure), segmentation, or attribution (D11) — never assumed from the speaker.
+- `heldout-2` stays reported as the out-of-scope control; a `heldout-3` PASS is reported with D16's scope qualifier.
+
+## Schema / Data Changes
+- `[2026-10-23]` **The set folder** gains `enrolment/slot-<n>.wav` per clinician voice slot (D11); `HarnessInputs` gains `enrolments` and `attribution`; `EncounterOutcome` carries the clinician seconds labelled other and the other seconds labelled clinician; `validation_set.ENROLMENT_PASSAGE`. No change to any stored file of the app.
+- **No new stored field.** One new review code is persisted in `note.enc`'s `note_warnings`; 0.3.2+ read them forward-tolerantly, each as an `unknown_review_warning` with its fields kept, grouped under that one code and cleared by that build's Acknowledge all (the rollback line says so).
+- **`PassRule` schema 2:** a new rule file with per-set class ceilings; schema 1 files read unchanged; `extra="forbid"` kept, so a schema-1 file with ceiling fields is refused.
+- **New frozen constants:** `validation.REFERENCE_HEDGES`; the widened `HEDGE_PHRASES`; under 0.3 (c) only, `ACKNOWLEDGEMENT_TOKENS` and D1's two exemption predicates, exactly as measured.
+- `_FactState` gains `warned_v033` (D7) and D8's `marked` (the deletion-edge flags were dropped 2026-10-23; at most 2^10 states per cell); `_WordInfo` gains `review_marked` (D8's R1); `_Judged` gains `warned_v033`; `FactOutcome` gains `silently_omitted_v033` (D7) and its residue-class fields (D8); `EncounterMetrics` gains `silent_omissions_v033` and the residue-adjusted counts read only under schema 2 (raw counts unchanged); `validation.REFERENCE_GREETING_LINES` and `validation.REFERENCE_TAIL_STARTS` (D8's R3); `validation.reference_document` replaces the fixture's `build_document`. `[2026-10-24]` `validation.REFERENCE_GREETING_LINES` is DELETED (D14, Task 0.17); `HeldOutSet` gains `tails_by_role` and `routed_material` (D16); rule v2's set rows gain an optional `require_uncertainty_surfaced` overriding the top-level field, and `main` a required `--set` under schema 2 (D17); `_WordInfo.warned` absorbs D13's predicate (no new flag).
+
+## Config / Environment / Deployment Impact
+- No environment variable, network, model-pack or dependency change. The harness now also needs the speaker-embedding model (`speaker-embedding`, already in the model pack and in `setup-models.py`'s default run); a refusal names it when absent (D11).
+- Release: 0.3.4 built of record by CI's `Release` workflow on the H4 commit after P.1 (attested; a `docs/release/pilot-builds.md` row). Same AppId, in-place upgrade. Install at a pilot-allowed point (never between consultations).
+
+## Critical Constraints
+1. **C1 — The agent never opens, reads, plays or describes any real session, kept recording, transcript, note, Past-sessions entry or learned config.** Synthetic sets and integer counts only; the kept-recording measurement is a practitioner-run script that prints integers per session ordinal and is a separate entry point from the id-printing synthetic script.
+2. **C2 — Rule v1's file, `validation/config/section_cues.json`, and the facts of the 50 scripts and of `validation/heldout` never change.** Rule v2 is a NEW file ratified on Task 0.7 (done) before Task 0.12; metric amendments are dated practitioner decisions before the run, pinned both ways; a bad number after a run is a finding (pilot Constraint 12, clinic-smoke D9).
+3. **C3 — The lexicons are frozen in one dated commit (Task 0.9) before `heldout-2` is authored and before 0.12's diagnosis is read.** Any later change is a new dated decision with a repeated run. The phrase lists are unchanged (0.5 (a)).
+4. **C4 — Fail toward inclusion and never silently.** The new warning never deletes or re-routes; it is review severity and separately acknowledged; the next-patient boundary is unchanged.
+5. **C5 — One function per rule, shared by product and harness:** the next-patient boundary (`note_config.next_patient_boundary`), the hedge scope (`segment_hedged`, with `script_line_hedged` pinned equal on built documents), "joined mid-sentence" (`note.ends_mid_sentence`), the omission predicates (imported by `validation.py` as `_omission_flag_token` is), the reference transcript (`validation.reference_document`, imported by the fixture).
+6. **C6 — No import of `voice_commands` from `note`, `note_config`, `note_fill` or `note_check`.**
+7. **C7 — The live new-consultation warning is unchanged** (0.5 (a)).
+8. **C8 — Nothing per consultation enters a tracked file** (clinic-smoke D12). Run records are ids and counts; kept-recording measurements are aggregates (n, median, max).
+9. **C9 — One `/execute-loop` at a time on `main`; isolation none.** Builds run in the main checkout (the `.venv` is an editable install of main's `desktop/src`). `main`'s version is never lowered.
+10. **C10 — Practitioner-run steps run from a normal terminal with the installed app closed.** Nothing checked from an agent shell counts. Any record script that writes into this plan asserts `"\x00" not in text` and `"\r" not in text` first (`docs/lessons.md` 2026-10-03).
+11. **C11 — `test_shadow_exits.py`'s counters are unchanged.** No new text widget, clipboard, drag, list, combo box or plaintext kept-recording reader; the new check functions and `note_drift`'s per-code counts fall outside every counter (verified 2026-10-22).
+12. **C12 — `heldout-2` is read by no build leg before Task 0.12 and is never measured in Task 0.2.** Its author session runs in an EMPTY folder outside the repository holding only the behaviour spec and one format example, with no repository access; its transcript is kept with the set's commit as the isolation record. Task 0.11 is built before the set exists and tolerates its absence. `[2026-10-24]` `heldout-3` (D16) is read by NO leg before run 6 — no cases, no divergence entries, no diagnosis, no predictions beyond D18's class priors; its only readers are the lints and the sidecar copy (ids and integers); its diagnosis is Task P.4, after the run.
+13. **C13 — No cloud sessions** (practitioner decision 2026-09-05). The findings register stays content-free (month dates, closed vocabularies; `test_pilot_docs.py`).
+14. **C14 — The harness's attribution policy is a declared policy** (D11): changed only by a dated amendment before a run, reproducible the old way by `--attribution clustering`; the enrolment vector lives in this process only (never a profile store); `ENROLMENT_PASSAGE` holds no clinical content; `ATTRIBUTION_THRESHOLD` is never tuned by this plan.
+
+## Validation / Verification
+**Suites.** `desktop/`: `ruff check . && mypy && pytest` (the composer runs the suite; verify=composer). `extension/`: `npm run qa` (version only).
+
+**Read-only baselines** (dry-run 2026-10-22 at `4ff5f26`):
+
+| Check | Baseline | Becomes |
+|---|---|---|
+| `NOTE_WARNING_SEVERITY` codes | 18 | 19 |
+| `SEPARATELY_ACKNOWLEDGED_CODES` | 4 | 5 |
+| `ACKNOWLEDGE_ALL_TOOLTIP` pin `test_ui_models.py:1979-1985` | quotes `[after possible next patient]` | quotes `[next patient?]` and the new name |
+| `HEDGE_PHRASES` | 16 | 33 (Task 0.9, 2026-10-23); `REFERENCE_HEDGES` 52 |
+| `CLOSING_PHRASES` / `GREETING_PHRASES` | 14 / 12 | unchanged (0.5 (a)) |
+| Report separator `"---|" * 25` at `validation.py:1943`; `cells = ["-"] * 18` :1956; the Facts table's 9 columns :2044 | 25 / 18 / 9 | each grows by the Phase 4 columns (counts pinned in Task 4.3) |
+| `PassRule.schema_version` | `Literal[1]` | `Literal[1, 2]` |
+| Harness attribution (D11) | plain 2-means, the track names the cluster | the enrolled pass, confirmed by the track; `--attribution clustering` = today |
+| Set folder contents | `<id>.json` / `.wav` / `.txt` triples | + `enrolment/slot-<n>.wav` per clinician slot (a directory; `find_encounters` skips it) |
+| `run-validation.py` refusals | the list in `validation-harness.md` | + the speaker model, a needed slot WAV missing, one that cannot be enrolled |
+| `SCRIPT_CASE_PREFIX` | `"hld-"` | per set: `hld-`, `h2-` (`[2026-10-24]` + `h3-`; `HeldOutSet` gains `tails_by_role`, `routed_material`) |
+| Held-out folders | `validation/heldout` (22) | + `validation/heldout-2` (`[2026-10-24]` + `validation/heldout-3`, 20–25, unread before run 6) |
+| `rule-v2.json` set rows (`[2026-10-24]`) | — | four: `scripts`, `heldout`, `heldout-2`, `heldout-3`; `heldout-3`'s `require_uncertainty_surfaced` false; R3 per encounter; `--set` required |
+| `REFERENCE_GREETING_LINES` (`[2026-10-24]`) | 6 run-of-record + 14 `hld-` + 15 `h2-` rows | deleted (D14, Task 0.17) |
+| Version | 0.3.3 | 0.3.4 |
+
+**Per-phase checks.** The tests named on each task; every new predicate pinned both ways (fires / does not fire), every ceiling pinned at the boundary (n = ceiling passes, n + 1 fails), every exact-code-list test in Key Findings re-pinned deliberately (not loosened).
+
+**Acceptance:** P.1 read against Task 0.12's written predictions, and the 0.8 gate met; the P.2 smoke on the installed 0.3.4. If either fails: the result is a recorded finding, P.5 stays (a), and the next cycle is a new plan. `[2026-10-24]` **Restated by D15:** P.1 read against predictions v1 and v2 (the seen sets) and D18's bands and falsifiers (`heldout-3`); the gate = a v2 pass on the 50 and `heldout-3`, `heldout` and `heldout-2` reported; the P.2 smoke unchanged. If the gate fails: a recorded finding, P.5 stays (a), the next cycle a new plan — with D18's stated consequence for an unmarked-error-only failure.
+
+## Deferred / Out of Scope
+See the Planning Extraction Summary (the canonical list).
+- **Deferred:** the practitioner's own phrases; the four items retained on `plan-validation-pass.md`; the ui-refresh adoption at its merge.
+- **Excluded:** a larger model; edits to rule v1, the cue file or the seen scripts' facts; widening from seen failures; the guard's constants; routing changes; a sub-reason field; a per-warning line number in review copy. `[2026-10-24]` deleting D1's exclusion of already-flagged lines (D13); a product-lexicon definition of "tone only" and a split-hedge residue class (D17); re-setting the seen sets' ceilings to the predictions (D15).
+
+## Current State / Handoff Note
+- Loop config: executor=claude-p model="claude-opus-5-5" effort=high profile=default; peer=codex model="gpt-6-astra" effort=medium; architect=off; cadence=every-phase; caps=review:3,peer:5; gates=executor; cap-raise=executor; high-auto=on; peer-max=12; notify=action-only; scope=all; autocommit=on; isolation=none; merge=off; perms=scoped; liveness=10; monitor-delivery=auto; verify=composer.
+- COMPOSER RUN-STATE: iso=validation-run6-20261024-125936-4d21; runkeys stage-1=Phase 1, stage-2=Phase 3, stage-3=Phase 4, stage-4=Phase 5, stage-5=H1-H4; started 2026-10-24 by the practitioner's /execute-loop (wizard confirmed); current: stage-4 closed (Phases 1, 3, 4 and 5 committed locally); next stage-5 (H1-H4).
+- Retro report: .cursor/loops/retro-validation-run6-2026-10-24.md (2026-10-24)
+- **Order:** 0.2 (measure) → 0.2a (the same audio counts under an enrolment, D11) → 0.13 (the D1 decision) → 0.9 (dated commit) → 0.14 (the harness enrols; its own dated commit) → 0.11 (fixtures over a set table, before the set) → 0.10 (`heldout-2`, independent author, empty folder) → 0.12 (diagnosis, the `h2-NN` cases and divergence entries, predictions; frozen) → Phases 1–5 → H1–H4 → P.1 → H5 → P.2 → P.3.
+- Line references were taken at `0be35d7`; `desktop/src` is unchanged at `4ff5f26`. A build leg re-locates symbols before editing.
+- `[2026-10-22]` Decisions taken ("take all the recommendations"): 0.1 median ≤ 2, maximum ≤ 5; 0.3 (b), (c) only if over budget; 0.4's rule (values owed after Task 0.2); 0.5 (a); 0.6 lexicon (b), scope (ii); 0.7 (b) with the written override; 0.8 all three sets. Recorded on each task. Later the same day: "joined" = `note.ends_mid_sentence` (D5).
+- `[2026-10-22]` Second `/review-plan` (Fable 5.1): 36 lens findings reconciled — the Task 0.10/0.11 order, the harness's script-side hedge term, the narrowed missed-speech credit, the `[gap?]` mark in place of a line number in copy, rule v2's set layer with literal ceilings, `reference_document` in the package, the rename ripples, the exact-code-list tests, the register and document additions, the kept-recording script's refusal order and enrolled-only median, the two lessons. Nothing built; nothing committed.
+- `[2026-10-22]` Cross-family plan peer pass (codex `gpt-6-astra` high, `/peer-loop`, cap 5): rounds 1–5 recorded in the Review Findings Log; 23 build-affecting + 2 record-only findings, all verified and amended. Round 5 still found one build-affecting finding (PR-MED-022), so the pass stopped AT THE CAP; at the practitioner's word a fresh one-round pass (round 6) found NO findings — converged.
+- `[2026-10-23]` Task 0.2 measured (record on the task). **The build PAUSES before Task 0.9 on two practitioner decisions:** (1) 0.4's "If no pair fits" — on real speech (n = 2) (b) alone reaches 6 and no threshold pair keeps both codes within the budget; (2) D1's premise — at audio level the five held-out silent omissions sit on clinician lines the speaker step gives to the other voice, so `clinician_line_omitted` as designed credits none of them (any-speaker would, but real speech has ~110 uncovered other-voice lines per consultation). `syn-22` is a recogniser drop (R1). The missed-speech warning cannot be exercised by the synthetic sets (no textless segments).
+- `[2026-10-23]` The practitioner's decisions: (1) 0.4 → option (2), the missed-speech warning leaves 0.3.4; (2) **D1 is re-planned** — a scoped `/review-plan` of D1 in Plan Mode with Fable, over Task 0.2's numbers (candidates named: enrol the synthetic clinician voice so the harness attributes as the app does with an enrolment; or a narrow predicate for other-voice lines). The re-plan also applies decision (1)'s sibling reconciliation. Tasks 0.9 onward wait on it.
+- `[2026-10-23]` Scoped `/review-plan` of D1 (Fable 5.1): D1's predicate unchanged; D11 added (the harness attributes with an enrolment of the synthetic clinician voice, the builder's passage per voice slot; `--attribution clustering` keeps runs 1–5's reading); Tasks 0.2a (measure first, scratch), 0.13 (the gate, written before the numbers) and 0.14 (the harness path, its own dated commit before 0.11) added; decision 0.4 (2)'s sibling sweep applied (D2, D3, D7, Phase 2, Task 0.9, 0.12, 4.2, P.1, P.2, Schema, C3, C4, the Validation table, the forecast, Excluded). Nothing built.
+- ~~Next: the agent writes Task 0.2a's scratch (`--enrol`), the practitioner runs it; then 0.13; then Task 0.9.~~ Done 2026-10-23.
+- `[2026-10-23]` Task 0.2a measured (record on the task); decision 0.13 GATE MET under the practitioner's outcome reading (D1 stands; D11 built in Task 0.14). Next: Task 0.9 (the dated lexicon commit), then 0.14, 0.11, 0.10, 0.12.
+- `[2026-10-23]` Task 0.9 built (record on the task): `HEDGE_PHRASES` 33, `REFERENCE_HEDGES` 52, the builder moved, the R3 tables, `hld-19` reconciled; uncommitted. Reviewed; codex peer pass rounds 11–15 CONVERGED (6 LOW fixed); /simplify round 16 (1 LOW applied). The practitioner kept all three risky phrases and gave the word to commit (2026-10-23); committed. Next: 0.14.
+- `[2026-10-23]` Task 0.14 built (record on the task): the harness enrols each synthetic clinician voice from `<set>/enrolment/slot-<n>.wav` and confirms it by the label track; `--attribution clustering` keeps runs 1–5's reading; uncommitted. Codex peer pass rounds 17–21 CONVERGED; /simplify round 22 clean. **Two practitioner words owed:** commit Task 0.14; and PR-LOW-016's deferral to Phase 3 (pre-existing report cells). Next after the commit: 0.11.
+- `[2026-10-23]` The practitioner gave both words: Task 0.14 committed and pushed; PR-LOW-016 deferred to the report work (Task 4.3 in this plan's numbering). Next: 0.11.
+- `[2026-10-23]` Task 0.11 built (record on the task): the held-out fixtures and lints run over a set table, `heldout-2` (`h2-`) unwritten until Task 0.12 (`cases_written=False`: lints only); uncommitted. Codex peer pass round 23 converged with no findings. **Practitioner word owed:** commit Task 0.11. Next after the commit: 0.10 (`heldout-2` by an independent author).
+- `[2026-10-23]` The practitioner gave the word: Task 0.11 committed and pushed. Next: 0.10.
+- `[2026-10-23]` Task 0.10 authored (record on the task): `validation/heldout-2/` (22 `h2-` scripts, the brief, the isolation record) from a blind restricted author session, attempt 2 — attempt 1 set aside unread after the brief was found to name frozen-list words; lints green first time; uncommitted. **Practitioner word owed:** commit Task 0.10. Next after the commit: 0.12 (diagnosis, the `h2-NN` cases, predictions).
+- `[2026-10-24]` The practitioner gave the word: Task 0.10 committed and pushed. Next: 0.12.
+- `[2026-10-24]` Task 0.12 built (record on the task): the `h2-NN` cases, the R3 tables' and divergence dicts' `heldout-2` entries, the difference check (clean), the diagnoses and the frozen predictions; uncommitted. **The Task 0.8 gate is predicted NOT met** (`heldout` and `heldout-2` fail under v2). **Practitioner word owed:** commit 0.12, and whether to build Phases 1–4 as planned or re-plan first.
+- `[2026-10-24]` The practitioner gave the word: Task 0.12 committed and pushed (/simplify round 24: no findings). Phase 0 is done. **Still owed:** whether to build Phases 1–4 as planned against the predicted failure, or re-plan first.
+- `[2026-10-24]` **Re-plan after the predictions (Plan Mode, Fable 5.1; approved by the practitioner through ExitPlanMode):** D12–D18 added; D4, D7, D8, D9 (superseded), the Goal, the Honest forecast, Agreed Scope, C12, the Excluded list and Tasks 4.1–4.4, 5.1, P.1, P.3 amended; Tasks 0.15–0.17 and P.4 added. The practitioner's two decisions (in chat): the gate is the 50 plus a blind `heldout-3`, with `heldout` and `heldout-2` reported in full (D15); unsurfaced doubt on the blind set is reported, not gated (D17). Next: a scoped `/review-plan` over D12–D18 and the amended tasks, then the codex plan peer pass; then Tasks 0.15 → 0.16 → 0.17, each committed on the practitioner's word; then `/execute-loop` for Phases 1, 3, 4, 5 and H. `[2026-10-24, scoped /review-plan]` Hardened in place by a scoped `/review-plan` (Fable 5.1; three read-only lenses — coverage, practicality, simplicity/risk — 39 findings reconciled): the sidecar dropped for role-derived tails; the D14 lint became a recorded check; D13 stated from the note alone; D17's `--set` and the set row's reach; D18 as falsifiable bands with the pre-registration commit; the greeting table deleted in 0.17; every old-gate sibling dated (Flow 4, Task 0.8, the forecast's PASS line, the Validation table and Acceptance, the Follow-Up note, Schema, P.1, P.3, `plan-pilot.md` P.5 and Constraint 12). Two practitioner answers (2026-10-24): D13/D14 stay in the gate, disclosed; `heldout-3`'s narrower scope accepted. Task order: 0.15 → 0.16 (bands; the pre-registration commit) → 0.17 (`heldout-3`). Plan edits uncommitted — **practitioner word owed:** commit the re-plan (both plan files) — the codex plan peer pass is accept-closed at cap 7 (2026-10-24; rounds 25–31 applied).
+- `[2026-10-24]` Task 0.15 recorded and committed on the practitioner's word ("do task 0.15, task 0.16 then task 0.17"). Predictions v2 equal the expected numbers on all three sets: the 50 PASS; `heldout` FAIL on 2 unmarked wrong facts plus R2 4; `heldout-2` FAIL with 25 silent facts on patient lines plus R2 9. The only D14 mismatch is `hld-10`. `C:\run6-sets-012\` may be deleted. Next: 0.16 (the pre-registration commit), then 0.17.
+- `[2026-10-24]` Task 0.16: D18's bands are written on the task and committed. That commit is the pre-registration, and its hash goes on Task 0.17 before the author runs. Next: 0.17.
+- `[2026-10-24]` Task 0.17 built and committed on the practitioner's word (record on the task): the test side and the blind runner; review rounds 32–36 over the runner (the codex pass converged at round 36) and `/simplify` round 37 (1 LOW applied); `validation/heldout-3/` with 23 scripts from a blind restricted author session; the lints green through the runner on the first run (8394 passed). From now on, while an `h3-` script is in the tree, pytest runs only through `scripts/lint-held-out-set.py validation/heldout-3`; every build leg's QA step must use it (C12). Phase 0 is complete. Next: `/execute-loop` for Phases 1, 3, 4, 5 and H (the loop config above), on the practitioner's word.
+- `[2026-10-24T13:28+11:00]` **stage-1 rx1 (executor) — Phase 1 BUILT, suite owed to the composer.** Tasks 1.1–1.4 are built and marked 🟨, with a record on each task. ruff and mypy are clean (66 source files). pytest was NOT run: the suite belongs to the composer, through the blind runner `scripts/lint-held-out-set.py validation/heldout-3`. No MUST-PAUSE: nothing changed WHAT is built.
+  - **What was built:**
+    - Check 4's second code `clinician_line_omitted` (review severity, separately acknowledged), from one function `note_check.clinician_line_omissions` over the shared coverage rule `_covered_words`. The harness reaches it through `check_note`; it runs after the first code and before Check 6, and stops at the boundary.
+    - The copy, the acknowledgement name, `OMISSION_CODES`, the count line and the `[next patient?]` mark.
+    - The 0.3.3 forward-tolerance pin.
+    - `replay_kept`'s per-code count and column.
+    - (c) is not built, per decision 0.13 GATE MET.
+    - C6 and C11 hold: no `voice_commands` import, and no new placement, clipboard, list, combo or text widget.
+  - **Tests re-pinned deliberately (the composer's first suite run will show if any were missed):**
+    - `test_note_matrix.py`: the exact code lists of ex-small-talk, ex-next-patient-greeting, ex-head-of-recording-greeting, ex-close-and-greet-one-segment and ab2-over-omission; Axis C's present-trigger reviews; prefill-partial; declined.
+    - `test_save_as_ratification.py` and `test_note_pipeline.py`.
+    - `test_note.py`: the registry, 20 codes.
+    - `test_ui_models.py`.
+    - `test_ui_screens.py`: the base fixtures' unquoted clinician lines now draw the new code. `_acknowledge_everything` and the Save flows acknowledge it, and the Acknowledge-all tests now assert it stays open.
+    - `test_ui_prose_stage.py`, `test_ui_note_editor.py` and `test_replay_kept.py`.
+  - **Not re-pinned, worth watching in the suite run:** `test_note_check.py::TestCheckNote` and any other exact-code list over a fixture with an uncovered, content-bearing clinician line.
+  - **Observations (not pauses):**
+    - Coverage is coordinate carriage (D1). So a clinician line that triggers an autofill line draws the new code even when that autofill line is confirmed: the config line covers nothing.
+    - The registry holds 19 codes at HEAD (the unknown-version code included) and 20 now. The Validation table's "18" is the count without the unknown-version code.
+    - The documents that quote the old mark or the count line (`docs/design-system.md`, the review guide, `docs/testing/kept-recordings.md`) are Task 5.1's.
+  - **Blind rule:** no file under `validation/heldout-3/` was opened, read, listed or returned by a search. Searches stayed in `desktop/` and named files, and the only held-out script read was the seen `validation/heldout/hld-19.json`.
+  - **Next round number:** 38 (loop-history-check OK, 37 headings).
+  - **Next:** the composer runs the desktop suite through the blind runner, then resumes this executor with the results to fix any failures and run `/review-loop` (round 38 onward).
+- `[2026-10-24T13:44+11:00]` **stage-1 rx2 (executor) — the suite's 3 failures fixed; `/review-loop` CONVERGED in round 38.** The suite still needs a re-run by the composer. ruff and mypy are clean (66 source files). No MUST-PAUSE.
+  - **The composer's rx1 run:** 8434 collected, 8422 passed, 3 failed, 9 skipped. All three failures were in `test_replay_kept.py::TestMain`: `test_with_enrolment_the_clinician_is_the_attributed_label`, `test_an_entry_with_no_saved_note_is_replayed_with_a_dash` and `test_the_suspect_count_is_the_new_transcripts_own`. Each pinned the row's END at the suspect cell, while Task 1.4 appended "Clinician lines omitted" as the new last column. The TESTS were wrong; Task 1.4's line leaves the column's place open, and the rx1 report pins put it last. Their endings now carry the new cell, which is 0 in each: either no clinician is set (the dash test and the suspect test), or there are no reviews at all (the enrolment test).
+  - **Round 38** (record in the Findings Log): 0 CRIT / 0 HIGH / 0 MED / 3 LOW, all applied.
+    - LOW-001: the `eligible_utterances` docstring and a test comment said "every mark before the speaker"; now "both front marks", since the suspect prefix stays after the speaker.
+    - LOW-002: the held-out test's function-local imports, hoisted into the module's import block.
+    - LOW-003: the typed-over test regains its check of the empty filter beside a replaced line, by adding lines 3 and 5 back first.
+    - The round converged in round 1 of the cap of 3. The history check is OK: 7 round entries and 38 headings, so the next round is 39.
+  - **Owed:** the composer's re-run of the full desktop suite through the blind runner. These tests changed in rx2: `test_replay_kept.py` (3), `test_note_check.py` (imports only), `test_ui_screens.py` (the typed-over test) and `test_ui_models.py` (a comment). Per the loop config, the codex peer pass over Phase 1 (cadence every-phase) is the composer's to schedule.
+  - **Proposed commit message for Phase 1** (the composer's to commit, after a green suite):
+    ```
+    Widen Check 4 to any uncovered clinician line and shorten the chooser marks (0.3.4 Phase 1, Tasks 1.1-1.4)
+
+    - note_check: clinician_line_omissions, Check 4's second code
+      clinician_line_omitted (review, separately acknowledged), one per
+      wholly uncovered line the confirmed clinician said that holds a
+      content word and draws no high_risk_omission, before the
+      next-patient boundary; one coverage rule (_covered_words) shared
+      by both codes; run in check_note after the first code, before
+      Check 6 (D1, decision 0.3 (b); (c) not built, decision 0.13)
+    - ui/models: its copy and acknowledgement name, OMISSION_CODES for
+      flagged_segments, the count line covering both codes, the
+      next-patient mark shortened to "[next patient?]" (D3)
+    - note: the code registered (20 codes); a 0.3.3 reader reads it as
+      unknown_review_warning, pinned (Task 1.3)
+    - replay_kept: the clinician_line_omitted count, its column and
+      total (Task 1.4)
+    - tests re-pinned where the new code fires; review-loop round 38
+      (3 LOW, applied)
+
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+    ```
+  - **Blind rule:** no file under `validation/heldout-3/` was opened, read, listed or returned by a search in rx2; no lint log was opened; pytest was not run.
+- `[2026-10-24T14:45+11:00]` **Composer — Phase 1 CLOSED (stage-1).**
+  - The full suite through the blind runner, re-run over rx2: collected 8434, passed 8425, failed 0, skipped 9. ruff and mypy are clean.
+  - Review rounds: review-loop round 38 (3 LOW, applied); codex peer round 39 (`gpt-6-astra` medium, read-only, pass stage-1.p1) found 0 findings, converged at peer round 1 of cap 5. The composer recorded the round, and the census assertion passed (39 > 38).
+  - Live-user smoke: the practitioner carried it to P.2's mock smoke (in chat, 2026-10-24; recorded on P.2).
+  - Committed locally with the rx2 commit message above; not pushed.
+  - Next: stage-2, Phase 3 (hedge scope, Task 3.1).
+- `[2026-10-24T15:00+11:00]` **stage-2 rx1 (executor) — Phase 3 (Task 3.1) BUILT, suite owed to the composer.** Task 3.1 is marked 🟨 with its record on the task. ruff and mypy are clean (66 source files). pytest was NOT run: the suite belongs to the composer, through the blind runner `scripts/lint-held-out-set.py validation/heldout-3`. No MUST-PAUSE: nothing at HEAD changed WHAT is built.
+  - **What was built:** one hedge scope, `note.segment_hedged` (own words, or the adjacent same-speaker segment joined mid-sentence by `ends_mid_sentence` on the earlier one), and `note.quoted_line_marks` (`line_marks` plus the scoped `unsure`), now called by Check 1 and the line editor alike; `validation.script_line_hedged` is `segment_hedged` over `reference_document(script)`; the harness's mark re-derivation and script term both read the scope. `line_marks` is unchanged. A keyword `phrases` on the hedge test, for Task 4.1's R2 over `REFERENCE_HEDGES`.
+  - **Three interpretations, recorded on the task (none a pause):** the neighbour is the adjacent index (a textless segment between breaks the join — what Task 0.12's scratch computed the predictions with); the earlier segment's raw trailing mark is read; a partly quoted span is judged by its segment.
+  - **Read-only check:** no line of the 50, `heldout` or `heldout-2` (nor the edge cases' turns) ends in a joining mark, so no held-out unsure result or divergence entry can change; scope (ii) acts at audio level, where the recogniser splits a line.
+  - **Watch in the suite run:** any exact-code-list test over a fixture whose same-speaker, non-clinician line ends in `,` `;` `:` or a dash before a hedged line (none found by search in the note-level fixtures); the four new test groups (`test_note.py`, `test_note_check.py`, `test_ui_models.py`, `test_validation_metrics.py`).
+  - **Blind rule:** no file under `validation/heldout-3/` was opened, read, listed or returned by a search. Searches named `validation/scripts`, `validation/heldout` and `validation/heldout-2` (seen) explicitly, and `desktop/`; the new pin reads `held_out_set("heldout")` and `held_out_set("heldout-2")` by name only. No lint log was opened; pytest was not run.
+  - **Next round number:** 41 (loop-history-check OK: 9 round entries, 40 headings).
+  - **Next:** the composer runs the full desktop suite through the blind runner, then resumes this executor to fix any failures and run `/review-loop` (round 41 onward).
+- `[2026-10-24T15:15+11:00]` **stage-2 rx2 (executor) — `/review-loop` CONVERGED in round 41; a suite re-run is owed to the composer.** ruff and mypy are clean (66 source files). No MUST-PAUSE.
+  - **The composer's rx1 run:** 8513 collected, 8504 passed, 0 failed, 9 skipped. There was nothing to fix.
+  - **Round 41** (record in the Findings Log): 0 CRIT / 0 HIGH / 0 MED / 2 LOW, both applied. Both were comments and docstrings only.
+    - LOW-001: `line_marks`'s docstring no longer claims Check 1 and the editor call it directly. They read it through `quoted_line_marks`.
+    - LOW-002: the unsure mark's description now names the hedge scope in its three places: the `HEDGE_PHRASES` comment, the `ui/note.py` module docstring and the `hedged_source` copy comment.
+    - The round converged in round 1 of the cap of 3. Review History integrity: OK. The history check is OK: 10 round entries and 41 headings, so the next round is 42.
+  - **Owed:** the composer's re-run of the full desktop suite through the blind runner. Comments changed in `note.py`, `note_check.py`, `ui/models.py` and `ui/note.py`; no test changed in rx2. Per the loop config (cadence every-phase), the codex peer pass over Phase 3 is the composer's to schedule.
+  - **Proposed commit message for Phase 3** (the composer's to commit, after a green suite):
+    ```
+    Mark a line unsure when its hedge was cut into the next segment (0.3.4 Phase 3, Task 3.1)
+
+    - note: segment_hedged, the hedge scope (D5, decision 0.6 (ii)) - a
+      segment's own words hold a hedge, or the adjacent same-speaker
+      segment holds one and the earlier of the two ends mid-sentence
+      (ends_mid_sentence); quoted_line_marks, line_marks plus the scoped
+      unsure mark, never for the confirmed clinician; the hedge test takes
+      an optional phrases list (the harness's reference lexicon only)
+    - note_check / ui/models: Check 1 and the line editor both mark
+      through quoted_line_marks, so they always agree
+    - validation: script_line_hedged is segment_hedged over
+      reference_document(script) (one rule, C5); the hedge credit's
+      re-derivation and script term both read the scope
+    - tests: the scope both ways, Check 1 and the editor rows agreeing,
+      a scope-(ii) mark credited and a scope-(iii) one not, the held-out
+      pin over heldout and heldout-2; review-loop round 41 (2 LOW,
+      applied)
+
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+    ```
+  - **Blind rule:** no file under `validation/heldout-3/` was opened, read, listed or returned by a search in rx2. No lint log was opened and pytest was not run. No subagent was spawned.
+- `[2026-10-24T15:46+11:00]` **Composer — Phase 3 CLOSED (stage-2).**
+  - The full suite through the blind runner, run over rx1: collected 8513, passed 8504, failed 0, skipped 9. Re-run over rx2's round-41 fixes: the same numbers. ruff and mypy are clean (66 source files).
+  - Review rounds: review-loop round 41 (2 LOW, applied); codex peer round 42 (`gpt-6-astra` medium, read-only, pass stage-2.p1) found 0 findings, converged at peer round 1 of cap 5. The composer recorded the round, and the census assertion passed (42 > 41). /simplify: round 43.
+  - Live-user smoke: the practitioner carried it to P.2's mock smoke (in chat, 2026-10-24; recorded on P.2).
+  - Committed locally with the rx2 commit message above; not pushed.
+  - Next: stage-3, Phase 4 (the harness, Tasks 4.1–4.4, as amended by D13–D17).
+- `[2026-10-24T16:28+11:00]` **Executor (stage-3, leg rx1) — Phase 4 BUILT, Tasks 4.1–4.4 🟨; the suite is the composer's (verify=composer).**
+  - **Done:** ruff clean and mypy clean (66 source files), each run with the exact command shapes. Pytest was not run (the blind rule).
+  - **Built:**
+    - `validation.py`:
+      - D13's flagged-line credit, folded into `_WordInfo.warned`. 0.3.3's reading is kept as the walk flag `warned_v033`, with `silently_omitted_v033`, `silent_omissions_v033` and the column "Silent (0.3.3 predicate)".
+      - `_FactState` is a 10-field NamedTuple: `warned_v033` and `marked`, plus `_WordInfo.review_marked`.
+      - D8's R1 and R2, and R3 as D14 amends it (`ReferenceReading`, `reference_reading`, `reference_tail_start`, `ResidueTableError`). These live in `FactOutcome.residue_r1/r2/r3`, with invariants: a class only ever names a failing fact.
+      - The residue-adjusted counts (`*_v2`). The raw counts are unchanged.
+      - `PassRule` schema `Literal[1, 2]` with `sets: dict[str, SetCeilings]`, and D17's per-set `require_uncertainty_surfaced`.
+      - `rule_failures(..., set_name=)`, `v1_failures`, `class_counts` / `class_breaches` (R3 counted in encounters), `run_passed(..., set_name=)` and `run_passed_v1`.
+      - The report:
+        - a heading with both verdicts;
+        - the v2 and v1 verdict lines, naming the gate and reported sets;
+        - the 28-column table;
+        - a "Residue class" column in the Facts table;
+        - a residue section (each class against its ceiling, with members; adjusted versus raw counts; Surfaced / expected; the `clinician_line_omitted` total, median and maximum; D14's reference-boundary record and its mismatches).
+      - `main --set`: refused with a schema-1 rule; missing or unknown with a schema-2 rule, printing the rule's set names and never the typed name.
+    - `validation/rules/rule-v2.json`: four rows, with ceilings only from D8/D15/D17 as amended.
+    - `docs/testing/validation-harness.md` (Task 4.4):
+      - the `heldout-2` and `heldout-3` paragraphs, with the brief's bounds and the scope qualifier;
+      - `--set` and the four-set run, plus the refusal;
+      - the D5/D7 (2026-10-22) and D13 (2026-10-24) metric amendments;
+      - the new columns;
+      - the schema-2 rule file;
+      - a "Rule v2" section: Task 0.7's override, D15's Decided / Disclosure / critic's-objection bullets and D17's Decided bullet, all quoted verbatim; the classes; the set layer and its ceiling table; the fitted-ceiling statement; D18's falsifiers worded as residue-adjusted counts; the report;
+      - the qualification on `:122` and the rule v1 "still silent" sentence.
+    - Task 0.14's attribution paragraph was cross-checked against `enrolled_clinician` / `attribution_seconds` as built. It agrees, and its test class names exist.
+  - **Tests:**
+    - `test_validation_metrics.py`, new classes: `TestFlaggedLineCredit`, `TestResidueR1`, `TestResidueR2`, `TestResidueR3`, `TestReferenceReading`, `TestRuleV2`.
+    - `test_validation_harness.py`: the new report tests, the `--set` refusals, `"set"` in the refusal-chaining parametrize, a rule-v2 full run (windows_only), and the runner's `ResidueTableError` before any store.
+    - Every class ceiling is pinned at n and n + 1. `[rx2, round 44]` This line said "every predicate both ways", which overclaimed: the closing-gap and greeting-gap R3 pins, the boundary-after-the-fact pin and R3's non-material pin were missing. Round 44 added them (F1–F3).
+  - **Re-pinned deliberately** (each is a D13 or report change, not a loosening of what the test guards):
+    - `test_an_unrelated_warning_in_the_same_segment_leaves_the_omission_silent`: the line is now the PATIENT's, because a clinician's wholly uncovered flagged line is credited by D13.
+    - `test_between_two_high_risk_words_is_still_silent_and_fails_option_a`: one word is quoted, so the line is partly covered.
+    - `test_a_provider_that_routes_nothing_still_fails_rule_v1`: the patient fact is now unflaggable ("worse at night"). The clinician's rest fact is now warned under D13 and still silent in the 0.3.3 column, and the test still fails rule v1 on the patient line. Stated: clinician-only speech routed nowhere is now fully warned. This is D15's loosening (1), documented.
+    - The 28-column report test.
+    - `_CLUSTERING_BASELINE_C5F3179`: the new 0.3.3 cell (0) and the Residue class cell (`-`) are stripped before the compare. The baseline constant itself is unchanged.
+  - **Interpretations (no MUST-PAUSE):**
+    1. D13's credit never counts a SUSPECT word. This keeps the invented-text guard's stated invariant that the harness's `warned` mirrors Check 4. The guard already excludes suspect words from both omission codes.
+    2. The measured boundary is read from Check 6's warning, `next_patient_segment(note.note_warnings)`, for both D13 (iv) and R3. Check 6 fires exactly when `next_patient_boundary` does.
+    3. A schema-1 file holding `sets` is refused by a model validator. A schema-1 file with a top-level ceiling key is still refused by `extra="forbid"` (pinned).
+    4. `gate` is a field of each set row in the rule file. The report names the gate and reported sets from it, and the verdict computation does not read it: rule v2 decides per `--set`.
+    5. The reference reading runs FIRST in `evaluate_encounter`, before the label track, the WAV or any store. An axis script with no row is therefore an error outcome with no store (pinned).
+    6. PR-LOW-016 is applied under rule v2's report only, as the task line says. A schema-1 report keeps runs 1–5's zeros (pinned both ways).
+    7. Task 4.1's original pin "a shared closing-and-greeting line read as the greeting line" is superseded by D14. It is replaced by `TestReferenceReading`'s shared-line case (reference boundary = the line after).
+    8. `validation/README.md`'s `rules/` line does not yet name `rule-v2.json`. That is D10's document list, Task 5.1.
+  - **Blind rule:** no file under `validation/heldout-3/` was opened, read, listed or returned by a search in rx1. Searches ran over `desktop/`, `docs/`, the plan and `validation/README.md` only, and no `h3-` line was returned. No lint log was opened, pytest was not run and no subagent was spawned. `REFERENCE_TAIL_STARTS` was read as code (ids and integers).
+  - **Owed:**
+    - the composer's full desktop suite through `scripts/lint-held-out-set.py validation/heldout-3`;
+    - then /review-loop from round 44 (history check: 12 round entries plus 43 headings);
+    - the codex peer pass (cadence every-phase).
+    - The tests most likely to need a numeric fix are `TestReferenceReading`'s boundary cases and `TestResidueR1`'s token-level cases. Their expectations were derived by hand from `consultation_boundary` and the walk.
+  - **Proposed commit message for Phase 4** (the composer's to commit, after a green suite):
+    ```
+    Rule v2, the residue classes and the flagged-line credit in the harness (0.3.4 Phase 4, Tasks 4.1-4.4)
+
+    - validation: D13's flagged-line credit in warned (either omission
+      code, the confirmed clinician's wholly uncovered line before Check
+      6's boundary; never a suspect word), 0.3.3's reading kept as
+      "Silent (0.3.3 predicate)"; the residue classes R1 (recogniser),
+      R2 (tone only) and R3 (unbroken next patient, by the reference
+      boundary, per encounter) with residue-adjusted counts, the raw
+      counts unchanged
+    - validation: PassRule schema 2 - per-set literal ceilings, a gate
+      flag and a per-set require_uncertainty_surfaced (D15, D17);
+      --set required under schema 2; the report's two verdicts, the
+      residue section and the Facts table's class column; PR-LOW-016
+      under rule v2's report
+    - validation/rules/rule-v2.json: scripts 2/2/2, heldout and
+      heldout-2 1/1/1 (reported), heldout-3 R1 1 / R3 1, uncertainty
+      reported
+    - docs/testing/validation-harness.md: the amendments, rule v2 with
+      Task 0.7's override and D15's and D17's disclosure verbatim, the
+      set layer, heldout-2 and heldout-3
+    - tests: every class condition both ways, each ceiling at n and
+      n + 1, the uncertainty override both ways, v1 FAIL beside v2 PASS
+      on the same outcomes, the --set refusals
+
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+    ```
+- `[2026-10-24T16:53+11:00]` **Executor (stage-3, leg rx2) — review-loop CONVERGED at round 45 (2 rounds of the cap of 3).**
+  - **Before the loop:** the composer's suite over rx1 was green (8604 collected, 8595 passed, 0 failed, 9 skipped).
+  - **Round 44** (1 MED, 9 LOW, all applied). The plan-deviation lens was a read-only subagent given the blind rule verbatim.
+    - **Confirmed clean:** the rule file's ceilings and gate flags; every residue predicate and the D13 credit; the four D15/D17 quotes; and all eight rx1 interpretations as faithful readings.
+    - **MED-001:** D14's closing-gap and greeting-gap R3 pins were missing (D15's loosening (2)). Added `_GAP_CASES` and an end-to-end `reference_reading` → R3 test.
+    - **Other R3 pins:** the boundary-after-the-fact pin, and R3's non-material pin.
+    - **Walk state:** it is pinned as flags only (the 2^10 bound).
+    - **D14 record:** now covers role-unresolved encounters too. `ReferenceReading.next_patient_axis` and `EncounterOutcome.reference` were added, and no rule reads them.
+    - **Harness document:** Task 0.7's quote now has its last sentence; D18's bands are now numbers; `syn-38` / `syn-46` are noted as rule v2 R3 encounters.
+    - **Plan:** the rx1 bullet's overclaim was reworded.
+    - **C5:** the D13 speaker test now calls `note.spoken_by_confirmed_clinician`.
+  - **Round 45** (1 LOW, applied): the outcome's type-guard pin now also names `reference`.
+  - **Checks:** the Review History integrity check is OK after each round (14 round entries plus 45 headings), so the next round is 46. ruff and mypy are clean (66 source files).
+  - **Owed:**
+    - The review changed CODE AND TESTS (`validation.py`, `test_validation_metrics.py`, `test_validation_harness.py`). The composer needs to re-run the full suite through `scripts/lint-held-out-set.py validation/heldout-3`.
+    - Then the codex peer pass (cadence every-phase).
+    - The tests most likely to need a numeric fix are the two new gap cases (their expected `None` boundaries were derived by hand from `consultation_boundary`).
+  - **Blind rule:** no file under `validation/heldout-3/` was opened, read, listed or returned by a search in rx2, by the executor or by the subagent. No lint log was opened, and pytest was not run. One subagent was spawned and has finished: children=0.
+  - **Proposed commit message for Phase 4** (amended for rx2; the composer commits it after a green suite):
+    ```
+    Rule v2, the residue classes and the flagged-line credit in the harness (0.3.4 Phase 4, Tasks 4.1-4.4)
+
+    - validation: D13's flagged-line credit in warned (either omission
+      code, the confirmed clinician's wholly uncovered line before Check
+      6's boundary, Check 4's own speaker test; never a suspect word),
+      0.3.3's reading kept as "Silent (0.3.3 predicate)"; the residue
+      classes R1 (recogniser), R2 (tone only) and R3 (unbroken next
+      patient, by the reference boundary, per encounter) with
+      residue-adjusted counts, the raw counts unchanged
+    - validation: PassRule schema 2 - per-set literal ceilings, a gate
+      flag and a per-set require_uncertainty_surfaced (D15, D17);
+      --set required under schema 2; the report's two verdicts, the
+      residue section and the Facts table's class column; D14's
+      reference-boundary record over every next-patient script the run
+      read (the reading kept on measured and role-unresolved outcomes);
+      PR-LOW-016 under rule v2's report
+    - validation/rules/rule-v2.json: scripts 2/2/2, heldout and
+      heldout-2 1/1/1 (reported), heldout-3 R1 1 / R3 1, uncertainty
+      reported
+    - docs/testing/validation-harness.md: the amendments, rule v2 with
+      Task 0.7's override and D15's and D17's disclosure verbatim, D18's
+      bands, the set layer, heldout-2 and heldout-3
+    - tests: every class condition both ways (the closing and greeting
+      gaps end to end), each ceiling at n and n + 1, the uncertainty
+      override both ways, v1 FAIL beside v2 PASS on the same outcomes,
+      the --set refusals; review-loop rounds 44 (1 MED, 9 LOW) and 45
+      (1 LOW), applied
+
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+    ```
+- `[2026-10-24T17:10+11:00]` **Executor (stage-3, leg rx3) — the suite failure fixed, and codex peer round 46 (2 LOW) applied.** ruff and mypy are clean (66 source files). No MUST-PAUSE.
+  - **The suite failure** (the composer's run over rx2: 8612 collected, 8602 passed, 1 failed): `test_validation_metrics.py::TestReferenceReading::test_the_tail_start_comes_from_the_table`.
+    - **Cause:** a TEST-side bug introduced by round 44's edit. The test called `_reading_inputs(tmp_path)` twice, and `_pipeline_config` creates its folder without `exist_ok`, so the second call raised `FileExistsError`.
+    - **Fix:** the inputs are built once and used for both readings.
+    - **Product side:** `reference_reading` matches Task 4.1 as amended by D14 (the axis flag, boundary 3 and tail start 3, as asserted), so it needed no change.
+  - **Round 46 PR-LOW-001:**
+    - **Verify tuple:** surface=test-harness; rec=Fix-now, applied — evidence: with `measured` empty, `_residue_section` printed `count.total` (0), `_flag(count.within)` (`yes`) and `sum(...)` totals of 0.
+    - **What changed:** every count in the section now reads `-` when nothing is measured. That covers the pattern siblings named in the Round 46 notes: Count and Within, the members line, the adjusted and raw totals, "Surfaced / expected" and the load total.
+    - **Clean elsewhere:** the rest of the rule v2 report was checked and was clean.
+    - **Pin:** the parametrized error-only and role-unresolved-only test.
+  - **Round 46 PR-LOW-002:**
+    - **Verify tuple:** surface=docs; rec=Fix-now, applied — evidence: `encounter_metrics` reads `REVIEW_MARK_CODES` (all four marks) for R1.
+    - **What changed:** the Known limits bullet now names the three places metrics read the warnings, including `possible_next_patient`'s segment, which was found while verifying.
+  - **Cap verdict: converge.**
+    - Both findings were LOW. The peer confirmed rule v2's predicates, ceilings and quotes otherwise.
+    - The code change is report rendering only: no predicate, count or verdict changes, and measured zeros are pinned unchanged.
+    - No finding recurred from rounds 44 and 45.
+  - **Checks:** the Review History integrity check is OK. The round 46 line was already present, so the next round is 47.
+  - **Owed:** the review changed CODE AND TESTS (`validation.py`, `test_validation_metrics.py`, `test_validation_harness.py`). The composer needs to re-run the full desktop suite through `scripts/lint-held-out-set.py validation/heldout-3`, then commit Phase 4.
+  - **Blind rule:** no file under `validation/heldout-3/` was opened, read, listed or returned by a search in rx3. No lint log was opened, pytest was not run, and no subagent was spawned: children=0.
+  - **Proposed commit message for Phase 4** (amended for rx3; it supersedes rx2's above; the composer commits it after a green suite):
+    ```
+    Rule v2, the residue classes and the flagged-line credit in the harness (0.3.4 Phase 4, Tasks 4.1-4.4)
+
+    - validation: D13's flagged-line credit in warned (either omission
+      code, the confirmed clinician's wholly uncovered line before Check
+      6's boundary, Check 4's own speaker test; never a suspect word),
+      0.3.3's reading kept as "Silent (0.3.3 predicate)"; the residue
+      classes R1 (recogniser), R2 (tone only) and R3 (unbroken next
+      patient, by the reference boundary, per encounter) with
+      residue-adjusted counts, the raw counts unchanged
+    - validation: PassRule schema 2 - per-set literal ceilings, a gate
+      flag and a per-set require_uncertainty_surfaced (D15, D17);
+      --set required under schema 2; the report's two verdicts, the
+      residue section and the Facts table's class column; D14's
+      reference-boundary record over every next-patient script the run
+      read (the reading kept on measured and role-unresolved outcomes);
+      PR-LOW-016 under rule v2's report, its residue section included
+    - validation/rules/rule-v2.json: scripts 2/2/2, heldout and
+      heldout-2 1/1/1 (reported), heldout-3 R1 1 / R3 1, uncertainty
+      reported
+    - docs/testing/validation-harness.md: the amendments, rule v2 with
+      Task 0.7's override and D15's and D17's disclosure verbatim, D18's
+      bands, the set layer, heldout-2 and heldout-3
+    - tests: every class condition both ways (the closing and greeting
+      gaps end to end), each ceiling at n and n + 1, the uncertainty
+      override both ways, v1 FAIL beside v2 PASS on the same outcomes,
+      the --set refusals; review-loop rounds 44 (1 MED, 9 LOW) and 45
+      (1 LOW), and codex peer round 46 (2 LOW: the residue section's
+      unmeasured counts read '-', pinned for error-only and
+      role-unresolved-only reports; R1's review-mark dependency
+      documented), applied; the reference-reading test builds its
+      inputs once
+
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+    ```
+
+- `[2026-10-24T17:30+11:00]` **Composer — Phase 4 CLOSED (stage-3).**
+  - The full suite through the blind runner: over rx1 8604 collected, 8595 passed, 0 failed; over rx2 (review rounds 44–45) 8612 collected, 8602 passed, 1 failed (a test-side double build, fixed in rx3); over rx3 8614 collected, 8605 passed, 0 failed, 9 skipped. ruff and mypy clean (66 source files).
+  - Review rounds: review-loop rounds 44 (1 MED, 9 LOW) and 45 (1 LOW), applied; codex peer round 46 (`gpt-6-astra` medium, read-only, pass stage-3.p1) 2 LOW, recorded by the composer (census 46 > 45), verified and applied by the executor in rx3, whose cap verdict was converge (report rendering and a document line only; no predicate, count or verdict changed); /simplify round 47, 0 findings.
+  - Live-user smoke: the practitioner carried it to P.1's run of record (in chat, 2026-10-24; recorded on P.1).
+  - Committed locally with the rx3 commit message above; not pushed.
+  - Next: stage-4, Phase 5 (Task 5.1 documents, Task 5.2 version 0.3.4).
+- `[2026-10-24T18:16+11:00]` **Executor (stage-4, leg rx1) — Phase 5 BUILT (Tasks 5.1 and 5.2, both 🟨); the suites are the composer's.** No MUST-PAUSE: nothing at HEAD changed WHAT is built.
+  - **Last completed:** Task 5.1's documents and sweep (record on the task: every D10 file, the sweep's counts and file:line, changed vs correct already); Task 5.2's six version fields by hand and "Rolling back below 0.3.4" (record on the task).
+  - **In progress:** none. **Next:** the composer runs the desktop suite through `scripts/lint-held-out-set.py validation/heldout-3` (it covers `test_install_layout.py::test_the_version_is_the_same_everywhere` and `test_pilot_docs.py`) and `npm run qa` in `extension/`; then resumes this executor to fix any failure and run `/review-loop` from round 48 (history check OK: 16 round entries + 47 headings).
+  - **Checks run here:** ruff clean; mypy clean (66 source files). pytest NOT run (blind rule); npm not available in this leg.
+  - **Most likely suite risk:** none expected — the only Python change is `__version__`; the pilot documents' edits are prose outside the tables and hold no id-shaped string.
+  - **One LOW routed (headless Include in plan, recorded on P.3):** `docs/pilot/exit-gate.md`'s "Validation passed" line and `docs/pilot/README.md` step 3 still describe rule v1; reconciling a signed exit-gate line with D15 is the practitioner's wording, so it waits for P.3.
+  - **For the practitioner (not a pause):** the clinician review guide's 0.3.4 lines await approval (as the 0.3.3 lines did); the shipping gate's 0.3.2 clarification still awaits initials (unchanged; the new 0.3.4 note sits after it, outside it).
+  - **Blind rule:** no file under `validation/heldout-3/` was opened, read, listed or returned by a search; searches ran over `docs/`, `desktop/`, `extension/`, `validation/README.md`, `validation/rules/rule-v2.json` and `CHANGELOG.md` only. No lint log opened, pytest not run, no subagent spawned: children=0.
+  - **Proposed commit message for Phase 5** (the composer's to commit, after green suites):
+    ```
+    Documents and version 0.3.4, the rollback line (0.3.4 Phase 5, Tasks 5.1-5.2)
+
+    - version 0.3.4 in the six fields (pyproject, __version__,
+      package.json, package-lock.json x2, manifest.ts)
+    - docs/release/pilot-builds.md: "Rolling back below 0.3.4" - the new
+      review warning reads on 0.3.3 as a newer-version warning that its
+      Acknowledge all clears; no warning dropped, nothing else on disk
+    - threat model (Phase 3A surfaces 2, 3, 5; re-review triggers),
+      data-flow flow 10, design system, shipping gate (a note), kept
+      recordings (the replay's new column, a 0.3.4 paragraph), three
+      stale validation-harness lines, phase history (the old mark),
+      validation/README (rule v2), the pilot README and register prose
+      (h2-, h3-), the clinician review guide's 0.3.4 lines (awaiting the
+      practitioner's approval), CHANGELOG
+    - the Task 5.1 sweep recorded in the plan; the exit gate's rule v1
+      wording routed to P.3
+
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+    ```
+- `[2026-10-24T18:34+11:00]` **Executor (stage-4, leg rx2) — `/review-loop` CONVERGED at round 48 (1 round of the cap of 3).**
+  - **Before the loop:** the composer's runs over rx1 were green — `npm run qa` 313 / 313 (typecheck and lint clean; the package reports 0.3.4); the desktop suite through the blind runner 8614 collected, 8605 passed, 0 failed, 9 skipped.
+  - **Round 48** (record in the Findings Log): 0 CRIT / 0 HIGH / 0 MED / 10 LOW, all applied. The document-accuracy lens was a read-only Explore subagent given the blind rule verbatim; it confirmed every quoted on-screen string character for character. The substantive corrections: a one-word "right" draws the first code, not the new one (threat model, kept-recordings); the threat model's unfound-hedge example was in fact found ("not, I think, sure" holds "i think"); the join is an en or em dash, never a hyphen; `heldout-3` has no R2 ceiling (`validation/README.md`); only 0.3.3 / 0.3.2 read the new code as a newer-version warning, a build below 0.3.2 refuses the note (data-flow); the register's first `h2-` / `h3-` mention now carries its condition; the guide's two clauses tightened; the CHANGELOG's R1 wording; the harness's "what stays silent" boundary clause.
+  - **Checks:** history check OK (17 round entries + 48 headings; the next round is 49). No Python changed in rx2 (ruff and mypy were clean in rx1).
+  - **Owed:** the review changed documents a test reads (`docs/pilot/findings-register.md`, `docs/practice/`, `validation/README.md`), so the composer re-runs the desktop suite through `scripts/lint-held-out-set.py validation/heldout-3`. `npm run qa` is unaffected (no extension file changed in rx2). Then, per the loop config, the codex peer pass over Phase 5 (cadence every-phase) is the composer's to schedule — `docs/lessons.md`: a docs-only phase still draws peer findings.
+  - **Blind rule:** no file under `validation/heldout-3/` was opened, read, listed or returned by a search in rx2, by the executor or the subagent; no lint log opened; pytest not run. One subagent was spawned and has finished: children=0.
+  - **Proposed commit message for Phase 5** (amended for rx2; it supersedes rx1's; the composer commits it after a green suite):
+    ```
+    Documents and version 0.3.4, the rollback line (0.3.4 Phase 5, Tasks 5.1-5.2)
+
+    - version 0.3.4 in the six fields (pyproject, __version__,
+      package.json, package-lock.json x2, manifest.ts)
+    - docs/release/pilot-builds.md: "Rolling back below 0.3.4" - the new
+      review warning reads on 0.3.3 as a newer-version warning that its
+      Acknowledge all clears; no warning dropped, nothing else on disk
+    - threat model (Phase 3A surfaces 2, 3, 5; re-review triggers),
+      data-flow flow 10, design system, shipping gate (a note), kept
+      recordings (the replay's new column, a 0.3.4 paragraph), three
+      stale validation-harness lines, phase history (the old mark),
+      validation/README (rule v2), the pilot README and register prose
+      (h2-, h3-), the clinician review guide's 0.3.4 lines (awaiting the
+      practitioner's approval), CHANGELOG
+    - the Task 5.1 sweep recorded in the plan; the exit gate's rule v1
+      wording routed to P.3
+    - review-loop round 48 (10 LOW, applied): a one-word "right" draws
+      the first code; the unfound-hedge example; en or em dash only;
+      heldout-3 has no R2 ceiling; which builds read the new code; the
+      register's id condition; the guide's two clauses; R1's mark
+
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+    ```
+- `[2026-10-24T18:47+11:00]` **Executor (stage-4, leg rx3) — codex peer round 49 (2 LOW) verified and applied.**
+  - **Before:** the composer's suite over round 48's changes was green (8614 collected, 8605 passed, 0 failed, 9 skipped).
+  - **PR-LOW-001** — surface=docs; rec=Fix-now, applied — evidence: `validation.py:1865` (`segment_hedged` on the mark's segment) and `:1937` (`script_line_hedged`). The harness document's `uncertainty_surfaced` and "Hedge marks on unhedged segments" summaries now describe the hedge scope (a joined same-speaker neighbour included). No sibling restates the old predicate outside the dated 2026-10-13 amendment paragraph, which is history.
+  - **PR-LOW-002** — surface=docs; rec=Fix-now, applied — evidence: `note_check.py:1730` (no non-suspect content token → no second code), and the first code excludes suspect words. The "what stays silent" sentence names the exception. Siblings fixed in the same pass: `validation-harness.md` :85 and :184, `design-system.md:155`, CHANGELOG's 0.3.4 entry, and the review guide in plain English ("a line whose words are all marked as possibly not speech").
+  - **Cap verdict: converge.** Both findings were LOW, docs-only, and confirmed against the code; the peer otherwise confirmed Phase 5. Neither recurs from round 48 (they are new omissions in older harness lines and in conditions lists, not regressions from round 48's fixes), and the fixes change wording only. A second peer round would review a dozen words of documentation.
+  - **Checks:** history check OK (18 round entries + 49 headings; the next round is 50). No Python, test or extension file changed in rx3.
+  - **Owed:** documents a test reads changed (`docs/practice/clinician-review-guide.md`), so the composer re-runs the desktop suite through `scripts/lint-held-out-set.py validation/heldout-3`; then commits Phase 5.
+  - **Blind rule:** no file under `validation/heldout-3/` was opened, read, listed or returned by a search in rx3; no lint log opened; pytest not run; no subagent spawned: children=0.
+  - **Proposed commit message for Phase 5** (amended for rx3; it supersedes rx1's and rx2's; the composer commits it after a green suite):
+    ```
+    Documents and version 0.3.4, the rollback line (0.3.4 Phase 5, Tasks 5.1-5.2)
+
+    - version 0.3.4 in the six fields (pyproject, __version__,
+      package.json, package-lock.json x2, manifest.ts)
+    - docs/release/pilot-builds.md: "Rolling back below 0.3.4" - the new
+      review warning reads on 0.3.3 as a newer-version warning that its
+      Acknowledge all clears; no warning dropped, nothing else on disk
+    - threat model (Phase 3A surfaces 2, 3, 5; re-review triggers),
+      data-flow flow 10, design system, shipping gate (a note), kept
+      recordings (the replay's new column, a 0.3.4 paragraph), stale
+      validation-harness lines, phase history (the old mark),
+      validation/README (rule v2), the pilot README and register prose
+      (h2-, h3-), the clinician review guide's 0.3.4 lines (awaiting the
+      practitioner's approval), CHANGELOG
+    - the Task 5.1 sweep recorded in the plan; the exit gate's rule v1
+      wording routed to P.3
+    - review-loop round 48 (10 LOW, applied: a one-word "right" draws
+      the first code; the unfound-hedge example; en or em dash only;
+      heldout-3 has no R2 ceiling; which builds read the new code; the
+      register's id condition; the guide's two clauses; R1's mark) and
+      codex peer round 49 (2 LOW, applied: the harness's hedge-credit
+      summaries read the hedge scope; a clinician line whose every
+      content word is suspect draws no warning, named in the harness,
+      the design system, the review guide and CHANGELOG)
+
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+    ```
+
+- `[2026-10-24T18:55+11:00]` **Composer — Phase 5 CLOSED (stage-4).**
+  - The full suite through the blind runner: over rx1 8614 collected, 8605 passed, 0 failed; over rx2 (review round 48) the same; over rx3 (peer round 49) 8614 collected, 8605 passed, 0 failed, 9 skipped. `npm run qa` in `extension/`: typecheck, lint, 313 / 313 tests (the package at 0.3.4) — `test_install_layout.py`'s version agreement and `test_pilot_docs.py` green inside the suite.
+  - Review rounds: review-loop round 48 (10 LOW, applied; converged); codex peer round 49 (`gpt-6-astra` medium, read-only, pass stage-4.p1) 2 LOW, recorded by the composer (census 49 > 48), verified and applied by the executor in rx3 with five pattern siblings, whose cap verdict was converge (documents only, no regression from round 48), accepted under cap-raise=executor.
+  - /simplify: not run — Phase 5 changed documents and six version strings only (the repository's rule: never for docs; no source logic changed).
+  - Live-user smoke: none of its own — documents and the version string only; the version shown on the Status tab is read by P.2's install smoke ("the Status tab shows 0.3.4").
+  - The review guide's 0.3.4 lines await the practitioner's approval (marked in the guide); the exit gate's rule v1 wording is routed to P.3.
+  - Committed locally with the rx3 commit message above; not pushed.
+  - Next: stage-5, the hardening stage H1–H4 over the whole run.
+
+- `[2026-10-24T19:08+11:00]` **Executor — Task H1 built (stage-5 rx1; `/review-loop` over the whole run `8996a75..HEAD` plus the working tree, `validation/heldout-3/` excluded). Converged in ONE round (round 50, cap 3).**
+  - **Round 50 (0 CRIT / 0 HIGH / 0 MED / 13 LOW, all applied).**
+    - LOW-001: `note.segment_hedged`'s docstring gave "not, I think, sure" as unlisted. It holds the listed "i think", so it is hedged; round 48 LOW-002 had left this docstring by phase scope.
+    - LOW-002: a new pin, `TestSegmentHedged.test_a_listed_hedge_with_other_words_inside_it_is_not_found`, for that named residue.
+    - LOW-003: the harness document's D5 amendment (:85) and the same docstring said "dash" where only an en or em dash joins.
+    - LOW-004 to LOW-013: documents that lagged the Phase 4 harness code.
+      - In `validation-harness.md`: R2's failure on `heldout-3` (reported, D17); R1's mark "in every end state judged `wrong`"; `hedged_source`'s 0.3.4 scope; three suspect-skipping predicates, not two; 0.3.3's reading among the non-ambiguous comparisons; the exit status and the Rule column read rule v2 under schema 2; `none` in the reference-boundary record.
+      - CHANGELOG: R3's measured-boundary condition; the D13 credit's boundary and suspect-word conditions.
+      - Data-flow flow 26: `--set`, and the in-memory reference compose.
+  - **Lenses:**
+    - the executor's whole-run passes (cross-phase interactions, C4–C6, C11, C2/C3);
+    - one read-only Explore subagent for the documents against the harness code. Its first two candidates were dropped on reading the document; its full report's ten were confirmed and applied.
+  - **Nothing here changes WHAT is built:** no rule, ceiling, vocabulary or decided behaviour. So there is no MUST-PAUSE.
+  - **Blind rule:** held (round 50's scope line). No pytest was run by the executor or the subagent.
+  - **Changed:**
+    - `desktop/src/scribe_desktop/note.py` (a docstring);
+    - `desktop/tests/test_note.py` (one test);
+    - `docs/testing/validation-harness.md` (eight clauses), `CHANGELOG.md` (two clauses), `docs/security/data-flow-map.md` (flow 26's RUN) — no test reads any of the three;
+    - this plan (round 50, its History line, H1, this note).
+  - **Gates:** ruff clean; mypy clean (66 source files).
+  - **Owed to the composer:** the full desktop suite through the blind runner. The extension is unchanged.
+  - **Proposed commit message:**
+
+    ```
+    Whole-run review of 0.3.4: the hedge-scope docstring and one pin (Task H1)
+
+    Review-loop round 50 over 8996a75..HEAD (validation/heldout-3 excluded),
+    converged in one round, 13 LOW applied:
+    - note.segment_hedged's docstring named "not, I think, sure" as an
+      unlisted split hedge; it holds the listed "i think". It now names a
+      listed hedge with other words inside it ("I don't really know"),
+      as the threat model and the harness document do, and the join's
+      dash is an en or em dash, never a hyphen
+    - a pin for that named residue (TestSegmentHedged)
+    - validation-harness.md: the D5 amendment's dash; R2 reported, not
+      failed, on heldout-3; R1's mark on the end states judged wrong;
+      hedged_source's 0.3.4 scope; every predicate skips suspect words;
+      0.3.3's reading is not ambiguity; the exit status and Rule column
+      are rule v2's under schema 2; "none" in the reference record
+    - CHANGELOG 0.3.4: R3's two boundary conditions; the flagged-line
+      credit's boundary and suspect-word conditions
+    - data-flow flow 26: --set, and the in-memory reference compose
+
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+    ```
+  - **Next:** the composer runs the suite and commits. Then H2 `/simplify`, H3 `/security-review` and H4, the codex peer pass, documents included.
+  - _Superseded by the rx2 bullet below: its commit message covers rounds 50–52._
+
+- `[2026-10-24T19:25+11:00]` **Executor — stage-5 rx2: H2's fix applied; H1 and H3 closed.**
+  - **H1 🟩:** the composer's suite over round 50 gave 8615 collected, 8606 passed, 0 failed, 0 errored, 9 skipped.
+  - **H2 🟨 (round 51):**
+    - SIMP-001 was verified (no reader of the three `EncounterMetrics` reference fields anywhere in `desktop/src`, `desktop/tests` or `scripts/`) and applied. The fields, their checks, their docstring paragraph and their constructor arguments are removed, along with the two test sites. R3's local axis guard and `EncounterOutcome.reference` are kept.
+    - The routed `note.text_holds_hedge` docstring was corrected.
+    - Round 51 is Closed; the fix-delta self-check passed.
+  - **H3 🟩:** round 52, 0 findings.
+  - **H4 🟥:** the composer's codex peer pass is next.
+  - **Gates:** ruff and mypy are clean (66 source files).
+  - **Owed:** the full desktop suite through the blind runner. Expect one fewer collected than 8615, because the metrics test was removed.
+  - **Blind rule:** held. Searches named `desktop/` and `scripts/` only, and no pytest was run.
+  - **Changed this leg:** `validation.py`, `note.py` (a docstring), `test_validation_metrics.py`, `test_validation_harness.py`, and this plan. They are uncommitted, alongside rx1's.
+  - **Proposed hardening commit message (rounds 50–52):**
+
+    ```
+    Hardening of 0.3.4: whole-run review, simplify, security review (H1-H3)
+
+    Review-loop round 50 (H1) over 8996a75..HEAD (validation/heldout-3
+    excluded), converged in one round, 13 LOW applied:
+    - note.segment_hedged's docstring named "not, I think, sure" as an
+      unlisted split hedge; it holds the listed "i think". It now names a
+      listed hedge with other words inside it ("I don't really know"),
+      and the join's dash is an en or em dash, never a hyphen
+    - a pin for that named residue (TestSegmentHedged)
+    - validation-harness.md: the D5 amendment's dash; R2 reported, not
+      failed, on heldout-3; R1's mark on the end states judged wrong;
+      hedged_source's 0.3.4 scope; every predicate skips suspect words;
+      0.3.3's reading is not ambiguity; the exit status and Rule column
+      are rule v2's under schema 2; "none" in the reference record
+    - CHANGELOG 0.3.4: R3's two boundary conditions; the flagged-line
+      credit's boundary and suspect-word conditions
+    - data-flow flow 26: --set, and the in-memory reference compose
+
+    Simplify round 51 (H2), 1 LOW applied:
+    - SIMP-001: EncounterMetrics' next_patient_axis, reference_tail_start
+      and reference_boundary had no reader (D14's record lives on
+      EncounterOutcome.reference); removed with their two test sites
+    - note.text_holds_hedge's docstring: the harness reaches it through
+      segment_hedged / script_line_hedged since D5
+
+    Security review round 52 (H3): no findings.
+
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+    ```
+  - _Superseded by the rx3 bullet below: its commit message adds rounds 53–54._
+
+- `[2026-10-24T19:43+11:00]` **Executor — stage-5 rx3: H4's finding fixed; H1–H4 done.**
+  - **H2 🟩:** the composer's suite over round 51 gave 8614 collected, 8605 passed, 0 failed, 0 errored, 9 skipped.
+  - **H4 🟩:** codex rounds 53 (code, 0) and 54 (documents, 1 LOW).
+  - **PR-LOW-001:** verified (`surface=docs`, `rec=Fix-now — confirmed`) and applied in `docs/testing/validation-harness.md:180`. It now says one non-suspect content word is enough for the LINE to draw `clinician_line_omitted`, while a FACT on it is credited only through its own non-suspect words. The sweep of `docs/` and `CHANGELOG.md` found no sibling. Round 54 is Closed; cap verdict converge.
+  - **Gates:** docs only; no suite owed. `docs/pilot/` and `docs/practice/` are untouched.
+  - **Blind rule:** held. Searches named `docs/`, `CHANGELOG.md` and `desktop/src`; no pytest was run.
+  - **Uncommitted:** every stage-5 change (rx1–rx3).
+  - **Next:** the composer commits the hardening stage; then Phase P (P.1, run 6, from the H4 commit).
+  - **Proposed hardening commit message (rounds 50–54):**
+
+    ```
+    Hardening of 0.3.4: whole-run review, simplify, security and peer review (H1-H4)
+
+    Review-loop round 50 (H1) over 8996a75..HEAD (validation/heldout-3
+    excluded), converged in one round, 13 LOW applied:
+    - note.segment_hedged's docstring named "not, I think, sure" as an
+      unlisted split hedge; it holds the listed "i think". It now names a
+      listed hedge with other words inside it ("I don't really know"),
+      and the join's dash is an en or em dash, never a hyphen
+    - a pin for that named residue (TestSegmentHedged)
+    - validation-harness.md: the D5 amendment's dash; R2 reported, not
+      failed, on heldout-3; R1's mark on the end states judged wrong;
+      hedged_source's 0.3.4 scope; every predicate skips suspect words;
+      0.3.3's reading is not ambiguity; the exit status and Rule column
+      are rule v2's under schema 2; "none" in the reference record
+    - CHANGELOG 0.3.4: R3's two boundary conditions; the flagged-line
+      credit's boundary and suspect-word conditions
+    - data-flow flow 26: --set, and the in-memory reference compose
+
+    Simplify round 51 (H2), 1 LOW applied:
+    - SIMP-001: EncounterMetrics' next_patient_axis, reference_tail_start
+      and reference_boundary had no reader (D14's record lives on
+      EncounterOutcome.reference); removed with their two test sites
+    - note.text_holds_hedge's docstring: the harness reaches it through
+      segment_hedged / script_line_hedged since D5
+
+    Security review round 52 (H3): no findings.
+
+    Codex peer pass (H4, gpt-6-astra medium): round 53, the code, no
+    findings; round 54, the documents, 1 LOW applied:
+    - PR-LOW-001: validation-harness.md's "what stays silent" sentence
+      now separates the line's warning (one content word not marked
+      suspect) from a fact's credit (its own words not suspect)
+
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+    ```
+
+- `[2026-10-24T19:50+11:00]` **Composer — stage-5 closed (hardening H1–H4).**
+  - Composer checks: suite 2 through the blind runner over rounds 50–51 gave 8614 collected, 8605 passed, 0 failed, 9 skipped. Round 54 was recorded and the census asserted (`NEW-ROUND OK`, findings_max 54). The rx3 diff (one sentence, `docs/testing/validation-harness.md:125` of the diff) was read and matches PR-LOW-001's fix. `--phase-close` OK. The executor's cap verdict "converge" was accepted under `cap-raise=executor` (a docs-only LOW, fixed, with no sibling).
+  - Blind rule: held in every stage-5 leg. In the peer logs (r53, r54), `heldout-3` appears only inside plan or document text.
+  - Committed locally with the rx3 message above; not pushed.
+  - **Run state:** Phases 1, 3, 4 and 5 and H1–H4 are done. **Next (practitioner):** H5 (0.3.4 built of record after P.1) and P.1–P.4. P.1 is run 6 from the H4 commit, on four sets; the gate is read on the 50 and `heldout-3`.
+- `[2026-10-25]` **P.1 done — run 6, the run of record, does NOT meet the gate** (record on P.1): the 50 pass rule v2; `heldout-3` fails it on `h3-03`'s unsupported clinical line and on R3 (2 encounters, ceiling 1), with 0 silent omissions; `heldout` and `heldout-2` fail as predictions v2 said. One finding on the prediction record (`heldout-2`'s rule v1 line, 19 failing, not 21). P.5 stays (a); the next cycle is a 0.3.5 plan. Uncommitted. **Next:** P.4 (the `heldout-3` diagnosis — the blind rule ends with it), the practitioner's word on committing P.1 and P.4, then H5 and P.2 (whether 0.3.4 is built of record and installed), P.3, and the 0.3.5 plan with Fable.
+- `[2026-10-25]` **P.4 done: the `heldout-3` diagnosis** (record on P.4). The blind rule has ended; the cases and divergence entries are written (boundary 9, corrections 2, unsure 7). Every failure is classed:
+  - R1 `h3-03` (whose recogniser number is also the one unsupported line — the rule has no R1 exemption there);
+  - R3 `h3-02` and `-17` (9 of 10 boundaries missed by the frozen lists; two reached the note through a cued next-patient line);
+  - R2 5 facts and 1 bare-modal fact (both reported).
+
+  The new code's maximum of 10 comes from segmentation: D1 judges per segment, so a split line draws one warning per piece. The gate was not met; P.5 stays (a). Uncommitted, with P.1. **Next (practitioner's word):** commit P.1 and P.4; H5 and P.2 (0.3.4 built of record and installed, or not); P.3's register rows (`h2-`, `h3-`); the review guide's 0.3.4 lines; the 0.3.5 plan with Fable; the custody deletions.
+- `[2026-10-25]` P.1 and P.4 committed and pushed (`4a95954`; CI green); the custody deletions done. **P.3 done** (record on P.3: F-102–F-140, five rows re-checked, the Encounter pattern). **H5 and P.2 declined** (the practitioner: "i'll wait for .3.5"): 0.3.4 is not built of record or installed; 0.3.3 stays installed. **The plan is Completed — Follow-ups Retained.** Carried to the 0.3.5 plan (Plan Mode, with Fable): the build of record and install smoke, which also owes Phases 1 and 3's live smoke (P.2's mock-smoke lines); the review guide's 0.3.4 lines, still awaiting approval; `docs/pilot/exit-gate.md`'s rule-v1 wording (the practitioner's); P.4's classes as the 0.3.5 inputs (R3 unlisted closings and greetings, the per-segment warning load, R2 hedge idioms, the unsupported-number line).
+
+## Review History
+- 2026-10-22 `/review-plan` (Opus 5.5): Plan-subagent design critique + Explore subagent + coverage, practicality, risk and simplicity lenses, every finding checked against `0be35d7` / `4ff5f26`. Plan-scoped; no code reviewed. Step 3.5 gate: missed-speech warning Include in plan; chooser mark Include in plan; ui-refresh at its merge; larger model Excluded.
+- 2026-10-22 `/review-plan` (Fable 5.1): three read-only subagent lenses (coverage 12 findings, practicality 12, simplicity/risk 12) over the plan and the code at `4ff5f26`; 5 HIGH (0.11 vs C12; the script-side hedge term twice; the missed-speech credit; the copy's line number), the rest MED/LOW; all applied. One practitioner answer: "joined" reuses `note.ends_mid_sentence`. Plan-scoped; no code reviewed.
+- 2026-10-22 `/peer-loop` plan pass (codex `gpt-6-astra` high, read-only, cap 5; composer Opus 5.5): Round 1 1 HIGH + 6 MED; Round 2 10 MED + 1 LOW; Round 3 3 MED; Round 4 2 MED; Round 5 1 MED + 1 LOW (record-only). Every finding verified against the code at `4ff5f26` and amended with siblings swept; no invalid findings; every round's read-only sandbox left the working tree unchanged. Ended at the cap with round 5 build-affecting; a fresh one-round pass at the practitioner's word (Round 6) found no findings — CONVERGED.
+
+- 2026-10-23 scoped `/review-plan` of D1 (Fable 5.1), after Task 0.2: coverage (the harness's attribution read against the app's), practicality (the enrolment audio's source; the order — the harness path before 0.12 so the diagnosis runs on the shipped path), simplicity (no companion column; the flag), risk (the threshold residue; masking stated and answered). Two practitioner answers. Decision 0.4 (2)'s sibling sweep in the same pass. Plan-scoped; no code reviewed; nothing built.
+- 2026-10-23 `/peer-loop` code pass over Task 0.9's diff (codex `gpt-6-astra` high, read-only, cap 5; composer Opus 5.5): Round 11 1 LOW; Round 12 2 LOW; Round 13 1 LOW; Round 14 2 LOW; Round 15 0 — converged. Every finding verified (probes for the hedge-line set and both-way mutations) and fixed; full suite 7987 passed, 9 skipped.
+- 2026-10-23 `/simplify` (Claude Code, Opus 5.5) over Task 0.9's diff before its commit: Round 16, 1 LOW (SIMP-001, test-only) Fix-now.
+- 2026-10-23 `/peer-loop` code pass over Task 0.14's diff (codex `gpt-6-astra` high, read-only, cap 5; composer Opus 5.5): Round 17 3 LOW (verified, fixed); Round 18 2 LOW (PR-LOW-017 fixed; PR-LOW-016 pre-existing, deferred to Task 4.3 — practitioner-confirmed 2026-10-23); Round 19 1 LOW (fixed, docs); Round 20 2 LOW (fixed, docs); Round 21 0 — converged.
+- 2026-10-23 `/simplify` (Claude Code, Opus 5.5) over Task 0.14's production diff before its commit: Round 22, no findings.
+- 2026-10-23 `/peer-loop` code pass over Task 0.11's test-only diff (codex `gpt-6-astra` high, read-only, cap 5; composer Opus 5.5): Round 23 0 — converged.
+- 2026-10-24 `/simplify` (Claude Code, Opus 5.5) over Task 0.12's diff before its commit: Round 24, no findings.
+- 2026-10-24 scoped `/review-plan` of the re-plan D12–D18 and Tasks 0.15–0.17 / P.4 (Fable 5.1), after the Plan Mode approval: three read-only lenses as subagents (coverage 11 findings, practicality 12, simplicity/risk 16) plus a Plan-subagent critique before the draft (16); every finding checked against the code at `519b5dd`; the sidecar dropped for role-derived tails, the D14 lint made a recorded check, D13 stated from the note alone, D17's `--set`, D18 as falsifiable bands with a pre-registration commit, the greeting table's deletion moved to 0.17, old-gate siblings dated in both plans; two practitioner answers (D13/D14 in the gate, disclosed; `heldout-3`'s narrower scope accepted). Plan-scoped; no code reviewed. Next: the codex plan peer pass.
+- 2026-10-24 `/peer-loop` plan pass over the re-plan (codex `gpt-6-astra` high, read-only, cap 5; composer Fable 5.1): Round 25 2 MED + 4 LOW (3 build-affecting, 3 record-only; all verified and applied); Round 26 (attack-the-class) 1 MED + 3 LOW (2 build-affecting, 2 record-only; all verified and applied; not converged); Round 27 3 MED + 1 LOW (3 build-affecting, 1 record-only; all verified and applied; not converged); Round 28 1 MED (build-affecting; the subprocess test replaced by an AST pin on the real readers; not converged); Round 29 (the cap) 1 MED (build-affecting; the pin as an exact-caller inventory with mutation checks); NOT converged within the cap of 5 — the practitioner raised it to 6; Round 30 2 MED (build-affecting; the syntax pin replaced by a console-owning runner, closing the class by construction); NOT converged within the raised cap — the practitioner raised it to 7; Round 31 2 MED (build-affecting; the runner's closed `problems` grammar and completion accounting); NOT converged within cap 7 — ACCEPT-CLOSED at the cap by the practitioner (2026-10-24): 7 rounds, 20 findings (12 MED, 8 LOW; 15 build-affecting), all verified and applied; the runner's code review made a requirement of Task 0.17.
+- 2026-10-24 round 32: 0 CRIT / 0 HIGH / 2 MED / 14 LOW; skew=none; action=none
+- 2026-10-24 round 33: 0 CRIT / 0 HIGH / 1 MED / 2 LOW; skew=none; action=none
+- 2026-10-24 round 34: 0 CRIT / 0 HIGH / 5 MED / 1 LOW; skew=none; action=none
+- 2026-10-24 round 35: 0 CRIT / 0 HIGH / 3 MED / 0 LOW; skew=same-family; action=strengthen-siblings
+- 2026-10-24 round 36: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
+- 2026-10-24 round 37: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=none; action=none
+- 2026-10-24 round 38: 0 CRIT / 0 HIGH / 0 MED / 3 LOW; skew=none; action=none
+- 2026-10-24 round 39: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
+- 2026-10-24 round 40: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
+- 2026-10-24 round 41: 0 CRIT / 0 HIGH / 0 MED / 2 LOW; skew=none; action=none
+- 2026-10-24 round 42: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
+- 2026-10-24 round 43: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
+- 2026-10-24 round 44: 0 CRIT / 0 HIGH / 1 MED / 9 LOW; skew=none; action=none
+- 2026-10-24 round 45: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=none; action=none
+- 2026-10-24 round 46: 0 CRIT / 0 HIGH / 0 MED / 2 LOW; skew=none; action=none
+- 2026-10-24 round 47: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
+- 2026-10-24 round 48: 0 CRIT / 0 HIGH / 0 MED / 10 LOW; skew=none; action=none
+- 2026-10-24 round 49: 0 CRIT / 0 HIGH / 0 MED / 2 LOW; skew=same-family; action=none
+- 2026-10-24 round 50: 0 CRIT / 0 HIGH / 0 MED / 13 LOW; skew=none; action=none
+- 2026-10-24 round 51: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=pre-existing; action=none
+- 2026-10-24 round 52: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
+- 2026-10-24 round 53: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
+- 2026-10-24 round 54: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=pre-existing; action=triage-and-ship
+
+## Review Findings Log
+### Round 1 — 2026-10-22
+Source: Codex gpt-6-astra high plan peer-review
+
+**PR-HIGH-001 — R2 can excuse correctness failures unrelated to tone.**  
+Materiality: build-affecting  
+D8 (`.cursor/plans/plan-validation-run6.md:197-199`) classifies any `expect_uncertain` fact without a reference hedge, then removes all its failure counts. Correctness and uncertainty are independent in `desktop/src/scribe_desktop/validation.py:978-991` and `:685-704`: an omitted or wrong fact that fails R1 can therefore escape through R2, while an already-correct, acoustically surfaced fact can unnecessarily consume its ceiling.  
+Proposed amendment: Apply R2 only to an actual unsurfaced-uncertainty failure, preserve that fact’s wrong/omission failures, and test already-surfaced, routing-loss and misrecognition cases.
+
+**PR-MED-001 — D2’s anchors and D7’s deletion credit are incompatible.**  
+Materiality: build-affecting  
+D2 (`.cursor/plans/plan-validation-run6.md:161-162`) creates singleton anchors for textless and leading/trailing gaps, whereas D7 (`:191`) requires an adjacent `(i, i + 1)` pair around the deletion. Cross-segment gaps cannot fit that pair, and skipping suspect words can leave nonadjacent original indices. Additionally, `all_deleted` means the entire fact was deleted, while `not all_matched` also includes substitutions (`desktop/src/scribe_desktop/validation.py:905-921`, `:942-948`).  
+Proposed amendment: Define deletion-edge matching separately from display anchors, covering singleton, first/final, cross-segment and suspect-filtered cases with explicit deletion state and tests distinguishing partial deletion from substitution.
+
+**PR-MED-002 — Histograms discard information needed to select the thresholds.**  
+Materiality: build-affecting  
+D6 (`.cursor/plans/plan-validation-run6.md:185-187`) prints duration histograms, and Task 0.4 (`:291`) selects thresholds from them, but D2 (`:161`) deduplicates warnings across triggers by anchor line. Identical histograms can describe two gaps sharing one anchor or two gaps on different anchors, yielding different combined warning counts.  
+Proposed amendment: Have the practitioner’s measurement script evaluate candidate threshold pairs using the exact anchoring and deduplication rules and print aggregate combined median/maximum counts for each pair.
+
+**PR-MED-003 — A maximum-only budget breach has no permitted resolution.**  
+Materiality: build-affecting  
+Task 0.1 (`.cursor/plans/plan-validation-run6.md:282`) requires median ≤2 **and** maximum ≤5, but D1 (`:152`) and Task 0.3 (`:290`) permit exemptions only when the median exceeds its bound. Counts `[0, 0, 6]` violate the fixed maximum while prohibiting exemptions; changing missed-speech thresholds cannot remove those six clinician-line warnings.  
+Proposed amendment: Apply the authorized “budget exceeded” condition to either bound and define the practitioner handoff if the exempted clinician-line counts still make the combined budget infeasible.
+
+**PR-MED-004 — The real-speech measurement omits its required enrolment input.**  
+Materiality: build-affecting  
+D6 and Task 0.2 (`.cursor/plans/plan-validation-run6.md:187`, `:286-288`) specify the archive and config but no enrolment source. Replay obtains enrolment only from an explicitly supplied WAV (`desktop/src/scribe_desktop/replay_kept.py:210-223`); fresh transcription does not recover the original recording’s clinician attribution (`:355-368`). Following the stated invocation can therefore produce zero enrolled sessions and incorrectly trigger the synthetic-only fallback.  
+Proposed amendment: Specify the practitioner-provided enrolment input, its validation and custody requirements, and distinguish missing enrolment input from unsuccessful clinician attribution.
+
+**PR-MED-005 — The vocabulary freeze changes behaviour before the baseline comparison.**  
+Materiality: build-affecting  
+Task 0.9 (`.cursor/plans/plan-validation-run6.md:299`) changes live `HEDGE_PHRASES` before Task 0.12 (`:314`) requires totals and encounter verdicts identical to run 5. Existing code immediately consumes that list through `desktop/src/scribe_desktop/note.py:405-414`, `:442` and `note_check.py:603`, so an intended vocabulary improvement can itself trigger the mandatory mismatch pause.  
+Proposed amendment: Perform the baseline comparison against pinned 0.3.3 code, or capture it before activating the frozen vocabulary, then generate predictions against the approved new vocabulary separately.
+
+**PR-MED-006 — `warned_v1` is not the 0.3.3 omission predicate.**  
+Materiality: build-affecting  
+D7 and Task 4.2 (`.cursor/plans/plan-validation-run6.md:191`, `:346`) identify `warned_v1` as today’s predicate and label it “Silent (0.3.3 predicate)”. In `desktop/src/scribe_desktop/validation.py:1385-1392`, current `warned` uses the widened all-speaker predicate, while `warned_v1` retains run 1’s clinician-only predicate; `:693-696` explicitly documents that distinction. Reusing it would misstate the comparison.  
+Proposed amendment: Preserve current `warned` in a distinct 0.3.3 comparison field, retain accurate run-1 labelling, and pin the difference with a patient-side omission warned by 0.3.3 but not run 1.
+
+Materiality: 7 build-affecting / 0 record-only / 0 invalid
+
+**Dispositions (composer, Opus 5.5, 2026-10-22; each verified against the code at `4ff5f26`):**
+- PR-HIGH-001 — verified (`validation.py:626-627` `material_wrong`, `:685-704` the separate counts; D8 removed a classed fact from all three counts). Accepted: each class excuses only its own failure kind (D8, Tasks 4.1, 4.3).
+- PR-MED-001 — verified (`_INITIAL_STATE` / `_after_word` / `_after_deletion` `validation.py:902-921`: the flag is ALL deleted; `not all_matched` includes substitutions). Accepted: a separate deletion-edge rule in the harness (D7, Task 4.2).
+- PR-MED-002 — verified against D2's de-duplication. Accepted: the measurement scores candidate threshold pairs with the exact rules (D6, Tasks 0.2, 0.4).
+- PR-MED-003 — verified (Task 0.1 has two bounds; D1 and Task 0.3 named the median only). Accepted: either bound, and a pause when still infeasible (D1, Tasks 0.3, 0.4).
+- PR-MED-004 — verified (`replay_kept.py:213-223`, `:355-368`: no clinician without `--enrolment`). Accepted: `--enrolment` is required (D6, Task 0.2).
+- PR-MED-005 — verified (Task 0.9 changes the live `HEDGE_PHRASES` before Task 0.12's premise check). Accepted: the premise check moves to Task 0.2, before the freeze (Tasks 0.2, 0.12).
+- PR-MED-006 — verified (`validation.py:1385-1392`: `warned_v1` is run 1's clinician-only predicate; `warned` is 0.3.3's). Accepted: a new comparison field from today's `warned` (D7, Task 4.2, Schema).
+
+**/fix notes (amendments, 2026-10-22):** each amendment re-read on disk after landing. Siblings reconciled: D1's and Task 0.3's "median" → either bound; D2's "histograms" and Task 0.4 → the threshold-grid scores; Key Findings' `word_info` line, Excluded and D1's Rejected line no longer call `warned_v1` the 0.3.3 comparison; Task 4.3's "R1 < R2 < R3" → each class excuses its own count; Task 0.12's premise check → a difference check against Task 0.2; Schema gains `warned_v033` and the class fields.
+
+### Round 2 — 2026-10-22
+Source: Codex gpt-6-astra high plan peer-review
+
+**PR-MED-007 — Residue-adjusted counters can contaminate the v1 comparison.**  
+Materiality: build-affecting  
+D8 (`.cursor/plans/plan-validation-run6.md:200`) directs each count to skip excused facts, but `EncounterMetrics`’ counters are rule-independent (`desktop/src/scribe_desktop/validation.py:685-704`) and shared by `rule_failures` and report totals (`:1629-1634`, `:1965-1970`). Changing those properties would also apply v2 exemptions to the printed v1 verdict.  
+Proposed amendment: Preserve raw metrics and calculate adjusted counts only during schema-2 evaluation, with identical outcomes pinned to produce v1 FAIL and v2 PASS.
+
+**PR-MED-008 — R1’s verdict-based excusal misses co-optimal silent omissions.**  
+Materiality: build-affecting  
+D8 (`.cursor/plans/plan-validation-run6.md:200`) associates omission excusal with verdict `omitted` and calls the failure kinds disjoint. However, `FactOutcome.silent_omission` deliberately counts an unwarned omitted alternative even when the reported verdict is `wrong` (`desktop/src/scribe_desktop/validation.py:603-614`, `:1460-1462`). One qualifying R1 fact can therefore contribute to both correctness counts.  
+Proposed amendment: Apply R1 independently to the actual material-wrong and silent-omission predicates, retaining uncertainty failures, and pin a fact whose co-optimal alternatives produce both counts.
+
+**PR-MED-009 — Nonmaterial facts can consume R1 and R3 allowances.**  
+Materiality: build-affecting  
+D8 admits `wrong` and qualifying `wrongly_present` facts without requiring materiality (`.cursor/plans/plan-validation-run6.md:197-200`). Materiality is independent of verdict (`desktop/src/scribe_desktop/validation.py:274-278`), and a correctness failure requires both (`:625-627`). Thus a nonmaterial fact can exhaust a ceiling despite having no failure to excuse.  
+Proposed amendment: Require an applicable failing predicate before assigning R1 or R3, and pin nonmaterial wrong/wrongly-present facts as consuming no allowance.
+
+**PR-MED-010 — R3 lacks a mechanical association between the fact and the patient switch.**  
+Materiality: build-affecting  
+D8 refers to “a fact with axis `end_and_new_patient`” and “the script’s greeting line” (`.cursor/plans/plan-validation-run6.md:199`). Axes belong to the whole script, while neither facts nor script lines identify a greeting or reference boundary (`desktop/src/scribe_desktop/validation.py:254-255`, `:274-278`, `:342-349`). Applying the encounter-level axis can excuse an unrelated absent fact before the switch.  
+Proposed amendment: Define frozen reference greeting/tail provenance without changing existing facts, require the excused fact to belong to that tail, and pin an unrelated absent fact in the same encounter.
+
+**PR-MED-011 — Recording deletion-edge histories removes the bounded alignment state.**  
+Materiality: build-affecting  
+D7 requires `_FactState` to retain edge indices for every deleted run (`.cursor/plans/plan-validation-run6.md:192`). The current walk bounds each cell to 256 states specifically by carrying eight booleans (`desktop/src/scribe_desktop/validation.py:896-900`, `:932-954`); retaining distinct edge histories prevents equivalent paths from merging and permits combinatorial growth.  
+Proposed amendment: Precompute deletion-position anchor coverage through `hypothesis.consumed`, retain bounded deletion/coverage flags instead of histories, and add a repeated-token ambiguity test with a state-count bound.
+
+**PR-MED-012 — Synthetic measurement expects transcripts the runner never saves.**  
+Materiality: build-affecting  
+D6 and Task 0.2 prescribe running validation, then reading the built set’s transcripts with `run6-measure.py --audio` (`.cursor/plans/plan-validation-run6.md:185-186`, `:337`). `evaluate_encounter` holds its document only in memory and returns metrics (`desktop/src/scribe_desktop/validation.py:1768-1773`, `:1808-1817`); `main` prints a report, not transcript artifacts (`:2362-2363`).  
+Proposed amendment: Make measurement consume documents in memory through the harness’s transcription path and explicitly define how that transcription supplies both the premise check and threshold measurements.
+
+**PR-MED-013 — The grid cannot establish the trigger-disabled budget.**  
+Materiality: build-affecting  
+D6 specifies finite threshold pairs with gap thresholds up to two seconds (`.cursor/plans/plan-validation-run6.md:185`), while Task 0.4 permits disabling trigger 2 and requires checking feasibility with it disabled (`:342-343`). Longer gaps remain active in every grid row, and aggregate combined counts cannot reconstruct the disabled result after anchor deduplication.  
+Proposed amendment: Print trigger-2-disabled scores for every empty-segment threshold and omission variant, using the same deduplication and population summaries.
+
+**PR-MED-014 — Option (c)’s two exemptions are not defined before measurement.**  
+Materiality: build-affecting  
+Task 0.3 names “two exemptions” (`.cursor/plans/plan-validation-run6.md:341`), and D6 requires scoring them (`:185`), but D1 supplies only acknowledgement examples, a short-line count and a later vocabulary freeze (`:152`, `:351`). Exempting all short lines and exempting only named acknowledgements produce different budgets and threshold choices.  
+Proposed amendment: Specify both exemption predicates and the candidate acknowledgement vocabulary before Task 0.2, then freeze the exact measured definitions if option (c) is selected.
+
+**PR-MED-015 — The vocabulary freeze can invalidate tests before their planned reconciliation.**  
+Materiality: build-affecting  
+Task 0.9 activates the widened hedge list before Task 0.11 requires a green suite (`.cursor/plans/plan-validation-run6.md:351-358`), but existing held-out tests assert the old frozen results (`desktop/tests/test_note_check.py:2220-2245`). An approved addition matching a previously missed hedge changes those results immediately; the plan names subsequent divergence reconciliation in Tasks 0.12 and 3.1.  
+Proposed amendment: Reconcile the existing sets’ lexicon-only divergence predictions with the freeze commit, keeping later scope-change predictions separate and preserving the original expectations.
+
+**PR-MED-016 — `warned_v033` alone cannot preserve the conservative comparison.**  
+Materiality: build-affecting  
+D7 and the schema section add `warned_v033` (`.cursor/plans/plan-validation-run6.md:191`, `:217`), but silent omission also depends on alternatives other than the reported verdict. The existing run-1 comparison therefore retains `silently_omitted_v1` across all judged states (`desktop/src/scribe_desktop/validation.py:617-623`, `:1460-1464`). A single reported warning flag cannot recover an old silent alternative that the new warning now covers.  
+Proposed amendment: Preserve the 0.3.3 silent-omission predicate across every alternative, with a dedicated comparison accumulator and a pin where the reported verdict is wrong but another alignment was silently omitted under 0.3.3.
+
+**PR-LOW-001 — The exact-code-list inventory incorrectly labels unchanged tests as requiring new expectations.**  
+Materiality: record-only  
+Key Findings and Task 1.1 (`.cursor/plans/plan-validation-run6.md:119`, `:377`) list direct `omission_warnings` tests as changing, although D1 explicitly leaves that function unchanged; these include `desktop/tests/test_note_check.py:1790-1791`, `:1827-1828`, `:1881-1882`, `:2290-2291` and `test_note_schema_v2.py:892-893`. The listed trim checks assert only Check 6’s presence/absence (`test_transcript_trim.py:479-483`).  
+Proposed amendment: Distinguish unchanged regression pins from expectations affected by the new checks, retaining these assertions unchanged.
+
+Materiality: 10 build-affecting / 1 record-only / 0 invalid
+
+**Round 2 dispositions (composer, 2026-10-22; each verified against the plan and the code at HEAD before amending):**
+- PR-MED-007 — verified (`validation.py:685-704` counts read by `rule_failures` :1629-1634 and the totals :1965-1970). Accepted: raw counts unchanged; residue-adjusted counts read only under schema 2 (D8, Task 4.1, 4.3, Schema).
+- PR-MED-008 — verified (`silent_omission` :603-614 counts a reported-`wrong` fact's silent alternative; D8 called the kinds disjoint). Accepted: R1 clears each predicate independently, a fact counts once against R1 (D8, Task 4.1).
+- PR-MED-009 — verified (`material` independent of verdict :274-278; `material_wrong` :625-627). Accepted: R1 and R3 need a failing predicate (D8, Task 4.1).
+- PR-MED-010 — verified (axes per script :342-349; `syn-38` and `syn-46` voice the next patient as `patient`). Accepted: the frozen `REFERENCE_TAIL_STARTS` table and the tail condition (D8, Tasks 0.9, 0.12, 4.1, Schema).
+- PR-MED-011 — verified (`_FactState` is eight flags so equal states merge, :896-954). Accepted: two flags plus a precomputed per-column edge table; a state-count pin (D7, Task 4.2, Schema).
+- PR-MED-012 — verified (`evaluate_encounter` holds the document in memory :1768-1817; `main` prints a report only :2362-2363). Accepted: `--audio` transcribes in memory through the harness path; the premise check stays on `run-validation.py`'s report (D6, Task 0.2).
+- PR-MED-013 — verified (D6's grid kept trigger 2 on in every row; Task 0.4's option (x)). Accepted: trigger-2-disabled rows printed (D6, Task 0.4).
+- PR-MED-014 — verified (D1 gave examples and a count, no predicates). Accepted: (c-q) and (c-a) with the candidate set defined now (D1).
+- PR-MED-015 — verified (`test_note_check.py:2220-2245` asserts the frozen-hedge divergences; 0.9 precedes 0.11). Accepted: lexicon-only reconciliation in the freeze commit (Task 0.9).
+- PR-MED-016 — verified (`silently_omitted_v1` across alternatives :617-623, :1460-1464). Accepted: `warned_v033` as a walk flag with `silently_omitted_v033` across alternatives (D7, Task 4.2, Schema).
+- PR-LOW-001 — verified (the five direct `omission_warnings` pins and the trim test's presence-only asserts). Accepted: Key Findings and Task 1.1 split changing from unchanged pins.
+
+**/fix notes (round 2 amendments, 2026-10-22):** each amendment re-read on disk after landing. Siblings reconciled: D8's "the three failure kinds are disjoint" removed; Schema's `_FactState` / `FactOutcome` line; Task 0.4's option (x); Tasks 4.1–4.3's class wording and pins; Task 0.2's practitioner line and D6's audio paragraph agree on two separate transcriptions; Task 0.9 and 0.12 carry the tail table.
+
+### Round 3 — 2026-10-22
+Source: Codex gpt-6-astra high plan peer-review
+
+**PR-MED-017 — R3 conflates the greeting line with the first withheld line.**  
+Materiality: build-affecting  
+D8 (`.cursor/plans/plan-validation-run6.md:199`) defines `REFERENCE_TAIL_STARTS` as the greeting line, tests that line for a listed greeting, and requires equality with `HeldOutCase.boundary`. These positions differ: `desktop/tests/fixtures/heldout_transcripts.py:214-217` places the greeting in segment 3 but the boundary at 4. `desktop/src/scribe_desktop/note_check.py:1805-1807` explicitly documents this distinction. Consequently, following the prescribed pin makes R3 inspect the wrong line for its greeting condition, potentially admitting a failure unrelated to an unlisted greeting.  
+Proposed amendment: Freeze separate reference greeting and tail-start indices, use each for its corresponding R3 predicate, and test a closing and greeting sharing one line.
+
+**PR-MED-018 — R3’s “fact’s aligned segment” has no defined meaning across alignment alternatives.**  
+Materiality: build-affecting  
+D8 and Task 4.1 (`.cursor/plans/plan-validation-run6.md:199`, `:473`) compare the detected boundary with one aligned segment. However, a fact can span multiple transcript segments, and the harness combines repeated occurrences and every co-optimal alignment (`desktop/src/scribe_desktop/validation.py:1427-1434`). `_fact_end_states` retains Boolean outcome flags and discards positions (`:924-954`); it provides no single segment for that comparison. Choosing one path would undermine the harness’s conservative treatment of alternatives.  
+Proposed amendment: Define R3’s boundary condition over the note-contributing aligned words and all relevant alternatives, using the authoritative boundary and bounded flags, with tests for spanning and repeated-token facts across a boundary.
+
+**PR-MED-019 — D2’s prescribed textless test contradicts its suspect-word exclusion.**  
+Materiality: build-affecting  
+D2 (`.cursor/plans/plan-validation-run6.md:159-162`) uses `not segment_has_text(segment)` while requiring suspect words to count as no words. The named helper counts every nonblank word, including suspect words (`desktop/src/scribe_desktop/transcription.py:351-357`, `:372-374`). An all-suspect segment therefore fails the textless test but has no surviving first/last words for the filtered gap calculation. Likewise, the prescribed `(i, i + 1)` anchor cannot represent surviving edges at original indices 0 and 2 after excluding index 1. This ambiguity affects both threshold measurement and shipped warnings.  
+Proposed amendment: Define detection over an indexed non-suspect word view, explicitly handle an empty filtered view and display-anchor fallback, preserve original edge indices, and pin all-suspect and nonadjacent-edge cases.
+
+Materiality: 3 build-affecting / 0 record-only / 0 invalid
+
+**Round 3 dispositions (composer, 2026-10-22; each verified against the plan and the code at HEAD before amending):**
+- PR-MED-017 — verified (`heldout_transcripts.py:214-217` `hld-11`: closing and greeting share segment 3, boundary 4; `note_check.py:1805-1807`). Accepted: two tables, the greeting line and the tail start (D8, Tasks 0.9, 0.12, 4.1, Schema).
+- PR-MED-018 — verified (`_fact_end_states` keeps flags, not positions, `validation.py:924-954`; occurrences and alternatives combined :1427-1434). Accepted, by the simpler route: R3 requires NO boundary on the measured document, an encounter-level fact; a later boundary leaves the fact failing (D8, Task 4.1).
+- PR-MED-019 — verified (`segment_has_text` counts suspect words, `transcription.py:351-357`, :372-374). Accepted: one indexed surviving-word view per segment, original indices for the anchor, all-suspect = textless (D2, Task 2.1).
+
+**/fix notes (round 3 amendments, 2026-10-22):** each amendment re-read on disk after landing. Siblings reconciled: Schema names both R3 tables; Tasks 0.9, 0.12 and 4.1 carry both tables and the boundary-None condition; Task 2.1's pins carry the all-suspect and non-adjacent-edge cases; D7's deletion-edge comparison is already in original coordinates and covers a span anchor.
+
+### Round 4 — 2026-10-22
+Source: Codex gpt-6-astra high plan peer-review
+
+**PR-MED-020 — R1’s review-mark condition remains undefined across alignment alternatives.**  
+Materiality: build-affecting  
+D8 (`.cursor/plans/plan-validation-run6.md:197`) requires “the fact’s line” to carry a product review mark. However, `fact.line` indexes the script (`desktop/src/scribe_desktop/validation.py:1423`), while product marks address transcript assertion spans (`desktop/src/scribe_desktop/note_check.py:589-610`). The harness evaluates every occurrence and co-optimal alignment (`validation.py:1427-1434`), potentially reaching different transcript segments, and retains flags rather than positions (`:951-954`). The plan therefore leaves undefined whether one marked alternative can excuse another unmarked, erroneous rendering; Round 3’s R3 amendment does not resolve this separate R1 condition.  
+Proposed amendment: Define mark eligibility over the note-contributing transcript segments for every wrong alternative and occurrence, retain a bounded eligibility flag during the walk, and test split-segment and repeated-token cases where only one alternative is marked.
+
+**PR-MED-021 — D2’s gap mark needs an explicit policy for replaced anchor lines.**  
+Materiality: build-affecting  
+D2 and Task 2.2 (`.cursor/plans/plan-validation-run6.md:157-163`, `:490`) make the warning document-only and place its `[gap?]` mark in `_row_marks`. That helper suppresses marks for replaced lines (`desktop/src/scribe_desktop/ui/models.py:3058-3059`), while replacements also remove their source segment from the chooser (`desktop/src/scribe_desktop/ui/note.py:1253-1259`). Following those existing rendering rules leaves the persistent warning pointing to a mark displayed nowhere after the clinician types a replacement—the response described in Flow 2 (`plan:139`).  
+Proposed amendment: Carry gap anchors as independent segment annotations, preserve `[gap?]` on replaced source rows as omission flags already are (`ui/models.py:2977`, `:3009`), and add a replacement regression case beside the fully quoted and chooser-anchor tests.
+
+Materiality: 2 build-affecting / 0 record-only / 0 invalid
+
+**Round 4 dispositions (composer, 2026-10-22; each verified against the plan and the code at HEAD before amending):**
+- PR-MED-020 — verified (`fact.line` indexes the script, `validation.py:1423`; Check 1's marks are per assertion `source_coords`, `note_check.py:585-612`; occurrences and alternatives combined, `validation.py:1427-1434`; the walk keeps flags, `:951-954`). Accepted: `_WordInfo.review_marked` and one more walk flag `marked`, required on every wrong end state of every occurrence (D8 R1, D7's state bound 2^12, Schema, Task 4.1's split-segment and repeated-token pins).
+- PR-MED-021 — verified (`_row_marks` returns () for removed and replaced rows, `ui/models.py:3043-3071`; the omission flag is computed outside it, `:2976`, `:3009`; a replaced segment counts as present, `ui/note.py:1250-1276`). Accepted: `gap_segments(warnings)` beside `flagged_segments`, shown on every state the omission flag shows on (D2 "How it is shown", Task 2.2 and its replacement regression test).
+
+**/fix notes (round 4 amendments, 2026-10-22):** each amendment re-read on disk after landing. Siblings reconciled: D7's pin and the Schema line both say 2^12 and name `marked`; Task 4.1 names the walk flag; Flow 2 and the P.2 mock smoke already speak of "the anchor line" and stand; D3's mark list is unchanged (the token is still `[gap?]`).
+
+### Round 5 — 2026-10-22
+Source: Codex gpt-6-astra high plan peer-review
+
+**PR-MED-022 — Reference-document migration conflates two input contracts.**  
+Materiality: build-affecting  
+D6/D8 and Task 0.9 (`.cursor/plans/plan-validation-run6.md:185`, `:203`, `:474`) prescribe `reference_document(script)` while making fixture `build_document` an import of it. However, `build_document` accepts `tuple[Turn, ...]` and reads `.speaker` (`desktop/tests/fixtures/heldout_transcripts.py:85-110`); `HeldOutCase.document()` passes those turns, including explicit edge cases (`:146-152`). The prescribed direct replacement breaks these callers, while the migration pin names only scripted held-out documents.  
+Proposed amendment: Preserve a shared turn-to-document builder, adapt `reference_document(script)` through it, and pin unchanged output for both scripted and explicit edge cases.
+
+**PR-LOW-002 — Stored-note reopen and rollback descriptions overstate what happens.**  
+Materiality: record-only  
+Integration Notes (`.cursor/plans/plan-validation-run6.md:124-125`) says checks rerun on every reopen and unknown codes collapse into one entry. Saved-note reopening instead displays previously ratified content without rerunning checks (`desktop/src/scribe_desktop/ui/note.py:1018-1050`, `:2546-2552`). The unknown-code reader preserves each warning’s fields and changes its code (`desktop/src/scribe_desktop/note.py:705-727`); multiple warnings form one UI group with their combined count (`desktop/src/scribe_desktop/ui/models.py:2360-2388`).  
+Proposed amendment: Distinguish saved-note display from active review, and describe rollback as retaining separate warnings under one grouped code rather than collapsing them into one stored entry.
+
+Materiality: 1 build-affecting / 1 record-only / 0 invalid
+
+**Round 5 dispositions (composer, 2026-10-22; each verified against the plan and the code at HEAD before amending):**
+- PR-MED-022 — verified (`build_document(turns: tuple[Turn, ...])` reads `turn.speaker` / `turn.text`, `heldout_transcripts.py:85-110`; `HeldOutCase.document()` passes `explicit_turns`, `:140-152`). Accepted: `validation.document_from_turns` as the one builder, `reference_document` an adapter, the fixture a thin call, pinned equal for scripted and explicit cases (D8's Schema line; D6's text mode).
+- PR-LOW-002 — verified (`show_saved_note` shows a saved note as saved, `ui/note.py:1018-1050`; the unknown-code reader keeps fields, `note.py:705-727`; grouping, `ui/models.py:2360-2388`). Accepted as a record correction (Integration Notes, the "No new stored field" line, Task 1.3); no build change.
+
+**/fix notes (round 5 amendments, 2026-10-22):** each amendment re-read on disk after landing. Siblings reconciled: D6's text mode names `document_from_turns`; the Integration Notes, D-section "No new stored field" line and Task 1.3 all describe rollback as fields kept and grouped; Key Findings line 116's fixture description stays true of HEAD. This is the pass's cap round (5).
+
+### Round 6 — 2026-10-22
+Source: Codex gpt-6-astra high plan peer-review
+
+No findings
+
+Materiality: 0 build-affecting / 0 record-only / 0 invalid
+
+**Round 6 disposition (composer, 2026-10-22):** a fresh one-round pass the practitioner asked for after the first pass ended at its cap. No findings; nothing to amend. The plan peer pass is CONVERGED.
+
+### Round 7 — 2026-10-23
+Source: Codex gpt-6-astra high plan peer-review
+
+**PR-MED-023 — Attribution failures can disappear from the gate’s budget population**  
+Materiality: build-affecting  
+Evidence: `.cursor/plans/plan-validation-run6.md:537` excludes unconfirmed encounters from measurement, but `:541` accepts solely on four credited facts and the measured warning median/maximum; the printed attribution-failure count has no acceptance condition. Consequently, four credited encounters and low counts among the remaining measurable encounters can satisfy the gate despite unresolved encounters elsewhere. The existing runner likewise returns `role_unresolved` before producing note metrics (`desktop/src/scribe_desktop/validation.py:1777`).  
+Proposed amendment: Require complete measurement of both expected sets for automatic gate acceptance, printing expected/measured/unresolved counts and routing any unresolved encounter to the written practitioner decision.
+
+**PR-MED-024 — Integer-only output cannot represent every gate-relevant median**  
+Materiality: build-affecting  
+Evidence: `.cursor/plans/plan-validation-run6.md:538` requires integers only while printing warning medians, and `:541` compares those medians against 2. Both sets have even sizes, so integer warning counts can yield a median of 2.5; rounding or truncating that to 2 changes the decision, and no representation rule is specified.  
+Proposed amendment: Print the exact median as twice its value in an explicitly labelled integer column and compare it against 4, or permit exact half-integer medians without rounding.
+
+**PR-MED-025 — The attribution diagnostic misses false clinician matches**  
+Materiality: build-affecting  
+Evidence: `.cursor/plans/plan-validation-run6.md:225` and `:538` measure only clinician speech labelled other. `desktop/src/scribe_desktop/transcription.py:929` assigns every threshold match to `speaker_1`, while `desktop/src/scribe_desktop/validation.py:1663` accepts a clinician-majority cluster even when it contains patient speech. An all-match result on a clinician-majority encounter can therefore pass confirmation and report zero lost clinician seconds while concealing the opposite attribution error.  
+Proposed amendment: Add other-speaker seconds labelled clinician alongside the existing diagnostic, with a mixed-cluster fake test, leaving the attribution threshold and verdict policy unchanged.
+
+**PR-MED-026 — Active instructions still require dropped missed-speech work**  
+Materiality: build-affecting  
+Evidence: `.cursor/plans/plan-validation-run6.md:26` still instructs the future UI merge to adopt `[gap?]`; `:604` explicitly drops deletion-edge pins but then still requires partial-deletion/substitution, first/last-edge, cross-segment and suspect-filtered pins from that removed mechanism. These are active implementation and verification instructions, unlike the expressly historical D2/D7 blocks.  
+Proposed amendment: Remove `[gap?]` from the merge contract and replace Task 4.2’s inherited pin list with tests solely for the retained omission-code amendment and comparison flags.
+
+**PR-LOW-003 — The scratch synthesis description incorrectly promises no disk write**  
+Materiality: record-only  
+Evidence: `.cursor/plans/plan-validation-run6.md:537` says synthesis through `sapi_synthesize` occurs “in memory; nothing written,” but `desktop/src/scribe_desktop/validation_set.py:156` creates a temporary directory and writes `turn.wav` before resampling and removing it.  
+Proposed amendment: State that no enrolment WAV is retained, while the existing synthesis helper temporarily writes and removes a synthetic WAV.
+
+Materiality: 4 build-affecting / 1 record-only / 0 invalid
+
+**Round 7 disposition (composer, 2026-10-23):** a fresh scoped pass over the D1 re-plan (`3a1d09a`), the first of a new peer-loop pass (cap 5). Every finding verified against the code and accepted: PR-MED-023 (the gate now requires every encounter of both sets measured; 0.2a prints n(expected) / n(measured) / n(attribution failed)); PR-MED-024 (medians printed and compared exactly; 2.5 is over the budget); PR-MED-025 (confirmed: `transcription.py:929` gives every matching segment to `speaker_1` and `clinician_speaker` accepts a clinician-majority cluster — a second recorded, never-gated column "Other speech labelled clinician (s)" in D11, 0.2a, Schema, Task 0.14 and its mixed-cluster fake test, P.1); PR-MED-026 (the ui-refresh merge contract no longer names `[gap?]`; Task 4.2 keeps only D7's retained pins plus a `clinician_line_omitted` credit pin both ways; sibling found and fixed: D2's dropped note no longer says the re-plan is still to come); PR-LOW-003 (0.2a says the synthesis helper writes and removes its own temporary WAV; no enrolment WAV is kept).
+
+**/fix notes (round 7 amendments, 2026-10-23):** applied by one asserting script (each replacement matched exactly once), re-read on disk. Siblings swept for `[gap?]`, "labelled other", "integers only", "median ≤ 2" and the seconds totals: the Related-plans line, D2's dropped note, D11's report, Schema, 0.2a, 0.13, 0.14 (files and tests), 4.2 and P.1 updated; line 27's and line 151's "integers only" (Task 0.2's real-speech counts) and the 0.1 budget lines stand unchanged (they describe Task 0.2, not 0.2a's medians).
+
+### Round 8 — 2026-10-23
+Source: Codex gpt-6-astra high plan peer-review
+
+**PR-MED-027 — Enrolled confirmation can accept a patient-majority cluster**  
+Materiality: build-affecting  
+Evidence: `.cursor/plans/plan-validation-run6.md:222` and `:593` require clinician-majority confirmation, but `desktop/src/scribe_desktop/validation.py:1657` totals whole segment durations under each segment’s winning truth label. `desktop/src/scribe_desktop/speaker_eval.py:397` computes overlap shares, but `:416` retains the winning label and `:369` supplies the whole duration. An enrolled cluster containing a 10-second segment with 5.1 clinician seconds and 4.9 patient seconds, plus a 9-second patient segment, therefore passes confirmation as 10 versus 9 despite actually containing 5.1 clinician versus 13.9 patient seconds. This differs from Round 7’s accepted contamination within a genuinely clinician-majority cluster; the ungated diagnostic does not prevent false confirmation.  
+Proposed amendment: Add an enrolled-path confirmation check using actual label-track overlap durations, preserving legacy clustering behaviour and pinning this patient-majority mixed-segment counterexample.
+
+**PR-MED-028 — R4 lacks positive evidence that recognised words were misattributed**  
+Materiality: build-affecting  
+Evidence: `.cursor/plans/plan-validation-run6.md:575` defines R4 through an omitted clinician-script fact and a negative speaker-label condition, without requiring correctly recognised fact tokens or a nonempty alignment. `desktop/src/scribe_desktop/validation.py:942` admits deletions, `:944` admits substitutions, and `:980` calls either outcome omitted when no aligned word is covered. A substituted fact aligned entirely into other-speaker segments can therefore qualify without evidence of an attribution error; a wholly deleted fact has no aligned segment, leaving the universal condition undefined or vacuously true. R4 could consequently excuse recognition failures without satisfying R1’s reference-document condition.  
+Proposed amendment: Define positive recognition-and-attribution evidence for R4 before its ceiling is decided, explicitly specifying and testing deletion, substitution, split-segment and co-optimal cases.
+
+**PR-LOW-004 — Threshold claims omit the no-match fallback**  
+Materiality: record-only  
+Evidence: `.cursor/plans/plan-validation-run6.md:227` says a below-threshold turn stays the other voice, while `:99` treats successful attribution diagnostics as verification that the synthetic voices cleared 0.50. However, `desktop/src/scribe_desktop/transcription.py:932` falls back to clustering when no segment matches, then selects the higher-similarity cluster; `:1461` still derives an enrolled speaker. Successful track confirmation therefore does not establish that any segment cleared the threshold.  
+Proposed amendment: Qualify the below-threshold statement with the no-match fallback and describe the existing measurements as validating attribution outcomes rather than threshold clearance.
+
+**PR-LOW-005 — Active summaries still describe dropped constants as outstanding**  
+Materiality: record-only  
+Evidence: `.cursor/plans/plan-validation-run6.md:70` still lists “0.4’s values owed after 0.2” in Agreed Scope, `:25` describes this plan’s missed-speech thresholds as current, and `:577` says the sibling reconciliation is “not yet” applied before its expressly historical text begins. These remaining locations contradict the completed removal recorded in D2 and Phase 2.  
+Proposed amendment: Update these summaries to state that decision 0.4 removed the constants and that its sibling reconciliation has been applied, leaving the explicitly marked history intact.
+
+Materiality: 2 build-affecting / 2 record-only / 0 invalid
+
+**Round 8 disposition (composer, 2026-10-23):** round 2 of the pass; every finding verified against the code and accepted. PR-MED-027 (confirmed: `clinician_speaker` sums whole segment durations under each segment's winning label, `validation.py:1657`; D11's enrolled confirmation now also requires an actual-overlap clinician majority, the counterexample pinned in Task 0.14, `clustering` unchanged); PR-MED-028 (0.13 (i)'s R4 now requires every fact token MATCHED on every co-optimal alignment and every matched word outside clinician-labelled segments; deletion, substitution, split and co-optimal-substitution pins named NOT R4); PR-LOW-004 (confirmed `transcription.py:932`: the assumption and D11's residue (i) now name the no-match fallback; the measurements validate attribution outcomes, not threshold clearance); PR-LOW-005 (the Related-plans line, Agreed Scope and Task 0.4's "not yet" updated).
+
+**/fix notes (round 8 amendments, 2026-10-23):** one asserting script, each replacement matched exactly once; swept for "owed after", "not yet", threshold-clearance wording and R4: line 103 is current and the 2026-10-22 Handoff line stands as dated history; R4 appears only in 0.13.
+
+### Round 9 — 2026-10-23
+Source: Codex gpt-6-astra high plan peer-review
+
+**PR-MED-029 — R4 can consume its ceiling for an already-warned omission**  
+Materiality: build-affecting  
+Evidence: `.cursor/plans/plan-validation-run6.md:604` defines R4 through a material `omitted` fact, matched tokens and other-speaker attribution, without requiring `silent_omission`; `:208` counts each qualifying fact against its class ceiling. The existing all-speaker warning predicate can warn such a fact (`desktop/src/scribe_desktop/validation.py:1385`), making its `silent_omission` false (`:603–614`). Thus an otherwise qualifying fact with every alternative already warned can consume R4’s allowance despite having no omission failure, potentially failing the set unnecessarily. The introductory “uncredited facts” wording does not carry this restriction into R4’s mechanical definition.  
+Proposed amendment: Require `silent_omission` for R4 membership, specify that R4 clears only that failure predicate, and pin that an otherwise qualifying, fully warned omission consumes no R4 allowance.
+
+Materiality: 1 build-affecting / 0 record-only / 0 invalid
+
+**Round 9 disposition (composer, 2026-10-23):** round 3 of the pass. PR-MED-029 verified (D8 already restricts R1 to a failing predicate and R2 to an unsurfaced fact; 0.13 (i)'s R4 did not) and accepted: R4 now requires `silent_omission`, clears `silent_omissions` only, and a fully warned omission is pinned NOT R4 and consuming nothing.
+
+**/fix notes (round 9 amendment, 2026-10-23):** applied by an asserting replacement, re-read on disk; sibling sweep: R4 appears only in 0.13; R1 to R3 in D8 already carry their own failing-predicate conditions.
+
+### Round 10 — 2026-10-23
+Source: Codex gpt-6-astra high plan peer-review
+
+**PR-LOW-006 — Failure of the pre-build gate does not imply a held-out run failure**  
+Materiality: record-only  
+Evidence: `.cursor/plans/plan-validation-run6.md:618` routes any failure of the compound gate to the practitioner’s decision, but option (ii) unconditionally forecasts `heldout` FAIL. The gate could fail solely because warning counts exceed the budget on `scripts`, with all five held-out facts credited. Review-warning counts do not themselves fail the harness (`desktop/src/scribe_desktop/validation.py:1472–1476`, `:1615–1640`), and D8’s set verdict depends on remaining failures and residue ceilings (`.cursor/plans/plan-validation-run6.md:208`).  
+Proposed amendment: Record which gate condition failed and derive each set’s forecast from its residual failures and ceilings, preserving the fixed gate and practitioner decision.
+
+Verification:
+- **Round 9 / residue classes:** Sound. R4 now requires `silent_omission`, including co-optimal alternatives (`validation.py:603–614`), and clears only that count. R1 requires no fully matched alignment; R4 requires every alignment fully matched, so they cannot overlap or consume both ceilings. D8 preserves raw counts, applies adjustments only under v2, and retains the set-level ceiling check.
+- **Four-of-five credit:** Sound under D6’s definition at plan line 193: credit counts facts the variant warns. A fact already resolved under enrolled attribution earns no D1 credit and no longer needs omission credit; the conservative gate may therefore require the practitioner’s decision.
+- **Unresolved roles:** Sound. `role_unresolved` fails before metric evaluation (`validation.py:1619–1620`); neither residue adjustments nor v2 ceilings excuse it.
+- **(a) Masking:** No verified defect. D11 explicitly uses the same synthetic voice and names the synthetic-versus-practitioner limitation; the forecast limits seen-set passes to regression evidence. The paired clustering/enrolment diagnostics quantify the attribution change cheaply, although they cannot establish real-speech generalisation.
+- **(b) Passage pin:** Sound. The tracked SHA-256 can pin the shipped text without retaining scratch. Exclusion tests can use `note_config`’s shipped section cues, `note_check.HEDGE_PHRASES`, `_STRENGTH_UNITS`, `_MEDICATION_LEXICON`, `consultation_phrases.CLOSING_PHRASES` / `GREETING_PHRASES`, and `transcription.is_number_token`.
+- **(c) Passage duration:** Feasible. `enrolment.enrol` requires usable detected speech and a valid mean vector, not a 30-second minimum (`enrolment.py:267–291`); `speaker_eval.enrolment_inputs:836` uses that contract. Approximately 40 seconds is compatible, with actual usability checked during measurement.
+
+Read-only review; no files changed and no tests, builds or harness runs performed.
+
+Materiality: 0 build-affecting / 1 record-only / 0 invalid
+
+**Round 10 disposition (composer, 2026-10-23):** round 4 of the pass; 0 build-affecting, so the pass CONVERGED (rounds 7–10). PR-LOW-006 verified (review-warning counts fail no encounter, `validation.py` ~1472–1476 / ~1615–1640) and accepted: 0.13 option (ii) now records which gate condition failed and derives each set's forecast from its residual failures against D8's ceilings, instead of forecasting `heldout` FAIL unconditionally. The peer's verifications of R1/R4 disjointness, the four-of-five credit, `role_unresolved`, D11 masking, the passage pin (the shipped lists it names) and the ~40 s passage are recorded as sound.
+
+**/fix notes (round 10 amendment, 2026-10-23):** applied with one exact replacement, re-read on disk; sibling sweep for "expected to FAIL" / "FAIL on `heldout`": no other occurrence.
+
+### Round 11 — 2026-10-23
+Source: Codex peer-review (gpt-6-astra high; code review of Task 0.9's uncommitted diff)
+
+- **PR-LOW-007** — `.cursor/plans/plan-validation-run6.md:677` — Freeze record omits a newly hedged script line
+  - Triage: Fix-now (docs-only).
+  - Fix route: fix-on-fast.
+  - Why it matters: The freeze record claims an exhaustive account of the lexicon’s effect, but conflates hedge matching with whether an unsure mark is emitted.
+  - Current behaviour: `hld-19` line 6 also changes from unhedged to hedged through `"i reckon"`. Its confirmed-clinician status suppresses the unsure mark, and its fact has no uncertainty expectation, so current scoring remains unchanged.
+  - Desired behaviour: Record all three changed script lines—`syn-30:3`, `hld-19:3`, and `hld-19:6`—and explain why the last does not change the current unsure result or scoring.
+  - Verification: Read-only comparison of HEAD’s 16 phrases against the current 33 across all 72 scripts found exactly these three changes. Pure-function probes confirmed line 6 matches, produces no mark with `clinician=True`, and produces `unsure` with `clinician=False`.
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 1 LOW
+
+**Round 11 disposition (composer, 2026-10-23):** round 1 of the Task 0.9 code pass. PR-LOW-007 verified (a scratch probe comparing HEAD's 16 phrases with the 33 over all 72 scripts found exactly `syn-30` line 3, `hld-19` line 3 and `hld-19` line 6; line 6 is a clinician line, `note.line_marks` puts no unsure mark on the confirmed clinician's line, and `validation._judge` reads `script_hedged` only for a fact with `expect_uncertain`, which line 6's fact lacks) and accepted: surface=docs, fixed now.
+
+**/fix notes (round 11, 2026-10-23):** Task 0.9's "Record (2026-10-23)" lexicon-reconciliation sentence now names `hld-19` lines 3 and 6 and says why line 6 changes neither the marks nor the scoring; re-read on disk; sibling sweep for "line 3" claims of the unhedged-to-hedged set: no other occurrence.
+
+### Round 12 — 2026-10-23
+Source: Codex peer-review (gpt-6-astra high; code review of Task 0.9's uncommitted diff)
+
+- **PR-LOW-008** — `desktop/src/scribe_desktop/note_check.py:509` — First-person selection rule omits the “seem” exception
+  - Triage: Fix-now (docs-only).
+  - Fix route: fix-on-fast.
+  - Why it matters: The freeze records an unconditional selection rule that its vocabulary does not follow.
+  - Current behaviour: The comment says a listed verb enters in the first person, repeated in `.cursor/plans/plan-validation-run6.md:690`. The added bare verb `seem`, like existing `seems` and `seemed`, has no first-person restriction.
+  - Desired behaviour: Explicitly distinguish first-person stance verbs from the admitted “seem” forms in both descriptions; preserve the intended vocabulary.
+  - Verification: `HEDGE_PHRASES` contains all three bare forms. A read-only probe confirms “They seem a bit better.” matches; `desktop/tests/test_note_check.py:2071` deliberately requires that result.
+
+- **PR-LOW-009** — `desktop/tests/test_validation_scripts.py:485` — Digest comment overstates what changes it detects
+  - Triage: Fix-now (docs-only).
+  - Fix route: fix-on-fast.
+  - Why it matters: Readers could mistake the document-parity pin for protection of frozen case expectations or script facts.
+  - Current behaviour: The comment claims a change to a case or held-out script changes the digest. The digest includes only case IDs and generated document JSON; expectations, facts and other non-document fields are excluded.
+  - Desired behaviour: Limit the claim to changes affecting case IDs or serialized documents, explicitly excluding expectations and script facts.
+  - Verification: Read-only, in-memory probes changed `hld-19`’s `unsure` expectation and a script fact’s `expect_uncertain` value independently; both left the corresponding document hash payload unchanged. The actual builder-parity pin remains valid across all 32 cases.
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 2 LOW
+
+**Round 12 disposition (composer, 2026-10-23):** round 2 of the Task 0.9 code pass. PR-LOW-008 verified (`HEDGE_PHRASES` holds bare "seem", "seems", "seemed"; the comment and the plan's selection line stated an unconditional first-person rule) and accepted: surface=docs. PR-LOW-009 verified (`_held_out_documents_sha256` hashes case ids and document JSON only) and accepted: surface=test-harness.
+
+**/fix notes (round 12, 2026-10-23):** `note_check.py`'s hedge comment and Task 0.9's "The selection, by rule" line now name the bare forms of "seem" as the exception to the first-person rule; the digest comment in `test_validation_scripts.py` now says what the pin covers (the builder, case ids, a case's document inputs) and that expectations and script facts are outside it. Re-read on disk; sibling sweep for "first person" / "first-person" over the plan, `note_check.py`, `test_vocabulary.py` and the harness document: no other statement; ruff clean; `test_vocabulary.py`, `test_validation_scripts.py`, `test_note_check.py` 487 passed.
+
+### Round 13 — 2026-10-23
+Source: Codex peer-review (gpt-6-astra high; code review of Task 0.9's uncommitted diff)
+
+- **PR-LOW-010** — `desktop/tests/test_validation_scripts.py:557` — R3 pins allow both reference indices to move past the greeting
+  - Triage: Fix-now.
+  - Fix route: fix-on-fast.
+  - Why it matters: D8 evaluates greeting recognition on the reference greeting line. An undetected change to that index could make a listed greeting appear absent and incorrectly satisfy that R3 condition.
+  - Current behaviour: The current table values are correct, but the assertions permit both greeting and tail indices to move one line later for every run-of-record script carrying the axis. The indices then point at the next patient’s material fact rather than the greeting. Held-out boundary equality does not cover these scripts; range, shared-line and fact-containment checks all still hold. The comment at lines 581–582 names only an early, fact-free displacement as the remaining limitation.
+  - Desired behaviour: Add exact dated pins for the six run-of-record greeting/tail pairs, retaining the existing structural checks. Ensure a one-line-late pair fails.
+  - Pattern siblings: `syn-06`, `syn-20`, `syn-21`, `syn-38`, `syn-43`, `syn-46`—all six run-of-record entries.
+  - Verification: Read-only, in-memory evaluation of every assertion predicate in `TestNextPatientReferenceTables` accepted each pair independently shifted by +1. For example, `syn-06` accepts `(5, 5)`, although its greeting is line 4 and its material absent fact is line 5. No test suite or harness was run.
+  - Regression risk: Test-only strengthening; current table values and product behaviour remain unchanged.
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 1 LOW
+
+**Round 13 disposition (composer, 2026-10-23):** round 3 of the Task 0.9 code pass. PR-LOW-010 verified (`TestNextPatientReferenceTables` ties a `syn-` pair to nothing exact: the boundary equality covers held-out ids only) and accepted: surface=test-harness.
+
+**/fix notes (round 13, 2026-10-23):** new `test_the_run_of_record_pairs_are_pinned_exactly` pins the six `syn-` greeting/tail pairs as read on 2026-10-23; the fact-side test's docstring now names where a moved start is caught; Task 0.9's record line names the exact pin. Both ways: an in-memory +1 shift of `syn-06` fails the new pin; the class passes 7/7; ruff clean.
+
+### Round 14 — 2026-10-23
+Source: Codex peer-review (gpt-6-astra high; code review of Task 0.9's uncommitted diff)
+
+- **PR-LOW-011** — `desktop/tests/test_note_check.py:2280` — Historical reconciliation accepts incorrect original predictions
+  - Triage: Fix-now.
+  - Fix route: fix-on-fast.
+  - Why it matters: Task 0.9 requires preserving the original 0.3.3 prediction and recording which predictions changed.
+  - Current behaviour: The historical result is checked only for inequality with today’s result. Replacing `hld-19`’s original `()` with `(5,)` passes. Replacing the entire history with `{"hld-20": ((3, 5), ())}` also passes, despite omitting the changed case and inventing a change to an unchanged case.
+  - Desired behaviour: Pin the dated history’s exact keys and original values, retaining the current behavioural assertions.
+  - Verification: Read-only evaluation of every historical assertion accepted both mutations. HEAD records `hld-19`’s prediction as `()` and `hld-20`’s as `(5,)`. The other references to the historical dictionary check only case membership and nonemptiness.
+
+- **PR-LOW-012** — `desktop/tests/test_validation_scripts.py:519` — Shared-builder pin checks equality but not delegation
+  - Triage: Fix-now.
+  - Fix route: fix-on-fast.
+  - Why it matters: Task 0.9 explicitly requires the fixture to call the harness’s single builder. An independent copy can later drift.
+  - Current behaviour: The implementation delegates correctly, but `test_the_fixture_builds_through_the_harness` compares only returned documents. Restoring HEAD’s independent fixture builder satisfies this assertion and the document digest unchanged.
+  - Desired behaviour: Add a delegation check that substitutes the fixture’s imported builder and verifies the turns passed and the returned result. Retain the document-parity checks.
+  - Verification: Executed HEAD’s pure builder in memory over all 32 cases, including all 10 explicit-turns cases. Every document equals the current harness result, and both aggregate digests equal the frozen SHA-256. Thus the new pins accept restoration of the duplicate builder.
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 2 LOW
+
+**Round 14 disposition (composer, 2026-10-23):** round 4 of the Task 0.9 code pass. PR-LOW-011 verified (the history test checked only `got != predicted_0_3_3`) and accepted: surface=test-harness. PR-LOW-012 verified (document equality alone accepts a restored private builder) and accepted: surface=test-harness.
+
+**/fix notes (round 14, 2026-10-23):** `test_the_widened_hedges_changed_these_predictions_and_no_expectation` now re-runs every held-out case under the 0.3.3 sixteen (`_HEDGE_PHRASES_0_3_3`, a literal frozen tuple, patched onto `note_check.HEDGE_PHRASES`) and asserts the dated record equals exactly the changed cases with their 0.3.3 results; new `test_the_fixture_delegates_to_the_harness_builder` swaps the fixture's imported builder for a recording fake. Both ways: `{"hld-19": ((3, 5), (5,))}` and `{"hld-20": ((3, 5), ())}` each fail the history test; a fixture `build_document` that does not call the module's builder fails the delegation test. Task 0.9's record lines on the reconciliation and the move updated. ruff clean; the touched tests pass.
+
+### Round 15 — 2026-10-23
+Source: Codex peer-review (gpt-6-astra high; code review of Task 0.9's uncommitted diff)
+
+No findings
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 0 LOW
+
+**Round 15 disposition (composer, 2026-10-23):** round 5 of the Task 0.9 code pass; 0 findings, so the pass CONVERGED (rounds 11–15: 6 LOW, all fixed — 3 wording, 3 test pins; no CRIT, HIGH or MED; no product behaviour change after round 11).
+
+### Round 16 — 2026-10-23
+Source: Claude Code simplify
+
+**Scope:** Task 0.9's uncommitted diff (8 files) before its commit, read in full: `note_check.py`, `note.py`, `validation.py`, `fixtures/heldout_transcripts.py`, `test_vocabulary.py`, `test_note_check.py`, `test_validation_scripts.py`, and the plan's Task 0.9 record.
+
+- **SIMP-001** — LOW — `desktop/tests/test_note_check.py` `test_the_widened_hedges_changed_these_predictions_and_no_expectation` — the closing loop recomputes the result it already holds
+  - Triage: Fix-now.
+  - Fix route: fix-on-fast.
+  - Why it matters: the loop calls `_held_out_unsure(case)` again (a config load, a request and a note per case) although `today[case_id]` holds that value, and asserts `got != predicted_0_3_3`, which `changed == _UNSURE_PREDICTIONS_BEFORE_RUN6_0_9` already implies (a recorded case is in `changed` only when its 0.3.3 result differs from today's).
+  - Current behaviour: one extra `_held_out_unsure` per recorded case and one implied assertion.
+  - Desired behaviour: read `today[case_id]`; drop the implied inequality; the expectation and divergence assertions stay.
+  - Pattern to follow: the `today` / `before` dictionaries computed above in the same test.
+  - Verification: the test passes; the two round-14 mutations (`hld-19` → `(5,)`, history keyed on `hld-20`) still fail it.
+  - Regression risk: none (test-only; the same values compared).
+  - /fix decision: Applied
+  - /fix notes: 2026-10-23 — the loop reads `today[case_id]` and the implied inequality is gone; the test passes and both round-14 mutations still fail it; ruff clean.
+
+**Consciously left alone:** the two R3 tables (one pair table would be shorter, but D8 and the comment choose two because a closing and a greeting can share a line); the fixture's thin `build_document` (callers keep their import; the delegation test pins it); `test_the_reference_is_a_superset_of_the_hedges` (implied by the exact pin, but it states the plan's named superset contract); the literal `_HEDGE_PHRASES_0_3_3` (frozen history on purpose, peer round 14); `_LineTurn` (a two-field adapter, the plainest shape).
+
+**Summary:** 1 LOW, Fix-now → `/fix`. No other simplification worth a maintainer's attention.
+
+### Round 17 — 2026-10-23
+Source: Codex peer-review (gpt-6-astra high; code review of Task 0.14's uncommitted diff)
+
+**PR-LOW-013 — `desktop/src/scribe_desktop/validation.py:2374` — Missing attribution measurements become zero totals**
+
+- Triage: Fix-now
+- Fix route: fix-on-fast
+- Why it matters: An unavailable measurement is presented as zero attribution error.
+- Current behaviour: Both totals unconditionally pass their lists through `math.fsum`. When no encounter has a confirmed clinician, every encounter displays `-`, but TOTAL displays `0.0` in both attribution columns. This conflicts with `docs/testing/validation-harness.md:65`, which specifies `-` when no clinician was confirmed.
+- Desired behaviour: Display `-` for an attribution total with no measured values; preserve `0.0` when measurements exist and sum to zero.
+- Verification: A read-only pure-function probe of `render_report` with one `role_unresolved` outcome produced `-` in both encounter cells and `0.0` in both TOTAL cells. Add pins distinguishing absent measurements from measured zero.
+- Regression risk: Limited to the two new total cells; no verdict or measurement changes.
+- /fix decision: Applied
+- /fix notes: 2026-10-23 — verified (a `role_unresolved` outcome printed `0.0` in both TOTAL cells); `_seconds_total` prints `-` when no row has a value; `TestReport` pins both ways (unresolved → `| - | - | - | FAIL |`, a measured zero → `| 0.0 | 0.0 | - | PASS |`); `validation-harness.md` names the TOTAL case.
+
+**PR-LOW-014 — `desktop/tests/test_validation_harness.py:905` — Clustering compatibility test has no previous-behaviour baseline**
+
+- Triage: Fix-now
+- Fix route: fix-on-fast
+- Why it matters: D11 and Task 0.14 require a pin that clustering preserves the previous outcome. The documentation claims this equality is tested.
+- Current behaviour: `plain` and `given` both call the modified `run_encounters` with `attribution="clustering"`. Their equality proves that supplied enrolments are ignored, but any shared change to clustering metrics or verdicts still passes, provided the outcome remains `measured`.
+- Desired behaviour: Retain the enrolment-independence assertion and add an independently fixed expected outcome derived from HEAD for the same fake inputs, excluding the two newly added seconds fields.
+- Verification: Static tracing of `_inputs` and lines 905–912 confirms both sides execute the same current implementation; neither supplies a HEAD-derived expected result. A shared change to an existing metric leaves this comparison equal.
+- Regression risk: Tests only; no production behaviour change.
+- /fix decision: Applied
+- /fix notes: 2026-10-23 — verified (both sides ran the current code); `_CLUSTERING_BASELINE_C5F3179` holds the rows, checker warnings and facts that `c5f3179`'s `validation.py` rendered for the same fake inputs (taken by loading HEAD's module beside the current one in a deleted probe; only the header and the two new cells differed); the test strips the two new `0.0` cells and compares.
+
+**PR-LOW-015 — `docs/security/threat-model.md:3968` — Enrolment refresh guarantee exceeds the builder’s scope**
+
+- Triage: Fix-now
+- Fix route: fix-on-fast
+- Why it matters: The documented protection against stale or replaced enrolment WAVs is stronger than the implemented protection.
+- Current behaviour: The threat model says the builder rewrites or removes enrolment WAVs “on every build”. However, `validation_set.py:720` selects only slots belonging to successfully built encounters. Unselected slots remain untouched. The related statement in `docs/testing/validation-harness.md:33` that no encounter needs a retained WAV after a failed rebuild is also false.
+- Desired behaviour: Explain that the builder refreshes slots used by successfully built encounters; other existing enrolments can remain and still serve existing encounters. Keep the empty-folder requirement for runs of record.
+- Verification: Build encounters A and B sharing slot 0, then fail a rebuild using `--only A`. A is removed at `validation_set.py:711`; `built` is empty, so `build_enrolments` returns at line 520 without touching slot 0. B remains and still needs that WAV. This is a static counterexample; no build was run.
+- Regression risk: Documentation only. The current builder behaviour matches D11’s scope.
+- /fix decision: Applied
+- /fix notes: 2026-10-23 — verified (the `--only` counterexample holds statically); the threat model's residue (7) and `validation-harness.md` step 1 now say a build refreshes only the slots its built encounters use, other slots keep their earlier WAV, and the run of record is built whole into an empty folder.
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 3 LOW
+
+Round 17 disposition (composer, 2026-10-23): all three verified against the code and fixed (`/fix` Fix-now, batched as independent mechanical LOWs); ruff and mypy clean; `test_validation_harness`, `test_validation_set`, `test_pilot_docs` 221 passed. Classes for round 18: an absent value rendered as a value; a compatibility pin that compares the code with itself; a document's guarantee wider than the code.
+
+### Round 18 — 2026-10-23
+Source: Codex peer-review (gpt-6-astra high; code review of Task 0.14's uncommitted diff)
+
+**PR-LOW-016 — `desktop/src/scribe_desktop/validation.py:2374` — Unmeasured report fields still become zero**
+
+- Triage: Fix-now
+- Fix route: fix-on-fast
+- Why it matters: Round 17 fixes the two seconds totals, but other cells still present missing measurements as measured zero.
+- Current behaviour: An error outcome with no transcript or metrics displays `0` segments. Its TOTAL displays zero reference words, spelling changes, unsupported content, facts, omission counts, uncertainty counts, checker failures and suspect segments. An entirely role-unresolved run likewise displays zero note-derived totals despite never measuring those metrics.
+- Desired behaviour: Show `-` where no contributing measurement exists, including an unavailable segment count. Preserve measured zero and totals over available measurements.
+- Pattern siblings: `segment_count` defaults at `validation.py:1791` and renders at `:2367`; unconditional counter totals at `:2374–2379`. Word-level, note-level and suspect totals need separate availability checks because role-unresolved encounters still supply transcription measurements.
+- Verification: A read-only `render_report` probe with one error outcome reproduced the zero segment count and zero legacy totals alongside absent encounter cells. Static tracing confirms `run_encounters` constructs this outcome at `:2195`. `_seconds_total` correctly handles absent, measured-zero and mixed cases; the remaining fields bypass that distinction.
+- Regression risk: Report presentation only; retain current verdicts and numeric totals whenever contributing measurements exist.
+- /fix decision: Deferred
+- /fix notes: 2026-10-23 — verified, and PRE-EXISTING: `c5f3179` renders the same `0` segment count for an error outcome (`segment_count: int = 0`) and the same integer TOTAL counters; Task 0.14's diff adds neither. Not fixed here: D11 says `--attribution clustering` reproduces runs 1–5, pinned by `_CLUSTERING_BASELINE_C5F3179`, and changing these cells would change runs 1–5's report shape. Recommended disposition: Defer to Phase 3 (the harness's report columns for rule v2), where the report changes anyway — awaiting the practitioner (Deferral Confirmation Gate). Confirmed 2026-10-23 (the practitioner: "defer PR-LOW-016 to Phase 3"); the composer's recommendation had named the report work by the draft's numbering — in this plan it is Task 4.3 (Phase 4, the harness's report), where the deferred item is recorded.
+
+**PR-LOW-017 — `desktop/tests/test_validation_set.py:1114` — Enrolment PCM expectation uses the implementation being checked**
+
+- Triage: Fix-now
+- Fix route: fix-on-fast
+- Why it matters: D11 requires enrolment audio to use the same level as a spoken turn, but the new PCM assertion cannot detect enrolment-specific gain drift.
+- Current behaviour: `build_enrolments` writes the result of `enrolment_pcm`, and the test compares the decoded WAV with another call to `enrolment_pcm`. Both sides inherit any regression in that new helper.
+- Desired behaviour: Keep the write/read assertion and independently pin the enrolment PCM’s level and sample count against the known fake input and the spoken-turn contract.
+- Pattern siblings: No other circular PCM expectation found in `TestEnrolment`. The passage hash and word count are literals; the fixed clustering baseline also matches HEAD’s report rendering.
+- Verification: Static counterexample: changing only `enrolment_pcm` to pass `target_rms=TURN_RMS / 2` to `level_turn` changes the required output level while preserving this equality, synthesis-call assertions, file counts and silence refusal. Existing `level_turn` tests exercise that helper directly and would not detect its incorrect use here. No tests or builds were run.
+- Regression risk: Tests only; use deterministic synthetic samples and allow PCM rounding tolerance.
+- /fix decision: Applied
+- /fix notes: 2026-10-23 — verified (the test compared `enrolment_pcm` with itself); `test_one_wav_per_clinician_slot_the_built_scripts_use` now also pins the WAV's length to the fake synthesiser's raw passage and its RMS to `TURN_RMS` (rel 1e-3), independent of `enrolment_pcm`; the `target_rms=TURN_RMS / 2` counterexample would halve the RMS and fail it; ruff clean.
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 2 LOW
+
+Round 18 disposition (composer, 2026-10-23): PR-LOW-017 verified and fixed; PR-LOW-016 verified as pre-existing (not in Task 0.14's diff) and held for the practitioner's word on its deferral. Classes for round 19: tests whose expectation comes from the code under test; a guarantee wider than the code; an absent value shown as a value — within the diff's own new code.
+
+### Round 19 — 2026-10-23
+Source: Codex peer-review (gpt-6-astra high; code review of Task 0.14's uncommitted diff)
+
+**PR-LOW-018 — `docs/testing/validation-harness.md:46` — Missing enrolment is incorrectly included under “role unresolved”**
+
+- Triage: Fix-now
+- Fix route: fix-on-fast
+- Why it matters: The declared policy conflates a refusal before transcription with an attribution failure after transcription. These produce different report statuses and available measurements.
+- Current behaviour: The new paragraph includes “no enrolment for the script’s clinician voice” among outcomes described as “role unresolved”. The code instead raises `EnrolmentMissingError` before reading the encounter WAV or creating a store; `run_encounters` reports an `error` outcome. The parenthetical “an error, below” and amendment paragraph at line 76 contradict the encompassing sentence.
+- Desired behaviour: Remove missing enrolment from the role-unresolved list and describe it separately as a pre-transcription harness error. Preserve the implemented behaviour.
+- Pattern siblings: The amendment paragraph at `docs/testing/validation-harness.md:76` and `evaluate_encounter`’s docstring correctly distinguish missing enrolment. No additional incorrect classification found in the scoped diff.
+- Verification: Traced the raise at `desktop/src/scribe_desktop/validation.py:2069` through the refusal handler at `:2176` and error-outcome construction at `:2195`. The new test at `desktop/tests/test_validation_harness.py:977` explicitly expects `("error", "EnrolmentMissingError")`. No tests, builds or harness runs performed.
+- Regression risk: Documentation only; no runtime or report change required.
+- /fix decision: Applied
+- /fix notes: 2026-10-23 — verified (`EnrolmentMissingError` is raised before the WAV is read and reported as an `error` outcome, which the test expects); the Clinician speaker policy no longer lists it among the role-unresolved cases and says instead that the encounter is refused before transcription and reported as an error; the doc-reading tests pass.
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 1 LOW
+
+Round 19 disposition (composer, 2026-10-23): PR-LOW-018 verified and fixed (documentation only). Round 20 re-attacks the documents-against-code class.
+
+### Round 20 — 2026-10-23
+Source: Codex peer-review (gpt-6-astra high; code review of Task 0.14's uncommitted diff)
+
+**PR-LOW-019 — `docs/testing/validation-harness.md:46` — Missing WAV still classified as an encounter error**
+
+- Triage: Fix-now
+- Fix route: fix-on-fast
+- Why it matters: The Round 19 replacement conflates a run-level refusal with an encounter-level error, which produce different exit statuses and report availability.
+- Current behaviour: The sentence says “No enrolment WAV” produces an encounter error, `EnrolmentMissingError`. For a synthetic script needing a missing WAV, `main` instead prints `[refused] … lacks slot-<n>.wav … rebuild the set` and returns 2 before running encounters or producing a report (`desktop/src/scribe_desktop/validation.py:2699`). `EnrolmentMissingError` occurs when `evaluate_encounter` has no in-memory enrolment for the script, including a recorded script without a voice slot (`:2064`).
+- Desired behaviour: Distinguish a missing required WAV (whole-run refusal, exit 2) from a missing in-memory enrolment or recorded script without a slot (encounter error).
+- Pattern to follow: The refusal list at `docs/testing/validation-harness.md:40` correctly describes the missing-file case.
+- Pattern siblings: The amendment paragraph at `docs/testing/validation-harness.md:76` correctly assigns `EnrolmentMissingError` to recorded scripts. No additional incorrect missing-file classification found in the scoped diff.
+- Verification: Traced the missing-file return at `validation.py:2708` and the encounter exception through `run_encounters` at `:2176` and `:2195`. The separate tests at `desktop/tests/test_validation_harness.py:1411` and `:965` explicitly expect these distinct outcomes. No tests or harness runs performed.
+- Regression risk: Documentation only; preserve both runtime paths.
+- /fix decision: Applied
+- /fix notes: 2026-10-23 — verified (`main` refuses the whole run, exit 2, when a needed `slot-<n>.wav` is missing; `EnrolmentMissingError` is the recorded-script case); the policy sentence now names both: a synthetic script's missing WAV refuses the run (the refusal list), a recorded script is reported as an error.
+
+**PR-LOW-020 — `desktop/src/scribe_desktop/validation_set.py:517` — Stale-enrolment removal described as guaranteed**
+
+- Triage: Fix-now
+- Fix route: fix-on-fast
+- Why it matters: The new docstring overstates the protection against measuring an earlier enrolment after a failed rebuild.
+- Current behaviour: It states that the earlier WAV is removed and “the harness never enrols from a stale file.” However, `build_enrolments` catches a failed deletion, prints a manual-deletion instruction and returns its error count (`:553–559`). An earlier readable WAV can remain; the harness checks its presence and enrols it without knowing that the preceding build failed (`desktop/src/scribe_desktop/validation.py:2701`, `:2737`).
+- Desired behaviour: Describe removal as attempted, and state that failed removal requires manual cleanup before running the harness. Preserve the existing operational contract.
+- Pattern to follow: `docs/testing/validation-harness.md:33` already names the manual-deletion exception.
+- Pattern siblings: `docs/security/threat-model.md:3968` also says a failed build removes the used slot’s WAV without mentioning failed removal. Searches for stale-file, removal and earlier-file wording across the scoped changes found these two unqualified descriptions.
+- Verification: Re-read the deletion failure branch and the harness’s file-loading path. `desktop/tests/test_validation_set.py:1187` explicitly covers the failed-deletion diagnostic. No files were written and no tests were run.
+- Regression risk: Documentation only; no change to builder cleanup, harness acceptance or measurement rules.
+- /fix decision: Applied
+- /fix notes: 2026-10-23 — verified (a failed removal is caught and reported with a delete-by-hand instruction); `build_enrolments`'s docstring and the threat model's residue (7) now say a removal that itself fails is reported for deletion by hand before the harness runs; ruff clean.
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 2 LOW
+
+Round 20 disposition (composer, 2026-10-23): both verified and fixed (documentation and a docstring). Correction to round 19's note: no test reads `docs/testing/validation-harness.md`, so "the doc-reading tests pass" checked nothing; the wording was verified against the code by reading. Round 21 is the pass's fifth and last round under the cap.
+
+### Round 21 — 2026-10-23
+
+Source: Codex peer-review (gpt-6-astra high; code review of Task 0.14's uncommitted diff)
+
+No findings
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 0 LOW
+
+Round 21 disposition (composer, 2026-10-23): no findings — the code pass over Task 0.14's diff converged (rounds 17–21, 8 LOW: 7 fixed, PR-LOW-016 pre-existing and held for the practitioner's word on its deferral).
+
+### Round 22 — 2026-10-23
+Source: Claude Code simplify
+
+**Scope:** Task 0.14's production diff after the peer pass converged, read in full: `validation.py` (the enrolment path, `overlap_by_label`, `enrolled_clinician`, `attribution_seconds`, `needed_enrolment_slots`, the two seconds columns, `main`'s attribution block) and `validation_set.py` (`ENROLMENT_PASSAGE`, `enrolment_pcm`, `build_enrolments`, `build_set`'s call).
+
+No findings.
+
+**Consciously left alone:** `evaluate_encounter`'s fallback to the plain document when `enrolled` is None (unreachable while `transcribe_in_temporary_store` returns an enrolled document for every enrolment, but it fails closed to "role unresolved" and says so); `build_enrolments` computing `enrolment_wav_name(slot)` twice (one is the printed name, one the path); the per-label lists summed with `math.fsum` (the harness's float convention, not a shape to collapse); `main`'s set-after-`except` failure variables (the peer round 27 PR-HIGH-066 rule: nothing printed inside an `except`).
+
+**Summary:** no simplifications worth a maintainer's attention.
+
+### Round 23 — 2026-10-23
+
+Source: Codex peer-review (gpt-6-astra high; code review of Task 0.11's uncommitted diff)
+
+No findings
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 0 LOW
+
+Round 23 disposition (composer, 2026-10-23): no findings — the code pass over Task 0.11's test-only diff converged in its first round. The peer's read-only probes (ids and counts only): the 32 existing cases keep their order; the set table reads `heldout` written with 32 cases and `heldout-2` unwritten with none; `misfiled` names a case filed under both sets, an id that is no case, and an edge case filed under `heldout-2`; `script_path` resolves each set's folder. No `/simplify` round: the diff is tests only.
+
+### Round 24 — 2026-10-24
+Source: Claude Code simplify
+
+**Scope:** Task 0.12's uncommitted diff, read in full around each change: `validation.py` (the comment and the 15 `heldout-2` rows of `REFERENCE_GREETING_LINES` and `REFERENCE_TAIL_STARTS`), and the test-side changes (`fixtures/heldout_transcripts.py`'s 22 cases, the three divergence dicts and their count pins, `test_validation_scripts.py`'s two widened lints and the digest pin's set filter).
+
+No findings.
+
+**Consciously left alone:** the two tables holding the same 15 `heldout-2` values (two tables by design — a closing and a greeting can share a line, `hld-11`; the plan chose them in peer round 3 PR-MED-017); the fixture's per-case `unsure_reason` strings (documentation of each expectation, read by no code).
+
+**Summary:** no simplifications worth a maintainer's attention.
+
+### Round 25 — 2026-10-24
+Source: Codex gpt-6-astra high plan peer-review
+
+**PR-MED-030 — D18’s silent-omission falsifier contradicts the retained R1 allowance**
+Materiality: build-affecting
+Evidence: `.cursor/plans/plan-validation-run6.md:277` says any silently omitted material fact fails the gate, and P.1 explicitly enforces those falsifiers. However, D8 at lines 209–212 allows R1 to clear silent omissions through residue-adjusted counts, with one R1 fact allowed on `heldout-3`. A single completely dropped fact meeting R1 can therefore pass the specified rule v2 while failing D18.
+Proposed amendment: Define this falsifier as any material silent omission remaining after the permitted R1 adjustment. Apply the same qualification to D15’s zero-omission disclosure and Task 4.4’s documentation wording.
+Verification: Pin a single R1-eligible silent omission as raw silent = 1, adjusted silent = 0, v2 PASS; an otherwise identical non-R1 omission must FAIL. Confirm D18 and P.1 give those same verdicts.
+
+**PR-MED-031 — Existing tail invariants conflict with the new role-derived tail**
+Materiality: build-affecting
+Evidence: D16 at `.cursor/plans/plan-validation-run6.md:265` permits an absent fact on the clinician’s welcome before the first `next_patient` line, explicitly denying it R3 credit. Yet `desktop/tests/test_validation_scripts.py:678–683` requires every material absent fact in an axis script to lie inside its tail. Task 0.17 does not retire that invariant. P.4 at plan line 1154 also retains the deleted `boundaries.json` artifact and requires tail equality with case boundaries, although a role-derived tail can follow the expected boundary at the clinician’s welcome.
+Proposed amendment: For `tails_by_role` sets, retain role-derived tail equality and the rule that facts inside the tail are absent, but permit absent facts before it. Update P.4 to use `REFERENCE_TAIL_STARTS` and preserve expected case boundaries independently, recording differences instead of requiring equality.
+Verification: Use a synthetic example with a material absent fact on the clinician’s welcome before the first `next_patient` line. It must pass structural lints, receive no R3 credit for that earlier fact, and remain representable after cases are written.
+
+**PR-LOW-021 — Blind-set size limits have no verification step**
+Materiality: build-affecting
+Evidence: D16 at `.cursor/plans/plan-validation-run6.md:266` specifies 20–25 scripts and 3–6 facts per script because fact exposure affects the ceilings. Existing checks require only at least 16 scripts (`desktop/tests/test_validation_scripts.py:79,391–400`) and some material fact (`:409–417`). Task 0.17 lists no checks for the new bounds, while prohibiting composer inspection of the scripts.
+Proposed amendment: Add metadata-only checks for both bounds to Task 0.17, reporting ids and counts only. Preserve the explicitly supported absent and empty preparation states.
+Verification: Confirm populated sets outside either bound fail, boundary values pass, and absent/empty preparation states remain green.
+
+**PR-LOW-022 — The scope summary reverses Tasks 0.16 and 0.17**
+Materiality: record-only
+Evidence: `.cursor/plans/plan-validation-run6.md:72` assigns blind authorship to 0.16 and priors to 0.17, opposite the actual tasks at lines 1087–1091. Task 5.1 at line 1126 likewise attributes the README update to 0.16, although 0.17 performs it.
+Proposed amendment: Make both references identify 0.16 as pre-registration and 0.17 as blind authorship and the README update.
+Verification: Compare the scope summary and Task 5.1 against the task headings and the Handoff Note’s final ordering.
+
+**PR-LOW-023 — Updated progress and reference-table counts are inaccurate**
+Materiality: record-only
+Evidence: `.cursor/plans/plan-validation-run6.md:10` reports 7 of 37 tasks, while the working-tree task list contains 38 checkbox tasks, 15 checked. The newly added Validation row at line 329 reports 22 `hld-` greeting-table rows; `desktop/src/scribe_desktop/validation.py:583–596` contains 14.
+Proposed amendment: Reconcile progress with the task list, documenting any deliberate exclusions from its denominator, and correct the greeting-table count to 14 `hld-` rows.
+Verification: Count task checkboxes and completed checkboxes outside the Findings Log, and count the constant’s keys by prefix without reading script dialogue.
+
+**PR-LOW-024 — D14 describes a broader reference-boundary exemption as vocabulary-only**
+Materiality: record-only
+Evidence: `.cursor/plans/plan-validation-run6.md:251` equates a `None` reference boundary with finding no closing–greeting pair anywhere. The actual `consultation_boundary` also requires preceding cued content and restricts the closing search by `BOUNDARY_SEGMENTS` (`desktop/src/scribe_desktop/consultation_phrases.py:256–280`). Both listed phrases can therefore occur while the reference boundary remains `None`; such a fact can satisfy D14.
+Proposed amendment: Describe R3 as a reference-boundary miss under the complete product rule, including its distance and prior-content conditions. Clarify this breadth in D15’s disclosure without changing the decided predicate.
+Verification: Trace examples with both listed phrases but an excessive segment gap or missing prior cue through the named function, and confirm the explanation matches their R3 eligibility.
+
+Materiality: 3 build-affecting / 3 record-only / 0 invalid
+Findings: 0 CRIT / 0 HIGH / 2 MED / 4 LOW
+
+**Round 25 disposition (composer, 2026-10-24):** round 1 of the pass (plan-review mode never converges on round 1). Every finding verified against the plan and the code: PR-MED-030 (D8's R1 clears a silent omission through the residue-adjusted count, so D18's "any silent fact fails" over-stated the gate), PR-MED-031 (`test_validation_scripts.py:678-683` would reject a material absent fact on the clinician's welcome line before a role-derived tail; P.4 still named the dropped sidecar), PR-LOW-021 (no size check: `MIN_HELDOUT` 16 and "some material fact" only), PR-LOW-022 (the Agreed Scope line and Task 5.1 still named the pre-reorder task numbers), PR-LOW-023 (38 checkboxes, 15 checked, 8 `[decision]` tasks all taken — the header's denominator was never stated; `REFERENCE_GREETING_LINES` holds 14 `hld-` rows, not 22), PR-LOW-024 (`consultation_boundary` also requires cued content before the pair and a closing within `BOUNDARY_SEGMENTS` of the greeting — `consultation_phrases.py:256-280` — so a None reference boundary is wider than "no pair anywhere"). 3 build-affecting + 3 record-only accepted and applied below; 0 invalid.
+
+**/fix notes (round 25 amendments, 2026-10-24):** each amendment re-read on disk after landing. PR-MED-030: D18's gate-falsifier line and D15's "unchanged" clause now read as residue-adjusted counts; Task 4.4's sub-bullet carries the same wording. PR-MED-031: D16 and Task 0.17 exempt `tails_by_role` sets from `test_every_material_absent_fact_lies_in_a_tail` (the "every fact at or after the tail is absent" rule stays); P.4 compares the role-derived rows with the cases' boundaries and records differences. PR-LOW-021: metadata-only size lints (`script_count` 20–25, `facts_per_script` 3–6) added to D16 and Task 0.17. PR-LOW-022: the Agreed Scope line and Task 5.1's parenthesis corrected. PR-LOW-023: the progress header states its convention (buildable tasks; the 8 decisions outside) — 7 of 30; the Validation row says 14 `hld-` rows. PR-LOW-024: D14's first bullet describes the complete boundary rule; D15's loosening (2) widened to match. Sibling sweep: "no closing–greeting pair" occurs nowhere else; "any silent" occurs only in D18 and P.1 (P.1 says "a falsifier on `heldout-3` is a FAIL", which now reads through D18's corrected wording).
+
+### Round 26 — 2026-10-24
+Source: Codex gpt-6-astra high plan peer-review
+
+**PR-MED-032 — Quiet pytest output does not preserve the blind-set boundary**
+
+Materiality: build-affecting
+
+Evidence: D16 (`.cursor/plans/plan-validation-run6.md:267`) and Task 0.17 (`:1138–1139`) assume `pytest -q` exposes only ids and integers. However, `desktop/tests/test_validation_scripts.py:414` asserts `script.conditions is not None`. Missing conditions are accepted by `EncounterScript` (`desktop/src/scribe_desktop/validation.py:367,383–385`), so this reaches pytest’s assertion explanation, which represents the content-bearing `script` object. Quiet mode does not suppress these representations; neither the script’s lines nor their text exclude themselves from representation.
+
+Proposed amendment: Add content-safe failure reporting to Task 0.17 before blind scripts arrive, covering existing assertions and error paths as well as new lints. Forward only approved ids, counts and diagnostic codes to the composer and author.
+
+Verification: Using an independently constructed synthetic sentinel script, deliberately omit conditions and confirm the captured failure reports the problem without exposing dialogue or fact tokens. Check other reachable lint failures under the same reporting boundary.
+
+**PR-LOW-025 — Task 0.17 misses the hard-coded divergence-table self-test**
+
+Materiality: build-affecting
+
+Evidence: Task 0.17 (`.cursor/plans/plan-validation-run6.md:1137`) names the set-name and divergence-count pins but omits `desktop/tests/test_validation_scripts.py:458–469`. Its valid, missing-set and misfiled fixtures assume exactly two sets. Once `heldout-3` enters `HELD_OUT_SETS`, `misfiled` requires its key (`desktop/tests/fixtures/heldout_transcripts.py:644–649`), making those expectations fail even while the folder is absent.
+
+Proposed amendment: Include this self-test in Task 0.17. Derive its valid table from `HELD_OUT_SETS`, then construct the missing, extra and misfiled cases from that table.
+
+Verification: Confirm all four cases give their intended results with the third set absent, empty, and populated without cases.
+
+**PR-LOW-026 — D13 describes a subset as the UI’s complete flagged condition**
+
+Materiality: record-only
+
+Evidence: D13 (`.cursor/plans/plan-validation-run6.md:246`) calls its four-part predicate “the `[flagged]` condition”. Actual `flagged_segments` (`desktop/src/scribe_desktop/ui/models.py:2694–2702`) checks the omission-warning code and coordinates only; patient, partly covered and post-boundary segments can also be flagged. D13 deliberately excludes those cases from its additional credit.
+
+Proposed amendment: Describe D13 as the subset of flagged lines eligible for segment-wide harness credit. Preserve the decided four-part predicate.
+
+Verification: Trace patient, partly covered and post-boundary warning anchors through the UI helper and D13; the wording should explain why their visible flag does not earn this additional credit.
+
+**PR-LOW-027 — D18 assigns omission causes before diagnosis**
+
+Materiality: record-only
+
+Evidence: D18 (`.cursor/plans/plan-validation-run6.md:279`) declares a silent clinician-line failure a D1 finding and a silent patient-line failure a routing-lint finding. Those causes do not follow from the outcome: D11 (`:232`) already acknowledges attribution-caused omissions. Likewise, recognition can lose a patient line’s routing cue while preserving every fact token; the script routing lint passes, but R1’s fact-token error requirement fails and the measured omission remains silent.
+
+Proposed amendment: Describe these as investigation categories, with P.4 establishing whether the cause is the warning, routing lint, recognition, segmentation or attribution. Keep the gate and its consequences unchanged.
+
+Verification: Trace a lint-valid patient fact whose cue alone is lost, and a clinician fact misattributed to the other speaker; neither outcome should automatically establish the stated component defect.
+
+Materiality: 2 build-affecting / 2 record-only / 0 invalid
+Findings: 0 CRIT / 0 HIGH / 1 MED / 3 LOW
+
+**Round 26 disposition (composer, 2026-10-24):** attack-the-class round over round 25's four classes. Every finding verified: PR-MED-032 (`test_validation_scripts.py:414` and its three siblings at :193/:207/:228 assert `script.conditions is not None` — pytest's rewritten explanation prints `where None = EncounterScript(...).conditions`, a pydantic repr that carries every line's text, truncated but not suppressed by `-q`; a `load_script` failure's pydantic message carries a truncated `input_value` too — so "reads nothing beyond ids and integers" was an assumption, not a property), PR-LOW-025 (`test_a_misfiled_divergence_table_is_named` at :458-469 hard-codes two sets; `misfiled` at `heldout_transcripts.py:640-649` names every missing `HELD_OUT_SETS` entry, so the `heldout-3` row alone turns it red), PR-LOW-026 (`ui/models.flagged_segments` :2694-2702 marks every `high_risk_omission` segment by coordinates — any speaker, any coverage — so D13's four-part predicate is a subset of the `[flagged]` lines, not the condition), PR-LOW-027 (D18 named the component from the speaker; D11 at :232 already records attribution-caused silent omissions, and a lost routing cue with intact fact tokens is neither R1 nor a lint failure). 2 build-affecting + 2 record-only accepted and applied below; 0 invalid. Not converged (two new build-affecting); round 27 follows.
+
+**/fix notes (round 26 amendments, 2026-10-24):** each amendment re-read on disk after landing. PR-MED-032: D16's lint bullet and Task 0.17 now require content-free failure reporting BY CONSTRUCTION — every held-out lint asserts on a collected list of id-stamped codes (`_script_problems`), never on a `script`, `fact` or `line` object or in an expression pytest would explain through one; `load_script` failures inside lints surface as the file stem plus pydantic's error `type` and `loc` only; the composer's 0.17 runs use `-q --tb=line`; a test with a sentinel script written to `tmp_path` pins that no problem string holds the sentinel; the four existing `conditions is not None` assertions (:193/:207/:228/:414) are rewritten the same way, so `heldout` and `heldout-2` share the property. PR-LOW-025: Task 0.17's test-side list gains the misfiled self-test, derived from `HELD_OUT_SETS`. PR-LOW-026: D13's sentence reworded as a subset of the chooser's `[flagged]` lines, with why the other flagged lines earn no credit. PR-LOW-027: D18's last clause reworded as investigation categories for P.4. Sibling sweep: "ids and integers" also appears in Task 0.17's tail-copy step (unchanged — it describes the copy, not pytest); D16's "A lint failure goes back to the author as the lint's message" now reads through the content-free helper; the Validation table has no row on lint output (none added — the sentinel test is named in 0.17).
+
+### Round 27 — 2026-10-24
+Source: Codex gpt-6-astra high plan peer-review
+
+**PR-MED-033 — Raw pydantic locations can contain author-supplied text**
+
+Materiality: build-affecting
+
+Evidence: D16 (`.cursor/plans/plan-validation-run6.md:267`) requires load failures to print pydantic error `type` and `loc`. Locations are not inherently content-free: unknown object keys and `voice_slots` keys are author-supplied strings. The existing `_validation_error_text` explicitly masks these as `<key>` (`desktop/src/scribe_desktop/validation.py:411–424`), and `test_an_unknown_key_is_never_printed` pins that protection (`desktop/tests/test_validation_harness.py:264–268`). Moreover, `load_script` already converts validation failures into sanitized `ScriptError`, rather than exposing a `ValidationError` (`validation.py:445–448`).
+
+Proposed amendment: Preserve the loader’s sanitized error boundary. If the helper needs structured locations, allow only schema field names and numeric indices, replacing every other component with a fixed placeholder.
+
+Verification: Before blind authorship, exercise an unknown key containing a sentinel and an invalid value beneath a sentinel `voice_slots` key. Both diagnostics must retain useful codes without revealing either key or rejected value.
+
+**PR-MED-034 — The sentinel test does not verify the displayed failure boundary**
+
+Materiality: build-affecting
+
+Evidence: D16 (`plan-validation-run6.md:267`) tests only whether `_script_problems` returns strings containing a sentinel. Missing conditions are accepted by the loader (`desktop/src/scribe_desktop/validation.py:383–385`), so that example does not exercise validation-error handling. Nor does it exercise pytest’s output from other full-suite readers: `test_the_reference_document_is_the_scripts_own_lines` runs over every held-out path and directly compares script words (`desktop/tests/test_validation_scripts.py:630–637`). A failed comparison can display those words; `--tb=line` does not sanitize the assertion message. The helper-only test could remain green despite such an exposure.
+
+Proposed amendment: Extend Task 0.17’s pre-author verification to capture actual pytest failure output from independently constructed fixtures, covering loader rejection, structural lints, reference-document comparisons and tail-table checks. Require the displayed diagnostics to contain only approved metadata and codes, including when the failure occurs outside `_script_problems`.
+
+Verification: Deliberately trigger each failure before copying blind scripts, including a reference-document mismatch and malformed input. Check captured stdout/stderr and failure summaries, using markers at multiple positions so truncation cannot falsely demonstrate safety.
+
+**PR-MED-035 — The role lint rejects legitimate boundary-negative scripts**
+
+Materiality: build-affecting
+
+Evidence: D16 (`plan-validation-run6.md:265,267`) requires the boundary axis, a `next_patient` line and a non-null tail to be equivalent. However, the retained brief requires boundary negatives (`validation/heldout-2/SPEC.md:20`), and the existing reference-table contract explicitly permits axis-tagged negatives with `None` tails (`desktop/tests/test_validation_scripts.py:648–656`). Rejecting those scripts—or removing their axis—excludes legitimate negatives from D14’s per-axis reference-boundary comparison (`plan-validation-run6.md:254`), potentially omitting false-boundary events from D18’s mismatch count.
+
+Proposed amendment: Require a non-null tail exactly when a `next_patient` line exists, and require that role to imply the boundary axis. Permit axis-tagged negatives without that role and record their tail as `None`.
+
+Verification: Pin a positive script, an axis-tagged negative with a `None` tail, and a next-patient role missing its axis. Confirm the negative remains included in the recorded reference-boundary comparison.
+
+**PR-LOW-028 — D7 retains the flagged-condition overclaim corrected in D13**
+
+Materiality: record-only
+
+Evidence: The amended D7 summary still calls its restricted credit predicate “the `[flagged]` condition” (`plan-validation-run6.md:205`). Round 26 corrected precisely that description in D13: `flagged_segments` checks warning code and coordinates without the clinician, coverage or boundary restrictions (`desktop/src/scribe_desktop/ui/models.py:2694–2702`).
+
+Proposed amendment: Describe D7’s credit as the eligible subset of flagged lines, matching D13.
+
+Verification: Compare both summaries against the UI helper and confirm neither equates the additional harness-credit predicate with all visible flags.
+
+Materiality: 3 build-affecting / 1 record-only / 0 invalid
+Findings: 0 CRIT / 0 HIGH / 3 MED / 1 LOW
+
+**Round 27 disposition (composer, 2026-10-24):** attack-the-class round over rounds 25–26. Every finding verified: PR-MED-033 (`load_script` already raises a sanitised `ScriptError` — `_validation_error_text` at `validation.py:411-424` masks unknown keys and `voice_slots` roles as `<key>` under `hide_input_in_errors`, pinned by `test_validation_harness.py:264-268` — so round 26's "stem + pydantic `type` + `loc`" would have REGRESSED an existing boundary: a `loc` part can be an author-typed key), PR-MED-034 (`test_the_reference_document_is_the_scripts_own_lines` at `test_validation_scripts.py:630-637` asserts `[word.word_text …] == line.text.split()` — a mismatch prints both word lists in the explanation's first line, which `--tb=line` keeps; the round-26 sentinel test covered only the helper), PR-MED-035 (the round-26 role lint's three-way equivalence would reject the brief's boundary NEGATIVES — `SPEC.md:20` requires them, and the existing table contract keeps an axis-tagged negative as a None row, `test_validation_scripts.py:648-656`), PR-LOW-028 (D7's dated line at :205 still said "the `[flagged]` condition"). 3 build-affecting + 1 record-only accepted and applied below; 0 invalid. Not converged (three new build-affecting); round 28 follows.
+
+**/fix notes (round 27 amendments, 2026-10-24):** each amendment re-read on disk after landing. PR-MED-033: D16's lint bullet and Task 0.17 now report a load failure as `load_script`'s own `ScriptError` text and never a raw `ValidationError`. PR-MED-034: D16 states the content boundary as a rule over EVERY reader of a held-out path — collect ids and integers, then assert on the collected list or a bool, never an expression pytest would explain through script words — names `test_the_reference_document_is_the_scripts_own_lines` as the first rewrite, and adds a displayed-output test (`pytester`, subprocess) over a sentinel set broken four ways with the sentinel at three positions, asserting the whole captured output; `--tb=line` is kept and stated as NOT a sanitiser. PR-MED-035: the role lint is now three one-way rules (a `next_patient` line ⇒ the axis; a non-null tail ⇔ a `next_patient` line; an axis script without one is a negative with a None row, kept in D14's recorded comparison); D16's tail bullet corrected to match. PR-LOW-028: D7's dated line reworded as D13's subset. Sibling sweep: "lint failure" wording in D16 and 0.17 reads through the sanitised helper; the round-26 /fix notes stay as the record of what that round applied (superseded here, not rewritten); no other line equates the credit with the `[flagged]` condition (grep `[flagged]` condition: none left).
+
+### Round 28 — 2026-10-24
+Source: Codex gpt-6-astra high plan peer-review
+
+**PR-MED-036 — The displayed-output test still bypasses the real held-out readers**
+
+Materiality: build-affecting
+
+Evidence: D16 (`.cursor/plans/plan-validation-run6.md:267`) specifies a generated module applying shared helpers, including a mismatch fed directly to the comparison helper. It does not exercise or pin the real test wrappers. Those wrappers bind `HELD_OUT_SETS` and `_heldout_paths()` during import (`desktop/tests/test_validation_scripts.py:358,419,630`), so patching paths afterwards does not replace their collected parameters. Restoring the word-bearing assertion at line 637 could therefore expose dialogue while the proposed helper-only subprocess test remains green. Checking sentinel absence alone also permits an unrelated import or collection failure to masquerade as successful verification.
+
+Proposed amendment: Exercise the real readers against a synthetic set injected before collection, or structurally pin every reader’s delegation to the tested reporting boundary. Include tail-table failures, assert the intended cases and failure counts, and explicitly enable the currently unregistered `pytester` plugin.
+
+Verification: Before blind authorship, deliberately restore a word-bearing assertion in the real reference-document wrapper and confirm the output guard fails. Confirm loader, structural, reference-document and tail-table failures reach their intended tests with content-free output; an import failure or missing collected case must fail the guard rather than pass through sentinel absence.
+
+Materiality: 1 build-affecting / 0 record-only / 0 invalid
+Findings: 0 CRIT / 0 HIGH / 1 MED / 0 LOW
+
+**Round 28 disposition (composer, 2026-10-24):** one finding, verified: the held-out readers bind `HELD_OUT_SETS` / `_heldout_paths()` in their `parametrize` decorators at import (`test_validation_scripts.py:358,419,630`), `HeldOutSet.folder` is `VALIDATION_DIR / name` with no injection seam, `pytester` is not registered and no test runs pytest in a subprocess — so round 27's generated-module test would have exercised the helpers and left the real wrappers unpinned, and a sentinel-absent subprocess could pass on an import failure. Build-affecting, accepted. The amendment takes the finding's SECOND route (structural pin), which also removes the subprocess test and its plugin: an AST pin over every held-out reader plus the in-process sentinel test over the helpers. Round 1 of this pass's rounds to yield a single finding; not converged (one new build-affecting); round 29 — the cap's last — follows.
+
+**/fix notes (round 28 amendments, 2026-10-24):** re-read on disk after landing. D16's lint bullet: the `pytester` subprocess test is REPLACED by (a) an AST pin in `test_validation_scripts.py` — every test function whose source names `_heldout_paths`, `HELD_OUT_SETS`, `held_out_set(`, `.script_paths()` or `_axis_scripts` may `assert` only a bare name (a bool) with an optional id message, or `<name> == []` where `<name>` is bound by a call to an allow-listed content-free helper (`_script_problems`, `_reference_mismatches`, `_tail_problems`, `misfiled`); any other assert shape in such a function fails the pin — restoring `:637`'s word comparison fails it, the peer's verification; and (b) the in-process sentinel test over those helpers (the four-way-broken `tmp_path` set, a fed reference-document mismatch, a tail-table row that disagrees with the roles, the sentinel at three positions), asserting the sentinel absent from every returned string and from each `ScriptError`'s text. Task 0.17's test-side line reworded to match (no `pytester`, no `pytest_plugins`). Sibling sweep: "`pytester`" now occurs only in the round-27/28 blocks and the round-27 /fix notes (records); the 0.17 Done-when line's evidence (`--tb=line` runs) still stands as convenience, not proof — the pin is the proof.
+
+### Round 29 — 2026-10-24
+Source: Codex gpt-6-astra high plan peer-review
+
+**PR-MED-037 — The AST guard excludes reader helpers and non-assert diagnostics**
+
+Materiality: build-affecting
+
+Evidence: D16 (`.cursor/plans/plan-validation-run6.md:267`) restricts assertions only in test functions selected by five source-name markers. However, `_heldout_scripts` (`desktop/tests/test_validation_scripts.py:326–327`) reads held-out files outside any test function. Adding a text-bearing assertion inside that helper escapes the specified pin and the sentinel tests over the four allow-listed helpers. Likewise, `pytest.fail(line.text)` inside a selected wrapper contains no assertion node for the guard to reject. These are gaps in the proposed regression protection, not claims of an existing disclosure; the normative “EVERY reader” rule does not mechanically enforce them.
+
+Proposed amendment: Inventory the permitted blind-reading entry points and helpers, reject unapproved loading paths, and constrain diagnostic calls as well as assertions throughout that inventory. Add in-memory mutation checks following `test_shadow_exits.py:171–185`, so the guard demonstrably catches these ordinary regressions before blind authorship.
+
+Verification: Confirm the guard rejects a word-bearing assertion inserted into `_heldout_scripts`, `pytest.fail(line.text)` inserted into the reference-document wrapper, and a new direct `load_script` reader using a literal held-out path without any of the five selector names. Confirm the approved wrappers and sanitized helper diagnostics remain accepted.
+
+Materiality: 1 build-affecting / 0 record-only / 0 invalid
+Findings: 0 CRIT / 0 HIGH / 1 MED / 0 LOW
+
+**Round 29 disposition (composer, 2026-10-24):** the cap's last round (5 of 5); one finding, verified: `_heldout_scripts` (`test_validation_scripts.py:326-327`) loads held-out scripts outside any test function, `script_path(case.case_id)` at :544 reaches one through a name the round-28 selector did not list, and `pytest.fail(line.text)` has no `assert` node — so a selector-by-name pin over assert statements leaves ordinary regressions uncaught, exactly the class `test_shadow_exits.py`'s exact-caller inventories and `_with_extra` mutation checks (:171-185) exist for. Build-affecting, accepted and applied below (the pin reshaped as an inventory with mutation checks). The pass did NOT converge within the cap: every round yielded at least one build-affecting finding (6 → 4 → 4 → 1 → 1), the last three on one subject (the content boundary over the blind set's readers). Cap contract: surfaced to the practitioner — raise the cap by one round, or accept-close at the cap with this record. `[2026-10-24]` The practitioner's answer (in chat): one more round — the pass's cap raised 5 → 6; round 30 follows.
+
+**/fix notes (round 29 amendments, 2026-10-24):** re-read on disk after landing. D16's lint bullet: the AST pin is now an INVENTORY, not a selector — `_HELD_OUT_READERS`, the exact set of functions in `test_validation_scripts.py` that call a loader name (`load_script`, `load_script_with_bytes`, `script_path`, `script_paths`, `_scripts`, `_heldout_paths`, `_heldout_scripts`, `_written_heldout_scripts`, `_axis_scripts`); a loader call in any function outside it fails the pin; inside every inventoried function (helpers and run-of-record readers included — one rule, not two) each `assert` test and message, and every `pytest.fail` / `pytest.skip` / `print` argument and f-string, may hold only names bound from an allow-listed helper's result, `len` / `set` / `sorted` calls, the id attributes `encounter_id` / `stem` / `name` / `case_id` / `prefix` and literals — any other attribute or call fails it; and three `_with_extra` mutation checks (a word-bearing assert appended to `_heldout_scripts`; `pytest.fail(line.text)` appended to the reference-document wrapper; a new function loading a literal held-out path) each fail the pin in memory. Task 0.17's test-side line reworded to match; the functions the pin's first run rejects are rewritten and listed by name on 0.17's record. Sibling sweep: D16's earlier "every test function whose source names …" selector sentence rewritten in place (no second statement of the selector remains); the round-28 /fix notes stay as that round's record.
+
+### Round 30 — 2026-10-24
+Source: Codex gpt-6-astra high plan peer-review
+
+**PR-MED-038 — The loader inventory misses content-consuming helpers and callbacks**
+
+Materiality: build-affecting
+
+Evidence: D16 (`.cursor/plans/plan-validation-run6.md:267`) inventories functions that directly call the listed loader names. However, `_short_turn` (`desktop/tests/test_validation_scripts.py:175–179`) receives every held-out line’s text through the rendering test at lines 419–425 and `desktop/src/scribe_desktop/validation_set.py:385`. It calls no listed loader: adding `pytest.fail(text)` there escapes the specified inventory. The content-consuming helpers at `test_validation_scripts.py:118–172` are likewise outside it. The fixture module also loads scripts through `script_turns` and `HeldOutCase.turns()` / `.document()` (`desktop/tests/fixtures/heldout_transcripts.py:105–134`); it does not merely hold handwritten cases. These are gaps in regression protection, not claims of an existing blind-set disclosure.
+
+Proposed amendment: Extend Task 0.17’s inventory to the content-consuming helpers, callbacks and fixture adapters, with explicit permitted delegation paths. Pin those paths so introducing an unreviewed delegate cannot bypass protection merely because it receives content as an argument instead of loading it directly.
+
+Verification: Add in-memory mutations inserting `pytest.fail(text)` into `_short_turn`, a word-bearing diagnostic into a script-consuming helper, and a new reader through `script_turns`. Each must fail the guard before blind authorship; existing approved delegation must pass.
+
+**PR-MED-039 — The diagnostic rule leaves unguarded output and mutable-result paths**
+
+Materiality: build-affecting
+
+Evidence: D16 (`.cursor/plans/plan-validation-run6.md:267`) checks assertions, `pytest.fail`, `pytest.skip`, `print` and f-strings. Within an inventoried reader, `warnings.warn(line.text)` or `logging.warning("%s", line.text)` uses none of those forms; pytest can display that content through warnings or captured logs despite `--tb=line`. Parameter-ID callbacks are another output surface: the current callbacks at `desktop/tests/test_validation_scripts.py:419,630` safely use `path.stem`, but their bodies have no specified output constraint. Furthermore, the binding-origin rule does not prohibit appending script text to a list returned by `_script_problems` before asserting on that still-allow-listed name. None of the three named mutations exercises these escapes.
+
+Proposed amendment: Constrain complete reporting-wrapper and parameter-ID shapes, including warning/logging calls, rather than checking only the enumerated sink expressions. Require helper results used in diagnostics to remain unmodified, and explicitly constrain the helpers’ returned metadata; this can remain a small structural contract without general Python dataflow analysis.
+
+Verification: Add mutations for a content-bearing warning/log call, a parameter-ID callback returning content, and text appended to an approved helper result before assertion. Each must be rejected, while the current stem-only IDs and unmodified content-free helper results remain accepted.
+
+Materiality: 2 build-affecting / 0 record-only / 0 invalid
+Findings: 0 CRIT / 0 HIGH / 2 MED / 0 LOW
+
+**Round 30 disposition (composer, 2026-10-24):** round 6 of the raised cap. Both findings verified: `_short_turn` (`test_validation_scripts.py:175-179`) and the helpers at :118-172 consume line text without calling a loader name, and `heldout_transcripts.py:105-134` (`script_turns`, `HeldOutCase.turns()` / `.document()`) loads scripts too (PR-MED-038); `warnings.warn`, `logging`, a `parametrize` `ids=` callback and a list appended to after an allow-listed helper returned it are sinks the enumerated rule never sees (PR-MED-039). Both build-affecting, accepted. The composer's reading of the class after rounds 27–30: a pin over the test module's SYNTAX (which asserts, which sinks, which bindings) always has a next escape — each round found one honestly, and the next would too — so the amendment changes the SHAPE rather than extending the list: the boundary becomes a runner that owns the console (`scripts/lint-held-out-set.py`), through which the composer runs the suite whenever an `h3-` script is in the tree, printing test ids, outcomes and the helpers' content-free codes only and writing everything else to a gitignored log it never opens; the AST inventory and its mutation checks are withdrawn; the helper-level sentinel test stays. Every sink the peer named — and any future one — is then inside the withheld output by construction. NOT converged within the raised cap (two new build-affecting); surfaced to the practitioner with this amendment unreviewed by the peer. `[2026-10-24]` The practitioner's answer (in chat): one more round — the cap raised 6 → 7; round 31 reviews the runner design.
+
+**/fix notes (round 30 amendments, 2026-10-24):** re-read on disk after landing. D16's lint bullet: the round-27 collect-then-assert rule, the round-28 AST pin and the round-29 inventory with its `_with_extra` checks are REPLACED (the rounds' blocks and /fix notes stay as the record) by the runner: `scripts/lint-held-out-set.py <set folder>` runs the suite in a child process whose stdout and stderr are redirected at the OS level to `.cursor/loops/lint-<set>-<timestamp>.log` (gitignored, never opened by the composer — the author-session log's treatment) with `-p no:terminal -p no:cacheprovider` and a plugin that writes to the parent's console ONLY: each test's node id (the id part rendered through the plugin's own allow-list — a param id that is not a `syn-`/`hld-`/`h2-`/`h3-` stem or a set name is replaced by its index), its outcome, and the `user_properties` the lints record (`problems`: the helpers' id-stamped codes); failures carry no longrepr, no captured section, no warning, no log record — those are in the file. Tests: (1) the plugin fed constructed reports (a sentinel in the longrepr, a captured-stdout section, a warning, a log record, a param id, a `user_properties` value NOT named `problems`) prints no sentinel and prints the `problems` codes; (2) an end-to-end subprocess test runs the real script over a `tmp_path` set holding a generated test module whose assert, `warnings.warn`, `logging.warning`, `print`, `ids=` callback and appended helper result all carry the sentinel at three positions — the sentinel absent from the child's console bytes and present in the log file; (3) the helper-level sentinel test of round 27 stays (the codes themselves are content-free). Task 0.17: the test-side line, the brief line (the full suite runs THROUGH the runner; bare pytest never while an `h3-` script is in the tree — a C1 operating rule, the shell history its evidence) and the Done-when line reworded. Sibling sweep: `--tb=line` no longer appears outside round records; `_HELD_OUT_READERS` likewise; `validation/README.md` and C12 unchanged (they name the set, not the runner).
+
+### Round 31 — 2026-10-24
+Source: Codex gpt-6-astra high plan peer-review
+
+**PR-MED-040 — The `problems` property remains an unchecked content channel**
+
+Materiality: build-affecting
+
+Evidence: D16 (`.cursor/plans/plan-validation-run6.md:267`) permits printing `user_properties` entries named `problems`, but specifies no validation of their values at the reporting boundary. Pytest’s `record_property` accepts any object and appends it unchanged (`.venv/Lib/site-packages/_pytest/junitxml.py:275–294`); failed reports retain those properties (`_pytest/reports.py:439–452`). Consequently, round 30’s mutable-result counterexample survives: append `line.text` to a helper’s returned list, then record that list as `problems`. The plugin forwards the text despite stdout/stderr redirection. The proposed plugin test puts its property sentinel under a different name, so it does not exercise this escape.
+
+Proposed amendment: Validate `problems` values at the final console boundary against a closed diagnostic schema: approved identifiers, numeric indices and fixed problem codes, with no arbitrary string rendering. Reject malformed values using a fixed content-free error, and apply that validation wherever the child’s report channel reaches the parent.
+
+Verification: Feed the plugin a sentinel directly inside `problems`, and exercise a helper-result list mutated before `record_property`. Both must produce no sentinel on the parent’s stdout or stderr; valid codes must remain visible on failed reports.
+
+**PR-MED-041 — Runner verification does not establish complete, successful execution**
+
+Materiality: build-affecting
+
+Evidence: D16 (`.cursor/plans/plan-validation-run6.md:267`) specifies per-test reports and an end-to-end check for sentinel absence from the console and presence in the log. Task 0.17 (`:1310–1312`) then relies on this runner to establish that the suite is green. Neither specifies propagation of the child’s exit status, completion accounting, or assertions that the intended generated tests actually ran. Pytest can terminate during configuration, collection or an internal error without ordinary test reports (`.venv/Lib/site-packages/_pytest/main.py:326–373,383–400`); its test-report hook runs through a separate path (`_pytest/runner.py:236–256`). With diagnostics withheld, per-test outcomes alone cannot establish completion, and sentinel checks alone cannot establish coverage of the intended failure paths.
+
+Proposed amendment: Require the parent to propagate unsuccessful child termination and emit fixed, content-free completion/error statuses, treating missing or incomplete results as failure. Strengthen the end-to-end test to assert the intended collected cases, outcomes and exit status alongside the output checks.
+
+Verification: Exercise successful completion, expected lint failures, collection failure, a plugin exception and premature child termination. Each abnormal run must visibly fail without exposing its diagnostic text; removing or bypassing any intended sentinel case must fail the verification test.
+
+Materiality: 2 build-affecting / 0 record-only / 0 invalid
+Findings: 0 CRIT / 0 HIGH / 2 MED / 0 LOW
+
+**Round 31 disposition (composer, 2026-10-24):** round 7 of the twice-raised cap; the first round over the runner design. Both findings verified against pytest's own code: `record_property` appends any object to `user_properties` and a failed report keeps them (PR-MED-040 — so the `problems` channel needed a closed grammar at the console boundary, which D16 left unstated); a configuration, collection or internal error ends the child without per-test reports, so sentinel absence plus per-test outcomes cannot establish that the suite ran and was green (PR-MED-041). Both build-affecting, accepted and applied below as refinements of the runner (no shape change: the two properties the peer asks for — a closed grammar on the one admitted channel, and completion accounting with the child's exit status propagated — are what the runner's build would need in any case). NOT converged within the raised cap (two new build-affecting); surfaced to the practitioner. `[2026-10-24]` The practitioner's answer (in chat): ACCEPT-CLOSE at cap 7. The pass is closed not converged: 7 rounds (25–31), 20 findings (0 CRIT / 0 HIGH / 12 MED / 8 LOW; 15 build-affecting, 5 record-only, 0 invalid), every one verified against the code and applied the same day. The residue is named, not hidden: the runner (D16) was reviewed on paper for four rounds (28–31) and each round refined it; its remaining refinements are code-level and belong to Task 0.17's build, where review-loop, `/security-review` and the codex peer review the REAL `scripts/lint-held-out-set.py` — made a requirement of 0.17 below, not an option.
+
+**/fix notes (round 31 amendments, 2026-10-24):** re-read on disk after landing. D16's lint bullet: (PR-MED-040) each `problems` value must match the closed grammar `<encounter id>:<code>[:<int>]` — the id a `syn-` / `hld-` / `h2-` / `h3-` stem, the code from a fixed set the plugin ships (`no-conditions`, `fact-unrouted`, `fact-tokens-absent`, `tail-disagrees`, `reference-mismatch`, `size-out-of-bounds`, …), the optional integer a fact or line index — anything else (a non-string, an unknown code, a free string) prints the fixed line `problems-malformed <node id>` and fails the run; the plugin test gains a sentinel INSIDE `problems` and a helper result mutated before `record_property` (neither reaches the console; valid codes still print on a FAILED report). (PR-MED-041) the parent prints fixed, content-free status lines — `collected <n>`, `ran <n>`, `passed <n> failed <n> errored <n>`, `exit <code>` — propagates the child's exit status as its own, and treats a missing or short count, a collection error, a plugin exception (caught by the plugin and reported as `plugin-error`), or premature termination as a failure with a fixed code; the end-to-end test asserts the generated module's expected node ids, outcomes and exit status, plus a collection-error run, a plugin-exception run and a killed child, each visibly failing without diagnostic text; removing any sentinel case from the generated module fails the test. Task 0.17's test-side line names the grammar and the status lines. Sibling sweep: nothing else describes the runner's console output; the Done-when line's "runner's summaries" now includes the status lines by reference.
+
+### Round 32 — 2026-10-24
+Source: Claude Code review (Opus 5.5; three read-only subagent lenses — correctness and content leak, executor judgment and structure, plan deviation — over Task 0.17's uncommitted test side: `scripts/lint-held-out-set.py`, `scripts/lint_held_out_plugin.py`, `desktop/tests/test_lint_held_out_set.py`, `desktop/tests/test_validation_scripts.py`, `fixtures/heldout_transcripts.py`, `validation.py`; no `h3-` script existed; the suite 8319 passed / 9 skipped before the round)
+Round status: Closed (0 pending)
+
+**MED-001 — The lints only `heldout-3` carries had never fired**
+Severity: MED · Surface: test-harness · Triage: Fix-now
+Evidence: `facts-out-of-bounds`, `next-patient-without-axis`, the `script_count` branch of `_set_problems` and the `tails_by_role` exemption of `absent-fact-before-tail` (`test_validation_scripts.py` `_checked_problems`, `_set_problems`, `_tail_problems`) were exercised only in the passing direction; they first meet real data on the blind set, which no one inspects, so a lint that wrongly passed there would go unseen.
+Desired: a synthetic negative for each, both ways.
+/fix decision: Applied · /fix notes: `test_the_blind_set_lints_fire` — a 2-fact and a 7-fact script, a `next_patient` line without the axis, an absent fact on line 0 under `tails_by_role` (no code) and under a seen-shaped set (the code), and `_set_problems` (now taking `paths`) at 10, 19, 20, 25, 26 and 0 scripts · /fix date: 2026-10-24 · /fix applied by: Claude Code (Opus 5.5)
+
+**MED-002 — A test with several call reports could be recorded as skipped when it failed**
+Severity: MED (latent) · Surface: production (the runner's plugin) · Triage: Fix-now
+Evidence: `lint_held_out_plugin.py` `_logreport` changed the outcome only while it was still `passed`; pytest 9.1's built-in `subtests` send one call report each, so a skipped subtest then a failing one printed `skipped` with no FAIL line (reproduced by the lens in a scratch project; the suite uses no `subtests` today).
+Desired: the worst call outcome wins.
+/fix decision: Applied · /fix notes: `_CALL_RANK` (passed < skipped < failed), `max` over the call reports; `test_the_worst_of_several_call_reports_wins` · /fix date: 2026-10-24 · /fix applied by: Claude Code (Opus 5.5)
+
+- LOW-001 — one size failure could be reported twice (`MIN_HELDOUT` and `script_count`). Triage: Fix-now; Decision: Applied (`MIN_HELDOUT` checked only for a set with no `script_count`; pinned at 10 scripts).
+- LOW-002 — `parse_report` let a second `finished` record silently win. Triage: Fix-now; Decision: Applied (`report-malformed`, as for a second `collected`; `test_a_second_collected_or_finished_record_is_malformed`).
+- LOW-003 — a relative `--log-dir` broke every run (the child opened the report path from its own folder). Triage: Fix-now; Decision: Applied (resolved to an absolute path; the end-to-end tests now pass `--log-dir logs` from `tmp_path`).
+- LOW-004 — a `lint_held_out_plugin.py` in the child's working folder would have been loaded instead of the real plugin (`python -m pytest` puts that folder first). Triage: Fix-now; Decision: Applied (a `-c` bootstrap loads the plugin from its full path and calls `pytest.main(..., plugins=[module])`; `PYTHONPATH` no longer altered; `test_a_stand_in_plugin_in_the_working_folder_is_not_loaded`).
+- LOW-005 — `--tests` passed pytest options through (`--junitxml` would write failure text outside the log; `--deselect` would shrink the run uncounted). Triage: Fix-now; Decision: Applied (`refused tests-option` for any entry starting with `-`; pinned).
+- LOW-006 — a child killed at the timeout exited 1 on Windows (`TerminateProcess(handle, 1)`), the same as a failing run. Triage: Fix-now; Decision: Applied (a killed run exits 9; the timeout test asserts it).
+- LOW-007 — the log, which can hold script text, sat beside the loop and probe logs the composer reads. Triage: Fix-now; Decision: Applied (its own folder `.cursor/loops/held-out-lint/`, named in the docstring as never opened or searched).
+- LOW-008 — a test writing straight to the console would bypass the redirect. Triage: Fix-now; Decision: Applied (`CREATE_NO_WINDOW`: the child gets a console of its own).
+- LOW-009 — the killed-child test asserted no diagnostic-text absence. Triage: Fix-now; Decision: Applied (the module prints the sentinel before it dies; absent from the console).
+- LOW-010 — the plan's runner text was stale in six places (`-p no:terminal`, `ScriptError` text, stem-only ids, the `FAIL` prefix, the extra status lines, the non-existent `fact-tokens-absent`). Triage: Fix-now; Decision: Applied (record-only: D16's dated as-built note; Task 0.17's record).
+- LOW-011 — a passing test's node id is printed only with `--verbose`, while D16 says each test's. Triage: Accept; Decision: Accepted (the counts prove completion; 8000+ lines otherwise; `--verbose` prints them; recorded in D16's as-built note).
+- LOW-012 — the plugin test feeds no warning. Triage: Accept; Decision: Accepted (a `TestReport` has no warning field; the hook-inventory pin and the end-to-end `warnings.warn` sink stand in).
+- LOW-013 — dead identity guards (`_set_problems`, `_tail_problems`) and a run-of-record set told apart by identity. Triage: Accept; Decision: Accepted (test-harness only, no behaviour; a later tidy).
+- LOW-014 — the render and reference tests share a prelude and load each script up to three times. Triage: Accept; Decision: Accepted (test-harness only; the two files run in 19 s).
+
+Findings: 0 CRIT / 0 HIGH / 2 MED / 14 LOW
+Round Classification: 🆕 16 (first code round over the runner); skew=none
+Also applied (no finding): the runner's docstring says the set folder only names the log — the child lints every set in the fixture's table.
+
+### Round 33 — 2026-10-24
+Source: Claude Code security-review (Opus 5.5; the portable threat-model checklist in session, over `scripts/lint-held-out-set.py`, `scripts/lint_held_out_plugin.py`, `desktop/tests/test_lint_held_out_set.py`, `desktop/tests/test_validation_scripts.py` after round 32's fixes). The asset is the blind set's text (synthetic, C8 — so a leak costs the run's blindness, not patient data); the trust boundary is the composer's console and every file the composer or a build leg reads.
+Round status: Closed (0 pending)
+
+**SEC-001 — Nothing stops a bare pytest while an `h3-` script is in the tree**
+Severity: MED · Surface: test-harness (the C12 boundary) · Triage: Fix-now
+Evidence: the runner is the boundary only when it is used; C12 and Task 0.17 make it a rule for the composer, but every build leg of Phases 1–5 runs AGENTS.md's QA step `ruff check . && mypy && pytest`, and a Phase 1 product change that fails a test over an `h3-` script would print pytest's assertion diff (rendered note or line text) straight to that leg's console. A passing run prints no text, so the leak waits for the first red run.
+Desired: a bare pytest refuses to start, with a fixed message, while a set with `cases_written=False` has a script in its folder and the run is not the runner's child; the refusal lifts on its own when P.4 writes the set's cases.
+/fix decision: Applied · /fix notes: `conftest.blind_run_refusal(sets, environ)` — the fixed message or None; `pytest_configure` raises `pytest.UsageError` with it; the runner's child carries `SCRIBE_LINT_REPORT`, so it runs; pinned both ways in `test_lint_held_out_set.py` (a blind set with a script and no variable refused; the variable present, an empty blind folder, or a set with its cases written, not) · /fix date: 2026-10-24 · /fix applied by: Claude Code (Opus 5.5)
+
+- SEC-002 — an interrupt (Ctrl+C, or any exception) during the child's wait left the child running, writing to the log, with the report file never removed (`main` caught it and returned). Severity: LOW (availability; no text reaches the console). Triage: Fix-now; Decision: Applied (the wait kills and reaps the child on any exception before re-raising; the report file is removed in a `finally`).
+- SEC-003 — the logs keep the blind set's text under the repository folder for as long as nobody deletes them. Severity: LOW. Triage: Accept; Decision: Accepted (`.cursor/loops/` is gitignored — verified with `git check-ignore`; ripgrep and the search tools skip ignored folders by default; the text is synthetic; P.4 may delete `.cursor/loops/held-out-lint/` once the set is no longer blind).
+
+Checked and clean: what the runner prints (every line fixed or grammar-checked, the log's name built from the checked set name and a timestamp); the report as an input (a test or a forged record can only add grammar text or fail the run; ids re-checked against `SAFE_NODE_RE`); a traceback in the runner (`runner-error` only); the child's environment (`PYTEST_ADDOPTS` / `PYTEST_PLUGINS` removed, no `PYTHONPATH` change, the plugin loaded by full path); pytest options through `--tests` (refused); the cache folder (`-p no:cacheprovider`); a direct console write (`CREATE_NO_WINDOW`); a log name collision (exclusive create, `log-exists`); unbounded report (`_MAX_RECORDS`); the lints' own messages (codes only through `record_property`; load failures as `load-error`). No new dependency; no network; no secret.
+Findings: 0 CRIT / 0 HIGH / 1 MED / 2 LOW
+Round Classification: 🆕 3; skew=none
+
+### Round 34 — 2026-10-24
+Source: Codex gpt-6-astra xhigh code peer-review (composer-recorded from the read-only peer's log, `.cursor/loops/validation-run6-code-peer-r34.log`, its last `### Round 34` header; verbatim below the status line)
+Round status: Closed (0 pending)
+
+**PR-MED-043 — Argument files bypass the pytest-option refusal**
+
+Severity: MED
+Surface: test-harness
+Evidence: `scripts/lint-held-out-set.py:226` rejects only entries beginning with `-`, then forwards them unchanged at line 251. Pytest expands `@argument-file` entries into arguments, including options; the installed pytest 9.1.1 parser enables this at `_pytest/config/argparsing.py:396`. This admits file reporters such as JUnit XML, which can write assertion text outside the protected log, and selection options that shrink the count before `pytest_collection_finish`. The runner also leaves configuration-file `addopts` and `log_file` settings effective. [Pytest argument-file documentation](https://docs.pytest.org/en/stable/how-to/usage.html#read-arguments-from-file).
+Proposed fix: Reject argument-file entries and constrain the effective pytest configuration so file reporters and unintended selection options cannot bypass the runner’s policy. Perform that check before reporters initialize.
+Verification: Extend the generated-project tests with an argument file requesting an external report, configuration-based file logging, and deselection. Each must refuse safely without creating an external diagnostic file or reporting a complete successful run.
+
+**PR-MED-044 — Node-name validation admits arbitrary words**
+
+Severity: MED
+Surface: test-harness
+Evidence: `scripts/lint_held_out_plugin.py:79` permits arbitrary ASCII words in paths, class names and function names. `safe_node_id` returns those names unchanged at lines 95–101, and `scripts/lint-held-out-set.py:151` accepts the same grammar. Consequently, a generated test or collector whose base name incorporates a blind word sends that word through both checks into the report and console. Only bracketed parameter text receives substantive filtering; the existing sentinel cases do not test an otherwise-valid base name containing the sentinel.
+Proposed fix: Render untrusted node bases as collection indices, or permit names only from a trusted manifest established independently of blind content. Apply the same restriction in the parent.
+Verification: Add sentinel cases in a valid module path, class name and function name, including a generated collected item. Confirm the sentinel reaches neither the report channel nor console, including under `--verbose`.
+
+**PR-MED-045 — A stale environment variable disables the blind-run guard**
+
+Severity: MED
+Surface: test-harness
+Evidence: `desktop/tests/conftest.py:90` permits execution whenever `SCRIBE_LINT_REPORT` is nonempty. It does not establish that the runner bootstrap or reporter is active. A bare pytest launched from a shell or IDE carrying a stale value therefore runs with ordinary terminal reporting, even when the referenced report file does not exist. `desktop/tests/test_lint_held_out_set.py:314` explicitly treats an arbitrary report-path value as sufficient.
+Proposed fix: Require process-local bootstrap state and the registered trusted plugin, established before conftest configuration, rather than treating an inherited environment string as proof of redirection.
+Verification: Exercise the real configuration hook in an isolated generated project with a simulated populated blind set. Bare pytest must refuse with absent, stale and nonexistent report paths; the genuine runner must succeed.
+
+**PR-MED-046 — Setup-only execution is reported as tests passing**
+
+Severity: MED
+Surface: test-harness
+Evidence: `scripts/lint_held_out_plugin.py:187` records a successful setup as `passed`; teardown emits that outcome without requiring a call report at lines 195–204. Pytest’s installed `_pytest/runner.py:135` deliberately omits the call phase under `--setup-only`, while still producing setup and teardown reports. That option remains reachable through configuration `addopts`. The runner consequently reports every item as run and passed, with matching counts and `exit 0`, although no test body executed.
+Proposed fix: Track whether each successfully set-up item produced a call report. Emit a fixed runner failure when teardown arrives without one, while preserving legitimate setup skips and errors.
+Verification: Add a generated-project setup-only case and a constructed setup/teardown pair without a call. Neither may report success; ordinary passing, skipped and fixture-error cases must retain their intended outcomes.
+
+**PR-MED-047 — Reported failures do not prevent exit zero**
+
+Severity: MED
+Surface: test-harness
+Evidence: `scripts/lint-held-out-set.py:164` counts failed and errored tests, but line 194 derives success solely from the separate `failures` list. Matching collected/ran counts, `finished: 0` and child exit zero therefore produce `exit 0` even with failed test records. This is reachable when a final `pytest_runtest_logfinish` hook calls `pytest.exit` with return code zero after all reports: pytest’s `_pytest/main.py:336` accepts that status before its normal failed-test decision, so the existing exit-mismatch check also passes.
+Proposed fix: Treat failed or errored outcomes paired with child exit zero as an inconsistent report and emit a fixed failure code. Preserve legitimate skipped/xfail outcomes.
+Verification: Cover both failed and errored records with zero exits in `TestRunnerChecks`, plus a generated failing run terminated with return code zero from its final log-finish hook. All must return nonzero.
+
+**PR-LOW-030 — Timeout cleanup does not terminate test subprocesses**
+
+Severity: LOW
+Surface: test-harness
+Evidence: `scripts/lint-held-out-set.py:268` and line 272 kill and wait only on the immediate process. Windows termination does not recursively terminate descendants. CPython’s venv launcher can terminate its interpreter through its job, but that job enables silent breakaway, allowing subprocesses started by tests to survive. Such processes can continue running and retain inherited output handles after the runner returns. `desktop/tests/test_lint_held_out_set.py:611` checks the timeout summary, not descendant termination. [Windows termination behavior](https://learn.microsoft.com/en-us/windows/win32/procthread/terminating-a-process), [CPython venv launcher](https://github.com/python/cpython/blob/3.14/PC/venvlauncher.c).
+Proposed fix: Own and terminate the complete child process tree on timeout and interruption, using a Windows job that prevents descendant breakaway or an equivalent bounded mechanism. Complete termination before report cleanup.
+Verification: Have a generated test start a long-lived subprocess, then trigger timeout and interruption separately. Confirm both interpreter and descendant terminate, output handles close, and the temporary report is removed.
+
+Findings: 0 CRIT / 0 HIGH / 5 MED / 1 LOW
+
+Composer dispositions (each finding verified against the code and pytest 9.1.1 before acting):
+- PR-MED-043 — VALID. /fix decision: Applied · /fix notes: `--tests` also refuses an entry starting with `@` (`refused tests-option`); the plugin's `pytest_configure` refuses, before any test is collected and before the reporters are configured, a configuration with any of `REFUSED_OPTIONS` set (`xmlpath`, `log_file`, `debug`, `pastebin`, `deselect`, `keyword`, `markexpr`, `setuponly`, `setupplan`, `collectonly`, `usepdb`, `trace`) or the ini `log_file` — it writes the new fixed code `config-refused` and raises `UsageError`, so the session never starts and JUnit XML / the log file are never written; pinned by a constructed-config test over every name and by four generated projects whose `pytest.ini` sets `--junitxml`, `log_file`, `--setup-only`, `-k` (each `FAIL config-refused`, a non-zero non-1 exit, no file written), and the `@a.txt` refusal. Residue: `--debug` from an ini file has already opened its debug file at parse time, which holds only pre-collection hook traces (no test text: no test is collected) · /fix date: 2026-10-24 · /fix applied by: Claude Code (Opus 5.5)
+- PR-MED-044 — VALID as stated (a base name passes unchanged), not reachable here. /fix decision: Accepted (Accept-with-record) · /fix notes: a node's base is built from the module path, class and function names in source the composer writes and reviews; a blind word reaches a base only through a collector that builds items from data, and the suite has none (grep for `pytest_collect_file`, `pytest_pycollect_makeitem`, `pytest_generate_tests`, `pytest_collection_modifyitems`, `pytest_itemcollected` over `desktop/`: no match). Every data-derived part of a node id is a parametrize id, which `_PARAM_RE` limits to ids and set names. Indices for every base would hide which lint failed. A data-driven collector added later is a change to this boundary, reviewed as such (C12) · /fix date: 2026-10-24
+- PR-MED-045 — VALID. /fix decision: Applied · /fix notes: `conftest.blind_run_refusal(sets, environ, plugin_active)` lets the run go ahead only with the variable set AND the plugin registered under `LINT_PLUGIN_NAME` (`config.pluginmanager.has_plugin`, pinned equal to the plugin module's `__name__`); a variable left in a shell is refused; the end-to-end test asserts the runner's child has the plugin registered under that name · /fix date: 2026-10-24 · /fix applied by: Claude Code (Opus 5.5)
+- PR-MED-046 — VALID. /fix decision: Applied · /fix notes: the reporter records each node's call report; at teardown a passed setup with no call is `error` (a setup skip stays `skipped`, a setup error stays `error`); `--setup-only` from an ini file is also `config-refused` (PR-MED-043); pinned by a constructed setup/teardown pair · /fix date: 2026-10-24 · /fix applied by: Claude Code (Opus 5.5)
+- PR-MED-047 — VALID. /fix decision: Applied · /fix notes: `render` adds `FAIL outcome-mismatch` when a test is failed or errored and the child exited 0, so the runner exits 9; pinned for both outcomes · /fix date: 2026-10-24 · /fix applied by: Claude Code (Opus 5.5)
+- PR-LOW-030 — VALID (a test's own subprocess outlives a kill). /fix decision: Accepted (Accept-with-record) · /fix notes: availability only — a surviving descendant can keep writing to the log, which nobody opens, and no text reaches the console (the runner's lines are fixed); the suite starts no long-lived subprocess (its child processes are bounded by their own timeouts); a job object is more machinery than the residue warrants. If a timeout ever fires, check Task Manager before the next run · /fix date: 2026-10-24
+
+Round Classification: 🆕 6 (the first cross-family code round over the runner); skew=none
+Checks after the fixes: `test_lint_held_out_set.py` 58 passed; ruff and the format check clean on the four files; mypy (the package) and `mypy --strict` (the two scripts) clean.
+
+### Round 35 — 2026-10-24
+Source: Codex gpt-6-astra high code peer-review (composer-recorded from the read-only peer's log, `.cursor/loops/validation-run6-code-peer-r35.log`, its last `### Round 35` header; verbatim below the status line)
+Round status: Closed (0 pending)
+
+**PR-MED-048 — Configuration can disable its own enforcement plugin**
+
+Severity: MED
+Surface: test-harness
+Evidence: `scripts/lint-held-out-set.py:84` registers the plugin before pytest parses configuration, but enforcement occurs only in that plugin’s `pytest_configure` (`scripts/lint_held_out_plugin.py:257`). Installed pytest processes configuration `addopts` at `_pytest/config/__init__.py:1560` and plugin exclusions at line 1576; Pluggy’s `_manager.py:230` unregisters an already registered plugin when blocked. Configuration can therefore disable the lint plugin, suppress conftest loading, and enable an external reporter. Neither refusal executes, while JUnit XML can write diagnostics at `_pytest/junitxml.py:647`. The parent eventually reports missing records, but that happens after the external diagnostic file has been written.
+Proposed fix: Validate configuration and mandatory plugin identity from bootstrap-controlled code before configuration hooks or collection execute. Refuse disabling the enforcement plugin or conftest guard, independently of those plugins’ own hooks.
+Verification: Verified by tracing installed pytest and Pluggy source; no tests run. Add a generated-project regression combining plugin exclusion, suppressed conftest loading and an external reporter; require refusal before collection and no external diagnostic file.
+
+**PR-MED-049 — Collection filters can silently omit the held-out lints**
+
+Severity: MED
+Surface: test-harness
+Evidence: `scripts/lint_held_out_plugin.py:99` refuses keyword, marker and node deselection, but omits `ignore`, `ignore_glob` and discovery-changing ini settings. Pytest applies file exclusions before collection (`_pytest/main.py:437`) and uses `python_files`, `python_classes` and `python_functions` to determine discovery (`_pytest/python.py:86`). Consequently, configuration can exclude `test_validation_scripts.py` while other tests run. The plugin records only the resulting items at `scripts/lint_held_out_plugin.py:183`; `scripts/lint-held-out-set.py:174` compares execution against that already-reduced count, allowing a successful summary without the omitted lints.
+Proposed fix: Refuse unapproved collection filters and discovery overrides, or pin the effective discovery configuration to the runner’s intended suite. Keep explicit runner-selected test paths distinguishable from configuration-driven omissions.
+Verification: Verified statically; no tests run. Add generated-project cases for file exclusion, glob exclusion and discovery overrides where another passing test remains; none should report a complete successful run.
+
+**PR-MED-050 — Plugin registration still does not establish runner confinement**
+
+Severity: MED
+Surface: test-harness
+Evidence: `desktop/tests/conftest.py:94` permits execution whenever the report variable and plugin-name check are both present. Pytest can register an importable module under that exact name through ordinary plugin loading (`_pytest/config/__init__.py:887–927`). With the repository’s scripts directory importable, manually loading the genuine plugin and supplying a writable report path satisfies both checks. The plugin itself checks only that path at `scripts/lint_held_out_plugin.py:258`; it never establishes that the bootstrap ran or that stdout/stderr are redirected. Ordinary terminal reporting therefore remains active outside the protected runner.
+Proposed fix: Require bootstrap-established process-local state and trusted plugin identity, with verification that diagnostic streams are confined, rather than accepting a plugin name plus inherited environment value as proof.
+Verification: Verified statically; no tests run. Exercise a simulated populated blind set through ordinary pytest with the genuine plugin manually loaded and a report path supplied: it must refuse before collection, while the actual runner must remain admitted.
+
+Findings: 0 CRIT / 0 HIGH / 3 MED / 0 LOW
+
+Composer dispositions (each finding verified against the code and pytest 9.1.1 before acting):
+- PR-MED-048 — VALID (an ini `-p no:lint_held_out_plugin` unregisters the already-registered module at `Config.parse`'s `consider_preparse`, so neither configure-time refusal runs and `--junitxml` writes its file). /fix decision: Applied · /fix notes: the check moved out of the plugin's `pytest_configure` into a new `RunnerGuard` that the child's bootstrap creates and registers beside the module (`pytest.main(plugins=[module, guard])`). pytest names an object plugin by its id, which no `-p no:` can name in advance. Its `tryfirst` `pytest_cmdline_main` runs after parsing and before any configure or collection; it refuses — `config-refused` in the report, pytest's usage-error exit, nothing printed — when the module is not registered under its name, or when `refused_configuration` holds. That is now: `PYTEST_ADDOPTS` or `PYTEST_PLUGINS` set, any of `REFUSED_OPTIONS` (now also `noconftest`, `ignore`, `ignore_glob`, `override_ini`), or any key in pytest's ini table outside `ALLOWED_INI` = `testpaths`, `markers` (`desktop/pyproject.toml`'s two). So `addopts` itself is refused, and so is any `-o` override, which pytest merges into that table. A missing table fails closed. Pinned by the generated project with `addopts = -p no:lint_held_out_plugin --noconftest --junitxml=j.xml` (`FAIL config-refused`, a non-zero non-1 exit, no `j.xml`) and by `-o log_file=`; by a constructed-config test over every option, five ini keys and both variables; and by a guard test (a plugin missing or not the module, and a refused option, each refused, three `config-refused` records; a clean config marked checked) · /fix date: 2026-10-24 · /fix applied by: Claude Code (Opus 5.5)
+- PR-MED-049 — VALID. /fix decision: Applied · /fix notes: `--ignore` and `--ignore-glob` are now in `REFUSED_OPTIONS`. `python_files`, `python_classes`, `python_functions` and `norecursedirs` are ini keys outside `ALLOWED_INI`, so they are refused by PR-MED-048's allow-list, and an `addopts` that carries an `--ignore` is refused with it. A conftest's `collect_ignore` stays source the composer writes and reviews (the PR-MED-044 reasoning). Pinned by generated projects with `addopts = --ignore=test_gen.py` and `python_files = nothing_*.py` (each `FAIL config-refused`) · /fix date: 2026-10-24 · /fix applied by: Claude Code (Opus 5.5)
+- PR-MED-050 — VALID. /fix decision: Applied · /fix notes: the plugin's `pytest_configure` now refuses (`UsageError`, before the report is opened) unless `RUNNER_GUARD` — set only by the runner's bootstrap — is a guard whose check passed. `conftest.lint_runner_active` asks for the plugin under its name, with its `RUNNER_GUARD` checked and registered, instead of `has_plugin` alone. Loading the plugin by hand (`-p lint_held_out_plugin`, the variable set, `scripts` importable) therefore never starts a run: pinned end to end (pytest's usage-error exit, no sentinel in the output, no report file) and by unit tests of both checks. The end-to-end child test asserts the runner's guard is checked and registered. Stream confinement itself is the runner's: the bootstrap runs only as its child, whose stdout and stderr are the log. A hand-made copy of the bootstrap is deliberate, outside the accident class this guard is for (C12) · /fix date: 2026-10-24 · /fix applied by: Claude Code (Opus 5.5)
+
+Round Classification: 🔁 3 (the same two classes as round 34's PR-MED-043/045 — configuration that changes what runs or where text goes, and the guard defeated — attacked across the class: the plugin's own check could be disabled by the configuration it checks); skew=same-family
+Checks after the fixes: `test_lint_held_out_set.py` 66 passed; ruff and the format check clean on the four files; mypy (the package) and `mypy --strict` (the two scripts) clean.
+
+### Round 36 — 2026-10-24
+Source: Codex gpt-6-astra high code peer-review (composer-recorded from the read-only peer's log, `.cursor/loops/validation-run6-code-peer-r36.log`, its last `### Round 36` header; verbatim below the status line)
+Round status: Closed (0 pending)
+
+No findings
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 0 LOW
+
+The code is sound within the stated scope and accepted boundaries on static review; no tests were run.
+
+Composer disposition: the re-review of round 35's guard (`RunnerGuard`, the ini allow-list, the refused options and variables, the plugin's checked-guard start and the conftest's `lint_runner_active`), attacking each prior class across the scope — CONVERGED, no findings. The code passes over the runner (rounds 34–36) close here: Task 0.17's required review-loop (round 32), `/security-review` (round 33) and codex peer rounds (34–36) are done.
+Round Classification: none (0 findings); skew=none
+
+### Round 37 — 2026-10-24
+Source: Claude Code simplify
+Round status: Closed (0 pending)
+
+**Scope:** Task 0.17's uncommitted code before its commit, read in full: `scripts/lint-held-out-set.py`, `scripts/lint_held_out_plugin.py`, the blind-run guard in `desktop/tests/conftest.py`, and `validation.py`'s change (`REFERENCE_GREETING_LINES` deleted; the `heldout-3` rows of `REFERENCE_TAIL_STARTS`). No `h3-` script and no `AUTHOR-NOTES.md` read.
+
+- **SIMP-001** — LOW — `scripts/lint-held-out-set.py` `_child_env` — the runner restates the plugin's `REFUSED_ENV` as a literal tuple
+  - Triage: Fix-now.
+  - Fix route: fix-on-fast.
+  - Why it matters: the guard refuses a run when a variable of `lint_held_out_plugin.REFUSED_ENV` is set, and the runner strips the same two names from the child's environment by a second literal. A name added to one list and not the other would make every run from a shell holding that variable `config-refused` (fail closed, but a confusing drift).
+  - Current behaviour: `k not in ("PYTEST_ADDOPTS", "PYTEST_PLUGINS")`.
+  - Desired behaviour: `k not in plugin.REFUSED_ENV` (the module is already imported for its other constants).
+  - Pattern to follow: `parse_report` and `render`, which read `plugin.FIXED_CODES` and `plugin.OUTCOMES` the same way.
+  - Verification: `test_lint_held_out_set.py` through the runner; ruff, the format check and `mypy --strict` on the script.
+  - Regression risk: none (the same two names).
+  - /fix decision: Applied · /fix notes: one line changed · /fix date: 2026-10-24 · /fix applied by: Claude Code (Opus 5.5)
+
+**Consciously left alone:** `Parsed.fail`'s de-duplication (it keeps a repeated malformed record to one `FAIL` line); `refused_configuration` taking `environ` as an argument (the tests feed it a mapping); the conftest's two helpers `lint_runner_active` and `blind_run_refusal` (each is unit-tested separately); the runner's `main`/`run` split (the catch-all prints a code instead of a traceback).
+
+**Summary:** 1 LOW, Fix-now → `/fix` (applied). Nothing else worth a maintainer's attention.
+
+### Round 38 — 2026-10-24
+Source: Claude Code review-loop (Opus 5.5, executor stage-1 rx2; sequential passes — correctness and security, executor judgment, structural quality, post-fix regression, missed-issue, plan deviation against D1, D3, C4–C6, C11 and Tasks 1.1–1.4)
+Round status: Closed (0 pending)
+
+**Scope:** Phase 1's 16 uncommitted files against HEAD `8996a75` (the working tree): `note.py`, `note_check.py`, `replay_kept.py`, `ui/models.py`, `ui/note.py`, the plan, and the tests `test_note.py`, `test_note_check.py`, `test_note_matrix.py`, `test_note_pipeline.py`, `test_replay_kept.py`, `test_save_as_ratification.py`, `test_ui_models.py`, `test_ui_note_editor.py`, `test_ui_prose_stage.py`, `test_ui_screens.py`. The source diff was read in full, and the tests through their diffs and the new class. Before the round, the composer's suite run over rx1 had 3 failures, all in `test_replay_kept.py::TestMain`. They pinned the row's END at the suspect cell, while Task 1.4 deliberately appended the new last column. Fixed before the round: the three endings now carry the new cell (`| 1.000 | 0 | 0 | 0 | 0 | 0 |`, `| - | 0 | 0 | 0 | 0 |`, `| 7 | 0 |`), and their comments name both last cells. No `h3-` file was read or returned by a search.
+
+- **LOW-001** — `desktop/src/scribe_desktop/ui/models.py` `eligible_utterances` docstring (and `test_ui_models.py`'s D3 comment): "every mark before the speaker" is false. The guard's `[possibly not speech]` prefix sits after the speaker, by the practitioner's 2026-10-13 front-mark decision, which the exact label pins keep. Triage: Fix-now; Decision: Applied. Both now say both FRONT marks come before the speaker and the suspect prefix after it, with the cut applied to the words only. D3's "all marks" is read as the front marks; record-only.
+- **LOW-002** — `desktop/tests/test_note_check.py` `test_the_five_held_out_silent_facts_are_carried_or_flagged`: four function-local imports, the only ones in the file. Triage: Fix-now; Decision: Applied. They are hoisted into the module's import block (`script_path`, `compose_draft`, `finalise_note`, `extractive_provider_from_config`, `flagged_segments`, `confirm_all`, `first_detected_prefill`, `load_script`).
+- **LOW-003** — `desktop/tests/test_ui_screens.py` `test_a_typed_over_flagged_line_is_named_by_number_never_offered_twice`: the rx1 re-pin dropped the test's only check of the empty filter beside a replaced line. That check covered `FLAGGED_FILTER_EMPTY_LINE` appended after "see its row below.", with Add disabled. The new code's lines 3 and 5 now fill the filter, so the path was no longer reached. Triage: Fix-now; Decision: Applied. Lines 3 and 5 are added back, then the empty chooser, the disabled Add and the appended line are asserted as before.
+
+**Looked at and left alone:**
+- `check_note` computes `omission_warnings` and `_covered_words` twice over (once for each Check 4 code). This is linear in the transcript and keeps `clinician_line_omissions` callable on its own, as the harness and the tests use it.
+- `validation.py:1537`'s `warned` still reads `high_risk_omission` only. That is the harness credit, D7/D13, owned by Tasks 4.x.
+- The documents that quote the old mark and the count line are Task 5.1's.
+- An autofill-trigger clinician line draws the new code even when its config line is confirmed. Coverage is coordinate carriage (D1, as decided).
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 3 LOW
+Round Classification: 🆕 3 (the first code round over Phase 1); skew=none
+Finding verification: 5 candidates; 2 dropped (the duplicate computation, by design; the harness reader, Phase 4's); 0 downgraded
+Missed-issue pass: re-read `note_check.py` (`_covered_words`, `clinician_line_omissions`, `check_note`), `ui/models.py` (`flagged_segments`, `flagged_count_line`, `eligible_utterances`, the copy and the names), `replay_kept.py` (`note_drift`, `render_report`), the new test class and the `test_ui_screens.py` re-pins; result: LOW-003
+Convergence: no CRIT, HIGH or MED; the three LOWs applied. Converged in one round (cap 3).
+
+### Round 39 — 2026-10-24
+Source: independent cross-family codex peer review (composer-recorded from the read-only peer's output, `.cursor/loops/stage-1-peer-r39.log`; pass stage-1.p1, peer_round 1 of cap 5)
+Reviewer: codex gpt-6-astra (medium)
+Round status: Closed (0 pending)
+
+**Scope:** Phase 1's working-tree diff against `8996a75` (`note.py`, `note_check.py`, `replay_kept.py`, `ui/models.py`, `ui/note.py`, ten test files, the plan's Phase 1 records and Round 38), plus the named supporting functions (`line_marks`, `admissible_sections`, `next_patient_boundary`, `check_note`, `SEPARATELY_ACKNOWLEDGED_CODES`, `eligible_utterances`, `flagged_segments`, the Note tab's acknowledgement and filter paths, the forward-tolerant reader, `replay_kept`'s count and output). Read-only; no suite, no network. The blind rule held: every search was scoped to `desktop/` files.
+
+#### Findings
+
+(none)
+
+- Verification counts: 6 claims checked, 6 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-10-24
+- Convergence: 0 findings in the pass's first round. Converged (cap 5).
+
+### Round 40 — 2026-10-24
+Source: Claude Code simplify (composer-run, before Phase 1's local commit)
+Round status: Closed (0 pending)
+
+**Scope:** Phase 1's source diff against `8996a75` (`note.py`, `note_check.py`, `replay_kept.py`, `ui/models.py`, `ui/note.py`), the touched functions read in full. The blind rule held: every search was scoped to `desktop/src`.
+
+#### Findings
+
+(none) — no simplifications worth a maintainer's attention.
+
+- Consciously left alone: `check_note` computes `omission_warnings` twice (once directly, once inside `clinician_line_omissions` for its exclusion) and `_covered_words` three times; folding them needs a signature change to a public, separately callable function (C5) for a cost bounded by one transcript — marginal. `validation.py`'s single-code `high_risk_omission` read is Phase 4's (D13), not this phase's.
+- Last reviewed: 2026-10-24
+
+### Round 41 — 2026-10-24
+Source: Claude Code review-loop (Opus 5.5, executor stage-2 rx2; sequential passes — correctness and security, executor judgment, structural quality, post-fix regression, missed-issue, plan deviation against D5, D8's R2 reach, C4–C6, C11 and Task 3.1)
+Round status: Closed (0 pending)
+
+**Scope:** Phase 3's 9 uncommitted files against HEAD `766c16e` (the working tree): `note.py`, `note_check.py`, `ui/models.py`, `validation.py`, the plan, and the tests `test_note.py`, `test_note_check.py`, `test_ui_models.py`, `test_validation_metrics.py`. The source diff and the touched functions (`text_holds_hedge`, `words_hold_hedge`, `segment_hedged`, `line_marks`, `quoted_line_marks`, `ends_mid_sentence`, `reconstruction_warnings`, `_row_marks`, `script_line_hedged`, `encounter_metrics`' hedge re-derivation and script term) were read in full, and the tests through their diffs. Before the round, the composer's suite over rx1 was green (8513 collected, 8504 passed, 0 failed, 9 skipped). The blind rule held: searches named `desktop/src` and `desktop/tests`; no `h3-` file was read or returned.
+
+- **LOW-001** — `desktop/src/scribe_desktop/note.py` `line_marks` docstring: "THE one rule: Check 1 emits its codes from it and the line editor marks its rows from it" was stale, since both now call `quoted_line_marks`. Triage: Fix-now; Decision: Applied. It now calls itself the per-span part of the one rule, read by both through `quoted_line_marks`, which adds the hedge scope.
+- **LOW-002** — the unsure mark described without the scope, a pattern family (searched: `spoken hedge`, `THE one rule`, `hedged_source` over `desktop/src`): `note_check.py`'s `HEDGE_PHRASES` comment ("a quoted line … that holds one of these phrases … is the unsure mark's evidence"), `ui/note.py`'s module docstring (the `[check: unsure]` paragraph) and `ui/models.py`'s `WARNING_COPY["hedged_source"]` comment. Triage: Fix-now; Decision: Applied. Each now names the scope: a same-speaker line joined mid-sentence to a hedged one is marked too. Siblings already right: `note.py`'s `NOTE_WARNING_SEVERITY` comment (rx1) and `validation.py`'s four docstrings (rx1). Comments only; no string a test pins was touched.
+
+**Looked at and left alone:**
+- `WARNING_COPY["hedged_source"]`'s on-screen title "A quoted line says the speaker was unsure": still true of the joined sentence; on-screen copy and its documents are Task 5.1's, and the P.2 smoke reads it.
+- `validation.render_report`'s header cites the 2026-10-13 hedge credit and not D5's scope: the header's amendment citations are Task 4.2/4.3's (re-pinned there with the rest of the header).
+- `script_line_hedged` rebuilds `reference_document(script)` once per fact: one document per fact of a few dozen lines, against keeping the harness's call the single named function C5 pins.
+- Index bounds: every caller reaches `segment_hedged` with a valid index (Check 1 after `_words_for_coords` succeeds, `_row_marks` after its bounds check, the harness after `marked` resolves, `fact.line` validated by the loader).
+- The clinician exclusion stays in `quoted_line_marks` alone; the harness's re-derivation does not re-check the speaker, as before D5 (the shipped checker never marks the clinician).
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 2 LOW
+Round Classification: 🆕 2 (the first code round over Phase 3); skew=none
+Finding verification: 7 candidates; 5 dropped (the four left alone above, by design or another task's; the index bounds, already guarded); 0 downgraded
+Missed-issue pass: re-read `note.py` (`text_holds_hedge` to `quoted_line_marks`, `ends_mid_sentence`), `note_check.py` (`HEDGE_PHRASES` comment, `reconstruction_warnings`), `ui/models.py` (`_row_marks`, `EditableLine`, the `hedged_source` copy), `ui/note.py` (module docstring), `validation.py` (`script_line_hedged`, the re-derivation, the script term, `_judge`), the four new test groups; result: LOW-002
+Convergence: no CRIT, HIGH or MED; the two LOWs applied (comments and docstrings only; ruff and mypy clean). Converged in one round (cap 3).
+
+### Round 42 — 2026-10-24
+Source: independent cross-family codex peer review (composer-recorded from the read-only peer's output, `.cursor/loops/stage-2-peer-r42.log`; pass stage-2.p1, peer_round 1 of cap 5)
+Reviewer: codex gpt-6-astra (medium)
+Round status: Closed (0 pending)
+
+**Scope:** Phase 3's working-tree diff against `766c16e` (`note.py`, `note_check.py`, `ui/models.py`, `ui/note.py`, `validation.py`, four test files, the plan's Task 3.1 record and Round 41), plus the named supporting functions (`ends_mid_sentence`, the hedge tests, `line_marks`, `reconstruction_warnings`, `_row_marks`, `reference_document`, `_judge`, `script_hedged`) and `test_shadow_exits.py`. Read-only; no suite, no network. The blind rule held: no `validation/heldout-3/` file was opened or listed.
+
+#### Findings
+
+(none)
+
+- Verification counts: 5 claims checked (the five review jobs), 0 defects confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-10-24
+- Convergence: 0 findings in the pass's first round. Converged (cap 5).
+
+### Round 43 — 2026-10-24
+Source: Claude Code simplify (composer-run, propose-only; stage-2 of run validation-run6-20261024-125936-4d21)
+Round status: Closed (0 pending)
+
+**Scope:** Phase 3's source diff against `766c16e`, read in full: `note.py` (`text_holds_hedge` / `words_hold_hedge` `phrases=`, `segment_hedged`, `quoted_line_marks`), `note_check.py` (`reconstruction_warnings`), `ui/models.py` (`_row_marks`), `ui/note.py` (docstring), `validation.py` (`script_line_hedged`, the hedge credit's re-derivation and script term). Tests and the plan are out of scope (the skill's rule). The blind rule held: no `validation/heldout-3/` file was read.
+
+#### Findings
+
+(none)
+
+- Consciously left alone: `quoted_line_marks`'s `UNSURE_LINE_MARK not in kinds` guard (it keeps the order and the one-per-line rule explicit and costs one tuple scan); `encounter_metrics`' `marked` now read only for emptiness (unchanged from HEAD's shape, a coordinate-validity guard).
+- Last reviewed: 2026-10-24
+
+### Round 44 — 2026-10-24
+Source: Claude Code review-loop (Opus 5.5, executor stage-3 rx2). Passes, in sequence:
+- correctness and security, structural quality, post-fix regression and missed-issue — the executor;
+- plan deviation — one read-only Explore subagent, given the blind rule verbatim. It checked: every `rule-v2.json` value against D8 as amended, D15 and option (a); every residue predicate and the D13 credit against D8, D13 and D14; every "verbatim" quote in the harness document against the plan, by exact escaped-regex search; the document against D15 and D18; the Phase 4 task lines and the eight interpretations.
+
+Round status: Closed (0 pending)
+
+**Scope:** Phase 4's six uncommitted paths against HEAD `9de1a1f`: `validation.py`, `test_validation_harness.py`, `test_validation_metrics.py`, `docs/testing/validation-harness.md`, `validation/rules/rule-v2.json` and the plan.
+- Before the round, the composer's suite over rx1 was green: 8604 collected, 8595 passed, 0 failed, 9 skipped.
+- The blind rule held: searches named `desktop/`, `docs/`, the plan, the rule file and `validation/README.md`; no `h3-` file was read or returned. The subagent ran no shell command and no pytest.
+- What the subagent confirmed:
+  - **Rule file:** every value matches.
+  - **Predicates:** every term of D8, D13 and D14 is present.
+  - **Verbatim quotes:** the four D15/D17 quotes are identical to the plan.
+  - **Interpretations:** all eight in the rx1 handoff are faithful readings.
+
+- **MED-001** — `test_validation_metrics.py`: Task 4.1's D14 amendment has no "closing gap" or "greeting gap" pin.
+  - The amendment reads: "Pins both ways: a closing gap and a greeting gap both R3".
+  - D15 lists this as its loosening (2), the main widening D14 makes, and nothing pinned it. The four reference-reading cases had none, and the R3 tests built `ReferenceReading` by hand.
+  - Triage: Fix-now. Decision: Applied.
+    - `_GAP_CASES`: an unlisted closing before a listed greeting, and a listed closing before an unlisted greeting. Each is added to `_BOUNDARY_CASES` with the expectation `None`.
+    - `TestReferenceReading.test_a_gap_on_the_scripts_words_makes_the_next_patient_r3`, end to end: `reference_reading` → `encounter_metrics` → `residue_r3`, for both gaps.
+- **LOW-002** — `TestResidueR3`: the "measured boundary" case put the boundary BEFORE the facts.
+  - Task 4.1 reads: "a boundary that fired after the fact not R3".
+  - Triage: Fix-now. Decision: Applied. `test_a_boundary_that_fired_after_the_fact_still_rules_r3_out` adds a fifth line and puts the boundary on segment 4.
+- **LOW-003** — `TestResidueR3`: no non-material case.
+  - Task 4.1 reads: "a nonmaterial `wrong` or `wrongly_present` fact consuming no allowance".
+  - R1's non-material case was pinned; R3's was not.
+  - Triage: Fix-now. Decision: Applied (`test_a_non_material_fact_consumes_no_allowance`).
+- **LOW-004** — `test_the_walk_state_holds_ten_flags` pinned only the field names.
+  - Task 4.2 reads: "the repeated-token state-count bound within 2^10".
+  - Triage: Fix-now. Decision: Applied. It now also asserts that every field's type is `bool`. The bound is structural (flags only, so equal states merge and a cell holds at most 2^10 states), so the state's shape is what is pinned rather than one measured walk. Recorded here as the reading of that pin.
+- **LOW-005** — `validation.py` `_residue_section`: D14's recorded check covered only measured encounters.
+  - D14 reads: "for every axis script of every set … record `(id, reference boundary, tail)` as integers".
+  - The reference reading is taken before the label track, but a role-unresolved outcome dropped it.
+  - Triage: Fix-now. Decision: Applied.
+    - `ReferenceReading` gains `next_patient_axis`.
+    - `EncounterOutcome` gains `reference` (validated type, no rule reads it), set on measured AND role-unresolved outcomes.
+    - The section reads the record from the outcome.
+    - An error outcome still has none, and the document says so.
+    - Pins: `TestReport.test_the_reference_boundary_record_covers_every_script_the_run_read` (role unresolved recorded, a mismatch named, an off-axis script and an error outcome absent); the runner's role-unresolved test asserts the reading is kept.
+- **LOW-006** — `docs/testing/validation-harness.md`: Task 0.7's override, labelled "quoted verbatim", dropped its last sentence.
+  - The missing sentence: "The practitioner may add a sentence of their own here before Task 0.12; it is not required."
+  - Triage: Fix-now. Decision: Applied (sentence restored).
+- **LOW-007** — `docs/testing/validation-harness.md`: D18's bands were referred to but not given.
+  - The document said "outside the band is a finding" with no numbers.
+  - Triage: Fix-now. Decision: Applied. D18's expected counts and reported bands are now stated.
+- **LOW-008** — `docs/testing/validation-harness.md` Known limits ("End of consultation and new patient").
+  - The text says `syn-38` and `syn-46` "stay expected fails". That reads as current, but it is rule v1's reading.
+  - Triage: Fix-now. Decision: Applied. Added: under rule v2 (D14) each is one R3 encounter, within the 50's ceiling of 2.
+- **LOW-009** — the plan's rx1 handoff bullet: "every predicate both ways" overclaimed, given MED-001 and LOW-002 to LOW-004.
+  - Triage: Fix-now. Decision: Applied (reworded, with a dated note).
+- **LOW-010** — `validation.py` D13 credit: the speaker test was re-spelled as `speaker == clinician_speaker` plus a None check.
+  - Check 4's `clinician_line_omissions` uses `note.spoken_by_confirmed_clinician`, and C5 says one function per rule.
+  - Triage: Fix-now. Decision: Applied (it calls the shared function; behaviour unchanged).
+
+**Looked at and left alone:**
+- The metrics' own `next_patient_axis` / `reference_tail_start` / `reference_boundary` fields now duplicate the outcome's `reference`. They are kept: `encounter_metrics` takes the reading as its input and records it, and `TestResidueR3` pins them. Folding them away is a later simplification.
+- `render_report` with a schema-2 rule and no `set_name` raises `RuleError` from `set_row`. That is acceptable, because `main` refuses that combination before any encounter runs.
+
+Findings: 0 CRIT / 0 HIGH / 1 MED / 9 LOW
+Round Classification: 🆕 10 (the first code round over Phase 4); skew=none
+Finding verification: 11 candidates; 0 dropped; 1 kept as left-alone (the duplicated metrics fields); MED-001 confirmed against `_BOUNDARY_CASES` (no gap case) and `TestResidueR3` (hand-built readings); LOW-005 confirmed against `evaluate_encounter`'s role-unresolved branch
+Missed-issue pass: re-read `encounter_metrics`' fact loop and D13 credit, `PassRule._check_sets`, `class_counts`, `run_passed`, `_verdict_lines`, `_residue_section`, `main`'s `--set` block; result: LOW-010
+Convergence: one MED, so round 45 follows (cap 3). Code and tests changed, so the suite is owed to the composer. ruff and mypy are clean (66 source files).
+
+### Round 45 — 2026-10-24
+Source: Claude Code review-loop (Opus 5.5, executor stage-3 rx2; post-fix regression and missed-issue passes over round 44's changes)
+Round status: Closed (0 pending)
+
+**Scope:** round 44's edits.
+- **Read in full:**
+  - `ReferenceReading.next_patient_axis` and `EncounterOutcome.reference` with its type guard;
+  - `evaluate_encounter`'s two outcome constructions;
+  - `_residue_section`'s record;
+  - the D13 speaker test.
+- **Tests read:** `TestResidueR3`'s widened `_metrics`, the two new R3 tests, `_GAP_CASES` and the end-to-end gap test, the walk-state pin, and the harness's `_measured_outcome` / `_axis_reading` / record test.
+- **Document read:** the four harness-document edits.
+- **Gap cases:** walked by hand through `consultation_boundary`. In the closing gap, no listed closing sits in the greeting's window. In the greeting gap, no listed greeting appears on any line. So both give `None`.
+- **Blind rule:** held as in round 44.
+
+- **LOW-001** — `test_validation_harness.py` `test_an_outcome_holds_only_its_validated_types`. This is round 12 LOW-002's run-time type guard, parametrized over the outcome's typed slots, and it did not name the new `reference` slot. Triage: Fix-now; Decision: Applied (`"reference"` added; its message is "reference must be a ReferenceReading").
+
+**Looked at and left alone:** `TestTextFreeTypes`' str-field census. `EncounterOutcome.reference`'s hint holds no `str` or `Literal`, so the listed set is unchanged.
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 1 LOW
+Round Classification: 🆕 1 (no round-44 finding recurred; no fix-induced defect); skew=none
+Finding verification: 2 candidates; 1 dropped (the census, by its own rule); 0 downgraded
+Missed-issue pass: re-read the outcome's `__post_init__`, `class_counts`, `_verdict_lines` and the report heading under schema 1 and schema 2; result: none beyond LOW-001
+Convergence: no CRIT, HIGH or MED; the LOW applied (ruff and mypy clean, 66 source files). Converged at round 2 of the cap of 3. A test changed, so the suite is owed to the composer.
+
+### Round 46 — 2026-10-24
+Source: independent cross-family codex peer review (composer-recorded from the read-only peer's output, `.cursor/loops/stage-3-peer-r46.log`; pass stage-3.p1, peer_round 1 of cap 5)
+Reviewer: codex gpt-6-astra (medium)
+Round status: Closed (0 pending)
+
+**Scope:** Phase 4's working-tree diff against `9de1a1f` (`validation.py`, `test_validation_metrics.py`, `test_validation_harness.py`, `docs/testing/validation-harness.md`), `validation/rules/rule-v2.json`, the plan's D7, D8, D13–D15, D17, D18 and Phase 4 records, plus the named supporting functions. Read-only; no suite, no network. The blind rule held: no `validation/heldout-3/` file was opened or listed.
+
+#### Findings
+
+- **PR-LOW-001** (LOW, test-harness, `desktop/src/scribe_desktop/validation.py:3182`): the residue section prints unmeasured metrics as zeros. When every outcome is an error or role-unresolved, no note metrics exist, yet the class counts print `0` with `Within yes`, and the adjusted and raw totals, "Surfaced / expected" and the warning-load totals also print zero. — Evidence: `measured = [o.metrics for o in outcomes if o.metrics is not None]`; the table prints `count.total` with `_flag(count.within)`; line 3209 prints `"total {sum(loads)}"` — against the report's own convention that a cell or total nothing measured reads `-` (PR-LOW-016). Recommendation: Fix-now — availability checks throughout the residue section, pinned for error-only and role-unresolved-only reports, measured zeros kept. /fix decision: Applied
+  - /fix notes:
+    - **Verified:** with `measured` empty, `class_counts` returns totals of 0, and `_flag(count.within)` printed `yes`.
+    - **Fix:** `_residue_section` now takes `any_measured` and a local `total()` built on `_count`.
+    - **Pattern siblings fixed in the same pass** (every measured-looking `0` in the section):
+      - the class Count;
+      - its Within flag (`-`);
+      - the members line (`- (no encounter measured)`, where it previously read `none`);
+      - the three adjusted totals and the three raw totals;
+      - "Surfaced / expected";
+      - the `clinician_line_omitted` load total. The median and maximum already read `-`.
+    - **Sections checked and found clean:**
+      - the main table and TOTAL row (PR-LOW-016);
+      - the Checker warnings and Facts sections (they list measured outcomes only);
+      - `_verdict_lines` and the header ("set-level errors: N" and "N measured" are real counts);
+      - D14's reference record (it lists outcomes, or `none`).
+    - **Pin:** `test_validation_harness.py` `TestReport.test_a_residue_section_with_nothing_measured_reads_dash`, parametrized over error-only and role-unresolved-only reports. In the role-unresolved case the D14 record still prints `syn-001: none, 4`. A measured zero still reads `0`, pinned by `test_a_schema_2_report_names_both_verdicts_and_the_set_layer` (`| R2 tone only | 0 | facts | 1 | yes |`).
+    - **Docs:** the harness document's rule v2 report paragraph names the convention for the section.
+    - **Gates:** ruff and mypy clean (66 source files). The suite is owed to the composer.
+  - /fix date: 2026-10-24
+- **PR-LOW-002** (LOW, docs-only, `docs/testing/validation-harness.md:184`): Known limits says only the hedge warning feeds a metric, but R1 now reads the other review marks. — Evidence: "Only `hedged_source` is read by a metric"; `validation.py:1681` `REVIEW_MARK_CODES = {"number_source", "low_confidence_source", "suspect_source", "hedged_source"}`, read for R1 at :1851 and :1903. Recommendation: Fix-now — describe R1's review-mark dependency beside the uncertainty credit. /fix decision: Applied
+  - /fix notes:
+    - **Verified:** `encounter_metrics` takes `review_marked = _marked_words(note, REVIEW_MARK_CODES)` and R1 requires every wrong state `marked`.
+    - **Also found while verifying:** the D13 credit and R3 read Check 6's `possible_next_patient` for its segment, through `next_patient_segment(note.note_warnings)`.
+    - **Fix:** the Known limits bullet's last sentence is replaced. It now says metrics read the warnings in three places, none failing an encounter on the warning itself:
+      - `hedged_source` → the uncertainty credit;
+      - all four review marks (`REVIEW_MARK_CODES`, named) → R1, so a confidently misheard word on an unmarked line still fails;
+      - `possible_next_patient` → its segment only, as the measured boundary.
+    - **Gates:** a docs-only change.
+  - /fix date: 2026-10-24
+
+- Verification counts: 2 claims checked, 2 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-10-24
+
+### Round 47 — 2026-10-24
+Source: Claude Code simplify (composer-run via a read-only subagent, propose-only, before Phase 4's local commit)
+Round status: Closed (0 pending)
+
+**Scope:** Phase 4's source diff against `9de1a1f` (`validation.py`), every touched function read in full (the residue types and properties, `_WordInfo` / `_FactState` / the walk, `encounter_metrics`, `SetCeilings` / `PassRule`, `rule_failures` / `v1_failures` / `class_counts` / `class_breaches`, `reference_reading` / `evaluate_encounter`, `run_passed` / `run_passed_v1`, `render_report`, `_verdict_lines`, `_residue_section`, `main`'s `--set`), with D7, D8, D13–D15, D17 and C1–C14. The blind rule held: searches named `desktop/` only; no pytest; no file edited.
+
+#### Findings
+
+(none) — no simplifications worth a maintainer's attention.
+
+- Consciously left alone: the verdicts computed in `render_report` and again in `_verdict_lines` (repeated work only, same function); `main`'s own `--set` refusals beside `set_row` (routing through it changes the refusal text); the `hedged` loop's coordinate range beside `_marked_words` (pre-existing, it also counts `hedge_marks_unhedged`); `r3`'s defensive `tail_start is not None` (hand-built readings in tests); `FactOutcome` built then `replace`d with the residue flags (R1 reads the canonical `silent_omission`, C5); `run_passed` under schema 1 beside `run_passed_v1` (D8's printed v1 verdict); `class_counts`' two dicts and `_check_sets`' name regex (taste); the duplicated reference fields (already known, round 44).
+- Last reviewed: 2026-10-24
+
+### Round 48 — 2026-10-24
+Source: Claude Code review-loop (Opus 5.5, executor stage-4 rx2). Passes: correctness, plan deviation (D10, Tasks 5.1–5.2, the Phase 1/3/4 records), structural and missed-issue — the executor; document accuracy against the code — one read-only Explore subagent given the blind rule verbatim (every quoted on-screen string against `ui/models.py`, `ui/note.py` and `replay_kept.py` character for character; every behavioural claim against `note_check.clinician_line_omissions`, `note.segment_hedged` / `quoted_line_marks` / `ends_mid_sentence`, `HEDGE_PHRASES`, `acknowledge_all_codes`, `flagged_segments`, `eligible_utterances`, the forward-tolerant reader, `note_drift`, `rule-v2.json`; the practice documents' banner and plain English; the register against `test_pilot_docs.py`'s pins).
+Round status: Closed (0 pending)
+
+**Scope:** Phase 5's working-tree diff against `0782bbc` — the 20 paths in `git status --short` (the documents, CHANGELOG, the five version files, `validation/README.md`, the plan). The blind rule held: no `validation/heldout-3/` file opened, listed or returned by a search, no lint log opened, no pytest; the subagent reported the same.
+
+- **LOW-001** — `docs/security/threat-model.md:515` and `docs/testing/kept-recordings.md:57`: a one-word "right" was said to fire `clinician_line_omitted`. It is a side word (`note_check._LATERALITY_TOKENS`), so it draws `high_risk_omission` and the second code skips the line (`test_note_check.py::test_a_one_word_side_or_negation_draws_the_first_code_only`). Found by both the executor and the subagent. Triage: Fix-now. Decision: Applied — "okay", "yeah", with the "right" / "no" case named in both.
+- **LOW-002** — `docs/security/threat-model.md:666`: the example of an unfound hedge, "not, I think, sure", IS marked (its content tokens hold the listed "i think"). Triage: Fix-now. Decision: Applied — "a listed hedge with other words inside it ("I don't really know")", the harness document's own wording. The same example in `note.segment_hedged`'s docstring is left (code, outside this phase; a docstring only).
+- **LOW-003** — the 0.3.4 passages said "dash" where the join reads only an en or em dash (`note._CONTINUATION_MARKS`; a hyphen never joins): threat-model :657, design-system :231, kept-recordings :57, CHANGELOG; the guide says "long dash" (plain English). Triage: Fix-now. Decision: Applied. The pre-0.3.4 passages that say "dash" for the bounded carry (threat-model :334, kept-recordings :44, the harness document) are older wording, left.
+- **LOW-004** — `validation/README.md:8`: "literal ceilings for R1, R2 and R3" per set, but `heldout-3`'s row has no R2 ceiling (refused on a set whose uncertainty is reported, `validation.py` `_check_sets`). Triage: Fix-now. Decision: Applied.
+- **LOW-005** — `docs/security/data-flow-map.md:440`: "a build before 0.3.4 reads it as a review warning from a newer version" — only 0.3.3 and 0.3.2 do; below 0.3.2 the note is refused. Triage: Fix-now. Decision: Applied.
+- **LOW-006** — `docs/pilot/findings-register.md:20`: the first prose mention of `h2-` / `h3-` lacked the condition the column bullet and the pilot README carry (the register's check accepts only `syn-` / `hld-` until P.3). Triage: Fix-now. Decision: Applied ("once the register's check accepts them").
+- **LOW-007** — `docs/practice/clinician-review-guide.md:130`: "A whole line you said that the note leaves out … has its own review warning" — true only for a line with none of the first warning's words. Triage: Fix-now. Decision: Applied ("with none of those words").
+- **LOW-008** — `CHANGELOG.md`: R1 was described as always carrying a review mark; the mark is required only of a fact reported wrong (D8). Triage: Fix-now. Decision: Applied.
+- **LOW-009** — `docs/practice/clinician-review-guide.md:112`: "doubt … split off from its sentence by a full stop is not marked" read as if the doubting line itself were unmarked. Triage: Fix-now. Decision: Applied ("words of doubt in a separate sentence (after a full stop) mark only their own line").
+- **LOW-010** — `docs/testing/validation-harness.md:180`: "what stays silent … since 0.3.4 only on another speaker's line, or a partly quoted clinician line" omitted the boundary condition. Triage: Fix-now. Decision: Applied ("or past a next-patient boundary").
+
+**Verified correct (no finding):** every quoted string (the five `SEPARATELY_ACKNOWLEDGED_NAMES` and the rendered tooltip, the `WARNING_COPY` titles and hints, the count line both ways, `FLAGGED_FILTER_EMPTY_LINE`, both front marks, the `ui/note.py` labels, the replay's 14 columns and totals clause); the new warning's seven conditions; `OMISSION_CODES` / `flagged_segments`; what Acknowledge all clears; the hedge scope (adjacent index, same label, the earlier segment's mark, suspect words supply nothing); `HEDGE_PHRASES` = 33 with the guide's listed and unlisted examples; `eligible_utterances`' marks and 60-character cut; the 0.3.3 reader (fields kept, one row, cleared by Acknowledge all); the practice banners and plain English; the register's tables unchanged and no `_ID_SHAPED` string; the six version fields (diff read).
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 10 LOW
+Round Classification: 🆕 10 (the first review round over Phase 5); skew=none
+Finding verification: 11 candidates; 1 merged (LOW-001, found twice); 0 dropped; each confirmed against the code named above
+Missed-issue pass: re-read `pilot-builds.md`'s new section, the review guide's diff, the threat model's new paragraph and the version diff; result: LOW-009, LOW-010
+Convergence: no CRIT, HIGH or MED — converged at round 1 of the cap of 3 (all LOW, all applied). Documents a test reads changed (`docs/pilot/`, `docs/practice/`, `validation/README.md`), so the suite is owed to the composer.
+- Last reviewed: 2026-10-24
+
+### Round 49 — 2026-10-24
+Source: independent cross-family codex peer review (composer-recorded from the read-only peer's output, `.cursor/loops/stage-4-peer-r49.log`; pass stage-4.p1, peer_round 1 of cap 5)
+Reviewer: codex gpt-6-astra (medium)
+Round status: Closed (0 pending)
+
+**Scope:** Phase 5's working-tree diff against `0782bbc` (the documents, CHANGELOG, `validation/README.md`, the five version files), checked against the definitions the documents quote at HEAD (`ui/models.py`, `ui/note.py`, `note_check.py`, `note.py`, `replay_kept.py`), `test_pilot_docs.py`, `test_install_layout.py` and the plan's Phase 1, 3, 4 and 5 records and Round 48. Read-only; no suite, no network. The blind rule held: no `validation/heldout-3/` file was opened or listed.
+
+#### Findings
+
+- **PR-LOW-001** (LOW, docs-only, `docs/testing/validation-harness.md:70`): The metric summary still describes the pre-0.3.4 hedge predicate. It incorrectly says marks without a hedge in their own words receive no credit; line 64 repeats that requirement. — Evidence: “which marks only a line holding one. Such a mark credits nothing”. At `desktop/src/scribe_desktop/note.py:475`, a same-speaker neighbour supplies the hedge when joined mid-sentence; `:522` uses that segment scope for the mark. The Phase 3 record at `.cursor/plans/plan-validation-run6.md:2269` explicitly states: “`hedge_marks_unhedged` now counts a mark whose segment is not hedged within the scope.” Recommendation: Fix-now — Update both metric summaries to describe segment scope, including a joined neighbour, consistently with the amendment paragraph. /fix decision: Applied
+  - /fix notes:
+    - **Verified:** `validation.py:1865` counts a mark unhedged unless `segment_hedged(document, coords.segment_index)`, and `:1937` reads the script term through `script_line_hedged` (Phase 3's record). The two summaries still described the 0.3.3 reading: "whose own words hold one too" (`uncertainty_surfaced`, :64) and "words that hold no spoken hedge … marks only a line holding one" (:70).
+    - **Fix:** both now name the hedge scope since the metric amendments of 2026-10-22 — its own words, or a same-speaker neighbour joined mid-sentence (`script_line_hedged` over the script, `segment_hedged` over the transcript) — and :70 says the shipped checker marks by the same rule.
+    - **Pattern siblings:** a search of `docs/` for the old predicate ("own words hold", "holding one", `words_hold_hedge`, "marks only a line") found only :81, the dated 2026-10-13 amendment paragraph — history, superseded in place by :85, left. The threat model, design system, review guide and kept-recordings were moved to the scope in rx1 (Task 5.1); none restates the old predicate.
+  - /fix date: 2026-10-24
+- **PR-LOW-002** (LOW, docs-only, `docs/testing/validation-harness.md:180`): The new exhaustive description of remaining silent omissions omits the suspect-word exception and therefore overstates Check 4’s coverage. A wholly uncovered clinician line before the boundary can remain unwarned when all its content words are suspect. — Evidence: “since 0.3.4 only on another speaker's line, on a clinician's line the note quotes in part, or past a next-patient boundary”. However, `desktop/src/scribe_desktop/note_check.py:1730` skips the new warning when `not any(content_tokens(word.word_text) for word in words if not word.suspect)`; the first omission code also excludes suspect words at `:1682`. Recommendation: Fix-now — Include this exception and qualify the following assertion that every wholly unquoted clinician line “draws Check 4's second code”. /fix decision: Applied
+  - /fix notes:
+    - **Verified:** `note_check.clinician_line_omissions` skips a segment when `not any(content_tokens(word.word_text) for word in words if not word.suspect)` (`note_check.py:1730`), and the first code leaves suspect words out, so a wholly uncovered clinician line whose every content word is suspect draws neither code and stays silent.
+    - **Fix (:180):** the "what stays silent" list gains "on one whose every content word the guard marked suspect", and the next clause reads "any other wholly unquoted line … draws Check 4's second code".
+    - **Pattern siblings fixed in the same pass** (a condition list that left out the suspect-word exception): `validation-harness.md:85` ("a content word not marked suspect") and `:184` (the same, plus "before any next-patient boundary"); `docs/design-system.md:155` (the flagged-lines bullet: "holding a content word not marked possibly not speech, before any possible next patient"); `CHANGELOG.md`'s 0.3.4 entry ("a content word not marked possibly not speech"); `docs/practice/clinician-review-guide.md:137`, in plain English ("and neither does a line whose words are all marked as possibly not speech").
+    - **Checked, already right:** the threat model's paragraph (:504-506 names "at least one content word that is not suspect"); `kept-recordings.md`'s 0.3.4 paragraph ("with a content word that is not suspect"); the data-flow map's flow 10 (it names no condition list, "the same in-memory reads as the first code").
+    - **Left as summaries** (they name the warning, they do not state its conditions): the kept-recordings column row, the shipping-gate note, "Rolling back below 0.3.4" in `pilot-builds.md` and the practice README's sentence.
+  - /fix date: 2026-10-24
+
+- Verification counts: 2 defect claims checked, 2 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-10-24
+
+### Round 50 — 2026-10-24
+Source: Claude Code review-loop (Opus 5.5, executor stage-5 rx1, Task H1; the WHOLE-RUN lens). Passes:
+- correctness and security, cross-phase interaction, plan deviation (D1, D3, D5, D7, D8, D13–D17, C4–C6, C11), structural, post-fix regression and missed-issue — the executor;
+- document accuracy against the HARNESS code — one read-only Explore subagent, given the blind rule verbatim. It checked every harness and rule v2 claim in `docs/testing/validation-harness.md`, the 0.3.4 entry of `CHANGELOG.md`, `validation/README.md`, and the harness passages of the threat model and data-flow map against `validation.py` and `rule-v2.json`.
+
+Round status: Closed (0 pending)
+
+**Scope:** the run's diff `8996a75..HEAD` (`97a5f37`) plus the working tree, with `validation/heldout-3/` excluded (its diff is empty).
+- **Source read in full:** `note.py`, `note_check.py`, `replay_kept.py`, `ui/models.py`, `ui/note.py` and the `validation.py` diff.
+- **Tests read:** the re-pins in `test_ui_screens.py`, `test_save_as_ratification.py`, `test_note_pipeline.py`, `test_ui_note_editor.py`, `test_ui_prose_stage.py` and `test_replay_kept.py`, plus `TestFlaggedLineCredit`, `TestSegmentHedged` and the clustering baseline pin.
+- **Blind rule:** held. Searches named `desktop/`, `docs/`, `scripts/`, `CHANGELOG.md`, the rule file and the plan; no `h3-` file was read or returned; no lint log was opened; no pytest was run. The subagent reported the same.
+
+**Cross-phase interactions checked (no finding):**
+- **Phase 1's code, read by Phase 4's harness:**
+  - D13's `credited_segments` reads both `OMISSION_CODES` and the shared `spoken_by_confirmed_clinician`.
+  - Its coverage, `_note_lines` over `note_span.source_coords`, is the same set as Check 4's `_covered_words` (`_resolved_coords` is that field).
+  - Its boundary, `next_patient_segment` over Check 6's warning, is the segment `next_patient_boundary` gives the second code.
+  - So every `clinician_line_omitted` segment is credited. That is pinned through the real checker (`test_the_real_check_4_code_on_an_uncovered_clinician_line_credits_it`).
+  - `warned_v033` is exactly 0.3.3's predicate, so the 0.3.3 column cannot read the new code.
+- **Phase 1's code, read by `replay_kept`:** it is counted by code name inside `reviews`, with `clinician_speaker` taken from the enrolment only, so there is no count without one.
+- **Phase 3's hedge scope:**
+  - Check 1 and `_row_marks` both go through `quoted_line_marks`.
+  - The harness's mark re-derivation goes through `segment_hedged` on the mark's segment.
+  - The script term and R2 go through `script_line_hedged`, which IS `segment_hedged` over `reference_document`.
+  - `REVIEW_MARK_CODES` takes in a scope-(ii) `hedged_source` as D8 lists it.
+  - No caller of the old per-span `line_marks` or `words_hold_hedge` remains outside `note.py`.
+- **R3:** it reads the measured boundary from Check 6 and the reference boundary from `next_patient_boundary`, as D14 has it. `reference_reading`'s `ResidueTableError` becomes an error outcome by type in `run_encounters`.
+- **C4 holds:** the new code is review severity, never routes or deletes, and is in `SEPARATELY_ACKNOWLEDGED_CODES`.
+- **C6 holds:** no `voice_commands` import in `note*.py`.
+- **C11 holds:** `test_shadow_exits.py` is unchanged.
+- **C2 and C3 hold:**
+  - `consultation_phrases.py`, `note_config.py`, `option-a-proposed.json`, `validation/config/` and `test_vocabulary.py` are unchanged.
+  - `HEDGE_PHRASES`'s diff is comments only.
+  - `rule-v2.json` matches D8, D15 and D17.
+- **Other readers:** `RULE_SCHEMA_VERSION` 2 has no other reader, and `guard_eval` imports nothing the run changed.
+
+- **LOW-001** — `desktop/src/scribe_desktop/note.py` `segment_hedged` docstring: the example of an unlisted split hedge, "not, I think, sure", is false. Its content tokens hold the listed "i think" in a row, so it IS hedged.
+  - Round 48 LOW-002 fixed the same example in the threat model but left this docstring as code outside Phase 5. It is in scope for the whole run.
+  - Triage: Fix-now. Decision: Applied. The docstring now uses the threat model's and the harness document's example, a listed hedge with other words inside it ("I don't really know"), which is not found.
+- **LOW-002** — the named residue that LOW-001 restates had no pin. The threat model (:668), the harness document and the docstring each state it.
+  - Triage: Fix-now. Decision: Applied. `test_note.py` `TestSegmentHedged.test_a_listed_hedge_with_other_words_inside_it_is_not_found` checks two lines:
+    - "I don't really know." is hedged nowhere;
+    - "Not, I think, sure." IS hedged, because punctuation is not a word.
+- **LOW-003** — `docs/testing/validation-harness.md:85` (D5's metric amendment, a 0.3.4 passage): the join was given as "a comma, semicolon, colon or dash". `note._CONTINUATION_MARKS` joins only an en or em dash, never a hyphen. This is a pattern sibling that round 48 LOW-003 missed.
+  - Triage: Fix-now. Decision: Applied ("or en or em dash, never a hyphen"). The same wording in `segment_hedged`'s docstring got the same fix.
+  - The sweep of `docs/`, `desktop/src` and `CHANGELOG.md` for "colon or dash" found only passages about the bounded carry from 0.3.1 and earlier: the harness document :180 and :187, threat-model :334, kept-recordings :44, phase-history :75 and CHANGELOG :11. Round 48 left these as older wording, and they are left again.
+
+The subagent's full report came after its first, partial one. It held ten more LOW candidates, each checked against the code named and confirmed. All were applied in the same round; all are documents, and no test reads any of them (searched `desktop/tests` for `validation-harness.md`, `CHANGELOG` and `data-flow-map`).
+- **LOW-004** — `validation-harness.md:125` (R2): "a reference hedge the product misses … fails" is true only where the set requires uncertainty surfaced. On `heldout-3` (`rule-v2.json`: `require_uncertainty_surfaced` false; `_encounter_failures` fails it only `if require_uncertainty and missed`) it is reported. Applied: now qualified, citing D17.
+- **LOW-005** — `validation-harness.md:184` (R1's mark term): "in every end state". The code (`all(state.marked for state, j in walked if j.verdict == "wrong")`) requires it of the end states judged `wrong` only; :124 already said so. Applied ("in every end state judged `wrong`").
+- **LOW-006** — `validation-harness.md:184`: `hedged_source` was described without the 0.3.4 hedge scope (`quoted_line_marks`). Applied (", or, since 0.3.4, joined mid-sentence to a same-speaker line holding one").
+- **LOW-007** — `validation-harness.md:73`: "both harness predicates follow — the current one and run 1's". There are now three, and the D13 credit skips suspect words too (`and not word.suspect`). Applied.
+- **LOW-008** — `validation-harness.md:71` (Ambiguous): the comparison readings listed left out 0.3.3's, which `encounter_metrics` also strips (`warned_v033=False`). Applied.
+- **LOW-009** — `validation-harness.md:43` (exit status): under a schema-2 rule the exit status, the Rule column and the TOTAL verdict are rule v2's for the named set (`main` returns `run_passed(..., set_name=)`), and this was unstated. Applied.
+- **LOW-010** — `validation-harness.md:155`: "as integers". The record prints `none` for a None value (`syn-38: none, 4`). Applied ("`none` where there is none").
+- **LOW-011** — `CHANGELOG.md` 0.3.4 entry: R3 "by the reference boundary" named one of its two boundary conditions. It requires no Check 6 boundary on the measured transcript too (`boundary is None and reference.boundary is None`). Applied.
+- **LOW-012** — `CHANGELOG.md`: the D13 credit's summary left out "before any next-patient boundary" and "never a suspect word". The harness document :87 is complete. Applied.
+- **LOW-013** — `docs/security/data-flow-map.md` flow 26 RUN: the command line omitted `--set`, which a schema-2 rule requires (`main` refuses without it). The flow also did not name the second in-memory compose over the script's own words (`reference_reading`, before the label track; no audio, no store). Applied: both added, and what is kept from it is named (fact indices, a boundary, a tail start, one flag; `ReferenceReading`). It has no custody effect.
+
+**Candidates dropped (the subagent's):**
+- "the D13 credit names `clinician_line_omitted` only" at :85: that paragraph is the dated D7 amendment, and :87 (D13) right after it says "EITHER code" and "subsumes D7's term". This is history, not a finding.
+- "the report prints per-set v1 and v2 verdict lines": that wording is not in the document. :155 says the two lines are for "the set" of the run, which is true of `_verdict_lines`.
+
+**Looked at and left alone:**
+- `replay_kept.note_drift` restates `evaluate_encounter`'s compose steps rather than calling the new `_compose_note`. This duplication predates the run, and `_compose_note` takes `HarnessInputs`, which the replay does not hold.
+- `WARNING_COPY["clinician_line_omitted"]`'s hint does not say a removed line can raise it, as the first code's does. Its "if it belongs" covers a deliberate removal, and the P.2 smoke reads the copy on screen.
+- At a patient / next-patient seam, `script_line_hedged` separates the roles `patient` and `next_patient`, while the measured transcript gives both the other voice's label. This needs a joining mark exactly at the seam. It is unmeasurable without reading `heldout-3`, so it is noted only.
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 13 LOW
+Round Classification: 🆕 12 (LOW-002 to LOW-013) and ♻️ 1 (LOW-001, round 48 LOW-002's sibling, left there by phase scope); skew=none. Every finding is a document or a docstring lagging code that is unchanged since its phase, plus one pin; no fix-induced defect.
+Finding verification: 15 candidates; 2 dropped (the subagent's first two, read against the document); 0 downgraded. LOW-001 was confirmed by hand through `content_tokens` and `HEDGE_PHRASES`, LOW-003 against `note._CONTINUATION_MARKS` and `TestSegmentHedged`'s hyphen case, and LOW-004 to LOW-013 against the code lines named on each.
+Missed-issue pass: re-read `clinician_line_omissions`, `_covered_words`, `encounter_metrics`' D13 block and fact loop, `reference_reading`, `_residue_section` and the `--set` refusals. Result: none beyond the findings above.
+Convergence: no CRIT, HIGH or MED. Converged at round 1 of the cap of 3, with all thirteen LOWs applied. ruff and mypy are clean (66 source files). A test changed, so the suite is owed to the composer through the blind runner. No test reads the three documents changed (searched `desktop/tests`).
+- Last reviewed: 2026-10-24
+
+### Round 51 — 2026-10-24
+Source: Claude Code simplify (composer-run subagent, stage-5 H2; composer-recorded from its returned block)
+Round status: Closed (0 pending)
+
+**Scope:** The whole run's source diff `8996a75..HEAD` (`97a5f37`) plus the working-tree change to `note.py`'s `segment_hedged` docstring, read in full: `note.py`, `note_check.py`, `replay_kept.py`, `ui/models.py`, `ui/note.py` and `validation.py` (the diff, plus `_note_lines`, `encounter_metrics`' coverage and credit block, and `EncounterMetrics`). For context, the plan's Goal, D1–D18, C1–C14, the Phase 1/3/4 task records and rounds 38–50. The test files were read only where a candidate touches them (`test_validation_metrics.py:2394-2401`, `test_validation_harness.py:1661-1722`). Blind rule held: searches named only `desktop/src`, `desktop/tests` and `docs/`; no `h3-` file was opened, listed or returned; no lint log was opened; no pytest was run; no file was written.
+
+#### Findings
+
+- **SIMP-001** — LOW — `EncounterMetrics.next_patient_axis`, `reference_tail_start` and `reference_boundary` are written and never read: they duplicate `EncounterOutcome.reference`.
+  - Triage: Fix-now
+  - Fix route: `/fix` (localized: one module plus two test sites)
+  - File: `desktop/src/scribe_desktop/validation.py:950-955` (docstring), `:969-971` (fields), `:984-988` (validation in `__post_init__`), `:2041-2043` (set in `encounter_metrics`)
+  - Why it matters: Phase 4 added these three fields so the metrics could record D14's reference-boundary check. Round 44 LOW-005 then moved that record onto `EncounterOutcome.reference`, a `ReferenceReading` that also carries `next_patient_axis`, and `_residue_section` (`:3225`) now reads only that. A search of `desktop/src` finds no reader of the three metrics fields. They are only built in `encounter_metrics` and type-checked in `__post_init__`. No document names them (`docs/` searched). So the same reading lives in two places and can drift. Round 44 said "folding them away is a later simplification", and round 47 left it as already known. This whole-run pass is the point where that deferral comes due.
+  - Current behaviour: `encounter_metrics(..., reference=)` copies `reference.tail_start` and `reference.boundary` into the metrics. It also recomputes `NEXT_PATIENT_AXIS in script.axes` into `next_patient_axis`. That is the third spelling of the axis test, beside `reference_tail_start()` and `reference_reading`. Nothing reads these copies.
+  - Desired behaviour: remove the three fields, their docstring paragraph, their `__post_init__` checks and the three constructor arguments. Keep the local `next_patient_axis` in `encounter_metrics`, because R3 reads it. Do not switch R3 to `reference.next_patient_axis`: hand-built readings in `TestResidueR3` leave that flag at its default of False. D14's record stays on `EncounterOutcome.reference`, which is unchanged. No report cell, verdict, class count or rule input changes.
+  - Pattern to follow: `EncounterOutcome.reference` and `ReferenceReading`, already the single record that `_residue_section` reads.
+  - Pattern siblings: searched `desktop/src` for `reference_tail_start|reference_boundary|next_patient_axis` and `desktop/tests` for `.reference_tail_start`, `.reference_boundary`, `metrics.next_patient_axis` and the `=` keyword spellings. Two test sites follow the fields:
+    - `test_validation_metrics.py:2394-2401` `test_the_metrics_record_the_reference_reading`: remove it. The record is pinned through the outcome by `test_validation_harness.py:2013` `test_the_reference_boundary_record_covers_every_script_the_run_read`.
+    - `test_validation_harness.py:1718-1719`: the `next_patient_axis=True, reference_tail_start=4` overrides in `_residue_outcomes`' `syn-002`. Remove them; `reference=_axis_reading(None, 4)` stays.
+    - No other site was found. `reference_tail_start` the FUNCTION (`:664`, tests `:2536`, `:2567`) is a different symbol and stays.
+  - Verification: ruff and mypy (no remaining reference to the fields), then the composer's suite through the blind runner. `TestReport`'s residue tests and the D14 record test must pass unchanged, and `TestResidueR3` must pass with the one test removed.
+  - Regression risk: low. The fields have no reader, so the change cannot alter output. The one risk is a missed test override, which mypy will not catch because `_metrics_of` passes `**overrides: Any`. It would fail loudly at construction as an unexpected keyword.
+  - /fix decision: Applied
+  - /fix notes:
+    - **Verified first** (stage-5 rx2, executor):
+      - `desktop/src`, `desktop/tests` and `scripts/` were searched for `reference_tail_start|reference_boundary|next_patient_axis` and every keyword spelling.
+      - The three `EncounterMetrics` fields had no reader. The only metrics hits were the declaration, the docstring, `__post_init__` and the `encounter_metrics` constructor arguments.
+      - In the tests, the only hits were the two sites the finding named: `test_validation_metrics.py`'s `test_the_metrics_record_the_reference_reading`, and `test_validation_harness.py`'s `syn-002` overrides through `_metrics_of`'s `**overrides: Any`. Nothing else passes either keyword, so mypy's blind spot hides no third site.
+      - Every other hit is a different symbol: `ReferenceReading.next_patient_axis`, the function `reference_tail_start` and the local `next_patient_axis` that R3 reads.
+    - **Fix** (`validation.py`): removed the three fields, their docstring paragraph, their two `__post_init__` checks and the three constructor arguments.
+    - **Kept:**
+      - the local `next_patient_axis = NEXT_PATIENT_AXIS in script.axes` (R3's guard; not switched to `reference.next_patient_axis`, per the finding);
+      - `EncounterOutcome.reference` / `ReferenceReading`, unchanged;
+      - R1 and R3 still read `reference`.
+    - **Tests:** the metrics test is removed, because D14's record stays pinned through the outcome by `test_the_reference_boundary_record_covers_every_script_the_run_read`. The two `syn-002` overrides are removed and `reference=_axis_reading(None, 4)` stays. `ReferenceReading` is still imported and used in `test_validation_metrics.py`.
+    - **Re-read after the fix:** a search returns no remaining reference to the fields. ruff is clean; mypy is clean (66 source files).
+    - **Sibling sites:** none beyond the two named. No document names the fields (`docs/` searched in round 51).
+    - **Suite:** owed to the composer through the blind runner. Collected should be one fewer than 8615.
+  - /fix date: 2026-10-24
+  - /fix applied by: Claude Code
+
+- Consciously left alone: the D13 credit's `credited_segments` comprehension (`validation.py:1837`) re-spells `ui.models.flagged_segments`' anchor test. Task 4.2's amendment chose "read from the note's warnings, not from `ui.models.flagged_segments`". That reason (no dependency on Task 1.2) has now lapsed, but it is still the plan's chosen shape.
+- Consciously left alone: the harness's coverage, `_note_lines` → `covered` → `covered_segments`, beside Check 4's `_covered_words`. Round 50 found the two give the same set. The harness's `covered` also feeds `covered_any` / `covered_all`, so importing `_covered_words` for the credit alone would put two coverage sets in one function, which is worse than now.
+- Consciously left alone: `reconstruction_warnings` and `_row_marks` each compute `spoken_by_confirmed_clinician(...)` before calling `quoted_line_marks`. Folding the speaker test into `quoted_line_marks` would change its signature for a two-line saving.
+- Consciously left alone: the code name `"clinician_line_omitted"` as a string literal in `replay_kept.note_drift` and `validation._residue_section`. Every warning code in this codebase is a literal, so this follows the convention.
+- Consciously left alone: `replay_kept.note_drift` restating `_compose_note`. Already left in round 50: it predates the run, and `_compose_note` takes `HarnessInputs`.
+- Consciously left alone: `_fact_classes`' zip and `class_counts`' per-class `if` both map a class to its fact flag. Two sites of three lines each; taste.
+- Consciously left alone (rounds 40, 43, 47; not re-raised): `check_note`'s double `omission_warnings` / `_covered_words`, `quoted_line_marks`' membership guard, `render_report` / `_verdict_lines` recomputing the verdict, `main`'s `--set` refusals beside `set_row`, `r3`'s defensive `tail_start is not None`, and `FactOutcome` built then `replace`d.
+- Noted, not a simplification (routed by the composer to the executor's fix leg as a docstring item): `note.text_holds_hedge`'s docstring still says "the validation harness reads it over a script line (D7)". Since Phase 3 the harness reaches it only through `segment_hedged` / `script_line_hedged` over `reference_document`.
+  - **Docstring correction, applied (stage-5 rx2, the composer's routing; 2026-10-24).**
+    - **Verified:** no caller of `text_holds_hedge(` exists outside `note.py`, whose `words_hold_hedge` calls it, and `segment_hedged` calls that.
+    - **Fix:** the docstring now says it is read through `words_hold_hedge` and the hedge scope `segment_hedged`, by the line mark (`quoted_line_marks`) and, since D5, by the harness over a script's lines (`validation.script_line_hedged` over `reference_document`) and over the measured transcript. A docstring only; ruff is clean.
+- Verification counts: 9 candidates; 1 kept (SIMP-001, confirmed by a `desktop/src` search showing no reader and a `docs/` search showing no mention); 8 left alone (6 by the conservatism guard or a plan-chosen shape, 2 already ruled on in earlier rounds); 0 downgraded.
+- Fix-delta self-check: PASS — re-read the 4 applied hunks across 3 files (`validation.py`'s docstring, fields, checks and constructor; the two test sites). R1 and R3 still read `reference`; no drive-by edit was found. Separately, the `note.py` docstring hunk was re-read.
+- Last reviewed: 2026-10-24
+
+### Round 52 — 2026-10-24
+Source: Claude Code security-review (composer-run subagent, portable checklist, stage-5 H3; composer-recorded from its returned block)
+Round status: Closed (0 pending)
+
+**Scope:** `git diff 8996a75 HEAD -- desktop/src scripts validation/README.md validation/rules` (`__init__.py`, `note.py`, `note_check.py`, `replay_kept.py`, `ui/models.py`, `ui/note.py`, `validation.py`, `validation/README.md`, `validation/rules/rule-v2.json`; no change under `scripts/` in the range) plus the working tree (`note.py`, docstring only), every hunk read in full with the unchanged code it depends on: `NoteWarning` / `_check_code` (`note.py:762-819`), the audit row's fields and patterns (`audit.py:133-146`, `:248-349`), `_validation_error_text` / `load_script_with_bytes` / `load_pass_rule`, `_error_type` / `run_encounters`, the D11 enrolment block of `main`, `validation_set.ENROLMENT_PASSAGE`. Context: plan Goal, D1–D18, C1–C14, the H3 line; threat-model Phase 3A surface 2 and data-flow flow 26. Trust boundaries: a warning's code and coordinates into `generated.enc` / `note.enc` and the audit row; the harness's console report, refusals and error lines; the replay's report on real kept recordings; the rule-file loader. Blind rule held: nothing under `validation/heldout-3/` and no lint or author log opened; every search confined to `desktop/` and `docs/`; nothing written; no pytest, app or script run.
+
+#### Findings
+
+None — no candidate survived verification.
+
+- Challenged and dropped (4):
+  - `main`'s `--set` refusal prints the rule's set names (`validation.py:3460-3463`): each name must match `RULE_NAME_PATTERN` before the rule loads (`PassRule._check_sets`); the typed name is never echoed; the report heading names a set only once `set_name in rule.sets`.
+  - A bad nested value under `sets.<key>` could echo the key through pydantic's error location: `SetCeilings` is in `_schema_field_names`, so a non-schema key prints as `<key>`; `_RULE_CONFIG` keeps `hide_input_in_errors=True`.
+  - `reference_reading` runs the full pipeline over script text before the label track is read: in memory only, no store or write (flow 26); any exception, `ResidueTableError` included, reported by type name only through `_error_type` in `run_encounters`, after the `except` block; only fact indices, a boundary, a tail start and one flag kept (`ReferenceReading.__post_init__` checks each).
+  - `segment_hedged` indexes `segments[segment_index]` without a bound check: not exploitable — Check 1 calls it only for coordinates that already reconstruct; `_row_marks` has already indexed the segment; the harness guards with `marked and …` after `_words_for_coords` returns None; `script_line_hedged` receives the loader-checked `fact.line`.
+- The H3 surfaces:
+  1. The `clinician_line_omitted` anchor is clean: the fixed code, `severity="review"` and `SourceCoords(seg, 0, len(words) - 1)` (three integers), a zero-word segment skipped first; `_check_code` refuses an unregistered code and the new code is a literal in `NOTE_WARNING_SEVERITY`; `WARNING_COPY` and `SEPARATELY_ACKNOWLEDGED_NAMES` are fixed text, `flagged_segments` / `OMISSION_CODES` indices only; the audit row holds no warning field and every string in it is pattern-constrained; no `log_event(` call logs a warning code; a 0.3.3 build's "Acknowledge all" clearing the new code on rollback is the named residue (`threat-model.md:903-907`).
+  2. The builder's passage and the in-memory enrolment (unchanged in this range, built in `f07dd41`): `ENROLMENT_PASSAGE` is everyday prose with no number, medication, hedge, closing or greeting; the vectors stay in the run's `enrolments` dict, never written; WAV and enrolment failures print a fixed help line or `EnrolmentError`'s numbers-only text, outside the handler, never the path; the builder's `enrolment/slot-<n>.wav` is synthetic audio by design (D11).
+  3. `replay_kept.py` keeps its refusals: only `NoteDrift` (a new `clinician_lines_omitted: int`, counted by code name) and `render_report` (one integer column, a fixed-label total) changed; the refusal order (`channel`, `check_tool_wer`, the lock) is untouched and `scripts/replay-kept-recordings.py` did not change; output stays session ids, integers and model names.
+  4. The harness's reference-transcript handling: `reference_document`, `script_line_hedged` and the R1/R2/R3 terms return booleans and indices; the new report pieces print only ids, closed vocabularies and integers ("Silent (0.3.3 predicate)", the Facts table's "Residue class", `_residue_section`, `_verdict_lines`); every new refusal and error is fixed text, none printed inside an `except` block.
+- Checked and clean: AuthN/AuthZ (no new entry point; channel guards unchanged); injection and taint (no text reaches a new sink or format string); secrets and sensitive data (no content in any code, log line, audit field, exception message or report column; the new warning persists only inside the already-encrypted note files); SSRF / outbound (no network code touched); crypto and sessions (no change); resource and availability (the fact walk bounded at 2^10 merged states per cell; the second pipeline pass bounded by `MAX_SCRIPT_BYTES`); dependencies and config (standard-library `statistics` and `dataclasses.replace` only; `rule-v2.json` literal integers and booleans).
+- Verification counts: 9 changed files read in full as diffs plus the working tree; 8 unchanged supporting regions; 5 searches confined to `desktop/` and `docs/`; 4 candidates challenged and dropped; 0 logged. The QA suite runs through `scripts/lint-held-out-set.py` (C12) — the composer's.
+- Last reviewed: 2026-10-24
+
+### Round 53 — 2026-10-24
+Source: independent cross-family codex peer review (composer-recorded from the read-only peer's output, `.cursor/loops/stage-5-peer-r53.log`; pass stage-5.p1, peer_round 1 of cap 5)
+Reviewer: codex gpt-6-astra (medium)
+Round status: Closed (0 pending)
+
+**Scope:** Hardening H4 over the whole run, `8996a75` to the working tree (H1–H3's fixes included): the source diff (`note.py`, `note_check.py`, `replay_kept.py`, `ui/models.py`, `ui/note.py`, `validation.py`, `rule-v2.json`, `validation/README.md`), the plan's Goal, D1–D18, C1–C14 and the phase and hardening records, and targeted test reads (`test_note.py`, `test_note_check.py`). It covered the cross-phase interactions (job 1), the constraints, with no diff in `consultation_phrases.py`, `note_config.py`, `note_fill.py` or rule v1, and no `voice_commands` import (job 2), and the edges and rollback (job 3). Read-only; no suite, no network; the blind rule held (no read under `validation/heldout-3/`; its ids appear only inside `validation.py`'s integer table and the plan's text).
+
+#### Findings
+
+None — the peer's block: "24 claims checked, 24 confirmed, 0 dropped as unverifiable".
+
+- Composer coverage note: the peer's command log shows no read of the documents diff (`docs/`, `CHANGELOG.md`), so job 4 (documents against the code after H1's fixes) was not covered by this round. A documents-only slice of the same pass follows as round 54. This round's zero is a code-lens result only.
+- Verification counts: 24 claims checked, 24 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-10-24
+
+### Round 54 — 2026-10-24
+Source: independent cross-family codex peer review (composer-recorded from the read-only peer's output, `.cursor/loops/stage-5-peer-r54.log`; pass stage-5.p1, peer_round 2 of cap 5; the documents slice of H4, after round 53's code lens left the documents unread)
+Reviewer: codex gpt-6-astra (medium)
+Round status: Closed (0 pending)
+
+**Scope:** the documents diff `8996a75` to the working tree (`CHANGELOG.md` and twelve files under `docs/`), with targeted reads of the code and plan each document quotes or describes. Per-document evidence, from the peer: `CHANGELOG.md` — feature summaries, quoted strings and rollback, consistent; `docs/architecture/phase-history.md` — the historical mark annotations, consistent; `docs/design-system.md` — warning copy, tooltip, marks and acknowledgement rules, match the code; `docs/pilot/README.md` — conditional admission of the new synthetic ids, accurate; `docs/pilot/findings-register.md` — prose against the Encounter pin and the unchanged table, consistent; `docs/practice/README.md` — review banner and update scope, retained; `docs/practice/clinician-review-guide.md` — quoted controls, warning conditions, hedge explanations and approval banner, consistent; `docs/release/pilot-builds.md` — the generic warning reader, grouping and acknowledgement on rollback, consistent; `docs/security/data-flow-map.md` — warning storage and the reference-reading flow, consistent; `docs/security/threat-model.md` — omission predicate, hedge scope, residues and rollback, consistent; `docs/testing/kept-recordings.md` — replay counts, fourteen columns and totals text, match the code; `docs/testing/shipping-gate.md` — separate acknowledgements and the unsure-mark treatment, consistent; `docs/testing/validation-harness.md` — D13 credit, residue classes, ceilings, gate, uncertainty override and report, one overstatement (below). No document unchecked. Read-only; no suite, no network; the blind rule held (every `heldout-3/` mention in the log is document or plan text).
+
+#### Findings
+
+- **PR-LOW-001** (LOW, docs-only, `docs/testing/validation-harness.md:180`): the remaining-silent-omission description requires every content word of the clinician's LINE to be suspect, but a fact whose own aligned words are all suspect stays silent even when another, non-suspect content word earns that wholly uncovered line `clinician_line_omitted`. — Evidence (peer): the document limits remaining silence to, among other cases, "one whose every content word the guard marked suspect", then calls other qualifying lines "warned"; `note_check.py:1730` needs only one non-suspect content token to raise the line warning, while `validation.py:1881` credits a fact only with `segment_index in credited_segments and not word.suspect`; the document's own line 73 states the fact-level exception correctly. Recommendation: Fix-now — separate the line's warning eligibility from the fact's credit and describe suspect words at the fact level. /fix decision: Applied
+  - Verified tuple (stage-5 rx3, executor): `surface=docs`, `rec=Fix-now — confirmed`. Evidence:
+    - `note_check.clinician_line_omissions` (`note_check.py:1730`) skips a line only when `not any(content_tokens(word.word_text) for word in words if not word.suspect)`. So ONE non-suspect content word is enough for the line to draw the warning.
+    - The harness's credit is per word: `warned=warned_v033 or (segment_index in credited_segments and not word.suspect)` (`validation.py:1881`). The fact's `warned` is the walk's `state.warned or info.warned` over its OWN aligned words (`_after_word`).
+    - So a fact whose own words are all suspect stays a silent omission on a line that IS warned. `:180` said every other wholly unquoted clinician line "is warned", which overstated the credit. `:73` already said it right ("a material fact whose words are all suspect is a silent omission").
+  - /fix notes:
+    - **Fix** (`docs/testing/validation-harness.md:180`): the line case is kept ("on one whose every content word the guard marked suspect (that line draws no warning)"). The next clause now separates the two:
+      - one content word not marked suspect is enough for the LINE to draw `clinician_line_omitted`;
+      - a fact on that line is warned unless every one of the fact's OWN words was marked suspect, since the harness never credits a suspect word (pointing to Suspect segments, :73).
+    - Re-read in place.
+    - **Sibling sweep:** `docs/` and `CHANGELOG.md` were searched for "every content word", "content word not marked suspect", "content word that is not suspect", "not marked possibly not speech", "marked as possibly not speech" and "suspect" across `docs/security/`. Every other hit states the LINE's warning condition, which is correct as written, or a different reader of the guard. None ties a FACT's warned or silent state to the line's words:
+      - `validation-harness.md:85` is D7's dated amendment; its "D7's term was widened on 2026-10-24 (next)" leads to :87, which states "a suspect word is never credited";
+      - `validation-harness.md:184` is the warning's description;
+      - `kept-recordings.md:57`, `design-system.md:156`, `clinician-review-guide.md:130` and `:137-138`, and `threat-model.md:506` are the warning's own conditions;
+      - `threat-model.md:545`, `:576` and `:688`, `data-flow-map.md:618` and `shipping-gate.md:102` are other guard readers;
+      - `CHANGELOG.md:8` is the warning's condition.
+      No sibling needed a change. `docs/pilot/` and `docs/practice/` are untouched, so `test_pilot_docs.py` is unaffected.
+    - **Gates:** docs only; no suite owed.
+  - /fix date: 2026-10-24
+  - /fix applied by: Claude Code
+- Verification counts: 48 claims checked, 47 confirmed, 0 dropped as unverifiable
+- Cap verdict: converge. The pass's code lens (round 53) found 0 in 24 claims. Its documents slice (this round) found one LOW overstatement, verified and fixed with no sibling. Neither found a regression from rounds 50–52. Peer round 2 of cap 5; no further peer round needed.
+- Fix-delta self-check: PASS — re-read the one applied hunk (`validation-harness.md:180`) in context. The line clause and the fact clause read separately, and nothing else in the sentence changed.
+- Last reviewed: 2026-10-24
+
+## Tasks
+
+### Phase 0 — Budget, measurement, decisions, freeze, predictions
+- [x] 🟩 **0.1 The warning budget** `[decision]` — Chosen: median ≤ 2, maximum ≤ 5 new review warnings per real consultation, both new codes together [since 2026-10-23 the one code] (2026-10-22, the practitioner's words: "take all the recommendations"; set before any Task 0.2 number existed).
+  - Practitioner, BEFORE seeing any number from Task 0.2.
+  - Recommended: median ≤ 2, maximum ≤ 5 (a guess to react to, not a measured value).
+- [x] 🟩 **0.2 Measurement before design (D6)** — measured 2026-10-22 → 2026-10-23 at `360d7b8` (records below; the build PAUSES at 0.4 and on D1's premise — see the handoff note).
+  - **Scratch scripts** (gitignored `.cursor/loops/`): `run6_measure_lib.py` (shared, pure), `run6-measure.py` (text and `--audio`), `run6-measure-kept.py` (real speech), `run6-diag.py` (the follow-up below). Practitioner outputs in `C:\run6-sets\` (UTF-16; synthetic ids and integers only).
+  - **Premise check: PASS.** Both `run-validation.py` reports equal run 5's and the held-out run's in every line but the commit line (`1e5707d` → `360d7b8`).
+  - **Text level (parser contract, not a model number).** `scripts`: (a) = (b) 26 segments, median 0, max 2, mean 0.52; (c) 1 (25 of the 26 are question lines); ≤ 2-token lines 0; next exposure 19; silent 0. `heldout`: (b) 3, max 1; (c) 1; exposure 16; silent 0.
+  - **Audio level, synthetic.** Per variant, segments / median / max per encounter / ≤ 2-token lines:
+
+    | Set | (a) = (b) | (c) | (c-q) | (c-a) | Next exposure |
+    |---|---|---|---|---|---|
+    | `scripts` (50) | 55 / 1 / 4 / 7 | 19 / 0 / 2 / 4 | 22 / 0 / 3 / 7 | 52 / 1 / 4 / 4 | 47 |
+    | `heldout` (22) | 31 / 1 / 4 / 9 | 25 / 1 / 3 / 8 | 26 / 1 / 3 / 9 | 30 / 1 / 4 / 8 | 58 |
+
+    Silent omissions credited: NONE by any variant. `scripts` 1 → 1 (`syn-22`); `heldout` 5 → 5 (`hld-06`, `-12`, `-15`, `-19`, `-22`); the widened-`warned` baseline equals base in both (no over-credit). Textless segments: 0 in both sets (TTS speech has no non-speech stretch); in-segment gaps ≥ 0.75 s: 3 (`scripts`), 1 (`heldout`). The grid with (b): median 1, max 4–5 at every pair (`scripts`), 1 / 4 (`heldout`); missed speech alone ≤ 1 per encounter at any pair, 0 at gap ≥ 1.0 s.
+  - **Why no variant credits them (`run6-diag.py`, warnings injected over widening segment sets):** `hld-06`, `-12`, `-15`, `-19`, `-22` — silent under (a) (clinician segments), credited under any-speaker → **the speaker step attributes each fact's clinician line to the other voice**; D1's clinician-only predicate cannot reach them. `syn-22` — silent even with every segment warned → the recogniser dropped the fact's words on an equal-cost alignment (F-087, R1). The next-patient boundary excluded nothing (all segments before it).
+  - **Real speech (kept recordings, `--enrolment` given; integers only):** n = 2, n(enrolled) = 2, n(attribution failed) = 0, errors 0. (b) median 3.5, max 6 (over the max bound); (c) median 3.0, max 6; ≤ 2-token lines under (b) 0. Uncovered other-voice lines with content and no flag: median 110.5. Missed speech alone (median / max): textless ≥ 1.5 s with gap ≥ 1.0 s 21 / 22; textless ≥ 2.0 s with trigger 2 off 1 / 2; at gap ≤ 1.0 s 20–100 per consultation. Combined with (b), the smallest within-budget pair does not exist: the best row (textless ≥ 2.5 s, trigger 2 off) is 4 / 7. **n(enrolled) < 3: under the Accepted Assumption, decision 0.3's (c) test falls back to the synthetic counts ((b) audio median 1, max 4 — within; (c) is NOT added). The budget was not tested on real speech for 0.3; 0.4's rule names real speech and no pair fits there → 0.4's "If no pair fits" pause.**
+  - Agent: `.cursor/loops/run6-measure.py` (gitignored; text mode and `--audio <set folder>`; ids and integers only; Check 4 variants (a), (b), (c) as scratch functions; the ≤ 2-content-token count) and `.cursor/loops/run6-measure-kept.py` (the separate real-speech entry point: `replay_kept.main`'s refusal order, `kept_session_ids`, re-transcription as `_replay_entry`, `--config validation\config`, integers per session ordinal with the enrolled flag). Both read `validation.reference_document` once Task 0.9's commit moves it — until then the text mode adds `desktop/tests` to `sys.path` and imports the fixture's `build_document`.
+  - Practitioner (normal terminal, developer build, installed app closed): rebuild the two sets into empty folders outside the repository (kept until 0.12 ends); run `run-validation.py --rule validation\rules\option-a-proposed.json` on each (the premise check); run `run6-measure.py --audio` on each (it transcribes in memory itself; nothing is saved); run `run6-measure-kept.py --enrolment <measurement folder>\enrolment\me.wav` over the developer and/or installed `past_sessions` folder (both builds closed).
+  - **Premise check, here and not in 0.12** (peer round 1 PR-MED-005: Task 0.9 changes the live `HEDGE_PHRASES`, so a later comparison with run 5 would mismatch by design): this task runs on the unfrozen code, and its two `run-validation.py` reports must equal run 5's (totals, per-encounter verdicts, WER) and the held-out run's. A mismatch pauses for the practitioner before anything else.
+  - Record on this task: the premise check's result; per set and per variant, the counts in D6 (text and audio levels, both labelled) and the threshold-grid scores; for kept recordings n, n(enrolled), n(attribution failed), median and maximum only, the (b) median over enrolled sessions. If n(enrolled) < 3, say the budget is tested on synthetic counts only.
+  - Done when: the numbers are on this task and the scratch scripts are named.
+- [x] 🟩 **0.2a Task 0.2's audio counts under an enrolment (D11; practitioner-run; measured BEFORE anything is built)**
+  - Agent: `run6-measure.py --audio <set folder> --enrol` and `run6-diag.py --enrol` (scratch; no product change): the draft `ENROLMENT_PASSAGE` text is held verbatim in the scratch library — its SHA-256 and word count recorded here, so Task 0.14 ships the SAME passage — checked for D11's exclusions before it speaks, synthesised through `validation_set.sapi_synthesize` for each clinician voice slot the set's scripts use (the helper writes and removes its own temporary WAV, as for every spoken turn; no enrolment WAV is kept — peer round 7 PR-LOW-003), enrolled with `speaker_eval.enrolment_inputs` and `build_speaker_embedder()`; each encounter is re-transcribed with `enrolment=` and the ENROLLED document judged with D11's confirmation rule (unconfirmed → counted as attribution failed, not measured).
+  - Prints, per set, ids and numbers only (integers; a median printed EXACTLY — a half-integer as `x.5`, never rounded — peer round 7 PR-MED-024): n(expected), n(measured), n(attribution failed) (PR-MED-023); the Task 0.2 columns under enrolment ((a), (b), (c), (c-q), (c-a): new warnings median / max, ≤ 2-token lines, the silent-fact credit per variant, the diag table for `hld-06`, `-12`, `-15`, `-19`, `-22` and `syn-22`); per encounter, under clustering and under enrolment, the label track's clinician seconds labelled other AND its other-speaker seconds labelled clinician (median / max per set; PR-MED-025: an all-match enrolment labels everything the clinician, which the first column alone would hide); and that every encounter's word count equals the plain pass's (the replay provider).
+  - Practitioner: the two `C:\run6-sets` folders from Task 0.2 (not rebuilt; the same commit and models), developer build, installed app closed; outputs beside Task 0.2's (`measure-*-enrol.txt`, `diag-*-enrol.txt`; UTF-16 → UTF-8 as before). Real speech is not re-measured: its two recordings already ran enrolled.
+  - Done when: the numbers and the passage's hash and word count are on this task.
+  - `[2026-10-23]` **Scratch written** (`.cursor/loops/run6_enrol_lib.py`; `--enrol` in `run6-measure.py` and `run6-diag.py`). **The passage:** SHA-256 `5f529ee96583ec4de5c9652d647d67591db830fc4d63bc4936b01503efa44367`, 130 words, exclusions OK against the shipped cues and `validation\config`'s, `HEDGE_PHRASES`, `CLOSING_PHRASES` / `GREETING_PHRASES`, `_STRENGTH_UNITS`, `_MEDICATION_LEXICON` and `is_number_token` (each category's negative control fires); slot 0 enrols with 37.5 s of detected speech. The confirmation's actual-overlap majority is "more than all other labels together"; PR-MED-027's counterexample is refused under it and accepted by the clustering rule. Smoke on one encounter (agent shell, synthetic; not the run of record): `hld-06` measured, word counts equal, no temporary residue. The numbers are owed from the practitioner's run.
+  - `[2026-10-23]` **Measured** (practitioner, normal terminal, the Task 0.2 folders at `360d7b8`'s models; Whisper `medium`; outputs `C:\run6-sets\measure-*-enrol.txt`, `diag-*-enrol.txt`). Passage as above; slot 0 enrols with 37.5 s, slot 2 with 37.9 s.
+    - **Coverage:** `scripts` n(expected) 50, n(measured) 50, n(attribution failed) 0; `heldout` 22 / 22 / 0. Word-count mismatches (plain vs enrolled): 0 on both.
+    - **Audio level, enrolled.** Per variant, segments / median / max per encounter / ≤ 2-token lines:
+
+      | Set | (a) = (b) | (c) | (c-q) | (c-a) | Next exposure |
+      |---|---|---|---|---|---|
+      | `scripts` (50) | 46 / 1 / 4 / 4 | 12 / 0 / 2 / 3 | 13 / 0 / 2 / 4 | 45 / 1 / 4 / 3 | 56 |
+      | `heldout` (22) | 24 / 1 / 4 / 7 | 17 / 0 / 3 / 4 | 20 / 0.5 / 4 / 7 | 21 / 1 / 3 / 4 | 51 |
+
+    - **Silent omissions:** `scripts` base 1 → 1 under every variant (`syn-22`; diag: silent even with every segment warned — R1, unchanged). `heldout` base 1 → 0 under every variant: under enrolment `hld-06`, `-12`, `-15`, `-22` are not silent at base (diag base 0 — the enrolled attribution alone resolves them), and `hld-19` (base 1) is credited by (b). So of the five held-out silent facts, enrolment alone clears four and (b) the fifth; none stays silent.
+    - **Attribution seconds (median / max per set):** `scripts` — clustering: clinician as other 0 / 6.2, other as clinician 0 / 9.5; enrolment: 0 / 3.8, 0 / 2.9. `heldout` — clustering: 2 / 9.4, 4.4 / 11.6; enrolment: 0 / 0.7, 0 / 0.
+- [x] 🟩 **0.13 D1 after the enrolled counts** `[decision]` — **`[2026-10-23]` Decided: GATE MET — D1 stands, D11 is built (Task 0.14).** Every encounter measured (50 / 50 and 22 / 22, 0 attribution failed); (b)'s new warnings median 1, max 4 on both sets (within the budget); none of the five held-out silent facts stays silent under enrolment with (b). The practitioner's reading of "(b) credits at least 4 of the 5" (2026-10-23, asked before the decision was recorded): the OUTCOME under the live condition with D1 — the gate's question, as the forecast put it, is whether the five are rescued. Stated plainly: the enrolled attribution alone clears four (`hld-06`, `-12`, `-15`, `-22`) and (b) itself credits one (`hld-19`); on the 50, (b) credits nothing (`syn-22` stays R1). Options (i) and (ii) below were not needed. **Gate, written before the numbers:** D1 stands and D11 is built (Task 0.14) when, under enrolment, EVERY encounter of both sets is measured (n(attribution failed) = 0 on each — an unresolved encounter fails in run 6, so any routes to the written decision below; peer round 7 PR-MED-023) AND (b) credits at least 4 of the 5 held-out silent facts AND (b)'s audio-level new-warning counts stay within the 0.1 budget on both sets (median ≤ 2 compared EXACTLY, so 2.5 is over — PR-MED-024; maximum ≤ 5). The other-speaker-seconds column is recorded, not gated (PR-MED-025). Otherwise the practitioner decides in writing from: (i) D11 built all the same (the harness measures the live condition either way) and the uncredited facts named a new rule-v2 residue class **R4 attribution** — a material fact on which `silent_omission` holds (reported, or on any co-optimal alternative — an omission already warned on every alternative is no failure and consumes no R4 allowance; R4 clears `silent_omissions` ONLY; peer round 9 PR-MED-029), whose SCRIPT line is the clinician's, where on EVERY co-optimal alignment, every one of the fact's reference tokens is MATCHED (`all_matched`; a deletion or substitution is never R4 — that is R1's ground or a failure) AND every matched hypothesis word lies in a segment not labelled as the confirmed clinician (peer round 8 PR-MED-028: positive evidence of correct recognition AND misattribution; the pins — a deleted fact, a substituted fact, a split fact with one part in a clinician-labelled segment, and a co-optimal alternative holding a substitution, each NOT R4; the all-matched, all-other-labelled fact R4; the same fact warned on every alternative NOT R4 and consuming nothing); a literal per-set ceiling decided then, under D8's override text; (ii) D11 built, no new class; the decision records which gate condition failed, and each set's forecast is derived from its residual failures against D8's ceilings (a FAIL only where they exceed them — a warning-budget breach alone fails no encounter; peer round 10 PR-LOW-006). Neither option touches the predicate, the threshold or the facts.
+- [x] 🟩 **0.3 Check 4's shape (D1)** `[decision]` — Chosen: (b), the new code `clinician_line_omitted`, with (c)'s two exemptions added ONLY if Task 0.2's real-speech counts for (b) exceed the 0.1 budget; Task 0.2's record states which applies, and under (c) the acknowledgement set joins Task 0.9 (2026-10-22, "take all the recommendations"). Rationale: honest copy, and the existing warning's meaning and harness comparison are kept. **"Exceeds the budget" means either bound** — the median above 2 OR the maximum above 5 (peer round 1 PR-MED-003; the decision named the median only, an omission, not a choice).
+- [x] 🟩 **0.4 Missed-speech constants (D2)** `[decision]` — **Decided 2026-10-23 under "If no pair fits": option (2), drop the missed-speech warning from 0.3.4** (the practitioner's choice of the recommended option, after Task 0.2: no pair fits on real speech; the synthetic sets hold no textless segment, so the harness cannot test it; it credits none of the measured failures). Phase 2 becomes Excluded and D7's deletion-edge term and its pins go with it — the sibling reconciliation (D2, D3's `[gap?]`, D7, Phase 2, Validation, the forecast) was applied by the D1 re-plan (Handoff Note, 2026-10-23; peer round 8 PR-LOW-005). Original rule, kept as history: Rule chosen 2026-10-22 ("take all the recommendations"): the SMALLEST values that keep both new codes together within the 0.1 budget on real speech, starting from textless ≥ 1.5 s and gap ≥ 1.0 s; trigger 2 dropped (option (x)) only if it alone breaks the budget, read off the grid's trigger-2-disabled rows (peer round 2 PR-MED-013). The two values are still owed: they are read off Task 0.2's threshold-grid scores (the combined median and maximum per pair, with the (b) or (c) variant 0.3 selects) and recorded here before Task 0.9.
+  - **If no pair fits** (peer round 1 PR-MED-003): when even (c) with the largest grid pair, or with trigger 2 dropped, breaks either bound, the build PAUSES before Task 0.9 and the practitioner decides in writing, from these options, without the budget itself being re-set after the numbers: (1) ship both codes and record the breach as a known cost in the Honest forecast; (2) drop the missed-speech warning from 0.3.4 (Phase 2 becomes Excluded; D7's deletion-edge term and its pins go with it); (3) narrow `clinician_line_omitted` further as a new dated decision, with Task 0.2 repeated for it.
+- [x] 🟩 **0.5 The greeting gap (D4)** `[decision]` — Chosen: (a), the lists stay frozen and an unbroken next patient with an unlisted greeting is residue class R3 (2026-10-22, "take all the recommendations"). Rationale: Start per patient is the primary control; the practitioner's own phrases stay the Deferred later amendment. Consequences: Task 0.9 changes no `consultation_phrases` list; C7's live warning is untouched.
+- [x] 🟩 **0.6 Hedges (D5)** `[decision]` — Chosen: lexicon (b), a blind widening from named published sources; scope (ii), the line plus a same-speaker neighbour joined mid-sentence (2026-10-22, "take all the recommendations"). Later the same day: "joined" reuses `note.ends_mid_sentence` (a trailing comma, semicolon, colon or dash on the earlier line); a bare cut is not joined — the accepted residue.
+- [x] 🟩 **0.7 Residues and the rule (D7, D8)** `[decision]` — Chosen: (b), rule v2 with R1, R2 and R3 (R3 applies: 0.5 is (a)), literal per-set ceilings of 2 per class on the 50, 1 on `heldout`, 1 on `heldout-2`, D7's warned amendments (the missed-speech credit narrowed to deleted tokens at the anchor pair); the v1 verdict stays printed beside the v2 verdict (2026-10-22).
+  - **The written override, in the practitioner's words:** "take all the recommendations" (2026-10-22), given in reply to the plan's recommendation of (b) and its statement that (b) overrides pilot Constraint 12 and the 2026-10-09 stop rule. The reasoning adopted is D8's: the recogniser- and tone-level failures cannot be fixed by the note pipeline. Each class is mechanical and capped, never named by encounter id. The v1 verdict stays visible, so nothing is hidden. The blind `heldout-2` is the real test. The practitioner may add a sentence of their own here before Task 0.12; it is not required.
+  - Consequence: Task 4.3 builds `rule-v2.json`; P.1 runs with it.
+- [x] 🟩 **0.8 The P.5 pass gate (D9)** `[decision]` — Chosen: a pass under rule v2 on all three sets (the 50 scripts, `heldout`, `heldout-2`), the v1 verdict recorded beside each (2026-10-22, "take all the recommendations"). `[2026-10-24]` Superseded by D15 (the gate: the 50 and `heldout-3`; `heldout` and `heldout-2` reported).
+- [x] 🟩 **0.9 The dated freeze commit (C3)** — **`[2026-10-23]` Built, reviewed, peer-converged (rounds 11–15), simplified (round 16); committed by the practitioner's word** (record below).
+  - Files: `note_check.HEDGE_PHRASES` (0.6 (b): a blind session given only the selection rule and named published sources; its sources and a contamination note in the commit message); `validation.REFERENCE_HEDGES` (the same blind method, harness-only, broader; pinned a superset of `HEDGE_PHRASES`; the known-failure phrases' membership recorded on this task either way); the acknowledgement set (only under 0.3 (c)); `validation.document_from_turns` moved from the fixture, with `validation.reference_document` its script adapter (D8; `fixtures/heldout_transcripts.build_document` becomes a thin call of `document_from_turns`; identical documents pinned for every scripted AND every explicit-turns held-out case, captured before the move — peer round 5 PR-MED-022); `validation.REFERENCE_GREETING_LINES` and `validation.REFERENCE_TAIL_STARTS` for every `end_and_new_patient` script of the 50 and `heldout` (D8's R3; synthetic scripts only; the tail starts pinned equal to `HeldOutCase.boundary` where one exists).
+  - **Lexicon-only reconciliation in the same commit** (peer round 2 PR-MED-015): a widened `HEDGE_PHRASES` can resolve a predicted held-out divergence (`test_note_check.py:2240-2244`, `hld-19` / `-20` / `-21`) and fail the suite before Task 0.11. The freeze commit re-runs the held-out unsure, boundary and correction tests and moves each entry the new phrases resolve out of `_PREDICTED_UNSURE_DIVERGENCES` into a dated record (case id → its original 0.3.3 prediction), asserted both ways (the original prediction kept as history, the case now equal to its expectation); no case expectation changes (C2, C3). Scope (ii)'s changes stay with Task 3.1. The suite is green on the freeze commit.
+  - Tests: exact pins in `test_vocabulary.py`; near-miss cases for every added phrase; the superset pin.
+  - Done when: reviewed, peer-checked and committed with the date BEFORE 0.10 starts.
+  - **Record (2026-10-23).**
+    - **The blind session.** A subagent given only the 0.3.3 selection rule (D5) and asked for named published sources; it saw no script, no held-out case, no register row and no frozen list. Its sources: S1 Prince, Frader & Bosk (1982); S2 Lakoff (1972/73); S3 Fraser (2010); S4 Namsaraev (1997); S5 Huddleston & Pullum (2002), p. 102; S6 Biber et al. (1999), §10.2; S7 Salager-Meyer (1994); S8 Hyland (2005), Appendix; S9 Kärkkäinen (2003); S10 Weatherall (2011); S11 Visser et al. (2020), ABIDE; S12 Shomoossi & Shokrpour (2024); S13 Carter, McCarthy, Mark & O'Keeffe (2011), *English Grammar Today*; S14 Carter & McCarthy (2006); S15 Coates (2013); S16 Nissen et al. (2026), *Health Expectations*; S17 a 2019 *Patient Education and Counseling* systematic comparison (authors not retrieved). It returned List A (the speaker's own doubt) and List B (the rest), each entry with its source.
+    - **The selection, by rule (this session).** `HEDGE_PHRASES` (16 → **33**): List A entries a named source holds that pass the 0.3.3 rule — a stance verb in the first person (the bare forms of "seem" excepted, as "seems" / "seemed" were in 0.3.3), no entry that IS a modal, no excluded token ("presumably" holds one, so it is reference-only), no phrase another entry already holds ("it seems", "it would seem", "most likely" and the like are skipped), a contraction and its full form both listed. Added: "i reckon" (S13), "i believe" (S7, S3, S4), "i'm not sure", "i am not sure", "not completely sure" (S11), "i don't know", "i do not know" (S10), "if i'm correct", "if i am correct" (S3), "i assume", "doubtful" (S4, S8), "conceivably", "arguably", "seemingly" (S5), "potentially", "probable" (S12, S4), "seem" (S7). `validation.REFERENCE_HEDGES` (52) = `HEDGE_PHRASES` followed by 19 harness-only entries: "presumably"; List A's unverified or self-rendered entries ("i don't think", "i do not think", "don't know for sure"); the possibility modals "may", "might", "could", "would" (S8, S15); the evidentials "apparently", "apparent", "evidently", "allegedly", "reportedly" (S5, S6); the attribution shields "it is believed", "it is said", "according to" (S1); the knowledge limits "we don't know", "we do not know", "nobody knows" (S11). Out of both: approximators, frequency words, fillers and words with a common plain sense ("possible", "appear", "feel", "suggest", "i'm afraid"), and "can", "will", "must", "should", "ought". One disagreement recorded, not acted on: the blind session put "uncertain" in List B; it stays in `HEDGE_PHRASES` from 0.3.3 (frozen; removing it is a separate dated decision).
+    - **Known-failure membership, either way:** "i reckon" — in both; "i don't know" — in both; bare "not sure" — in neither (only "i'm not sure" / "i am not sure"); "not too sure" — in neither; "i dunno" — in neither. Each enters only where a named source holds it.
+    - **Contamination note.** The blind session was clean; the selecting session was not — it had read the 50 scripts and `heldout`, Task 0.2's numbers and the known-failure phrases. It applied the rule to the blind lists without adding, rewording or reordering an entry; the known-failure phrases entered only as the sources hold them. Disclosed, not avoided (A3).
+    - **What changed in the pins.** `test_vocabulary.py`: the exact pin is 33; the "no apostrophe" pin is narrowed to "no TYPOGRAPHIC apostrophe" (a plain one is now listed, "i'm not sure"; the matcher folds the typographic one in the line, never in the list — a contract change, flagged to the practitioner); the excluded-token and modal pins hold unchanged; new `TestReferenceHedges`: the exact reference pin, the superset pin, content-token form, the approximator/frequency/filler exclusion, the known-failure membership, and an AST pin that no app module but `validation.py` reads `REFERENCE_HEDGES`. `test_note_check.py`: 0.3.3's near miss "It seem sore." matches now that "seem" is listed, so it is replaced by "The seam of the brace rubs."; one hedged line and one near miss per added phrase (each also with typographic apostrophes).
+    - **Lexicon-only reconciliation (no expectation changed, C2, C3).** `hld-19` (expected (3, 5); 0.3.3 result ()) now reads (3,): line 3 is resolved by the widened list and line 5 still diverges, so it STAYS in `_PREDICTED_UNSURE_DIVERGENCES` with the new result, and its 0.3.3 value moves to the dated record `_UNSURE_PREDICTIONS_BEFORE_RUN6_0_9`, asserted both ways (the record is EXACTLY the cases whose result under the 0.3.3 sixteen, re-run in the test, differs from today's — peer round 14; the expectation unchanged; today's result is the recorded divergence). `hld-20` and `hld-21` are unchanged. The boundary and correction tests are unaffected (full suite). **On the 50 (review finding):** the harness's script-side hedge test reads the same list, so `syn-30` line 3 ("i'm not sure") is now hedged in the script and markable in the app — one of run 5's six failures may change in run 6 for this reason alone; no other line of the 50 or `heldout` changes from unhedged to hedged except `hld-19` lines 3 and 6 (`syn-04`, `-12`, `-49` gain matches on lines already hedged). `hld-19` line 6 ("i reckon") is a clinician line: the unsure mark is never put on the confirmed clinician's line, and its fact carries no uncertainty expectation, so neither the app's marks nor the harness's scoring changes there (PR-LOW-007; the three lines found by comparing HEAD's 16 phrases with the 33 over all 72 scripts). Run 5 stays the run of record for 0.3.3; Task 0.2's premise check already ran on the unfrozen code (PR-MED-005), so nothing later compares with run 5 as identical.
+    - **Risks for the practitioner, not acted on** (review): "i don't know" is often a patient's filler ("I don't know, it just aches") and will add `[check: unsure]` marks, each acknowledged separately; "seem" marks reports such as "it doesn't seem to help" (consistent with "seems" / "seemed" already listed); "i believe" can report someone else's words. Removing any is a new dated decision before Task 0.10. **Decided 2026-10-23 (the practitioner): keep all three.**
+    - **The move.** `validation.document_from_turns` / `reference_document` / `SpokenTurn` / `REFERENCE_MODEL_NAME`; the fixture's `build_document` is a thin call (a delegation test proves it calls the harness's builder — peer round 14); every scripted and explicit-turns held-out document is pinned by one SHA-256 taken before the move (`test_validation_scripts.py` `_HELD_OUT_DOCUMENTS_SHA256`), unchanged after it. `REFERENCE_GREETING_LINES` / `REFERENCE_TAIL_STARTS` for every `end_and_new_patient` script (6 of the 50, 14 held-out), the tail starts pinned equal to `HeldOutCase.boundary`, the six run-of-record pairs pinned exactly (peer round 13), the axis coverage pinned both ways. The acknowledgement set is not written (0.3 is (b) without (c): Task 0.2a's counts are within the budget).
+    - Task 0.2a's enrolment passage still holds no listed hedge and no `REFERENCE_HEDGES` entry (hash unchanged).
+- [x] 🟩 **0.14 The harness's enrolment path (D11) — its own dated commit, after 0.13 and before 0.11**
+  - `validation_set.py`: `ENROLMENT_PASSAGE` (Task 0.2a's text, hash-equal); `build_set` writes `enrolment/slot-<n>.wav` for every clinician slot the built scripts use (the folder made once; whole-then-move; a write failure refused by name like a triple's); `scripts/README.md` and the builder's docstring.
+  - `validation.py`: `HarnessInputs.enrolments` / `.attribution`; `evaluate_encounter`'s enrolled judgement and the track confirmation (`clinician_speaker` on the enrolled document must equal `enrolled_speaker`); `main`'s `--attribution` flag, the three refusals in the model block, the needed slots read from the set's scripts (the same `load_script`); `EncounterOutcome` carries the clinician seconds labelled other and the other seconds labelled clinician; the report header line and the two seconds columns (separator and cell counts re-pinned in Task 4.3's inventory).
+  - Tests (fakes only, no model): a frequency-stub embedder as `test_speaker_eval.py`'s `_FrequencyEmbedder`; both ways — the enrolled speaker confirmed by the track → `measured`; an enrolled speaker whose majority truth is not the clinician → `role_unresolved`; the PR-MED-027 counterexample (a 10 s segment at 5.1 / 4.9 clinician / patient plus a 9 s patient segment in the enrolled cluster) → `role_unresolved` on the enrolled path, while `clustering` reads it as today; no `enrolled_speaker` → `role_unresolved`; `--attribution clustering` equals today's outcome on the same fake inputs; each refusal by name before any encounter; the builder writes one WAV per slot used and none for an unused slot, and refuses a passage write failure by name; `ENROLMENT_PASSAGE`'s exclusions (no number token, unit, medication, shipped cue phrase, hedge, closing or greeting phrase; the word count ≥ 0.2a's); `find_encounters` ignores the subfolder; both seconds columns on a fake track, including a mixed cluster (every segment matched: clinician-majority confirmed, the patient's seconds in the second column — PR-MED-025).
+  - Docs: `docs/testing/validation-harness.md` — step 1 (the builder's `enrolment/` output), the declared policy "Clinician speaker" rewritten, a "Metric amendment 2026-10-23" paragraph in the amendments' form (what changed, what it overrides, why it is not masking, the pins), the refusal list and the new column under "What each number means"; flow 26 of `docs/security/data-flow-map.md` (the enrolment vector in memory only) and the threat model's harness residues.
+  - Done when: suite green; a one-encounter fake set exercised both ways in the tests; committed with the date before 0.11.
+  - **Record (2026-10-23).** Built, uncommitted (10 files: `validation.py`, `validation_set.py`, `test_validation_harness.py`, `test_validation_set.py`, `test_shadow_exits.py` — the one `_WRITER_REFERENCES` pin for `build_enrolments`, a deliberate pin change — `docs/testing/validation-harness.md`, `scripts/README.md`, flow 26 of `docs/security/data-flow-map.md`, the threat model's "The pilot" residue (7), and this plan). The report has 27 columns; the clustering path is pinned against the report `c5f3179` rendered for the same fake inputs (`_CLUSTERING_BASELINE_C5F3179`). Codex peer pass rounds 17–21 CONVERGED (8 LOW: 7 fixed; PR-LOW-016 — unmeasured legacy report cells shown as zero — is PRE-EXISTING at `c5f3179`, not in this diff, and its deferral was confirmed by the practitioner 2026-10-23, recorded on Task 4.3); /simplify round 22 no findings. Suite: 8032 passed, 9 skipped, run twice — the second after round 18's test edit and round 19's wording (only round 20's docstring and documentation wording came after); ruff and mypy clean on the final tree. Committed 2026-10-23 on the practitioner's word ("commit and push").
+- [x] 🟩 **0.11 Fixtures and lints over a set table (before the set exists)**
+  - `fixtures/heldout_transcripts.py`: `HELDOUT_DIR` :62 and `SCRIPT_CASE_PREFIX` :63 → a per-set table `(folder, prefix, cases)`; `HELD_OUT_CASES` concatenates the sets; a set whose folder is absent contributes nothing (so the suite is green before 0.10).
+  - `test_validation_scripts.py`: `HELDOUT` :62 and :464, the prefix asserts :354 / :386 / :388, `TestHeldOutScripts` and `TestHeldOutTranscripts` parameterised over the table; the lints :329-348 run per set.
+  - The divergence dicts keyed per set with their count pins (`test_consultation_boundary.py:103` / :354, `test_note.py:~2947`, `test_note_check.py:~2242`); `heldout-2`'s entries are EMPTY here and written in 0.12.
+  - Done when: the suite is green with the second folder absent, and green with an empty `validation/heldout-2/` folder present.
+  - **Record (2026-10-23).** Built, uncommitted (5 test files: `fixtures/heldout_transcripts.py`, `test_validation_scripts.py`, `test_consultation_boundary.py`, `test_note.py`, `test_note_check.py`). As built: `HELDOUT_DIR` / `SCRIPT_CASE_PREFIX` became `HELD_OUT_SETS` (a `HeldOutSet` per folder: name, prefix, cases, edge cases, `cases_written`) and `SCRIPT_CASE_PREFIXES`; `script_path` finds a case's script by its prefix; the divergence dicts are `_PREDICTED_*_DIVERGENCES_BY_SET`, flattened by `by_case`, each count test asserting `misfiled(...) == []` (a missing or extra set, a case filed under a set that does not hold it — pinned both ways) and per-set counts (`heldout-2` 0). `HELD_OUT_CASES` keeps its order, so the documents' pins are unchanged. Interpretation, recorded here: `heldout-2` carries `cases_written=False` until Task 0.12 — while it is False the set holds no case, its scripts get the script lints only (Task 0.10's lint step), and they are left out of the R3 tables' axis scripts (C12: nothing but the lints reads them before 0.12); Task 0.12 flips it with the `h2-NN` cases, and from then the one-case-per-script test requires a case for every script. Checked: the five files with `heldout-2` absent, 1106 passed; with an empty `validation/heldout-2/` present, 1106 passed; a rehearsal with `heldout`'s 22 scripts copied in under `h2-` ids and no cases, green (44 more lint items); a rehearsal with one misnamed `hld-` script in `heldout-2`, the id test failed as intended (each rehearsal folder removed after). Full suite: 8041 passed, 9 skipped (run before the `misfiled` both-ways test was added; that test passes on its own); ruff and mypy clean. Codex peer pass round 23: no findings, converged. Committed 2026-10-23 on the practitioner's word ("commit and push").
+- [x] 🟩 **0.10 `validation/heldout-2/` by an independent author (C12)**
+  - A fresh author session in an EMPTY folder outside the repository, given ONLY a behaviour spec (written by the composer, committed with the set) and one format example: uncued clinician lines (advice, plans, safety-netting) and uncued patient lines; varied greetings and closings with negatives ("morning stiffness"); hedges and non-hedges, clinician hedges included; self-corrections; a dose read aloud; a quiet trailing clause; the lint rules in plain words (every uncertain clause routed; no line that is an autofill trigger; synthetic conditions). Same script format as `validation/heldout`; ids `h2-NN`; 20–25 scripts.
+  - `[2026-10-23]` The format example puts the clinician on voice slot 0 and the spec says so (D11: the builder enrols each clinician slot the set uses; slot 0 keeps `heldout-2` on the baseline's first voice).
+  - The author never sees the frozen lists, the 50 scripts, `validation/heldout`, the register or this plan; the session transcript is kept as the isolation record.
+  - The composer copies the scripts in and runs ONLY Task 0.11's lints over them (no reading of their text beyond lint output); a lint failure goes back to the author as the lint's message.
+  - Done when: `validation/README.md` names it; committed with the date before 0.12.
+  - **Record (2026-10-23).** Authored, uncommitted: `validation/heldout-2/` holds 22 scripts `h2-01`…`h2-22`, `SPEC.md` (the composer's brief with the one format example, clinician on slot 0), `AUTHOR-NOTES.md` (the author's per-script intent, unread until 0.12), `author-prompt.txt` and `author-session.jsonl` (the session's stream-json log, the Windows user name redacted — the isolation record); `validation/README.md` names the set. The author: a headless `claude -p` (`claude-opus-5-5`, CLI 2.1.282) run in the empty folder `C:\heldout2-author` with `--restricted` (no command-running tools or WebFetch, user/project/local settings ignored, file tools confined to the working folder), `--safe-mode`, `--strict-mcp-config`, `--disallowedTools WebSearch Agent`, `--permission-mode acceptEdits`. Its log shows one Read (`SPEC.md`), 23 Writes and two Greps, every path inside that folder. **Attempt 1 discarded unread.** A check of the brief against the frozen lists after the first run found that its wording carried two of the four correction markers (as example fixes) and one greeting and one closing word (naming the concept), which would bias the set toward passing; its 22 scripts were set aside unread in `C:\heldout2-author-attempt1` (outside the repository; the practitioner may delete it) and its log kept only in the gitignored `.cursor/loops/`. The brief was reworded and re-checked before attempt 2: it now holds no greeting, no correction marker and no hedge from `HEDGE_PHRASES` or `REFERENCE_HEDGES` except three forced by the brief's own content — "i think" and "see you next week" (cue phrases of `validation/config/section_cues.json`, which the routed-clause lint needs the author to know) and "uncertain" (the schema's axis and field name). Interpretation, recorded here: the cue file is the config the scripts are written against, not a frozen list, so the brief gives it with each section's ownership, as the first held-out author had it. Lint step: the 22 scripts copied in and ONLY Task 0.11's lints run (`-k "heldout-2 or h2-"`): 50 passed on the first run, so nothing went back to the author; no script text read. Full suite with the set present: 8086 passed, 9 skipped (45 more than Task 0.11's 8041: the set's lint and reference-document items); ruff and mypy clean. Committed 2026-10-24 on the practitioner's word ("commit and push"), before 0.12.
+- [x] 🟩 **0.12 Diagnosis, the `h2-NN` cases and the predictions (the Task 0.10 shape)**
+  - Rebuild all three sets deterministically (practitioner if the agent shell cannot see the models; `docs/lessons.md`); re-transcribe through `evaluate_encounter` (the stage-3 scratch method). `[2026-10-23]` Under the DEFAULT attribution (enrolled, Task 0.14 landed) for the predictions and the `h2-NN` cases; the difference check below runs with `--attribution clustering` (Task 0.2's policy); the record also lists, per set, the encounters whose verdict differs between the two policies (ids only).
+  - Difference check (the premise check itself ran in Task 0.2, before the freeze): the 50 and `heldout` reports at the 0.9 commit differ from Task 0.2's only where the frozen hedge list explains it — each changed verdict listed with the encounter id and whether a 0.9 phrase sits on its line (ids and yes/no only). Any other difference pauses for the practitioner.
+  - A scratch reference of decisions 0.3, 0.4, 0.6 and the R1–R3 classifiers.
+  - Write the `h2-NN` `HeldOutCase` entries (turns, boundary, corrections, unsure expectations), the two R3 tables' `heldout-2` entries (the tail starts equal to the cases' boundaries) and the three divergence dicts' `heldout-2` entries from the scratch reference — this is the one task that reads the set before the build.
+  - Record ids and counts only: whether `syn-22`'s fact tokens are deleted; whether `syn-28`'s wrong rendering carries a review mark (D8's `marked` flag); `syn-30` fact 0 split off or misheard; R2 membership; the class of every `heldout` failure; the new code's count per set.
+  - Write the predictions for all three sets: pass/fail under v1 and v2, residues by class, checker tallies, the new code's count.
+  - Frozen from here. The practitioner deletes the set folders. The record script asserts no NUL and no bare CR before writing (C10).
+  - Done when: the record, the cases and the predictions are committed on this task.
+  - **Record (2026-10-24).** Built, uncommitted. Re-transcribed at `6c40ca6` (Task 0.10's commit; Task 0.12's tables were uncommitted in the working tree and read by nothing that transcribes) by the agent shell, which saw the developer models; every encounter measured (50 / 50, 22 / 22, 22 / 22), 0 attribution failed. The builds and per-id outputs are in `C:\run6-sets-012\`, the scratch in the gitignored `.cursor/loops/run6-012-*.py`. The scratch reference's own walk of the 0.3.3 verdicts equals the shipped harness's on all three sets (no mismatch).
+    - **Written into the repository.** The 22 `h2-NN` `HeldOutCase` entries and `heldout-2`'s `cases_written=True` (`fixtures/heldout_transcripts.py`); the two R3 tables' 15 `heldout-2` rows, 7 with a tail start equal to the case's boundary and 8 `None` (`validation.py`); the divergence dicts' `heldout-2` entries: boundary 6 (`h2-01`, `-05`, `-07`, `-09`, `-14`, `-22`; count 6), correction carry 4 (`h2-02`, `-08`, `-15`, `-19`), unsure 10 (`h2-01`, `-03`, `-05`, `-08`, `-10`, `-12`, `-13`, `-15`, `-18`, `-21`). Two lints read wider than before, recorded here as interpretations: a correction may be the clinician's (D4 carries any speaker; the `heldout-2` brief says "a speaker"), and a tail may hold a NONMATERIAL absent fact (R3 still counts material ones only). The builder-move digest pin reads `heldout` alone, as it was taken.
+    - **Difference check (clustering at the 0.9+ commit against Task 0.2's premise reports): clean, no pause.** Changed rows: `syn-30` fact 1 and `hld-19` fact 1 (uncertainty surfaced no → yes; a 0.9 phrase on the line: yes, both); their checker rows gained `hedged_source`; each set's TOTAL "Uncertainty missed" fell by 1. No encounter verdict changed.
+    - **Verdicts that differ between the two policies (0.3.3 code, rule v1):** the 50: none. `heldout`: `hld-06`, `-12`, `-15`, `-22` pass enrolled and fail clustering; `hld-07` fails enrolled and passes clustering (new — not in Task 0.2a's record). `heldout-2`: none. Failing under 0.3.3, enrolled / clustering: the 50 6 / 6, `heldout` 5 / 8, `heldout-2` 21 / 21.
+    - **The named diagnoses.** `syn-22` fact 2: every equal-cost alignment deletes all of the fact's tokens, and the reference pipeline gets it right (R1). `syn-28` fact 1: wrong, every wrong end state marked (R1). `syn-30` fact 0: SPLIT OFF, not misheard — its hedge sits in the next same-speaker segment, joined mid-sentence; scope (ii) surfaces it and `syn-30` passes. `syn-35` fact 2: on a clinician segment, no reference hedge on its line (R2).
+    - **The class of every `heldout` failure (0.3.4, enrolled):** `hld-07` R1 (fact 0); `hld-14` R3 (fact 2) plus fact 1 wrong and unmarked (no class); `hld-19` R2 (fact 2); `hld-20` R2 (fact 2); `hld-21` R2 (facts 1 and 2) plus fact 3 wrong and unmarked (no class).
+    - **The new code `clinician_line_omitted` per set:** the 50 46 in all (median 1, max 4, 29 encounters); `heldout` 24 (median 1, max 4, 13 encounters); `heldout-2` 104 (median 5, max 9, 21 encounters). Scope (ii)'s extra hedge marks: 3, 0, 2.
+    - **PREDICTIONS (frozen from here).**
+      - **The 50:** v1 FAIL, 5 (`syn-22`, `-28`, `-35`, `-38`, `-46`). v2 PASS: R1 2 of 2 (`syn-22`/f2, `syn-28`/f1), R2 1 of 2 (`syn-35`/f2), R3 2 of 2 (`syn-38`/f1, `syn-46`/f2), no encounter left failing. Checker tallies: `clinician_line_omitted` 46, `contradiction` 1, `dose_mismatch` 1, `hedged_source` 14, `high_risk_omission` 107, `laterality_mismatch` 2, `low_confidence_source` 27, `number_source` 51, `possible_next_patient` 4.
+      - **`heldout`:** v1 FAIL, 5 (`hld-07`, `-14`, `-19`, `-20`, `-21`). v2 FAIL: R1 1 of 1 (`hld-07`/f0), R2 4 against a ceiling of 1 (`hld-19`/f2, `hld-20`/f2, `hld-21`/f1, `hld-21`/f2), R3 1 of 1 (`hld-14`/f2); `hld-14` and `hld-21` still fail on an unmarked wrong fact. Checker tallies: `clinician_line_omitted` 24, `hedged_source` 2, `high_risk_omission` 67, `low_confidence_source` 4, `number_source` 14, `possible_next_patient` 2.
+      - **`heldout-2`:** v1 FAIL, 21 of 22 (all but `h2-02`). v2 FAIL: R1 0, R3 0, R2 9 against a ceiling of 1 (`h2-03`/f1, `-05`/f0, `-08`/f7, `-10`/f1, `-12`/f2, `-13`/f2, `-15`/f0, `-18`/f1, `-21`/f4); left after the classes: 47 silent omissions (25 on patient lines; 22 on wholly uncovered clinician lines that already draw `high_risk_omission`, which D1 excludes), 3 unsurfaced uncertainties outside R2 (`h2-01`/f3, `h2-17`/f2, `h2-18`/f5) and 2 wrong facts (`h2-05`/f11, f12 — not R3: the frozen lists find the greeting on the reference greeting line, but no boundary fired on the measured document). The new code warns 18 of the 65 facts silent under 0.3.3. Checker tallies: `clinician_line_omitted` 104, `hedged_source` 3, `high_risk_omission` 203, `low_confidence_source` 10, `number_source` 19, `possible_next_patient` 2.
+    - **Findings, stated plainly (no rule, definition or prediction changed for them):** (1) the Task 0.8 gate (a v2 pass on all three sets) is PREDICTED NOT MET — `heldout` and `heldout-2` fail under v2, so run 6 is predicted to fail and P.5 stays (a) unless the practitioner re-plans before Phase 1; (2) D7 with D1's exclusion leaves 22 `heldout-2` facts counted silent on clinician lines the chooser already shows `[flagged]` (they draw `high_risk_omission` on some other word, so the line is warned but the fact's own words are not); (3) the new code's load on `heldout-2` (median 5, max 9) is above Task 0.1's budget of median 2 / max 5 — synthetic, not real speech, where the budget applies; (4) `hld-07` is a new enrolled-only failure, classed R1.
+    - Checked: the four affected test files with the cases written, 1257 passed; full suite, ruff and mypy: 8262 passed, 9 skipped (176 more than Task 0.10's 8086: the `h2-NN` cases' items); ruff and mypy clean. The practitioner deletes `C:\run6-sets\` (Task 0.2's builds) once this is committed; `[2026-10-24]` `C:\run6-sets-012\` is KEPT until Task 0.15 is committed (its `out-*` payloads are 0.15's input), then deleted. /simplify round 24: no findings. Committed 2026-10-24 on the practitioner's word ("commit and push"). **Practitioner decision owed:** finding (1) — build Phases 1–4 as planned against a predicted failure, or re-plan first.
+
+- [x] 🟩 **0.15 The coherence amendments' deltas and predictions v2 (D13, D14)**
+  - Re-run the scratch reference over `C:\run6-sets-012\` with D13's credit and D14's R3 and record, beside the frozen predictions v1, "predictions v2 (2026-10-24, after D13–D14)" for the three seen sets — ids and counts only. Scratch changes (`.cursor/loops/run6-012-analyse.py`): `info()` sets `warned_new` from D13's four-part predicate over the omission segments of either code; `r3` reads `next_patient_boundary(refdoc, config) is None` in place of `greeting_found`; `classes["R3"]` becomes a set of encounter ids; `CEILINGS` per set and class. Expected: the 50 v2 PASS (R1 2, R2 1, R3 2 encounters); `heldout` v2 FAIL (R2 4; `hld-14` f1 and `hld-21` f3 unmarked wrong; R3 1); `heldout-2` v2 FAIL (silent 25, all patient lines; R2 9; 3 unsurfaced outside R2; R3 1 encounter; R1 0). A different number pauses for the practitioner.
+  - Also recorded: D14's reference-boundary check for every axis script of the three sets — `(id, reference boundary, tail)` as integers (`hld-10` is known to differ) — and the self-check (the scratch's 0.3.3 walk equal to the shipped harness). No product code; the record script asserts no NUL and no bare CR (C10).
+  - Done when: the record is on this task and committed on the practitioner's word; `C:\run6-sets-012\` may then be deleted.
+  - **Record (2026-10-24).** The scratch `.cursor/loops/run6-015-analyse.py` (gitignored) was derived from the frozen 0.12 scratch by a generator whose every replacement is asserted once: D13's credit (either omission code, the confirmed clinician's segment, wholly uncovered, before `next_patient_segment(note.note_warnings)`); D14's R3 (`next_patient_boundary(reference_document, config) is None`, counted by encounter); `CEILINGS` per set and class. It re-ran over the 0.12 outputs in `C:\run6-sets-012\` under the enrolled attribution. It printed ids, flags and integers only. **Every number equals the expected line above, so there was no pause.**
+    - **Self-check:** the scratch's walk of the 0.3.3 verdicts equals the shipped harness on all three sets (no mismatch). **D13 subsumes D7's new-code term:** on all three sets every segment the new code warns is also credited by D13 (no new-code segment left uncredited).
+    - **PREDICTIONS v2 (2026-10-24, after D13–D14; beside the frozen v1 on Task 0.12, which stand unchanged).**
+      - **The 50:** v1 FAIL, 5 (`syn-22`, `-28`, `-35`, `-38`, `-46`), unchanged. v2 PASS: R1 2 facts of 2 (`syn-22`/f2, `syn-28`/f1); R2 1 fact of 2 (`syn-35`/f2); R3 2 encounters of 2 (`syn-38`, `syn-46`); nothing left after the classes.
+      - **`heldout`:** v1 FAIL, 5 (`hld-07`, `-14`, `-19`, `-20`, `-21`), unchanged. v2 FAIL on `hld-14` and `hld-21`: R1 1 fact of 1 (`hld-07`/f0); R2 4 facts against a ceiling of 1 (`hld-19`/f2, `hld-20`/f2, `hld-21`/f1, `hld-21`/f2); R3 1 encounter of 1 (`hld-14`). Left after the classes: 2 wrong facts without a review mark, both on clinician lines (`hld-14`/f1, `hld-21`/f3). No silent omission and no unsurfaced doubt is left.
+      - **`heldout-2`:** v1 FAIL, 21 of 22, unchanged. v2 FAIL on 15 encounters (`h2-01`, `-03`, `-04`, `-07`, `-08`, `-09`, `-11`, `-13`, `-14`, `-17`, `-18`, `-19`, `-20`, `-21`, `-22`). R1 0 facts. R2 9 facts against a ceiling of 1 (`h2-03`/f1, `-05`/f0, `-08`/f7, `-10`/f1, `-12`/f2, `-13`/f2, `-15`/f0, `-18`/f1, `-21`/f4). R3 1 encounter of 1 (`h2-05`, facts f11 and f12). Left after the classes: 25 silent omissions, all on non-clinician lines, and none on a clinician line. That is D13's predicted 47 → 25. There are also 3 unsurfaced doubts outside R2, all on non-clinician lines (`h2-01`/f3, `h2-17`/f2, `h2-18`/f5), and no wrong fact.
+      - The new code's counts and the checker tallies are unchanged from v1. D13 and D14 are harness-side only.
+    - **D14's reference-boundary check, every axis script `(id, reference boundary, tail)`:** the 50: `syn-06` (4, 4), `syn-20` (4, 4), `syn-21` (4, 4), `syn-38` (None, 4), `syn-43` (6, 6), `syn-46` (None, 4). `heldout`: `hld-01`…`hld-08` (None, None); `hld-09` (None, 5); `hld-10` (5, 4); `hld-11` (None, 4); `hld-12` (None, 5); `hld-13` (5, 5); `hld-14` (None, 5). `heldout-2`: `h2-01` (None, 13); `h2-02`, `-04`, `-06`, `-10`, `-13`, `-16`, `-21` (None, None); `h2-05` (None, 12); `h2-07` (None, 10); `h2-09` (None, 9); `h2-11` (12, 12); `h2-14` (None, 8); `h2-17` (10, 10); `h2-22` (None, 10).
+    - **The mismatch:** one script in all three sets has a reference boundary that is neither None nor equal to its tail. It is `hld-10` (5 against 4), as known. That mismatch is a finding, not R3 (D14). A None reference boundary with a non-null tail is R3's ground only where a material absent fact is `wrongly_present`. That holds for `syn-38`, `syn-46`, `hld-14` and `h2-05`, and for no other script.
+    - No product code changed. The record script asserts no NUL and no bare CR (C10). Committed 2026-10-24 on the practitioner's word ("do task 0.15, task 0.16 then task 0.17"). The practitioner may now delete `C:\run6-sets-012\`.
+- [x] 🟩 **0.16 D18's bands and the pre-registration commit** — BEFORE the author session
+  - D18's gate falsifiers, reported bands and the stated consequences written on this task as they stand in D18 (no set is read; no counting script is needed — the bands are per script and per fact, not totals). Done when: committed on the practitioner's word; that commit's hash is the pre-registration and is recorded on Task 0.17 before the author runs.
+  - **Record (2026-10-24): the pre-registered bands for `heldout-3`, copied verbatim from D18.** No set is read, and the author session has not run. `validation/heldout-3/` does not exist.
+    - **Gate falsifiers (each one FAILS the v2 gate on `heldout-3`):** any silently omitted material fact, on ANY speaker's line, that R1 does not clear (`[2026-10-24, peer round 25]`: a fact whose tokens took a word error on every alignment and that the reference pipeline gets right is R1 and consumes R1's ceiling of 1 — `max_silent_omissions` 0 applies to the residue-adjusted count; expected 0 after R1); any material fact `wrong` without a review mark — a confident recogniser error (expected 0–2 over the set: `heldout` had 2, `heldout-2` 0); R1 above 1 fact (expected 0–1); R3 above 1 encounter (expected 0–1); any `wrongly_present` material fact outside R3 (expected 0).
+    - **Reported, not gating (outside the band = a finding, never a rule edit):** the new code's load median 1–5 and maximum ≤ 9 per script; the surfaced-doubt rate 15–40% of `expect_uncertain` facts; the D14 reference-boundary mismatches 0–2 scripts; R2 any count (reported under D17).
+    - **The prediction:** v1 FAIL (any R1 or R3 event fails v1; expected ≥ 1 event); v2 PASS only if no falsifier fires — a draw on the recogniser, stated in advance: a v2 FAIL caused ONLY by unmarked confident errors leads to the larger-model plan (Excluded here, "revisit if run 6 exceeds the R1 ceiling") and to NO rule change; a FAIL on a silent fact is a finding whose component P.4 establishes from the evidence (`[2026-10-24, peer round 26]`) — the warning predicate (D1), the routing rule (D16), the recogniser losing the routing cue while keeping the fact's tokens (neither R1 nor a lint failure), segmentation, or attribution (D11) — never assumed from the speaker.
+    - `heldout-2` stays reported as the out-of-scope control; a `heldout-3` PASS is reported with D16's scope qualifier.
+    - Committed 2026-10-24 on the practitioner's word ("do task 0.15, task 0.16 then task 0.17"). This commit carries D12–D18 (unchanged since `38811c6`) and these bands. Its hash is the pre-registration and is recorded on Task 0.17 before the author session starts.
+- [x] 🟩 **0.17 `heldout-3`, the blind set (D16; C12)**
+  - Test side FIRST, green with the set absent: `fixtures/heldout_transcripts.py` — `HeldOutSet` gains `tails_by_role: bool = False` and `routed_material: bool = False`; a `heldout-3` row (`h3-`, no cases, `cases_written=False`, `tails_by_role=True`, `routed_material=True`); `"heldout-3": {}` in all three `*_BY_SET` divergence dicts with their count pins (`test_consultation_boundary.py:~379`, `test_note.py:~2942`, `test_note_check.py:~2273`); the names pin `test_validation_scripts.py:~352`; `_axis_scripts` and the table tests read a `tails_by_role` set's tails from the roles (no `HeldOutCase` boundary to equal, no KeyError on `h3-` ids); `REFERENCE_GREETING_LINES` and its pins deleted (D14; the run-of-record pairs' pin keeps the tail half); the generalised routing lint (`present` / `negation` / `laterality` / `dose`, non-clinician lines, `routed_material` sets); the role lint and the rows-equal-roles test; `[2026-10-24, peer round 25]` `test_every_material_absent_fact_lies_in_a_tail` skips `tails_by_role` sets; metadata-only size lints — `HeldOutSet.script_count=(20, 25)` and `facts_per_script=(3, 6)` for `heldout-3` (ids and counts only; a populated set outside either bound fails; the absent and empty states stay green). `[2026-10-24, peer round 26]` the content-free lint helper `_script_problems` and its sentinel test (D16; `[2026-10-24, peer round 27]` load failures as `ScriptError` text; `[2026-10-24, peer round 30]` no collect-then-assert rewrites (withdrawn with the AST pin — the runner is the boundary); `[2026-10-24, peer round 28]` `[2026-10-24, peer round 30]` `scripts/lint-held-out-set.py` and its plugin (D16: `[2026-10-24, peer round 31]` the closed `problems` grammar, the fixed status lines and the propagated exit status) with the plugin test and the end-to-end subprocess test; the lints record their codes through `record_property("problems", …)` and the in-process sentinel test over the helpers (the four-way-broken set, a fed mismatch, a disagreeing tail row); the role lint as three one-way rules with a negative's None row; the four existing `assert script.conditions is not None` lints at `test_validation_scripts.py:193/:207/:228/:414` rewritten through it, so every set shares the property); `test_a_misfiled_divergence_table_is_named` (:458-469) rewritten to derive its well-formed table from `HELD_OUT_SETS` and its missing / extra / misfiled cases from that table (today it hard-codes two sets, and `misfiled` names every absent set name, so the `heldout-3` row alone turns it red). Then the folder empty: still green.
+  - The brief: `validation/heldout-2/SPEC.md` amended per D16 (the diff recorded here verbatim; the leak check against every frozen list recorded with its result; the pre-registration hash from 0.16 recorded here first); the author session exactly as Task 0.10's record. The composer copies the scripts and `AUTHOR-NOTES.md` in, derives and copies the tails (axis scripts only; `.cursor/loops/`, ids and integers), then runs the FULL suite THROUGH `scripts/lint-held-out-set.py` (`[2026-10-24, peer round 30]`: never bare pytest while an `h3-` script is in the tree — the runner is the boundary; the table tests are not parametrised by set, so the runner runs the whole module); a lint failure goes back to the author as the lint's message. `validation/README.md` names the set; this plan's C12 line is already amended.
+  - Done when: the suite, ruff and mypy green; committed with the date on the practitioner's word before any Phase 1 work. `[2026-10-24, peer pass close]` REQUIRED before that commit, not optional: a review-loop round, a `/security-review` and a codex peer round over the runner's real code (`scripts/lint-held-out-set.py`, its plugin and its two tests) — the plan peer pass refined the runner on paper for four rounds (28–31) and was accept-closed at cap 7 with its code review owed here. The agent has read no `h3-` script text (the shell history, the author log and `[2026-10-24, peer round 26]` the runner's summaries are the evidence (`[2026-10-24, peer round 30]`)).
+  - **Record (2026-10-24, before the author session):**
+    - **The pre-registration:** `3b699628a1434f73b72a178586c892bf8bb59f26` (Task 0.16's commit; D12–D18 and D18's bands as committed there). Written here before the author session starts.
+    - **The test side, green with `validation/heldout-3/` holding only the brief:** `HeldOutSet` gained `tails_by_role`, `routed_material`, `script_count` and `facts_per_script`; the `heldout-3` row (`h3-`, no cases, `cases_written=False`, both flags, `(20, 25)` scripts, `(3, 6)` facts); `"heldout-3": {}` in the three divergence dicts with their count pins; `REFERENCE_GREETING_LINES` deleted from `validation.py` with its pins (D14; the tail table stays); the routing lint generalised (`present` / `negation` / `laterality` / `dose` on non-clinician lines, `routed_material` sets); the role lint as three one-way rules and the rows-equal-role-tails test; the size lints; the content-free `_script_problems` helper with its sentinel tests; every lint recording its codes through `record_property("problems", …)`; `test_a_misfiled_divergence_table_is_named` derived from `HELD_OUT_SETS`.
+    - **The runner, as built:** `scripts/lint-held-out-set.py` and `scripts/lint_held_out_plugin.py`, with `desktop/tests/test_lint_held_out_set.py` (66 tests: the plugin, its guard, the parser, the renderer and end-to-end runs in generated projects) and the conftest guard. The child's output goes to a gitignored log under `.cursor/loops/held-out-lint/` that nobody opens; the console carries only fixed lines, node ids whose parameter parts are ids or set names, and the closed `problems` grammar. After review rounds 32–34 it also refuses a `--tests` entry starting with `-` or `@`; refuses, at configure and before collection, an ini or `addopts` option that would write a report elsewhere or run fewer tests than collected (`config-refused`); counts a passed setup with no call as an error; fails a run with a failed or errored test and the child's exit 0 (`outcome-mismatch`); and lets a blind run go ahead only with the report variable set AND the plugin registered under its name. After round 35 the configuration check is the bootstrap's `RunnerGuard`, registered beside the plugin under pytest's id-based name (which no `-p no:` can name in advance); its `tryfirst` `pytest_cmdline_main` runs after parsing and before any configure or collection and refuses (`config-refused`) `PYTEST_ADDOPTS` or `PYTEST_PLUGINS` set, the refused options (now also `--noconftest`, `--ignore`, `--ignore-glob` and `-o`), any ini key outside `testpaths` and `markers` (so `addopts` itself), or the plugin missing under its name; the plugin starts only with that guard checked, and the conftest's blind-run check asks for the same. Codex round 36 converged with no findings.
+    - **The brief:** `validation/heldout-3/SPEC.md` = `validation/heldout-2/SPEC.md` with this diff (verbatim, `git diff --no-index -U0`), and `author-prompt.txt` naming the seven rules:
+      --- a/validation/heldout-2/SPEC.md
+      +++ b/validation/heldout-3/SPEC.md
+      @@ -1 +1 @@
+      -# Held-out set 2 — the author's brief (validation-run6 plan, Task 0.10, 2026-10-23)
+      +# Held-out set 3 — the author's brief (validation-run6 plan, Task 0.17, 2026-10-24)
+      @@ -5 +5 @@ You are writing a small set of INVENTED, synthetic physiotherapy consultation sc
+      -Work only in this folder. Write each script as `h2-NN.json` here (`h2-01.json`, `h2-02.json`, …), **20 to 25 scripts**, and one file `AUTHOR-NOTES.md` (described at the end). There is nothing else to read: this brief and the format example in it are all you get.
+      +Work only in this folder. Write each script as `h3-NN.json` here (`h3-01.json`, `h3-02.json`, …), **20 to 25 scripts**, and one file `AUTHOR-NOTES.md` (described at the end). There is nothing else to read: this brief and the format example in it are all you get.
+      @@ -9,2 +9,2 @@ Work only in this folder. Write each script as `h2-NN.json` here (`h2-01.json`,
+      -1. **The note.** The app puts a line of the transcript into a section of the note when the line contains one of the section's cue phrases (listed below). It also has a broader built-in phrase layer you cannot see. Lines that contain no cue can be left out of the note altogether — that is the main gap this set measures.
+      -2. **The next patient.** Sometimes the recording keeps running after a consultation ends: the clinician sends one patient off, then welcomes the next one, and the next patient starts talking. The app should stop the note where the first consultation ends, so nothing the next patient says reaches the first patient's note.
+      +1. **The note.** The app puts a line of the transcript into a section of the note when the line contains one of the section's cue phrases (listed below). It also has a broader built-in phrase layer you cannot see. A clinician's line that contains no cue can be left out of the note altogether — that is the main gap this set measures. Anyone else's line must carry its clinical facts with a cue phrase (rule 1).
+      +2. **The next patient.** Sometimes the recording keeps running after a consultation ends: the clinician sends one patient off, then welcomes the next one, and the next patient starts talking. The next patient's role is `next_patient`. The app should stop the note where the first consultation ends, so nothing the next patient says reaches the first patient's note.
+      @@ -18,2 +18 @@ Work only in this folder. Write each script as `h2-NN.json` here (`h2-01.json`,
+      -- **Uncued patient lines** that matter clinically (a symptom, its side, a past problem, what makes it worse), carrying a material fact. At least 5 scripts.
+      -- **The next patient** — at least 6 scripts where, after the first consultation ends, the clinician welcomes a NEW person who then says something clinical (their own complaint). Vary how people end a consultation and how they welcome someone: everyday, formal, brief, regional, by name, with or without small talk in between. The next person is a third role (see voices).
+      +- **The next patient** — at least 6 scripts where, after the first consultation ends, the clinician welcomes a NEW person who then says something clinical (their own complaint). Vary how people end a consultation and how they welcome someone: everyday, formal, brief, regional, by name, with or without small talk in between. The next person is a third role, `next_patient` (see the format).
+      @@ -25 +24 @@ Work only in this folder. Write each script as `h2-NN.json` here (`h2-01.json`,
+      -- Mix appointment types and body regions; some scripts short (5–7 lines), some long (15–25 lines).
+      +- Mix appointment types and body regions; some scripts short (5–7 lines), some long (15–25 lines). Each script lists 3 to 6 facts.
+      @@ -53 +52 @@ A line goes to the FIRST section, in this order, whose cue phrase it contains as
+      -1. **A fact marked `expect_uncertain` sits in a routed clause.** Split the line at every `.` `?` `!` `,` `;` followed by a space. Such a fact must lie inside at least one clause that contains a cue phrase of a section that speaker is admitted to (a patient line can never route to the four clinician-only sections; nor can a clinician's question). The words carrying the doubt can be anywhere in the line, or in a separate line.
+      +1. **Anyone but the clinician states a clinical fact with a cue phrase.** Split the line at every `.` `?` `!` `,` `;` followed by a space. Two kinds of fact must lie inside at least one clause that contains a cue phrase of a section that speaker is admitted to (a patient line can never route to the four clinician-only sections; nor can a clinician's question): every fact marked `expect_uncertain`, and every fact with `"material": true` of kind `present`, `negation`, `laterality` or `dose` on a line spoken by anyone other than the clinician. In plain words: when anyone other than the clinician says something clinically important, say it with one of the cue phrases of a section open to that speaker. The clinician's own lines need no cue. The words carrying the doubt can be anywhere in the line, or in a separate line.
+      @@ -57 +56,3 @@ A line goes to the FIRST section, in this order, whose cue phrase it contains as
+      -5. Each file's name is its `encounter_id` plus `.json`; ids are `h2-01`, `h2-02`, … with no gaps.
+      +5. Each file's name is its `encounter_id` plus `.json`; ids are `h3-01`, `h3-02`, … with no gaps.
+      +6. **The next patient's role.** The role `next_patient` is used for the new person in a next-patient script and for no one else, and only in a script tagged `end_and_new_patient`. Every fact on the next patient's first line, or on any line after it, is `absent`.
+      +7. **Size.** 20 to 25 scripts; each script lists 3 to 6 facts.
+      @@ -64 +65 @@ Each script is one JSON object:
+      -- `encounter_id`: `"h2-NN"`.
+      +- `encounter_id`: `"h3-NN"`.
+      @@ -67 +68 @@ Each script is one JSON object:
+      -- `lines`: in speaking order, each `{"role": ..., "text": ...}`. Roles are lower-case words with underscores. One role must be `clinician`; the patient is `patient`; a third person, when there is one, has a role that says who they are (`next_patient`, `partner`, `receptionist`, …). At most three roles per script.
+      +- `lines`: in speaking order, each `{"role": ..., "text": ...}`. Roles are lower-case words with underscores. One role must be `clinician`; the patient is `patient`; the new person in a next-patient script is `next_patient`; any other third person has a role that says who they are (`partner`, `receptionist`, …). At most three roles per script.
+    - **The leak check** (every frozen list — closings, greetings, correction markers, the product hedges, the reference hedges — as content-token runs over the brief and the prompt; the list name and the frozen phrase printed, never script text): `heldout-3`'s hits are exactly `heldout-2`'s control, which Task 0.10 accepted — `SPEC.md`: closing `see you next week` ×1, hedge `i think` ×2, hedge `uncertain` ×2 (the same in the reference hedges); `author-prompt.txt`: hedge `doubtful` ×1. No new hit.
+  - **Record (2026-10-24, after the author session):**
+    - **The reviews over the runner's real code, before the author ran:** review-loop round 32, `/security-review` round 33, codex peer rounds 34–36 (`gpt-6-astra` high, read-only; 34 and 35 found 5 MED + 1 LOW and 3 MED, every one verified and applied; 36 converged with no findings). The full suite after round 35's fixes, with `validation/heldout-3/` holding only the brief: 8348 passed, 9 skipped; ruff and mypy clean.
+    - **The author session:** `--restricted --safe-mode --strict-mcp-config`, Opus 5.5, in `C:\heldout3-author` holding only `SPEC.md`; exit 0. Its log was never opened: a script printed only its tool names and path fields — Read 1 (`SPEC.md`), Grep 1 (its own folder), Write 24 (23 scripts and `AUTHOR-NOTES.md`), no Bash, no other tool; every path inside `C:\heldout3-author`. The log is kept as `validation/heldout-3/author-session.jsonl` with the user name replaced by `sed` (0 occurrences left, counted, not read).
+    - **The set:** 23 scripts, `h3-01` to `h3-23`, and `AUTHOR-NOTES.md` (unread until P.4), copied in unread. The tail script (`.cursor/loops/validation-run6-heldout3-tails.py`; ids and integers only) found 17 scripts with the axis `end_and_new_patient`: 9 with a tail and 8 negatives with a None row. They were copied into `REFERENCE_TAIL_STARTS`. `[2026-10-25, P.4]` Miscounted: the table holds 10 tails and 7 None rows (unchanged since this commit).
+    - **The lints, through the runner only** (`scripts/lint-held-out-set.py validation/heldout-3`; first run, the set unedited): collected 8403, ran 8403, passed 8394, failed 0, errored 0, skipped 9 (the nine link tests that skip on this machine, the same as every bare run), exit 0. No lint failure, so nothing went back to the author. No `h3-` script text was read by the agent: the shell history, the author log's path check and the runner's fixed lines are the evidence.
+    - `validation/README.md` names the set; `scripts/README.md` names the runner. The practitioner may delete `C:\heldout3-author` (the scripts are in the repository).
+
+### Phase 1 — Check 4 widened and the chooser marks (`note_check.py`, `note.py`, `ui/models.py`)
+- [x] 🟩 **1.1 The checker (D1)**
+  - `note_check.clinician_line_omissions(note, document, config)` inside `check_note` after `omission_warnings`; `note.NOTE_WARNING_SEVERITY["clinician_line_omitted"] = "review"`; `__all__`; the code-list docstrings (`note_check.py:136`, `:192`).
+  - Tests (`test_note_check.py`, a sibling of `TestCheck4Omission`): fires on a wholly uncovered clinician line; not on a partly quoted one, a filler-only line, a patient line, a line that already draws `high_risk_omission`, a line past the boundary, or with no confirmed clinician; a one-word acknowledgement fires under (b) and not under (c); the tail pin `test_consultation_boundary.py:656` unchanged; `test_note_matrix`; the five held-out silent cases asserted per 0.12's predictions; every note-level exact-code-list test in Key Findings re-checked and re-pinned deliberately where the new code fires (`test_save_as_ratification.py:342`, `test_ui_screens.py:5693-5749`); the direct `omission_warnings` pins (`test_note_check.py:1791/:1828/:1882/:2291`, `test_note_schema_v2.py:893`) and `test_transcript_trim.py:459-483` stay unchanged as regression pins (peer round 2 PR-LOW-001).
+  - **`[2026-10-24]` Built (stage-1 rx1; ruff and mypy clean; the suite is the composer's, through the blind runner).** `note_check.clinician_line_omissions(note, document, config)` exactly D1's seven conditions, coverage through a new private `_covered_words` that `omission_warnings` now also reads (Check 4's ONE coverage rule, behaviour-preserving), the "already draws `high_risk_omission`" condition read from `omission_warnings` itself (so the two codes can never double-warn a line), the boundary from `next_patient_boundary`; `check_note` runs it right after `omission_warnings` and before Check 6; `__all__`; the module docstring's Check 4 paragraph and Check 6's docstring; `NOTE_WARNING_SEVERITY["clinician_line_omitted"] = "review"`. (c) is not built (decision 0.13: GATE MET). Tests: `TestCheck4ClinicianLineOmission` (15 tests, 26 items: fires once over the whole line, one per line in order, partly quoted / whole quoted / config line, disfluencies and punctuation, patient line, a `high_risk_omission` line, no clinician, suspect line, past the boundary with the first code still flagging the tail, five one-word acknowledgements and a question firing under (b) with no `ACKNOWLEDGEMENT_TOKENS`, a one-word "right" / "no" drawing the FIRST code only, `check_note`'s order, the five held-out cases); `test_registered_severities` pins the count at 20. Re-pinned where the new code fires: `test_note_matrix` (cells `ex-small-talk`, `ex-next-patient-greeting`, `ex-head-of-recording-greeting`, `ex-close-and-greet-one-segment`, `ab2-over-omission`; Axis C's present-trigger, prefill-partial and declined cases), `test_save_as_ratification.py` (4 codes, segments `[0, 3, 1, 2]`), `test_note_pipeline.py` (the fixture's "Please use an ice pack tonight"). **Count, recorded:** `NOTE_WARNING_SEVERITY` held 19 codes at HEAD (the Validation table's baseline of 18 left out `unknown_review_warning` or another code), so it is 20 now — a count, not a design change.
+- [x] 🟩 **1.2 The copy, acknowledgement, count line and chooser marks (D1, D3)**
+  - `ui/models.py`: `WARNING_COPY["clinician_line_omitted"]` ("A line you said is not in the note"); `SEPARATELY_ACKNOWLEDGED_CODES` / `_NAMES` and `ACKNOWLEDGE_ALL_TOOLTIP` (the rename ripple); `flagged_segments` reads both omission codes; `flagged_count_line`'s wording rewritten to cover both ("a line you said, or a side, negation, number, dose, name or medication someone said"); `eligible_utterances` front marks short (D3: `[next patient?]`), marks before the speaker, the 60-character cut on the words only; `ui/note.py`'s docstring :44-77.
+  - Tests: `test_ui_models` (the separately-acknowledged set, the tooltip :1979-1985, the count line, the exact labels :2025-2055), `test_ui_screens` `WARNING_COPY` parity; `test_shadow_exits.py` unchanged.
+  - **`[2026-10-24]` Built (stage-1 rx1; ruff and mypy clean; suite owed to the composer).** `ui/models.py`: `WARNING_COPY["clinician_line_omitted"]` ("A line you said is not in the note"; hint: the transcript, the "Show flagged lines only" filter, Add line to section, then acknowledge); the code in `SEPARATELY_ACKNOWLEDGED_NAMES` (so in `_CODES` and the tooltip; 5 codes); `NEXT_PATIENT_LINE_MARK` = `"[next patient?] "` and the `possible_next_patient` name quotes it; a new `OMISSION_CODES` (both codes), which `flagged_segments` reads; `flagged_count_line` → "N flagged line(s) is/are not in the note (a line you said, or a side, negation, number, dose, name or medication someone said)." with the "Line N is replaced…" tail unchanged; `eligible_utterances` already put every mark before the speaker and cut the words only — its docstring now says so (D3); `ui/note.py`'s module docstring (Flagged lines, the next-patient mark). No widget, list, combo, clipboard or placement change (C11). Tests: `test_ui_models` (the set of 5, the tooltip word for word plus a pin that the name quotes the mark, the new copy, `flagged_segments` over both codes and not Check 6, the count line's four cases, the exact labels with `[next patient?]`, and a 159-character line whose label keeps `[flagged] [next patient?]` whole while its words are cut at 60). **Ripple, re-pinned deliberately:** the screens' base fixtures (`_NOTE_TURNS`' "Please use an ice pack tonight"; `_EDIT_TURNS`' segments 3 and 5) carry clinician lines the note leaves out, so the new code is open on every base review — `test_ui_screens.py`'s `_acknowledge_everything` acknowledges it by its own row (like the line-mark codes), the write-tests' `_save`, the window flows and the Note-tab Save flows use that helper, and the tests that assert "Acknowledge all" semantics now assert the new code stays open (`test_confirming_all_then_acknowledge_enables_save`, `test_acknowledge_all_clears_unacknowledged`, `test_removing_a_line…`, `test_acknowledge_all_clears_the_others_and_leaves_the_omission_open` → 2 open, then 1, then 0), and the flagged-lines group starts with lines 3 and 5 flagged (the chooser, the count line, the filter's four entries, the typed-over line's count); `test_ui_prose_stage.py`'s `_ratify` and `test_ui_note_editor.py`'s Save test the same.
+- [x] 🟩 **1.3 Forward tolerance** — a pin that a note holding `clinician_line_omitted` reads on the stored-note path and that the 0.3.3 reader's behaviour (each new-code warning read as an `unknown_review_warning`, fields kept, grouped as one code) is what the rollback line describes.
+  - **`[2026-10-24]` Built (suite owed).** `test_note.py::TestForwardTolerantWarningReader::test_the_new_omission_code_reads_back_and_a_0_3_3_reader_groups_it`: 0.3.4 reads two stored `clinician_line_omitted` back unchanged (and round-trips); with the registry patched to 0.3.3's (the code removed), the same bytes read as two `unknown_review_warning` with their coordinates, no block, ONE review group of count 2 that `acknowledge_all_codes` clears — the rollback line's wording (Task 5.2).
+- [x] 🟩 **1.4 `replay_kept` per-code count** (moved from 2.3, 2026-10-23) — `note_drift` gains the per-code review count for `clinician_line_omitted` (an integer, the code name only), so the practitioner's replay and `docs/testing/kept-recordings.md` can follow it; the numbers-only output pin extended; `test_shadow_exits.py` unchanged.
+  - **`[2026-10-24]` Built (suite owed).** `NoteDrift.clinician_lines_omitted: int = 0` (already inside `reviews`); `note_drift` counts it by code name; the report gains a last column "Clinician lines omitted" (14 columns) and a totals clause "Clinician lines omitted (clinician_line_omitted, among the reviews): N." Tests: the column and its total, the count kept apart and among the reviews (a stubbed checker), an end-to-end uncued clinician line counted once, the error/review test now carries codes, and the report pins at 14 columns. `docs/testing/kept-recordings.md` is Task 5.1's.
+
+### Phase 2 — The missed-speech warning — DROPPED 2026-10-23 (decision 0.4 (2))
+Nothing to build. Tasks 2.1 and 2.2 are removed (their text survives in D2 and the Review Findings Log); 2.3 moved to Phase 1 as 1.4.
+
+### Phase 3 — Hedge scope (`note.py`, `note_check.py`, `ui/models.py`, `validation.py`)
+- [x] 🟩 **3.1 One scope rule, two inputs (D5)**
+  - `note.segment_hedged(document, segment_index)` using `words_hold_hedge` and `ends_mid_sentence`; `validation.script_line_hedged(script, line_index)` with the same rule over script lines, pinned equal to `segment_hedged` on `reference_document(script)` for every `heldout` script.
+  - Callers: Check 1's `reconstruction_warnings` (`note_check.py:603`), `_row_marks` (`ui/models.py:3071`; no signature change), the harness's `:1360` re-derivation and `:1425` `script_hedged`. `line_marks` unchanged.
+  - Tests: `test_note`, `test_note_check` (joined by a comma yes; after a full stop no; a bare cut no; other speaker no; the clinician excluded as today), `test_ui_models` (the editor row's mark agrees with Check 1), the per-set unsure divergence entries, a harness test that a scope-(ii) mark is credited and a scope-(iii) one is not.
+  - **`[2026-10-24]` Built (stage-2 rx1; ruff and mypy clean, 66 source files; the suite is the composer's, through the blind runner).**
+    - **`note.py`:** `segment_hedged(document, segment_index, *, phrases=None)` — the segment's own words hold a hedge (`words_hold_hedge`), or the ADJACENT segment (index ± 1) has the same speaker label, holds one, and the earlier of the two `ends_mid_sentence`. `quoted_line_marks(document, segment_index, words, *, clinician)` — `line_marks(words, clinician=)` unchanged, plus `unsure` (last, never twice) when the line is not the confirmed clinician's and `segment_hedged` holds: THE one rule Check 1 and the line editor both call. `text_holds_hedge` / `words_hold_hedge` gain a keyword `phrases` (None = `note_check.HEDGE_PHRASES`, still read lazily, so the 0.9 monkeypatch test keeps working) for D8's R2 over `REFERENCE_HEDGES` (Task 4.1); the app never passes it. `__all__`; the `hedged_source` severity comment.
+    - **Callers:** `note_check.reconstruction_warnings` and `ui/models._row_marks` call `quoted_line_marks` (no signature change; `line_marks` is no longer imported by either). `validation.script_line_hedged(script, line_index, *, phrases=None)` IS `segment_hedged(reference_document(script), line_index)` — equal by construction (C5); the harness's mark re-derivation reads `segment_hedged(document, coords.segment_index)` (was `words_hold_hedge` over the marked words) and its script term `script_line_hedged(script, fact.line)` (was `text_holds_hedge` over the line). `hedge_marks_unhedged` now counts a mark whose segment is not hedged within the scope. Docstrings updated (`_WordInfo.hedged`, `_judge`, `encounter_metrics`, `EncounterMetrics`).
+    - **Interpretations, recorded (none changes WHAT is built):** (1) "neighbour" is the adjacent index, exactly as Task 0.12's scratch reference (`.cursor/loops/run6-015-analyse.py` `segment_hedged`) computed predictions v1/v2 — so a textless VAD segment between the two halves breaks the join, a named residue beside D5's "a segment in between"; (2) the join reads the earlier segment's raw trailing mark (`ends_mid_sentence` over all its words), as the scratch and the bounded carry do; a suspect hedge supplies nothing (`words_hold_hedge`); (3) the scope is a SEGMENT's: a partly quoted span whose segment hedges outside the span is marked (the scratch marked only when the span itself or a joined neighbour held one; the extractive provider quotes whole segments, so the predictions are unaffected) — this keeps Check 1 and the harness re-derivation one rule, so `hedge_marks_unhedged` stays 0 from the shipped checker by construction.
+    - **Checked, read-only (blind rule kept):** no line of `validation/scripts`, `validation/heldout` or `validation/heldout-2` ends in a joining mark, and neither do the held-out edge cases' turns — so scope (ii) changes no held-out case's unsure lines and no divergence entry (`_PREDICTED_UNSURE_DIVERGENCES_BY_SET` unchanged: `heldout` 3, `heldout-2` 10, `heldout-3` 0), consistent with Task 0.12 ("scope (ii) joins none" on the case documents; its 3 / 0 / 2 extra marks were on the AUDIO documents, where the recogniser splits a line at a comma). The script side of the 50 is therefore scope (i) too; `syn-30` fact 0's credit comes from its own line's hedge plus the product's joined mark.
+    - **Tests:** `test_note.py` `TestSegmentHedged` (9 tests: the next / previous neighbour joined by `,` `;` `:` and both dashes; `.` `?` `!`, a bare cut and a hyphen not; only the earlier segment's mark joins; another speaker never; a segment in between, a textless one included; own hedge; a suspect hedge supplies nothing; `phrases`) and `TestQuotedLineMarks` (4: unsure added after number and never for the clinician; marked once; an unjoined line keeps `line_marks`; a partly quoted line judged by its segment). `test_note_check.py` `TestCheck1HedgeMark` (+4: the scope over five cuts — `,` `;` and a spaced dash mark both lines, `.` and a bare cut only the hedge's; never across speakers; the clinician's joined lines excluded and both marked with no confirmed clinician; a fact line joined to an UNQUOTED hedge marked through `check_note`). `test_ui_models.py` `test_the_hedge_scope_marks_the_same_rows_as_check_1` (every line in the note, routed or added; unsure rows {0, 1} and, with no confirmed clinician, {0, 1, 3, 4}; equal to Check 1's `hedged_source` set both times). `test_validation_metrics.py` `TestHedgeCreditAmendment` (+6: a scope-(ii) mark credited; a scope-(iii) one — Check 1's and a stub's — not, the stub counted unhedged; a hedge the recogniser split off by a full stop not credited (D12's named residue); the `heldout` / `heldout-2` pin, parametrised by script stem over the two NAMED folders only, `script_line_hedged` equal to `segment_hedged` on `reference_document` AND to a text-level re-reading, under both lexicons; the same three-way equality over a synthetic script that does join (commas, a dash, a closing quote, a role change, a reference-only hedge); the two named sets present, `heldout` 22). The per-set unsure divergence test is unchanged (above).
+    - **Not here:** the report header's citation of the scope as a metric amendment (Task 4.2/4.3's header work); the documents (Task 5.1).
+
+### Phase 4 — The harness (`validation.py`, `validation/rules/`, `docs/testing/validation-harness.md`), its own dated commit before run 6
+- [x] 🟩 **4.1 The residue classifiers (D8)** — R1 through `_fact_end_states` (no `all_matched` state) plus the `reference_document` run plus the review-mark term over the walk's `marked` flag on every wrong end state of every occurrence (its numeric near-emptiness documented); R2 only on an unsurfaced fact, through `script_line_hedged` over `REFERENCE_HEDGES`; R3 (axis, the fact at or after `REFERENCE_TAIL_STARTS`, no boundary on the measured document, no listed greeting on the `REFERENCE_GREETING_LINES` line). Each class a field on `FactOutcome` that clears ONLY its own failure predicates, through residue-adjusted counts (D8). Pins both ways for each condition, plus: an already-surfaced fact is not R2 and uses no ceiling; an R2 fact that is also `omitted` still fails `silent_omissions` unless R1; an R1 fact with an unsurfaced uncertainty still fails `uncertainty_missed` unless R2; a fact reported `wrong` with a silently omitted alternative cleared from BOTH counts by one R1 and counted once against R1; a nonmaterial `wrong` or `wrongly_present` fact consuming no allowance; a split-segment fact and a repeated-token fact where only ONE wrong alternative is marked NOT R1, and both marked R1; an unrelated `absent` fact before the tail start not R3; a boundary that fired after the fact not R3; a shared closing-and-greeting line read as the greeting line; a script with the axis and no entry in either table a harness error; the raw counts unchanged, the same outcomes giving v1 FAIL and v2 PASS. `align_transcripts` not used.
+  - `[2026-10-24]` **Amended by D14:** R3 reads `next_patient_boundary(reference_document(script), config) is None` (the reference boundary computed in `evaluate_encounter` from the run's `--config` and passed to `encounter_metrics`) and `REFERENCE_TAIL_STARTS` only (`REFERENCE_GREETING_LINES` is already gone — Task 0.17); R3 is counted per ENCOUNTER (one tail = one event; the residue-adjusted count drops every R3 fact of that encounter) while R1 and R2 stay per fact; an axis script with no `REFERENCE_TAIL_STARTS` row is a harness error, pinned; the reference-boundary mismatch per axis script is printed as integers (D14's recorded check). Pins both ways: a closing gap and a greeting gap both R3; a script whose reference boundary fires is not R3; two absent facts after one tail count once. R1 and R2 unchanged (D17's rejected items are not built).
+- [x] 🟩 **4.2 The warned amendments (D7)** — `warned` reads `clinician_line_omitted` on the fact's segment (the deletion-edge term, its `_FactState` flags and their pins were DROPPED 2026-10-23 with the missed-speech warning — not built); today's `warned` carried as the walk flag `warned_v033`, with `silently_omitted_v033` across every alternative, printed as "Silent (0.3.3 predicate)" (D7); `warned_v1` unchanged and still labelled as run 1's; `_FactState`'s new fields; the report header cites the amendments (`test_validation_harness.py:1198`); D7's retained pins (an omitted fact on a segment carrying `clinician_line_omitted` credited, and the same fact with the code on another segment not; a patient-side omission warned by 0.3.3 and not by run 1; a reported-`wrong` fact with a 0.3.3-silent alternative; the repeated-token state-count bound within 2^10). The deletion-edge pins (partial deletion vs substitution, edges, cross-segment, suspect-filtered, a line beside a pause) went with their term and are not built (peer round 7 PR-MED-026).
+  - `[2026-10-24]` **Amended by D13:** `_WordInfo.warned` also holds on a fact whose aligned segment is anchored by `high_risk_omission` OR `clinician_line_omitted`, spoken by `note.clinician_speaker`, wholly uncovered and before `next_patient_segment` — read from the note's warnings, not from `ui.models.flagged_segments` (so no dependency on Task 1.2). Pins both ways: a wholly uncovered flagged clinician line credited; a partly covered one not; a patient line not; a `high_risk_omission` past the boundary not; a wholly uncovered clinician line with NO warning not; the 0.3.3 column unchanged by all of these.
+- [x] 🟩 **4.3 Rule v2, the set layer and the report** — `PassRule` `Literal[1, 2]` with per-set literal ceilings keyed by set name; `validation/rules/rule-v2.json`; each class clearing only its own failure predicates through the residue-adjusted counts, the raw counts and the v1 verdict untouched (D8); `run_passed`'s set-level check and a set-level failure line; `main` takes the set name (from the folder or a flag) to pick the ceilings; report: per-set class counts, a class column in the Facts table, the v1 verdict line beside the v2 verdict, the one-verdict heading replaced; every positional pin re-pinned (`"---|" * 25`, `cells = ["-"] * 18`, `cells.insert(17, …)`, the TOTAL row, `test_validation_harness.py:1184-1209`); ceilings pinned at n and n + 1; a schema-1 file with ceiling fields refused; a schema-2 file refused by a `Literal[1]` reader (documented, not tested here).
+  - `[2026-10-24]` **Amended by D15 and D17:** four set rows in `rule-v2.json` (`scripts`, `heldout`, `heldout-2`, `heldout-3`) with D8's amended ceilings; a per-set `require_uncertainty_surfaced` overriding the top-level field (default: the top-level value; false for `heldout-3`), pinned both ways; `--set` REQUIRED under schema 2 and refused for an unknown name (schema 1 keeps today's command line); the set row passed into `rule_failures`, `run_passed` and `render_report` (none takes a set today); R3's ceiling counts encounters; the report prints per-set v1 and v2 verdict lines, "Surfaced / expected" per set, and names the gate sets (the 50 and `heldout-3`) beside the reported ones.
+  - Deferred here 2026-10-23 (PR-LOW-016, practitioner-confirmed): an unmeasured cell shows `-`, never `0` — an error outcome's segment count, and each legacy TOTAL counter (reference words, spelling changes, unsupported content, facts, omissions, uncertainty, checker failures, suspect segments) when no outcome contributes to it; a measured zero stays `0`. Word-level, note-level and suspect totals take separate availability checks (a role-unresolved encounter still supplies transcription measurements). Under rule v2's report only; `--attribution clustering` under rule v1 keeps `_CLUSTERING_BASELINE_C5F3179`'s shape unless this task re-pins it deliberately.
+- [x] 🟩 **4.4 The harness document** — `docs/testing/validation-harness.md`: the amendments (dated), the rule v2 section with its override text (verbatim from Task 0.7) and the set layer, `heldout-2`, the three-set gate, the fitted-ceiling statement; Task 0.14's attribution amendment paragraph cross-checked against the policy as built.
+  - `[2026-10-24]` **Amended:** D15's and D17's disclosure text verbatim (the gate change after a predicted failure and before the run, its reason, the Honest forecast's quoted line, the critic's objection and the four loosenings named); D13 and D14 as dated metric amendments; `heldout-3`, its brief's bounds and its scope qualifier; the deleted greeting table; the four-set run and `--set`; "the three-set gate" in the task line above reads as D15's; `validation-harness.md:122` ("still silent … fails the run") qualified — true for the gate sets, reported for `heldout` and `heldout-2`. `[2026-10-24, peer round 25]` D18's falsifiers and D15's "unchanged" clause are worded as residue-adjusted counts (an R1-cleared silent omission within the ceiling passes v2).
+
+### Phase 5 — Documents and version
+- [x] 🟩 **5.1 Documents (D10)** — as D10 lists; exact on-screen strings quoted from `ui/models.py`; the review guide's 0.3.4 lines marked as awaiting the practitioner's approval; a sweep of `docs/` for "high_risk_omission", "omission warning", "after possible next patient", "Acknowledge all" and "hedge" reconciled and recorded here. `test_pilot_docs.py` green.
+  - `[2026-10-24]` **Amended:** `heldout-3` (`h3-`) beside `h2-` in `docs/pilot/README.md:161` and the register's prose; `validation/README.md` already names it (0.17); the review guide unchanged by the re-plan.
+  - **`[2026-10-24]` Built (stage-4 rx1; documents only; `test_pilot_docs.py` and the suite owed to the composer through the blind runner).** Every on-screen string quoted was copied from `ui/models.py` at HEAD (`WARNING_COPY["clinician_line_omitted"]` title and hint, `["high_risk_omission"]`, `["hedged_source"]` title, `["possible_next_patient"]`; `ACKNOWLEDGE_ALL_TOOLTIP` as its f-string renders over the five `SEPARATELY_ACKNOWLEDGED_NAMES`; `flagged_count_line`'s plural form; `NEXT_PATIENT_LINE_MARK`) and from `ui/note.py` ("Show flagged lines only", "Add line to section", "Edit the note"); the replay's column and totals clause from `replay_kept.py`.
+    - **Per D10's list:**
+      - `docs/security/threat-model.md` — surface 2: a 0.3.4 paragraph after Check 4's warning (the second code's seven conditions, `[flagged]`, the one count line, separately acknowledged, never deletes; named residues: a one-word acknowledgement fires it, a clinician line attributed to the other voice fires nothing, coordinate coverage and a confirmed autofill line); NEXT PATIENT's mark → `[next patient?]` (the old mark named as history) and "Check 4's second code stops at the boundary"; THE UNSURE MARK: 33 phrases (16 in 0.3.3) and scope (ii), its SCOPE AND COARSENESS residues rewritten (the old examples "not sure" / "I don't know" / "I reckon" were stale: the last two are listed since Task 0.9); surface 3's "an uncued sentence … stays unflagged" qualified for the clinician's wholly unquoted line; surface 5's separately-acknowledged set (five, the tooltip names all five) and its "Rolling back" (0.3.4's code on 0.3.3 / 0.3.2); the re-review triggers gain a 0.3.4 line.
+      - `docs/security/data-flow-map.md` — flow 10 gains the 0.3.4 paragraph (in-memory reads only; the new warning's position-only coordinates saved in `note.enc`, the stored note's only change); flow 7 needed nothing (0.3.4 changes no transcription); the title names the plan.
+      - `docs/release/pilot-builds.md` — "Rolling back below 0.3.4" (Task 5.2).
+      - `docs/testing/validation-harness.md` — reconciled, not rewritten (Task 4.4 wrote it): three stale lines in Known limits — "Material facts in an uncued sentence" (what stays silent, since 0.3.4), "Expected uncertainty" (the hedge scope, 16 → 33, a split hedge not joined), "Spoken contradictions" (`clinician_line_omitted` among the review warnings, read by `warned`).
+      - `docs/testing/shipping-gate.md` — a dated note after the 0.3.2 clarification (not a rubric change, not inside the clarification awaiting initials): the two rows cleared only by their own Acknowledge since 0.3.3 / 0.3.4, and `[check: unsure]` cleared by "Acknowledge all".
+      - `docs/testing/kept-recordings.md` — the "Clinician lines omitted" column row and a 0.3.4 paragraph (Check reviews can rise; Sections missing unchanged; 14 columns).
+      - `docs/design-system.md` — the flagged-lines bullet (both codes, the count line's 0.3.4 wording, `OMISSION_CODES`), the next-patient bullet (`[next patient?]`, D3's reason), the check-marks bullet (scope (ii)), the two-button bullet (the fifth code, its copy, the tooltip word for word), the omission-copy bullet (its sibling's copy).
+      - `docs/practice/clinician-review-guide.md` — the 0.3.4 lines, marked "added 2026-10-24 for version 0.3.4, awaiting the practitioner's approval" in the guide's header (the wording the 0.3.2 lines used): step 4 (the wider doubt list, the joined halves, what stays unmarked), step 5 (`[next patient?]`), step 6 (the new warning, how to find and add the line, a one-word reply can raise it, a misattributed line raises nothing). Plain English, no file or code names (the guide quotes the screen word for word). `docs/practice/README.md`'s "updated on …" sentence gains 0.3.3 and 0.3.4 (both guide-only) — 0.3.3 was missing.
+      - `docs/pilot/README.md:161` and the register's prose (:20, :33) — `h2-01` … and `h3-01` … named as joining with run 6's register update, "once its Encounter check names them" — prose only; the table and `test_pilot_docs.py`'s Encounter pattern stay P.3's, so the prose does not claim the check accepts them yet.
+      - `docs/architecture/phase-history.md:55` — the two quotes of the old mark keep their history and gain "(`[next patient?]` since 0.3.4)"; `:51` holds no quote of the mark (its "hedge" is 0.3.3's history, correct).
+      - `validation/README.md` — the `rules/` line names `rule-v2.json` (schema 2, four set rows, the gate flag, `heldout-3`'s uncertainty reported, `--set`), checked against the file.
+      - `CHANGELOG.md` — the 0.3.4 entry (Phases 0–5) in the 0.3.3 entry's style. AGENTS.md not edited (the composer's `/document`).
+    - **The sweep (2026-10-24, before the edits):** searched `docs/` (all files), `validation/README.md` and `CHANGELOG.md` — never `validation/` as a whole, never `validation/heldout-3/` (no `h3-` line returned). Terms, case-insensitive: "high_risk_omission", "omission warning", "after possible next patient", "Acknowledge all" (44 matching lines in 8 files: threat-model 12, design-system 10, validation-harness 10, phase-history 3, pilot-builds 3, practice guide 3, kept-recordings 2, shipping-gate 1); "hedge" (42 occurrences in 10 files: validation-harness 14, threat-model 10, findings-register 9, design-system 2, phase-history 2, and one each in cross-agent-orchestration, exit-gate, pilot README, pilot-builds, kept-recordings); `CHANGELOG.md` 3 (the 0.3.1–0.3.3 entries, history); `validation/README.md` 0.
+      - **Changed (stale against 0.3.4 as built):** threat-model :497-501 (extended), :532, :622-637, :643-653, :829-836, :855-860, :4478; design-system :153-175, :218-223, :409-421, :845-849; practice guide :101-113 and the header; kept-recordings :40 (a row after it) and a paragraph after :53; shipping-gate :102 (a note after it); validation-harness :180, :182, :184; phase-history :55 (×2); pilot README :161, register :20, :33; validation/README :8.
+      - **Correct already, left:** phase-history :51, :55's other hedge mentions, :75, :77 (0.3.1 and 0.3.3 history); design-system :388-408 (the 0.3.1–0.3.3 behaviour, still true; extended after it); threat-model :498, :527, :629 ("Acknowledge all" clears the unsure mark — still true), :781, :793, :836-838, :877 (0.3.2 history and still-true reader lists); kept-recordings :47, :52 (0.3.2 / 0.3.3 paragraphs, still true as history); pilot-builds :21, :22 (builds of record, history) and :73 (0.3.3's rollback, true); validation-harness :23, :64, :67, :77, :81, :85, :87, :163, :166, :167, :186 (Task 4.4's text or dated history); shipping-gate :102 itself (awaiting initials; not edited); the register's rows :105-:190 (P.3's table); cross-agent-orchestration :1471 (an unrelated "hedge"); CHANGELOG's three (history).
+      - **Found, not D10's, routed (LOW, headless Include in plan → P.3):** `docs/pilot/exit-gate.md:16-25` ("Validation passed … under rule v1 as amended") and `docs/pilot/README.md:83-99` (step 3's `--rule …option-a-proposed.json`) describe the validation run as rule v1's; under D15 run 6's gate is rule v2 on the 50 and `heldout-3`. Rewording a signed exit-gate line is the practitioner's, so it was not edited here; added to P.3 below.
+- [x] 🟩 **5.2 Version 0.3.4 and the rollback line** — the six version places (`npm version 0.3.4 --no-git-tag-version` needs npm; a leg without it sets them by hand); "Rolling back below 0.3.4" in `docs/release/pilot-builds.md`: the new code reads as a newer-build review warning on 0.3.3, cleared by its Acknowledge all, so the separately-acknowledged control is lost there; nothing else changes on disk. Done when: `test_install_layout.py:867` green; `npm run qa`.
+  - **`[2026-10-24]` Built (stage-4 rx1; by hand — no npm in the leg; `test_install_layout.py` and `npm run qa` owed to the composer).** 0.3.3 → 0.3.4 in the six fields the version test reads: `desktop/pyproject.toml` `[project] version`, `desktop/src/scribe_desktop/__init__.py` `__version__`, `extension/package.json` `version`, `extension/package-lock.json` top-level `version` and `packages[""].version`, `extension/src/manifest.ts` `version:` — nothing else in those files touched. No other `"0.3.3"` literal under `desktop/` or `extension/` (node_modules excluded). "Rolling back below 0.3.4" sits above "Rolling back below 0.3.3": one new stored thing (the review warning), read on 0.3.3 / 0.3.2 as "A review warning from a newer version of the app", one row with its count, coordinates kept, cleared by that build's "Acknowledge all" — the separate click lost, no warning dropped (Task 1.3's pin named); a note the older build generates is checked by its own rules; the `[next patient?]` mark is on screen only; no recording needs finishing for 0.3.4's sake; below 0.3.3 the older rules apply. ruff and mypy clean (66 source files).
+
+### Hardening stage
+- [x] 🟩 **H1** `/review-loop` to convergence over the whole run.
+  - **`[2026-10-24]` Built (stage-5 rx1; suite owed to the composer through the blind runner).** Round 50 converged in one round: 13 LOW applied (a docstring, a pin, and documents lagging the harness code — `validation-harness.md`, CHANGELOG's 0.3.4 entry, data-flow flow 26). Cross-phase checks are recorded on round 50.
+  - **`[2026-10-24]` Verified (stage-5 rx2):** the composer's full suite over round 50's changes, through the blind runner: 8615 collected, 8606 passed, 0 failed, 0 errored, 9 skipped (the nine link tests).
+- [x] 🟩 **H2** `/simplify`: trivial → `/fix`, substantial → scoped `/review-plan`.
+  - **`[2026-10-24]` Round 51 (composer-run subagent): 1 LOW, SIMP-001, trivial → `/fix`, applied in stage-5 rx2.** The three unread `EncounterMetrics` reference fields were removed with their two test sites. Also corrected: `note.text_holds_hedge`'s docstring, a routed note. ruff and mypy are clean.
+  - **`[2026-10-24]` Verified (stage-5 rx3):** the composer's full suite over round 51's changes, through the blind runner: 8614 collected (one fewer, the removed metrics test), 8605 passed, 0 failed, 0 errored, 9 skipped (the nine link tests).
+- [x] 🟩 **H3** `/security-review`: the new warning's anchor (no content in a code), the builder's passage and the harness's in-memory enrolment (D11), the kept-recording measurement script's refusals and integer-only output, the harness's handling of the reference transcript.
+  - **`[2026-10-24]` Round 52 (composer-run subagent, portable checklist): 0 findings, Closed.** Four candidates were challenged and dropped there.
+- [x] 🟩 **H4** Final cross-family `/peer-review` (codex `gpt-6-astra` medium), documents included (`docs/lessons.md`: a docs-only phase still draws peer findings).
+  - **`[2026-10-24]` Pass stage-5.p1:** round 53, the code lens, 0 findings over 24 claims; round 54, the documents slice (all thirteen documents), 1 LOW, PR-LOW-001 (`validation-harness.md:180`, line eligibility vs a fact's suspect-word credit). It was verified and fixed in stage-5 rx3 with no sibling. Cap verdict: converge. Docs only, so no suite is owed.
+- [x] ⬜ **H5 — NOT DONE: declined by the practitioner 2026-10-25** 0.3.4 built of record after P.1 on the H4 commit: the `Release` workflow, `gh attestation verify`, the `docs/release/pilot-builds.md` row, CI green. If P.1 forces a code change, H1–H4 and P.1 run again before H5.
+  - `[2026-10-25]` **Declined (the practitioner, in chat: "i'll wait for .3.5").** 0.3.4 is not built of record and not installed; the installed clinic app stays 0.3.3. Run 6 did not meet the gate (P.1), and shadow mode stays on (`plan-pilot.md` P.5 (a)), so nothing clinical waits on 0.3.4. Its changes (H4 commit `5f1e3e5`) ship first in the 0.3.5 build of record, which repeats H5 and P.2 there. `docs/release/pilot-builds.md` records that 0.3.4 has no build of record.
+
+### Phase P — Practitioner (normal terminal, developer build, installed app closed; C1, C8, C10)
+- [x] 🟩 **P.1 Run 6, the run of record**
+  - `[2026-10-24]` **Amended by D15–D18:** FOUR sets built and run (`validation/heldout-3` added); the gate is read on the 50 (against predictions v1/v2) and `heldout-3` (against D18's priors and falsifiers); `heldout` and `heldout-2` are reported in full against predictions v2. Anything outside the predictions or the priors is a finding, never a rule edit; a falsifier on `heldout-3` is a FAIL of the gate.
+  - From a clean, committed checkout at the H4 commit: check the voice baseline; build `validation/scripts`, `validation/heldout`, `validation/heldout-2` and (`[2026-10-24]`) `validation/heldout-3` into empty folders outside the repository; run each with `.venv\Scripts\python.exe scripts\run-validation.py <set> --config validation\config --rule validation\rules\rule-v2.json --set <name>` (the set name selects its row; `[2026-10-24]` `--set` is required under schema 2).
+  - Record in `validation-harness.md` "Runs of record" and `plan-pilot.md` P.3: commit, manifest hash, voices, rule and cue blobs, the amendments in force (`[2026-10-24]` D7/D13, D8/D14, D11, D15, D17 by date), per-set v1 and v2 verdict lines with the gate sets named, the residue counts by class, "Surfaced / expected" per set, the new code's count, the attribution policy (enrolment, D11) and both attribution-seconds totals, `heldout-3`'s set commit, its pre-registration hash and its isolation log's name, and each D18 falsifier's outcome.
+  - Read against predictions v1 and v2 (the seen sets) and D18's bands and falsifiers (`heldout-3`); anything outside them is a finding, never a rule edit; a falsifier on `heldout-3` is a FAIL of the gate (`[2026-10-24]`).
+  - Delete the folders; check `%TEMP%` for `scribe-speaker-eval-*`.
+  - `[2026-10-24]` It is also Phase 4's live-user smoke (the harness under rule v2 and `--set`, over the four sets): the practitioner carried it here in chat during stage-3 of the same run. Phase 4 was committed without a separate smoke.
+  - **Record (2026-10-24 → 2026-10-25; the practitioner, normal terminal, developer build, installed app closed): run 6 is the run of record and the gate is NOT met.** Checkout at `3249af0` (clean, committed, pushed; CI run 40148433250 green): H4's `5f1e3e5` plus `AGENTS.md`, one plan pointer line and `ci.yml` only, so `desktop/src` and `validation/` are H4's. Rule v2 `validation/rules/rule-v2.json` blob `0f333d8937ffa26f7819d0a76cb20db268fbcbf4`; rule v1 `option-a-proposed.json` blob `ec6c38d4…` and the cue file `c7f7b53d…` unchanged; models manifest `10a83493…9930a`; Whisper `medium`, VAD `silero`, prose off; attribution `enrolment` (D11); amendments in force: D5 (2026-10-22), D7 and D13 (2026-10-22, 2026-10-24), D8 and D14 (2026-10-22, 2026-10-24), D11 (2026-10-23), D15 and D17 (2026-10-24). The voice check was not in the pasted output. Four sets, each built into an empty folder outside the repository: 0 build errors, 0 set-level errors. Ids and counts only:
+    - **The 50 (gate set): rule v2 PASS; rule v1 FAIL** (45 / 5: `syn-22` silent, `-28` wrong, `-35` uncertainty, `-38` and `-46` wrong). WER 0.013 over 2785; 162 facts — 124 correct, 3 wrong, 34 omitted, 1 silent (30 by run 1's predicate, 1 by 0.3.3's), 32 warned; uncertainty missed 1; 0 unsupported clinical lines (14 other unsupported words); attribution seconds 12.0 / 7.4. R1 `syn-22`/f2, `syn-28`/f1; R2 `syn-35`/f2; R3 `syn-38`, `syn-46` (2 encounters); after the classes wrong 0, silent 0, uncertainty missed 0. Surfaced / expected 9 / 10 (required). `clinician_line_omitted` total 46, median 1, maximum 4. Exactly predictions v1 and v2.
+    - **`heldout-3` (blind gate set; set commit `8996a75`, pre-registration `3b699628…` (Task 0.16), isolation log `validation/heldout-3/author-session.jsonl`): rule v2 FAIL; rule v1 FAIL** (14 / 9: `h3-02`, `-03`, `-10`, `-12`, `-14`, `-17`, `-19`, `-20`, `-21`). v2 fails on `h3-03` (an unsupported clinical line, which no class excuses) and on R3, 2 encounters (`h3-02`, `h3-17`) against its ceiling of 1. WER 0.013 over 3033; 116 facts — 60 correct, 3 wrong (`h3-02`/f4 and `h3-17`/f5 `wrongly_present`, R3; `h3-03`/f0 `wrong`, R1, so under a review mark), 53 omitted, 0 silent (21 by run 1's predicate, 14 by 0.3.3's), 52 warned; uncertainty missed 6; 1 unsupported clinical line (`h3-03`; 8 other unsupported words); Surfaced (acoustic only) 1; attribution seconds 4.7 / 1.9. R1 `h3-03`/f0; R2 (reported) `h3-10`/f2, `-12`/f0, `-14`/f1, `-20`/f0, `-21`/f2; after the classes wrong 0, silent 0, uncertainty missed 1 (`h3-19`/f1). Surfaced / expected 2 / 8 (25%, reported, D17). `clinician_line_omitted` total 96, median 4, maximum 10 (`h3-05`, `h3-21`). `possible_next_patient` on `h3-01` only.
+    - **D18 read on `heldout-3`:** gate falsifiers — R3 above 1 encounter FIRED (2); silent after R1 0, a material fact `wrong` without a review mark 0, R1 1 fact (at its ceiling), `wrongly_present` outside R3 0 — quiet. Not pre-registered: the unsupported clinical line on `h3-03` (rule v2 fails it whatever the class). Bands — new-code median 4 (inside 1–5), maximum 10 (OUTSIDE ≤ 9: a finding); surfaced-doubt rate 25% (inside 15–40%); reference-boundary mismatches 1 script (`h3-01`: boundary 10, tail 11; inside 0–2); R2 5 facts (reported). The prediction: v1 FAIL, as predicted; v2 PASS, not met. This is not D18's "ONLY unmarked confident errors" branch, and R1 stayed within its ceiling, so the larger-model plan is not triggered by this run.
+    - **`heldout` (reported): rule v2 FAIL** (`hld-14`, `-21` wrong; R2 4 over 1); **rule v1 FAIL** (17 / 5: `hld-07`, `-14`, `-19`, `-20`, `-21`). WER 0.004 over 1659; 76 facts — 67 correct, 4 wrong, 5 omitted, 0 silent (5 / 1), 5 warned; uncertainty missed 4; 0 unsupported clinical lines (4 other); seconds 0.7 / 0.0. R1 `hld-07`/f0; R2 `hld-19`/f2, `-20`/f2, `-21`/f1, `-21`/f2; R3 `hld-14`; after the classes wrong 2, silent 0, uncertainty missed 0. Surfaced 2 / 6. New code total 24, median 1, maximum 4. Reference-boundary mismatch `hld-10` (5, 4), known since Task 0.15. Exactly predictions v2.
+    - **`heldout-2` (reported, the out-of-scope control): rule v2 FAIL on 15 encounters** (`h2-01`, `-03`, `-04`, `-07`, `-08`, `-09`, `-11`, `-13`, `-14`, `-17`, `-18`, `-19`, `-20`, `-21`, `-22`; R2 9 over 1); **rule v1 FAIL** (3 / 19: all but `h2-02`, `-06`, `-16`). WER 0.011 over 3273; 233 facts — 92 correct, 2 wrong, 139 omitted, 25 silent (96 / 65), 111 warned; uncertainty missed 12; 0 unsupported clinical lines (5 other); seconds 4.8 / 2.2. R1 none; R2 `h2-03`/f1, `-05`/f0, `-08`/f7, `-10`/f1, `-12`/f2, `-13`/f2, `-15`/f0, `-18`/f1, `-21`/f4; R3 `h2-05`; after the classes wrong 0, silent 25, uncertainty missed 3. Surfaced 1 / 13. New code total 104, median 5, maximum 9. No reference-boundary mismatch. The v2 lines are exactly predictions v2.
+    - **A finding about the prediction record, not the run:** predictions v2 carried `heldout-2`'s rule v1 line over from v1 unchanged (21 of 22 failing); the run fails 19. `h2-02`, `-06` and `-16` pass with 0 silent facts: rule v1 reads the same outcomes as rule v2 on the raw counts, so D13's flagged-line credit reaches rule v1's verdict too, and Task 0.15 re-walked only the v2 line under D13. Recorded here, never a rule edit.
+    - **Consequence:** the gate is not met — a recorded finding (the Follow-Up note: "a `heldout-3` failure is a finding, never a tuning target"). `plan-pilot.md` P.5 stays (a): shadow mode stays on, and the next cycle is a new plan (0.3.5, Plan Mode with Fable), drafted after P.4 has classed `heldout-3`'s failures. H5 is not conditioned on a pass (0.3.3 was built of record and installed after the failing run 5); whether 0.3.4 is built of record and installed is put to the practitioner after P.4.
+    - Custody: `C:\run6\scripts`, `C:\run6\heldout` and `C:\run6\heldout-2` may be deleted; `C:\run6\heldout-3` is kept until P.4 is committed; then `%TEMP%` is checked for `scribe-speaker-eval-*`.
+- [x] ⬜ **P.2 — NOT DONE: declined by the practitioner 2026-10-25** Install 0.3.4 and smoke it
+  - `[2026-10-25]` **Declined with H5** ("i'll wait for .3.5"). The mock smoke below — also Phases 1 and 3's live-user smoke — is owed by the 0.3.5 plan's own install smoke, which must cover these lines as well as its own: Phases 1 and 3 have had no live smoke on any build.
+  - Verify (`gh attestation verify`, hashes) and install at a pilot-allowed point; reload the extension; restart Chrome.
+  - Mock smoke (desktop-started, no patient, shadow on, no development tick, Discarded): an uncued clinician advice line shows "A line you said is not in the note", Acknowledge all leaves it, the per-code click clears it; a hedge after a comma-cut line shows `[check: unsure]`; the chooser's `[flagged]` / `[next patient?]` marks are readable; the count line reads correctly; the Status tab shows 0.3.4.
+  - `[2026-10-24]` This mock smoke is also Phase 1's live-user smoke: the practitioner carried it here in chat during stage-1 of run `validation-run6-20261024-125936-4d21`, rather than smoking Phase 1 on the developer build. Phase 1 was committed without a live smoke of its own.
+  - `[2026-10-24]` It is also Phase 3's live-user smoke (its `[check: unsure]` line above): the practitioner carried it here in chat during stage-2 of the same run. Phase 3 was committed without a live smoke of its own.
+  - Done when: the result is on this task and AGENTS.md says 0.3.4 is installed.
+- [x] 🟩 **P.3 The register and the P.5 question**
+  - `[2026-10-24]` **Amended:** rows for `heldout` and `heldout-2` from run 6 by class — an unrouted patient statement silently absent (control: the chooser lists every unrouted line; the clinician's review), hedge idioms outside every list, the confident recogniser errors, the closing gap — and `heldout-3`'s after P.4; the Encounter cell pattern gains `h2-` and `h3-` with both-ways cases.
+  - Move rows to `resolved` ("0.3.4 (commit <H4 short hash>)") or keep them `controlled` (control text ≤ 200 characters) by the run's result; new rows from `heldout-2` as `h2-NN` and (`[2026-10-24]`) from `heldout-3` as `h3-NN` after P.4 — the Encounter cell pattern in `test_pilot_docs.py:113` becomes `(?:syn|hld|h2|h3)-` with both-ways cases (:266-292), and the register's prose (:20, :33) and `docs/pilot/README.md:161` name the third and fourth id forms.
+  - Put the P.5 question (shadow off?) to the practitioner as a dated decision on `plan-pilot.md`.
+  - `[2026-10-24, stage-4 Task 5.1 sweep; LOW, headless Include in plan]` Reconcile `docs/pilot/exit-gate.md`'s "Validation passed" line (rule v1 as amended) and `docs/pilot/README.md` step 3 (`--rule …option-a-proposed.json`) with D15's gate (rule v2, `--set`, the 50 and `heldout-3`, `heldout` and `heldout-2` reported) — the exit-gate wording is the practitioner's.
+  - Done when: `test_pilot_docs.py` green and committed.
+  - **Record (2026-10-25; composer): the register updated after run 6 and P.4; ids and counts only.**
+    - 39 new rows, F-102–F-140, all `controlled` by shadow mode (0.3.4 has no build of record, so none is `resolved`), found and closed 2026-10:
+      - `heldout`: F-102 (`hld-07`, the misheard word under a review mark, R1).
+      - `heldout-2`: F-103–F-116 (14 encounters, a patient line no cue routes, silently absent); F-117–F-125 (9, a hedge outside every list, R2); F-126–F-128 (3, a listed hedge split from its fact, or a bare modal); F-129 (`h2-05`, a next patient met with an unlisted closing, R3).
+      - `heldout-3`: F-130 (`h3-03`, the misheard number that is also the unsupported line); F-131, F-132 (`h3-02`, `-17`, an unbroken next patient, R3); F-133–F-137 (5, R2); F-138 (`h3-19`, a bare modal); F-139, F-140 (`h3-05`, `-21`, medium workflow: ten left-out-line warnings in one note).
+    - Five older rows re-checked by run 6, still `controlled`: F-089, F-090, F-093 and F-099 (run 6 does not fail these encounters with the voice enrolled); F-094 (`hld-19`: the left-out line is warned since `5f1e3e5`, not installed).
+    - The Encounter pattern is `(?:syn|hld|h2|h3)-[0-9]{2,}|—`, with both-ways cases (`h4-01`, `h3-1`, `k-01` refused); the register's prose and `docs/pilot/README.md` name the four id forms; README step 3 names rule v2 and D15's gate.
+    - The P.5 question: (a) stands, dated on `plan-pilot.md` P.5 2026-10-25 (not a new decision).
+    - **Not done here:** `docs/pilot/exit-gate.md`'s "Validation passed" line still names rule v1 — the wording is the practitioner's; carried to the 0.3.5 plan.
+    - `test_pilot_docs.py`: 10 passed.
+
+- [x] 🟩 **P.4 The `heldout-3` diagnosis, after run 6 (D16)**
+  - The one task that reads `heldout-3`: its `HeldOutCase` entries, the three divergence dicts' entries and `cases_written=True`; the role-derived `REFERENCE_TAIL_STARTS` rows compared with the cases' boundaries (`[2026-10-24, peer round 25]`: a case boundary at the clinician's welcome precedes the role tail by one; differences recorded as ids and integers, never required equal); every failure classed as Task 0.12 classed `heldout-2`'s (ids and counts only); its register rows (P.3). Done when: committed on the practitioner's word; the plan's Handoff Note says whether the gate was met and what P.5 is asked.
+  - **Record (2026-10-25; composer, after run 6; ids and counts only).** The blind rule ends here. The set was re-transcribed from run 6's built audio into `C:\run6-p4\heldout-3` with the scratch `run6-012-transcribe.py`. Every number below equals run 6's `heldout-3` line on P.1: new code 96 / median 4 / maximum 10; surfaced 2 / 8; the same R1, R2 and R3 ids.
+    - **What was written** (uncommitted):
+      - `HELDOUT_3_CASES`: 23 cases. The set row is `cases_written=True`, `tails_by_role=True`, `routed_material=True`.
+      - Divergence entries:
+
+        | Axis | Count | Ids | Reason |
+        |---|---|---|---|
+        | Boundary | 9 | `h3-02`, `-09`, `-10`, `-11`, `-12`, `-13`, `-17`, `-18`, `-20` | The product finds no boundary. |
+        | Corrections | 2 | `h3-15`, `-19` | The opener is not a frozen marker. |
+        | Unsure | 7 | `h3-04`, `-10`, `-12`, `-14`, `-19`, `-20`, `-21` | Four hedges outside the frozen list, two doubts on their own line, one self-question. |
+
+      - The count pins are now heldout 7 / 6 / 9 (boundary), 2 / 4 / 2 (corrections) and 3 / 10 / 7 (unsure).
+      - The lint's blind-set pin is now `[]`: no set is blind.
+      - `validation/README.md`'s `heldout-3` bullet is in the past tense.
+      - Suite: `ruff` and `mypy` clean. Run through the blind runner: 8788 passed, 9 skipped, and 1 failed. That failure was the old blind-set pin, now rewritten. `test_lint_held_out_set.py` was then run on its own: 1 failed, 65 passed. That failure was an ini-option case that ran alongside the transcription job, and it passed on its own (8 / 8), so it was contention.
+    - **Tails against the cases' boundaries:**
+      - All 10 axis scripts with a next patient have a case boundary exactly one before the role-derived tail: the welcome line. The pairs, as (boundary, tail): `h3-01` 10 / 11, `-02` 9 / 10, `-09` 5 / 6, `-10` 12 / 13, `-11` 10 / 11, `-12` 10 / 11, `-13` 9 / 10, `-17` 7 / 8, `-18` 8 / 9, `-20` 7 / 8.
+      - The 7 negatives (`h3-03` to `-08`, `-23`) have a None row and no boundary.
+      - The product found a boundary only on `h3-01`, at 10, equal to its case boundary.
+      - Why the other nine were missed, by the frozen lists:
+        - the closing is not listed: `h3-02`, `-12`, `-18`;
+        - the greeting is not listed: `h3-09`, and `-20` (a bare time-of-day greeting);
+        - neither is listed: `h3-10`, `-11`, `-13`, `-17`.
+      - **Record correction:** Task 0.17's line "9 with a tail and 8 negatives" is a miscount. `REFERENCE_TAIL_STARTS` has held 10 and 7 since `8996a75`.
+    - **Every failure, by class.** Rule v1 fails 9 encounters; rule v2 fails the set on two counts.
+      - **R1, 1 fact:** `h3-03`/f0 is `wrong` under a `number_source` mark (the recogniser's wrong number). The same word is the set's one unsupported clinical line. `rule_failures` fails any encounter with an unsupported clinical line under either rule, with no ceiling and no R1 exemption (`validation.py:2282`), so a recogniser error that R1 clears as a fact still fails the encounter as an unsupported line. **Finding (rule).**
+      - **R3, 2 encounters:** `h3-02`/f4 and `h3-17`/f5. The reference pipeline also judges both `wrongly_present`.
+        - Of the nine boundary misses, only these two reached the note, because the next patient's line holds a section cue.
+        - In the other seven, the next patient's content stayed unrouted and is correctly absent. So R3's count depends on what the next patient says, not on the miss.
+        - **Finding (vocabulary):** 9 of 10 boundaries missed against frozen lists. The closings and greetings were varied by the brief, as they are in real speech.
+      - **R2, 5 facts (reported, not gated, D17):** `h3-10`/f2, `-12`/f0, `-14`/f1, `-20`/f0, `-21`/f2.
+      - **Unsurfaced outside R2, 1 fact (reported, not gated):** `h3-19`/f1, a bare-modal hedge ("may"), which is in `_REFERENCE_ONLY_HEDGES`. A fail by design (D5; D17's rejected item), like `heldout-2`'s bare-modal fact.
+      - **Surfaced 2 / 8:**
+        - `h3-07`/f0 by the hedge credit;
+        - `h3-04`/f0 by a recogniser `low_confidence_source` mark only ("Surfaced (acoustic only) 1"). Its hedge is outside the list, and it is one of the unsure divergences, so it was surfaced by chance, not by design.
+      - **Silent omissions:** 0 under rule v2 (14 by 0.3.3's predicate, 21 by run 1's). D1's code with D13's credit cleared every one, and no D18 silent-fact falsifier fired.
+    - **The new code's load (D18 band: maximum ≤ 9; observed 10 on `h3-05` and `-21`)** comes from segmentation.
+      - The 96 warnings fall on 64 distinct script lines.
+      - The reference pipeline (one segment per script line) draws the code 0–1 times per script, 5 in all, each on a whole line.
+      - The other 91 sit on pieces of lines the recogniser split:
+
+        | What the reference does with the whole line | Warnings |
+        |---|---|
+        | Already warns it with `high_risk_omission` | 65 |
+        | Partly covered (or empty) | 17 |
+        | Warns it with the new code | 6 |
+        | Marks it `number_source` | 3 |
+
+      - Worst case: `h3-05`'s line 4 was split into 8 segments, and 6 of them drew the code.
+      - **Finding (predicate):** D1 excludes a line that already draws `high_risk_omission`, but it judges per segment. Once the recogniser splits the line, every piece without the flaggable word draws the new code. So one clinician line can raise up to one warning per piece. This is the 0.3.5 candidate for the load.
+    - **D18 read, restated:**
+      - Falsifiers: R3 above 1 encounter fired (2); every other falsifier was quiet.
+      - Bands: new-code median inside (4); maximum outside (10, segmentation as above); surfaced rate inside (25%); reference-boundary mismatches inside (1, `h3-01`, the welcome offset).
+      - **Not pre-registered:** the unsupported-line rule's interaction with R1.
+    - **What P.5 is asked:** nothing new. The gate was not met, so P.5 stays (a): shadow mode on. The 0.3.5 plan (Plan Mode, with Fable) starts from the four findings above:
+      1. the unsupported-line metric's missing R1 exemption (a rule decision, made before any run);
+      2. the boundary vocabulary (a dated phrase-list decision with a repeated run, C3);
+      3. the new code counted per segment;
+      4. the bare-modal and unlisted-hedge doubts (reported).
+    - **Custody:** after this task is committed, `C:\run6\heldout-3` and `C:\run6-p4` may be deleted, `%TEMP%` checked for `scribe-speaker-eval-*`, and `.cursor/loops/held-out-lint/` deleted (SEC-003).
+
+## Retained Follow-Up Items
+None yet.
+
+## Follow-Up Continuation Notes
+- If `heldout-2` fails: record the findings, keep P.5 (a), and plan `heldout-3` with a 0.3.5 fix — never tune 0.3.4's constants, lists or ceilings to it. `[2026-10-24]` Superseded: `heldout-2` failed in the predictions; the practitioner chose the re-plan (D12–D18) over the 0.3.5 cycle, and D14 (the closing gap, the encounter unit) does change what `h2-05` counts as — disclosed in D15 as a loosening. The line is kept as history; the rule it states now applies to `heldout-3`: a `heldout-3` failure is a finding, never a tuning target.
+- If run 6 exceeds the R1 ceiling: the larger-model plan (Excluded here) becomes the next candidate.
+
+---
+_Plan hardened by `/review-plan` 2026-10-22 (Opus 5.5, then Fable 5.1). Planning only: nothing built, nothing committed._

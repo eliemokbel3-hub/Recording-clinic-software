@@ -2,7 +2,11 @@
 #
 # Update-workflow is side-effecting: it overwrites installed workflow
 # payloads, writes the installed-version marker, and makes a provenance
-# commit. Require explicit $update-workflow invocation so Codex never
-# runs a workflow update as an implicit action.
+# commit. As of v34.0, implicit ($update-workflow) invocation is permitted
+# so an agent can run the update when the user asks for it; safety comes
+# from the in-skill gates (the safety-gate chain — clean tree, live-run
+# guard, committed marker — and the one confirm before any write to the
+# repo), not from invocation-locking. It never pushes. It can still be
+# invoked explicitly.
 policy:
-  allow_implicit_invocation: false
+  allow_implicit_invocation: true

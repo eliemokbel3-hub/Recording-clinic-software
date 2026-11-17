@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h6-09",
+  "appointment_type": "initial",
+  "axes": ["uncertain", "laterality", "numbers", "contradictory"],
+  "lines": [
+    {"role": "clinician", "text": "Hello, I'm Priya, one of the physios. What are you coming in with?"},
+    {"role": "patient", "text": "Pain on the outside of my right elbow, mainly when I grip the kettle."},
+    {"role": "clinician", "text": "How long has it been going on?"},
+    {"role": "patient", "text": "This flare is about six weeks old."},
+    {"role": "clinician", "text": "Anything in the past with that arm?"},
+    {"role": "patient", "text": "I had previous surgery on that elbow back in my twenties, if memory serves."},
+    {"role": "patient", "text": "Actually, there's something else, it's much worse after a long day on the computer mouse."},
+    {"role": "clinician", "text": "Let me have a look. Squeeze my fingers as hard as you can."},
+    {"role": "clinician", "text": "Grip is noticeably weaker on the right, and pressing just below the bony point reproduces your pain."},
+    {"role": "clinician", "text": "I think what's going on is tennis elbow, though it could possibly be coming from your neck, so I'll check that next time."},
+    {"role": "clinician", "text": "Take the strain off by lifting the kettle with your palm facing up, and slowly lower a tin of beans with your wrist, fifteen times, twice a day."},
+    {"role": "patient", "text": "I'm certain the mouse is the culprit, no question."},
+    {"role": "clinician", "text": "Could well be. Book in for two weeks."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["outside", "of", "my", "right", "elbow"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["when", "i", "grip", "the", "kettle"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["about", "six", "weeks", "old"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["previous", "surgery", "on", "that", "elbow"], "line": 5, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["much", "worse", "after", "a", "long", "day", "on", "the", "computer", "mouse"], "line": 6, "material": true},
+    {"kind": "laterality", "tokens": ["noticeably", "weaker", "on", "the", "right"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["pressing", "just", "below", "the", "bony", "point"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["tennis", "elbow"], "line": 9, "material": true},
+    {"kind": "present", "tokens": ["palm", "facing", "up"], "line": 10, "material": true},
+    {"kind": "present", "tokens": ["slowly", "lower", "a", "tin", "of", "beans"], "line": 10, "material": true},
+    {"kind": "present", "tokens": ["fifteen", "times", "twice", "a", "day"], "line": 10, "material": true},
+    {"kind": "present", "tokens": ["mouse", "is", "the", "culprit"], "line": 11, "material": false},
+    {"kind": "present", "tokens": ["in", "for", "two", "weeks"], "line": 12, "material": false}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

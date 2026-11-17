@@ -19,6 +19,10 @@ row names the manifest it was checked against.
 | 0.3.0 | `a29820e87267668455d91bf6af95e4d1caca4193` | [37748447840](https://github.com/eliemokbel3-hub/Recording-clinic-software/actions/runs/37748447840) | `5eb255fb90570666cffca5e916295b87201d86ff321fbbbfc5e2a04c548cd54b` | `10a834937fe8c783d3e387dcdb4c2b74c3c290db97c626e38be4deba3fa9930a` | 2026-10-08 | Development recordings (development-recordings plan Phases 1–5 and hardening H1–H4, review rounds 8–48): with the patient's written consent a recording's audio is kept encrypted in its Past-sessions entry (the Status-tab setting and the Session tab's second tick), with Delete recording, Export recording (WAV) and the practitioner-run replay tool; schema v3 for the encounter record and audit row; the replay tool and `measure-speakers.py` refuse unless `python.exe` is excluded from Windows crash reporting (re-run `register-native-host.py` once on a developer computer). Read "Rolling back below 0.3.0" before installing any older build afterwards. `BUILD-INFO.txt` says `tree=clean`; `gh attestation verify` passed for the installer and `SHA256SUMS.txt` (composer, 2026-10-08; source `refs/heads/main` at `a29820e`, run 37748447840); the hash matches `SHA256SUMS.txt`; models manifest unchanged, so the existing model pack serves it. CI run 37748448162 green on the same commit. Not yet installed (development-recordings plan Phase P). |
 | 0.3.1 | `1031452b594f1773bfb23b09cc3fa8d14e943e57` | [38162111889](https://github.com/eliemokbel3-hub/Recording-clinic-software/actions/runs/38162111889) | `1aa5c51fd383660324e20379ab2cf9f7fd3a1974e005aa2692750eb377920d8a` | `10a834937fe8c783d3e387dcdb4c2b74c3c290db97c626e38be4deba3fa9930a` | 2026-10-12 | No silent omissions from note routing (note-routing-omissions plan Phases 1–4 and hardening H1–H9, review rounds 4–29): a note line is routed by the practitioner's own cue file first and by the shipped cues only for a line those cues route nowhere; the omission check reads every speaker's lines (sides, numbers, doses, units, negations, medications) and its warning has its own Acknowledge; a flagged line is marked `[flagged]` in the Note tab's chooser with a "Show flagged lines only" tick; a same-speaker sentence the recogniser splits at a comma is carried whole into its cued section (never into a clinician-owned section); the validation harness compares spelling canonically (its measurement only). No schema change; a 0.3.0 reinstall reads everything. `BUILD-INFO.txt` says `tree=clean`; `gh attestation verify` passed for the installer and `SHA256SUMS.txt` (composer, 2026-10-12; source `refs/heads/main` at `1031452`, run 38162111889); the hash matches `SHA256SUMS.txt`; models manifest unchanged, so the existing model pack serves it. CI run 38161573539 green on the same commit. Validation run 3 (2026-10-12, `e9c1536`, code identical) FAILED as predicted on the five next-patient encounters and met the plan's D12. Installed on this computer 2026-10-12 and smoked the same day (note-routing-omissions plan P.2, PASS). |
 | 0.3.2 | `d34f685a1dd32210e3c6260a0dc820f105463945` | [38287760115](https://github.com/eliemokbel3-hub/Recording-clinic-software/actions/runs/38287760115) | `25c62b64e288c77a1e44be309edd6ec2c4168382550af5fc1b8b8cb9039b2a24` | `10a834937fe8c783d3e387dcdb4c2b74c3c290db97c626e38be4deba3fa9930a` | 2026-10-13 | The invented-text guard (invented-text guard plan Phases 1–6 and hardening stages 1–2, review rounds 1–22): Whisper's primer holds vocabulary only (no example sentence, number or routing cue); a short burst over background sound that looks invented is marked "possibly not speech" and its note line carries a `[check: …]` mark that no copy or Cliniko draft carries and "Acknowledge all" never clears; the shipped cue "out of 10" beside "out of ten". Validation run 4 repeated at `6e78c31` met the plan's acceptance (0 suspect segments). Read "Rolling back below 0.3.2" before installing any older build afterwards. `BUILD-INFO.txt` says `tree=clean`; `gh attestation verify` passed for the installer and `SHA256SUMS.txt` (source `refs/heads/main` at `d34f685`; composer, 2026-10-13); every hash matches `SHA256SUMS.txt`; models manifest unchanged, so the existing model pack serves it. Installed on this computer 2026-10-13 (the invented-text guard plan's P.2: PASS). |
+| 0.3.3 | `3da26ee2e618ef2694dc55819b1873f334f006c6` | [39650345676](https://github.com/eliemokbel3-hub/Recording-clinic-software/actions/runs/39650345676) | `4dbf1807340e9e7a09be62d694a1848b710f2cef1a13077867b8fedc20d04087` | `10a834937fe8c783d3e387dcdb4c2b74c3c290db97c626e38be4deba3fa9930a` | 2026-10-22 | The validation pass (validation-pass plan Phases 1–5 and hardening H1–H4, review rounds 5–31): a possible next patient stops the note and raises its own warning, with the chooser's `[after possible next patient]` mark and the clinician's confirmed removal of the transcript's tail (which keeps no audio for that recording); a line opening with a self-correction follows the line it corrects; a patient line holding a listed hedge is marked `[check: unsure]`. Validation run 5 at `1e5707d` (the run of record): FAIL under rule v1 as amended 2026-10-13 (2), 44 passed / 6 failed, exactly as predicted; P.5 stays in shadow by the practitioner's decision (a), 2026-10-22. Read "Rolling back below 0.3.3" before installing any older build afterwards. `BUILD-INFO.txt` says `tree=clean`; `gh attestation verify` passed for the installer and `SHA256SUMS.txt` (source `refs/heads/main` at `3da26ee`; composer, 2026-10-22); every hash matches `SHA256SUMS.txt`; CI green on the same commit; models manifest unchanged, so the existing model pack serves it. Installed on this computer 2026-10-22 (the validation-pass plan's P.2: PASS). |
+| 0.3.5 | `edb2724a5204366da7d62ae7fea16269db76df1b` | [40606350246](https://github.com/eliemokbel3-hub/Recording-clinic-software/actions/runs/40606350246) | `06640d3360900b8ab684317eb94d5a8bafab90f41ce30bb579c107918caeee4a` | `10a834937fe8c783d3e387dcdb4c2b74c3c290db97c626e38be4deba3fa9930a` | 2026-10-28 | Validation run 7 (validation-run7 plan Phases 1–3 and hardening H1–H4, review rounds 1–27). It is the first build to carry 0.3.4's changes, which never had a build of record: the review warning "A line you said is not in the note" with its own Acknowledge, a line joined mid-sentence to a hedged one marked `[check: unsure]`, and the shorter `[next patient?]` mark. Then 0.3.5's own changes: that warning drawn once per line the recogniser split, and the longer closing and greeting lists (30 and 26). Validation run 7 at `c985857` (the run of record) did NOT meet rule v3's gate: the 50 pass; `heldout-4` fails on R1 alone (two misheard facts, each under a review mark). P.5 stays in shadow (decision (a)). Built of record on the practitioner's word after the failed gate, so the install smoke owed for 0.3.4 and 0.3.5 (P.2) can run. `edb2724` is `c985857` plus documents and the plans only. Read "Rolling back below 0.3.5" (and below 0.3.4) before installing any older build afterwards. `BUILD-INFO.txt` says `tree=clean`. `gh attestation verify` passed for the installer and `SHA256SUMS.txt` (source `refs/heads/main` at `edb2724`, run 40606350246; composer, agent shell, 2026-10-28 — re-verify from a normal terminal before installing). Every hash matches `SHA256SUMS.txt`. CI run 40606305700 green on the same commit. Models manifest unchanged, so the existing model pack serves it. Installed on this computer 2026-11-04 over 0.3.3, after `gh attestation verify` and `Get-FileHash` were re-run from a normal terminal. The validation-run7 plan's P.2 smoke PASSED; the joined-hedge `[check: unsure]` mark was not exercised live. |
+| 0.3.6 | `b130df757d2ab1ebb79255f72930277499ab16d3` | [42686865234](https://github.com/eliemokbel3-hub/Recording-clinic-software/actions/runs/42686865234) | `c0cc0d877162e808cd44adb0922ea91b2a0750b624f1dc113a07fffb5ec52e67` | `10a834937fe8c783d3e387dcdb4c2b74c3c290db97c626e38be4deba3fa9930a` | 2026-11-10 | The note-content-design build (Phases 0, R, C and D, hardening H1–H4, review rounds 4–21). The prose styles write in a governed clinical register: the ratified lexicon, Check 5's fold, and the Pt / patient speaker frame. The local model also suggests a section for a left-out line, by line number only (`[suggested: …]` on the line chooser). Built BEFORE validation run 9 (the note-content-design plan's H5), at run 9's run-of-record commit. `b130df7` is the blind `heldout-6`'s commit `38af5c2` plus one `.gitattributes` line that keeps the rule files LF on a Windows checkout. That line ended CI's red run since `5edcefa`, on the practitioner's decision of 2026-11-10. Read "Rolling back below 0.3.6" before installing any older build afterwards. `BUILD-INFO.txt` says `tree=clean`. `gh attestation verify` passed for the installer and `SHA256SUMS.txt` (exit 0; source `refs/heads/main` at `b130df7`, run 42686865234; composer, agent shell, 2026-11-10). Re-verify from a normal terminal before installing. Every hash matches `SHA256SUMS.txt`. CI run 42684787019 green on the same commit. Models manifest unchanged, so the existing model pack serves it. Installed on this computer over 0.3.5 by 2026-11-14, after `gh attestation verify` and `Get-FileHash` were re-run from a normal terminal; shadow mode stays on. The plan's P.3 smoke (2026-11-14, two mock consultations): the register, Add clearing a left-out-line warning, Save, a Complete while the suggestion job ran (immediate), Copy refused and the audit CSV's `app_version` / `prompt_version` PASSED; the `[suggested: …]` mark and Save while marks pend were not observed (both mocks ended "No suggestions."; on a short note the job ends before Save is offered). |
+| 0.3.7 | `e79be57401b2b49af172e98e463ec09f1d48a6a3` | [44031862110](https://github.com/eliemokbel3-hub/Recording-clinic-software/actions/runs/44031862110) | `6ac7747fbdea16a5e0c8c40103ba695a96ec3156e29013a421d2cb72d48136d2` | `10a834937fe8c783d3e387dcdb4c2b74c3c290db97c626e38be4deba3fa9930a` | 2026-11-17 | The answers-follow-question build (Phases 1, V, M and D, review rounds 1–24). A patient's uncued answer to the confirmed clinician's cue-routed question joins the note beside it as an ordinary quoted line (the answer hop), and the answer to a left-out clinician question is marked `[flagged]` on the line chooser (the reply flag). An improvement measured at the plan's Task 0.6 and reproduced on the built product by its M.1 (0 differences over the seven seen sets), but not gate-capable: shadow mode stays on, and there is no validation run 10. `e79be57` is the hardened commit `4a0081d` plus documents, the plan and two code comments only. Read "Rolling back below 0.3.7" before installing any older build afterwards. `BUILD-INFO.txt` says `tree=clean`. `gh attestation verify` passed for the installer and `SHA256SUMS.txt` (exit 0; source `refs/heads/main` at `e79be57`, run 44031862110; composer, agent shell, 2026-11-17). Re-verify from a normal terminal before installing. Every hash matches `SHA256SUMS.txt`. CI run 44030371305 green on the same commit. Models manifest unchanged, so the existing model pack serves it. Installed on this computer over 0.3.6 on 2026-11-17 (the answers-follow-question plan's P.3), after `gh attestation verify` for the installer and `SHA256SUMS.txt` and the installer's SHA-256 were re-checked from a normal terminal by the practitioner; no model pack was needed; shadow mode stays on. The plan's P.3 smoke (2026-11-17, one mock consultation) PASSED on all four checks: the answer beside its question, the `[flagged]` answer after a left-out question, nothing extra in Copy (Copy and Write refused for the shadow recording) and the audit CSV's `app_version` 0.3.7. |
 
 - **Version**: the `AppVersion` the installer shows; it comes from `desktop/pyproject.toml`.
 - **Commit**: the full commit the run built. The run's `BUILD-INFO.txt` names it too, and must say `tree=clean`; a build that says `DIRTY` or `unknown` is never recorded here.
@@ -61,6 +65,126 @@ checked it before the first run; check it again before a release run whenever
 the repository's visibility may have changed. If no attestation can be made, the first
 check above can never pass, and the build of record needs a decision — never an
 install without that check.
+
+## Rolling back below 0.3.7
+
+0.3.7 (the answers-follow-question build: a patient's uncued answer placed
+with the confirmed clinician's question, and the answer to a left-out question
+flagged) was built of record on 2026-11-17 (that plan's Task F.3; the table
+above) and installed on this computer on 2026-11-17 (that plan's P.3). This section applies from
+that build on.
+
+**Nothing at rest changes shape, and there is no data step** (that plan's D3).
+0.3.7 adds no persisted field, no schema version, no setting and no file in
+the data folder: a joined answer is an ordinary quoted transcript line, with
+the same assertion kind and id shape as any line the app placed, the note's
+provider name is unchanged, and the reply flag is worked out on screen and
+never stored. `encounter.enc`, `note.enc`, `generated.enc`,
+`saved-provenance.enc`, `write.enc`, the audit row and every Past-sessions
+entry keep the shape 0.3.6 reads; the audit row's `app_version` reads
+`0.3.7`. So no recording needs finishing first for 0.3.7's sake, and the model
+pack is unchanged (no model was added).
+
+**What an older build shows differently.** (1) A note generated on 0.3.7 that
+holds a joined answer opens on 0.3.6 with that line as an ordinary quoted
+line, kept; a note 0.3.6 generates, or generates again, leaves such an answer
+out, as before. (2) 0.3.6 flags no answer: its count line and its "A line you
+said is not in the note" hint read 0.3.6's wording, without the answer
+clause. (3) The validation harness at 0.3.6 has no reply credit, so its
+reports read as before the metric amendment of 2026-11-17
+(`docs/testing/validation-harness.md`).
+
+## Rolling back below 0.3.6
+
+0.3.6 (the note-content-design build: the prose styles' clinical register and
+the section suggestions) was built of record on 2026-11-10, before validation
+run 9 (that plan's Task H5; the table above), and installed on this computer
+by 2026-11-14 (that plan's P.3). This section applies from that build on.
+
+**Nothing at rest changes shape** (that plan's D3 and D12). 0.3.6 adds no
+persisted field, no schema version, no key in `practitioner_settings.json`
+and no file in the data folder: `encounter.enc`, `note.enc` with its prose
+renderings, `generated.enc`, `saved-provenance.enc`, `write.enc`, the audit
+row and every Past-sessions entry keep the shape 0.3.5 reads. The clinical
+lexicon (`clinical_equivalents.json`) is package data inside the install
+folder, never in the data folder, so it goes with the build. The audit row's
+`prompt_version` reads `narrative-v7` where 0.3.5 wrote `narrative-v2`; 0.3.5
+reads any such version token. So no recording needs finishing first for
+0.3.6's sake, and the model pack is unchanged (no model was added).
+
+**What an older build shows differently.** (1) A note saved under a prose
+style on 0.3.6 binds each section's prose to its lines AND to whether the
+section holds a line someone other than the confirmed clinician said (the
+speaker frame's flag, folded into the section's digest). 0.3.5 does not know
+that second part, so for each section of such a note that holds another
+voice's line it finds the prose stale and shows that section as Clean
+clinical — its confirmed lines, unchanged — in Past sessions and in "Copy
+saved note"; a section holding only the clinician's own lines shows its prose
+as saved, shorthand included. Nothing is lost: the confirmed lines are the
+note. The same happens the other way after an upgrade: a note saved in a
+prose style on 0.3.5 shows such a section as Clean clinical on 0.3.6. (2)
+0.3.5 makes no section suggestions: a left-out line is flagged as before, and
+the tick reads "Show flagged lines only". (3) A note 0.3.5 generates, or
+renders again, uses its own prompt and its own Check 5, with no shorthand and
+no "Pt reports" frame.
+
+## Rolling back below 0.3.5
+
+0.3.5 (the validation-run7 build) was built of record on 2026-10-28, after
+validation run 7 (validation-run7 plan H5; the table above), and installed on
+this computer on 2026-11-04 (that plan's P.2). It is the first build
+to carry 0.3.4's changes, so going back from it to 0.3.3 is a rollback below
+0.3.4 too: **"Rolling back below 0.3.4" (below) applies from this build on**,
+and below 0.3.3 the rules after it as well.
+
+0.3.5 itself adds nothing new on disk. It writes the same review warning 0.3.4
+introduced, "A line you said is not in the note", with the same fields — only
+less often: once per line you said that the recogniser split into pieces,
+each but the last ending mid-sentence, where 0.3.4 wrote one per piece
+(validation-run7 plan D1).
+So an older build reads those notes exactly as "Rolling back below 0.3.4"
+says: 0.3.3 shows each warning as "A review warning from a newer version of the
+app" and keeps its place in the transcript (it reads the code it does not
+know as `unknown_review_warning`, which the validation-run6 plan's Task 1.3
+pins — that pin is the rollback control, so no two-version install is
+smoked). A note the older build generates again is checked by its own rules.
+
+**The closing and greeting lists go back too.** 0.3.5's lists are longer (30
+closings and 26 greetings, from 14 and 12; the dated commit of 2026-10-26,
+validation-run7 plan D2). On 0.3.3 a note generated, or generated again, may
+include lines after a next patient's arrival that 0.3.5 would hold back,
+wherever the goodbye or the greeting is one only 0.3.5's lists know, and where
+both lists find a next patient the older ones may stop the note at a different
+line (the threat model's NEXT PATIENT residues (a) and (c)) — check the end
+of every transcript, as the clinician review guide says — and the live
+warning that a new consultation may have started fires on fewer pairs again.
+A note already saved keeps the warnings it was saved with.
+
+Nothing else changes, so no recording needs finishing first for 0.3.5's sake.
+
+## Rolling back below 0.3.4
+
+0.3.4 has no build of record: after validation run 6 did not meet its gate,
+the practitioner chose on 2026-10-25 to wait for 0.3.5 (validation-run6 plan
+H5 and P.2), so 0.3.3 stayed installed. Its changes ship first in 0.3.5 (built
+of record 2026-10-28, installed on this computer 2026-11-04), and this section
+applies from that build on.
+
+From 0.3.4 (the validation-run6 build) one thing can be new: **a saved note
+can carry a new kind of review warning**, "A line you said is not in the
+note" — one per whole line you said that the note left out. 0.3.3 (and 0.3.2)
+show each as "A review warning from a newer version of the app" (below), all
+of them in that one row with their count, and keep each warning's place in the
+transcript; that build's "Acknowledge all review warnings" clears the row. So
+on the older build such a line no longer needs its own Acknowledge — the
+separate click is lost — but no warning is dropped (validation-run6 plan
+Task 1.3 pins it). A note the older build generates, or generates again, is
+checked by its own rules: no such warning, and a line joined mid-sentence to a
+hedged one is not marked `[check: unsure]`.
+
+Nothing else changes on disk (the `[next patient?]` mark is on screen only), so
+no recording needs finishing first for 0.3.4's sake. Below 0.3.3, the rules
+that follow apply as well.
 
 ## Rolling back below 0.3.3
 

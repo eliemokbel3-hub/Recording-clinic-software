@@ -14,15 +14,41 @@ beside it — an open item becomes a finding and is resolved or controlled first
 ## Clinic 1
 
 - [ ] **Validation passed.** The validation run (pilot plan Task P.3) passed
-      under rule v1 as amended 2026-10-09 — from run 5 on, as amended
-      2026-10-13 (2), under which a correct fact the speaker hedged, quoted
-      under the note's `[check: unsure]` mark, also counts as surfaced
-      uncertainty (validation-pass plan, decision 0.1 (a)) —
-      (`docs/testing/validation-harness.md`, decision 3.5), over the synthetic set — at least 50 encounters, three
-      installed voices matching the recorded baseline — from a clean,
-      committed checkout, with the practitioner's own cue file in
-      `validation\config`; its totals, voices, commit and models-manifest hash
-      are recorded under Task P.3.
+      under the rule in force for that run of record as
+      `docs/testing/validation-harness.md` "Runs of record" names it (rule v3
+      from run 7: the 50 and the blind set as the gate, the earlier held-out
+      sets reported), over the synthetic sets, from a clean committed
+      checkout, with the practitioner's own cue file; its totals, voices,
+      commit and models-manifest hash are recorded under Task P.3.
+
+      *Approved by the practitioner on 2026-11-04 (validation-run7 plan D8 and
+      Task P.3, proposed 2026-10-27). It replaces the rule-v1 wording, under
+      which runs 1 to 5 were read: rule v1 as amended 2026-10-09, and from run 5
+      as amended 2026-10-13 (2).*
+
+      *Proposed wording, dated 2026-11-06 (validation-run8 plan D7) — a draft
+      for the practitioner's approval at that plan's Task P.2. It does not
+      replace the line above, and this proposal is not a line to tick; until
+      it is approved, the line above is the one read:* **Validation passed.**
+      The validation run (pilot plan Task P.3) passed under the rule in force
+      for that run of record as `docs/testing/validation-harness.md` "Runs of
+      record" names it (rule v3 for run 7; rule v5 from run 8: the 50 and the
+      blind set as the gate, the earlier held-out sets reported, and each
+      misheard material fact under a review mark on the blind set reported
+      beside R1's ceiling, each a findings-register row), over the synthetic
+      sets, from
+      a clean committed checkout, with the practitioner's own cue file; its
+      totals, voices, commit and models-manifest hash are recorded under Task
+      P.3.
+
+      *Dated 2026-11-09 (note-content-design plan D11), for the
+      practitioner's approval together with the proposal above — not a line
+      to tick, and it changes nothing until that proposal is approved:* if it
+      is approved, "rule v5 from run 8" reads "rule v5 for run 8; rule v6 from
+      run 9", rule v6 being rule v5's predicates and ceilings with the fresh
+      blind `heldout-6` as the gate set beside the 50 and `heldout-5`
+      reported, and run 9 run with the prose stage and every suggested section
+      accepted.
 - [ ] **Clinic 1 smoke records exist** (pilot plan Tasks P.2 and P.4, the
       clinic 1 smoke plan's Phase P): the shipping-gate scoring table and its decision line
       (Phase 3A Task 9.1), the speaker numbers over the frozen measured set

@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h2-04",
+  "appointment_type": "post_operative",
+  "axes": ["laterality", "numbers", "uncertain", "small_talk", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "So it's four weeks since the operation on your left knee, how are you getting on?"},
+    {"role": "patient", "text": "Since last time the morning stiffness is a lot worse, it takes me a good half hour to get going."},
+    {"role": "clinician", "text": "Let me have a look at the bend. You're getting to 85 degrees, which is reduced range for this stage."},
+    {"role": "partner", "text": "Sorry I'm late, the parking was a nightmare. Hello!"},
+    {"role": "clinician", "text": "No worries, come and sit down, you're very welcome to stay."},
+    {"role": "partner", "text": "Since last time he's been sleeping in the chair, I think, though he'll deny it."},
+    {"role": "patient", "text": "I'm absolutely certain I've slept in bed every night."},
+    {"role": "clinician", "text": "Right, the wound has healed nicely and there's no heat around the joint."},
+    {"role": "clinician", "text": "Lie on your back, slide your heel towards your bottom as far as it'll go, hold for ten seconds, and do that fifteen times, every couple of hours."},
+    {"role": "clinician", "text": "If the calf goes red, hot or swollen, ring the ward straight away."},
+    {"role": "clinician", "text": "No lifting anything heavier than a kettle for now."},
+    {"role": "clinician", "text": "Okay, see you next week, both of you."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["left", "knee"], "line": 0, "material": true},
+    {"kind": "present", "tokens": ["morning", "stiffness", "is", "a", "lot", "worse"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["a", "good", "half", "hour"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["85", "degrees"], "line": 2, "material": true},
+    {"kind": "absent", "tokens": ["the", "parking", "was", "a", "nightmare"], "line": 3, "material": false},
+    {"kind": "present", "tokens": ["sleeping", "in", "the", "chair"], "line": 5, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["slept", "in", "bed", "every", "night"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["wound", "has", "healed", "nicely"], "line": 7, "material": true},
+    {"kind": "negation", "tokens": ["no", "heat", "around", "the", "joint"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["slide", "your", "heel", "towards", "your", "bottom"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["hold", "for", "ten", "seconds"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["do", "that", "fifteen", "times"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["every", "couple", "of", "hours"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["calf", "goes", "red"], "line": 9, "material": true},
+    {"kind": "present", "tokens": ["ring", "the", "ward", "straight", "away"], "line": 9, "material": true},
+    {"kind": "present", "tokens": ["heavier", "than", "a", "kettle"], "line": 10, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "partner": 1}}
+}

@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h3-12",
+  "appointment_type": "chronic",
+  "axes": ["end_and_new_patient", "uncertain", "laterality", "negation", "overlap"],
+  "lines": [
+    {"role": "clinician", "text": "G'day, how's the back since last time?"},
+    {"role": "patient", "text": "Since last time the pain's been running down into my left buttock."},
+    {"role": "patient", "text": "Hard to tell, to be honest."},
+    {"role": "clinician", "text": "Any tingling or numbness in the leg?"},
+    {"role": "patient", "text": "No tingling, just the ache."},
+    {"role": "clinician", "text": "Let me have a look. Straight leg raise is about seventy on both sides, so the nerve's not too cranky."},
+    {"role": "clinician", "text": "I think you have a bit of irritation in the joint at the base of the spine, probably from all the driving."},
+    {"role": "clinician", "text": "Get out of the ute every hour on long trips and walk around it twice, no worries if people stare."},
+    {"role": "clinician", "text": "Righto, no worries, see ya next Tuesday."},
+    {"role": "patient", "text": "Cheers mate."},
+    {"role": "clinician", "text": "G'day mate, come on in, grab a seat."},
+    {"role": "next_patient", "text": "Thanks. My knee's been swelling up after cricket, it's the right one."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["into", "my", "left", "buttock"], "line": 1, "material": true, "expect_uncertain": true},
+    {"kind": "negation", "tokens": ["no", "tingling"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["irritation", "in", "the", "joint", "at", "the", "base", "of", "the", "spine"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["every", "hour", "on", "long", "trips"], "line": 7, "material": true},
+    {"kind": "absent", "tokens": ["swelling", "up", "after", "cricket"], "line": 11, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}, "overlap_seconds": 1.5, "overlap_lines": [4, 9]}
+}

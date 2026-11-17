@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h4-21",
+  "appointment_type": "follow_up",
+  "axes": ["end_and_new_patient", "negation"],
+  "lines": [
+    {"role": "clinician", "text": "How's the hamstring been since last time?"},
+    {"role": "patient", "text": "Since last time it's stiff every morning but loosens up after my shower."},
+    {"role": "clinician", "text": "That's normal at this stage, and the bruising down the back of your thigh has cleared, which is a good sign."},
+    {"role": "clinician", "text": "Carry on with the heel bridges on the sofa each evening, no sprinting yet."},
+    {"role": "patient", "text": "Fair enough. Thanks, that's me sorted."},
+    {"role": "clinician", "text": "Lovely. Have a good evening, and I'll see you in a fortnight."},
+    {"role": "patient", "text": "Will do, bye."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["it's", "stiff", "every", "morning"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["the", "bruising", "down", "the", "back", "of", "your", "thigh", "has", "cleared"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["no", "sprinting", "yet"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["see", "you", "in", "a", "fortnight"], "line": 5, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

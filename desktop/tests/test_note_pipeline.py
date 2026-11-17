@@ -261,13 +261,16 @@ class TestFinaliseNote:
     def test_all_confirmed_passes_checks_two_and_three(self) -> None:
         """Task 6.1 Done-when: confirmed clinician-authored assertions pass
         Checks 2 and 3 — the only warnings on a fully-confirmed note are the
-        unsuppressible per-assertion `clinician_asserted` reviews."""
+        unsuppressible per-assertion `clinician_asserted` reviews, and (since
+        the validation-run6 plan's D1) Check 4's `clinician_line_omitted` for
+        the clinician's unquoted "Please use an ice pack tonight" (a config
+        line covers no transcript word)."""
         draft = _draft()
         resolutions = [_resolve(proposal) for proposal in draft.note_proposals]
         note = finalise_note(draft, resolutions, _document(), PIPELINE_CONFIG, created_at=_NOW)
         assert note.blocking_warnings() == ()
         codes = sorted(warning.note_warning_code for warning in note.note_warnings)
-        assert codes == ["clinician_asserted", "clinician_asserted"]
+        assert codes == ["clinician_asserted", "clinician_asserted", "clinician_line_omitted"]
 
     def test_confirmation_evidence_rides_the_artifact(self) -> None:
         draft = _draft()

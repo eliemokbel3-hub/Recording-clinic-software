@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h3-17",
+  "appointment_type": "discharge",
+  "axes": ["end_and_new_patient", "small_talk"],
+  "lines": [
+    {"role": "clinician", "text": "So, Daniel, this is the last one. How's the wrist?"},
+    {"role": "patient", "text": "Since last time I'm back climbing twice a week with no pain at all."},
+    {"role": "clinician", "text": "Grip's equal on both sides now, and your wrist bends back just as far as the good one."},
+    {"role": "clinician", "text": "Keep taping the wrist for the hard overhangs until the end of next month, then wean off it."},
+    {"role": "clinician", "text": "If it starts clicking or swelling after a session, give me a ring and we'll get you back in."},
+    {"role": "patient", "text": "Cheers, Ana. Thanks for sorting me out."},
+    {"role": "clinician", "text": "My pleasure. Off you go, climb safe."},
+    {"role": "clinician", "text": "Oh, Mrs Patel! How was the cruise?"},
+    {"role": "next_patient", "text": "Lovely, thank you, though I've come back with a terrible pain in my left knee."},
+    {"role": "clinician", "text": "Oh no. Come through and tell me all about it."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["back", "climbing", "twice", "a", "week"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["grip's", "equal", "on", "both", "sides"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["until", "the", "end", "of", "next", "month"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["clicking", "or", "swelling"], "line": 4, "material": true},
+    {"kind": "absent", "tokens": ["how", "was", "the", "cruise"], "line": 7, "material": false},
+    {"kind": "absent", "tokens": ["terrible", "pain", "in", "my", "left", "knee"], "line": 8, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

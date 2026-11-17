@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h5-13",
+  "appointment_type": "post_operative",
+  "axes": ["numbers", "uncertain", "rate"],
+  "lines": [
+    {"role": "clinician", "text": "Six weeks since the ACL reconstruction. How's it been since last time?"},
+    {"role": "patient", "text": "Since last time I've stopped using the crutches completely."},
+    {"role": "clinician", "text": "Great. And the swelling?"},
+    {"role": "patient", "text": "From last time the evening swelling has gone down, I'm fairly sure."},
+    {"role": "clinician", "text": "Let me have a look. You can get it fully straight now and bend to 120 degrees, and the quads are firing well."},
+    {"role": "patient", "text": "Sorry, I meant to ask, when can I get back on my bike?"},
+    {"role": "clinician", "text": "Static bike from now, no resistance to start with, and road cycling not before twelve weeks."},
+    {"role": "clinician", "text": "Also no running for now, that's the big one."},
+    {"role": "patient", "text": "Okay. See you next week then."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["stopped", "using", "the", "crutches", "completely"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["evening", "swelling", "has", "gone", "down"], "line": 3, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["bend", "to", "120", "degrees"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["road", "cycling", "not", "before", "twelve", "weeks"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["no", "running", "for", "now"], "line": 7, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}, "rate": 3}
+}

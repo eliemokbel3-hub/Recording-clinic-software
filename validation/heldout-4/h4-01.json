@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h4-01",
+  "appointment_type": "initial",
+  "axes": ["laterality", "negation", "uncertain", "numbers", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Morning, come through and take a seat. What can I help with?"},
+    {"role": "patient", "text": "I'm coming in with low back pain that shoots into my right buttock."},
+    {"role": "clinician", "text": "And how long has that been going on for?"},
+    {"role": "patient", "text": "About a fortnight now, ever since I lifted a bag of compost."},
+    {"role": "clinician", "text": "Any numbness in the saddle area, or changes going to the toilet?"},
+    {"role": "patient", "text": "No, going to the toilet is all normal, and I haven't had any numbness."},
+    {"role": "patient", "text": "There's a bit of tingling down the back of my right thigh at night, though whether it's every night I really couldn't say, my partner reckons I kick about in my sleep anyway."},
+    {"role": "clinician", "text": "Okay. Let me have a look at how you move. Bend forwards for me as far as is comfortable."},
+    {"role": "clinician", "text": "Your fingertips stop just above your knees and the pain comes on near the end."},
+    {"role": "clinician", "text": "Lie back for me and I'll lift the right leg. Tell me when you feel it."},
+    {"role": "patient", "text": "There, that pulls right down the back."},
+    {"role": "clinician", "text": "That's at about forty degrees, and the left side goes much higher without any bother."},
+    {"role": "clinician", "text": "I suspect this is probably an irritated nerve root rather than anything sinister, but I'd want to see how it settles."},
+    {"role": "clinician", "text": "For now, keep moving little and often, walk for ten minutes every couple of hours and avoid sitting for longer than half an hour."},
+    {"role": "clinician", "text": "If you lose feeling between your legs or can't control your bladder, ring 999 or go straight to A and E."},
+    {"role": "patient", "text": "Right, will do. Thanks ever so much."},
+    {"role": "clinician", "text": "You're welcome. Take care of yourself, and mind that compost."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["shoots", "into", "my", "right", "buttock"], "line": 1, "material": true},
+    {"kind": "negation", "tokens": ["haven't", "had", "any", "numbness"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["tingling", "down", "the", "back", "of", "my", "right", "thigh", "at", "night"], "line": 6, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["fingertips", "stop", "just", "above", "your", "knees"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["walk", "for", "ten", "minutes", "every", "couple", "of", "hours"], "line": 13, "material": true},
+    {"kind": "present", "tokens": ["go", "straight", "to", "a", "and", "e"], "line": 14, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

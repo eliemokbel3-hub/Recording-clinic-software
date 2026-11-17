@@ -839,6 +839,9 @@ from pathlib import Path
 from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
 apply_offline_env()
 assert_offline_env()
+from scribe_desktop import transcription
+transcription.cuda_device_count = lambda: 0  # gpu-decoding plan C12, as the parent pins
+transcription.preload_cuda_libraries = lambda device: None
 from PySide6.QtWidgets import QApplication
 from scribe_desktop.audio_capture import MockCaptureBackend
 from scribe_desktop.clinics import ClinicRegistry

@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h6-12",
+  "appointment_type": "chronic",
+  "axes": ["uncertain", "laterality", "negation", "numbers", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "How have things been since last time?"},
+    {"role": "patient", "text": "Since last time the evening pain has crept up to about a six out of ten, give or take."},
+    {"role": "clinician", "text": "Is that worse after work?"},
+    {"role": "patient", "text": "After work, yes, I'm certain of that, sitting at the till all day does it."},
+    {"role": "clinician", "text": "Any numbness in your legs?"},
+    {"role": "patient", "text": "I haven't had any numbness, but there's maybe a bit of tingling in my left foot now and then."},
+    {"role": "clinician", "text": "Let me have a look at how you move."},
+    {"role": "clinician", "text": "Your back is pretty tight through the lower segments, and side bending to the left is reduced."},
+    {"role": "clinician", "text": "I suspect the tingling is coming from a nerve getting a bit cranky, though I could be wrong, so let's watch it."},
+    {"role": "patient", "text": "Oh, and going to the toilet has been normal, as far as I can tell."},
+    {"role": "clinician", "text": "Good. Keep the walks going, twenty minutes after tea rather than sitting straight down on the sofa."},
+    {"role": "clinician", "text": "If the foot goes properly numb or weak, ring me before the next appointment."},
+    {"role": "clinician", "text": "See you next week."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["evening", "pain", "has", "crept", "up", "to", "about", "a", "six", "out", "of", "ten"], "line": 1, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["sitting", "at", "the", "till", "all", "day"], "line": 3, "material": true},
+    {"kind": "negation", "tokens": ["haven't", "had", "any", "numbness"], "line": 5, "material": true},
+    {"kind": "laterality", "tokens": ["tingling", "in", "my", "left", "foot"], "line": 5, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["pretty", "tight", "through", "the", "lower", "segments"], "line": 7, "material": true},
+    {"kind": "laterality", "tokens": ["side", "bending", "to", "the", "left", "is", "reduced"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["nerve", "getting", "a", "bit", "cranky"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["going", "to", "the", "toilet", "has", "been", "normal"], "line": 9, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["twenty", "minutes", "after", "tea"], "line": 10, "material": true},
+    {"kind": "present", "tokens": ["foot", "goes", "properly", "numb", "or", "weak"], "line": 11, "material": true},
+    {"kind": "present", "tokens": ["see", "you", "next", "week"], "line": 12, "material": false}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

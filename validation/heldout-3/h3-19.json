@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h3-19",
+  "appointment_type": "acute",
+  "axes": ["laterality", "uncertain", "contradictory", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "So which calf is it?"},
+    {"role": "patient", "text": "I'm coming in with a ping in my left calf from squash on Wednesday, or it may have been Thursday."},
+    {"role": "clinician", "text": "Let me have a look. There's a tender spot in the middle of the right calf muscle."},
+    {"role": "clinician", "text": "Sorry, left calf, I've got your other leg in my head from the form."},
+    {"role": "clinician", "text": "Walk normally as much as you can, use a small heel raise in both shoes for two weeks, and no squash for at least four weeks."},
+    {"role": "patient", "text": "Four weeks. Gutted."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["left", "calf"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["from", "squash", "on", "wednesday"], "line": 1, "material": true, "expect_uncertain": true},
+    {"kind": "laterality", "tokens": ["left", "calf"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["no", "squash", "for", "at", "least", "four", "weeks"], "line": 4, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

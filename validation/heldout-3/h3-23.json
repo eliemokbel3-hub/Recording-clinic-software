@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h3-23",
+  "appointment_type": "follow_up",
+  "axes": ["end_and_new_patient", "noise", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "How's the wrist been since the cast came off?"},
+    {"role": "patient", "text": "Since last time it's much less swollen, but it's still stiff bending it back."},
+    {"role": "clinician", "text": "Sorry, one second, that's my phone. Hello? Yes, I'm with someone, I'll ring you back at half past. Bye now."},
+    {"role": "clinician", "text": "Sorry about that. Let me have a look. It bends back about forty degrees, the good side does seventy."},
+    {"role": "clinician", "text": "Prayer stretch against the kitchen worktop, hold for thirty seconds, five times, every couple of hours."},
+    {"role": "patient", "text": "Is there any numbness I should watch for? My fingers went a bit funny in the cast."},
+    {"role": "clinician", "text": "If your fingers go numb or the hand turns cold and pale, come straight back in."},
+    {"role": "patient", "text": "Right you are."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["much", "less", "swollen"], "line": 1, "material": true},
+    {"kind": "absent", "tokens": ["ring", "you", "back", "at", "half", "past"], "line": 2, "material": false},
+    {"kind": "present", "tokens": ["bends", "back", "about", "forty", "degrees"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["hold", "for", "thirty", "seconds", "five", "times"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["fingers", "go", "numb"], "line": 6, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}, "snr_db": 25}
+}

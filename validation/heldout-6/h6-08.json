@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h6-08",
+  "appointment_type": "acute",
+  "axes": ["numbers", "contradictory", "negation"],
+  "lines": [
+    {"role": "clinician", "text": "Hi, come and sit down. You said on the phone you hurt your back?"},
+    {"role": "patient", "text": "Yeah, it went on Tuesday morning when I bent down to tie my shoe."},
+    {"role": "patient", "text": "Er, Monday morning, actually. It was the day the bins went out."},
+    {"role": "clinician", "text": "And going to the toilet, any problems with your bladder or bowels?"},
+    {"role": "patient", "text": "No, all normal."},
+    {"role": "clinician", "text": "Have you had anything for it?"},
+    {"role": "patient", "text": "Just paracetamol, two tablets at a time."},
+    {"role": "clinician", "text": "You're going to take naproxen 250 milligrams twice a day with food, for up to a week."},
+    {"role": "clinician", "text": "And keep going with the paracetamol, 500 milligrams, two tablets four times a day."},
+    {"role": "clinician", "text": "Hot water bottle on it for 20 minutes, then lie on your front and gently push up on your elbows, holding a slow breath."},
+    {"role": "clinician", "text": "No lifting the shopping for now, get someone else to carry it."},
+    {"role": "patient", "text": "My son can do that."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["bent", "down", "to", "tie", "my", "shoe"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["monday", "morning"], "line": 2, "material": true},
+    {"kind": "negation", "tokens": ["all", "normal"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["two", "tablets", "at", "a", "time"], "line": 6, "material": false},
+    {"kind": "dose", "tokens": ["naproxen", "250", "milligrams", "twice", "a", "day"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["for", "up", "to", "a", "week"], "line": 7, "material": true},
+    {"kind": "dose", "tokens": ["paracetamol", "500", "milligrams"], "line": 8, "material": true},
+    {"kind": "dose", "tokens": ["two", "tablets", "four", "times", "a", "day"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["for", "20", "minutes"], "line": 9, "material": true},
+    {"kind": "present", "tokens": ["lie", "on", "your", "front", "and", "gently", "push", "up", "on", "your", "elbows"], "line": 9, "material": true},
+    {"kind": "present", "tokens": ["no", "lifting", "the", "shopping"], "line": 10, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

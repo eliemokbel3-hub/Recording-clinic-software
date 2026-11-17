@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h5-14",
+  "appointment_type": "chronic",
+  "axes": ["laterality", "numbers", "uncertain", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "How's the elbow been since last time?"},
+    {"role": "patient", "text": "If I'm honest it's about the same since last time and still sore lifting the kettle."},
+    {"role": "clinician", "text": "Gripping the dynamometer, you're at 22 kilos on the right against 38 on the left."},
+    {"role": "clinician", "text": "The cups seemed to settle it last time, so I'll do those again."},
+    {"role": "patient", "text": "The cups left a bruise for about a week, but I might be muddling it up with something else."},
+    {"role": "clinician", "text": "Fair enough, I'll go a bit lighter today. When you carry anything, palm up rather than palm down, it takes the strain off the tendon."},
+    {"role": "clinician", "text": "Right, that's you sorted. Same time next week."},
+    {"role": "patient", "text": "Cheers."},
+    {"role": "clinician", "text": "Good morning, Mr Oyelaran, thank you for waiting. Do take a seat."},
+    {"role": "next_patient", "text": "Morning. It's my right knee, it's been swelling up after five a side."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["still", "sore", "lifting", "the", "kettle"], "line": 1, "material": true},
+    {"kind": "laterality", "tokens": ["22", "kilos", "on", "the", "right"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["cups", "left", "a", "bruise", "for", "about", "a", "week"], "line": 4, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["palm", "up", "rather", "than", "palm", "down"], "line": 5, "material": true},
+    {"kind": "absent", "tokens": ["right", "knee"], "line": 9, "material": true},
+    {"kind": "absent", "tokens": ["swelling", "up", "after", "five", "a", "side"], "line": 9, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

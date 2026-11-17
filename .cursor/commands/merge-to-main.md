@@ -2,6 +2,8 @@
 description: Safely merge the current branch into main with preview, confirmation, and deployment reminders.
 ---
 
+For a loop run's worktree/branch (an `/execute-loop` run left `retained-green`), use `/close-run` instead — it owns the records commit, the ONE pull request or `--no-pr` local close, the squash-verified merge check, and the worktree/branch/journal teardown; this command is for an ordinary feature branch.
+
 Please help me merge the current branch into `main` safely.
 
 ## Step 1 — Confirm branch and cleanliness

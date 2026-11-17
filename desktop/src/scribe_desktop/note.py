@@ -64,7 +64,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence, Set
 from datetime import UTC, datetime
 from importlib import resources
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, Protocol, Self, final
@@ -82,6 +82,7 @@ from scribe_desktop.transcription import (
     TranscriptWord,
     is_name_like_token,
     is_number_token,
+    segment_has_text,
     words_hold_suspect,
 )
 
@@ -309,8 +310,11 @@ NOTE_WARNING_SEVERITY: Final[Mapping[str, NoteWarningSeverity]] = {
     "suspect_source": "review",
     # Validation-pass plan D7 (decision 0.1 (a)): ONE per quoted line spoken by
     # someone other than the confirmed clinician that holds a spoken hedge
-    # (``note_check.HEDGE_PHRASES``), from the same ``line_marks`` rule. It
-    # marks its line as the two above do, but "Acknowledge all" clears it.
+    # (``note_check.HEDGE_PHRASES``), from the same ``line_marks`` rule —
+    # since validation-run6 plan D5 within the hedge scope
+    # (``quoted_line_marks``: or a same-speaker neighbour joined
+    # mid-sentence). It marks its line as the two above do, but "Acknowledge
+    # all" clears it.
     "hedged_source": "review",
     # Check 2 — structured contradictions (Task 5.2). Three codes because
     # severity is a property of the code: a contradiction resting on
@@ -349,6 +353,14 @@ NOTE_WARNING_SEVERITY: Final[Mapping[str, NoteWarningSeverity]] = {
     # Check 4 — scoped omission (Task 5.4). Review, never error: a heuristic
     # must not be able to block Complete on a false positive.
     "high_risk_omission": "review",
+    # Check 4's second code (validation-run6 plan D1, decision 0.3 (b)): ONE
+    # per wholly uncovered line of the confirmed clinician that holds a
+    # content word and draws no ``high_risk_omission``, before any next-patient
+    # boundary — since validation-run7 plan D1 one per JOINED RUN of the
+    # pieces the recogniser split that line into (``joined_run``). Review,
+    # never error, for the same reason; only its own Acknowledge clears it
+    # (``ui.models.SEPARATELY_ACKNOWLEDGED_CODES``).
+    "clinician_line_omitted": "review",
     # Check 5 — prose fidelity (note-learning-and-styles plan Task 4.2, D6):
     # a section whose language-model prose failed the fidelity gate is shown
     # as `clean` (its confirmed lines, unchanged) and says so. Review, never
@@ -393,19 +405,27 @@ def check_mark(kind: str) -> str:
     return f"check: {kind}"
 
 
-def text_holds_hedge(text: str) -> bool:
+def text_holds_hedge(text: str, *, phrases: Sequence[str] | None = None) -> bool:
     """True when ``text``'s content tokens — typographic apostrophes folded
     first — hold a spoken hedge (``note_check.HEDGE_PHRASES``, frozen by the
-    validation-pass plan's Task 0.8) as whole tokens in a row. THE one hedge
-    test: the line mark reads it through ``words_hold_hedge`` and the
-    validation harness reads it over a script line (D7). Returns a bool; no
-    text leaves it."""
-    # Read here, not imported at the top: ``note_check`` imports this module
-    # (as ``finalise_note`` reads ``check_note``).
-    from scribe_desktop.note_check import HEDGE_PHRASES
+    validation-pass plan's Task 0.8, widened by the validation-run6 plan's
+    Task 0.9) as whole tokens in a row. THE one hedge
+    test, read through ``words_hold_hedge`` and the hedge scope
+    ``segment_hedged`` — by the line mark (``quoted_line_marks``) and, since
+    validation-run6 plan D5, by the validation harness over a script's lines
+    (``validation.script_line_hedged`` over ``reference_document``) and over
+    the measured transcript. ``phrases`` replaces
+    the product's list for the harness's reference lexicon only
+    (``validation.REFERENCE_HEDGES``, validation-run6 plan D8's R2); the app
+    never passes it. Returns a bool; no text leaves it."""
+    if phrases is None:
+        # Read here, not imported at the top: ``note_check`` imports this
+        # module (as ``finalise_note`` reads ``check_note``).
+        from scribe_desktop.note_check import HEDGE_PHRASES
 
+        phrases = HEDGE_PHRASES
     tokens = content_tokens(text.replace(_TYPOGRAPHIC_APOSTROPHE, "'"))
-    for phrase in HEDGE_PHRASES:
+    for phrase in phrases:
         wanted = tuple(phrase.split())
         if any(
             tokens[start : start + len(wanted)] == wanted
@@ -415,11 +435,55 @@ def text_holds_hedge(text: str) -> bool:
     return False
 
 
-def words_hold_hedge(words: Sequence[TranscriptWord]) -> bool:
+def words_hold_hedge(
+    words: Sequence[TranscriptWord], *, phrases: Sequence[str] | None = None
+) -> bool:
     """``text_holds_hedge`` over the words the transcription guard did NOT
     mark ``suspect`` (invented-text guard D6: a suspect word supplies no
     phrase; it is skipped, as in ``opens_with_correction``)."""
-    return text_holds_hedge(" ".join(word.word_text for word in words if not word.suspect))
+    return text_holds_hedge(
+        " ".join(word.word_text for word in words if not word.suspect), phrases=phrases
+    )
+
+
+def segment_hedged(
+    document: TranscriptDocument, segment_index: int, *, phrases: Sequence[str] | None = None
+) -> bool:
+    """THE hedge scope (validation-run6 plan D5, decision 0.6 (ii)): True
+    when segment ``segment_index``'s own words hold a spoken hedge
+    (``words_hold_hedge``), or when the segment right before or right after
+    it has the SAME speaker label, holds one, and the EARLIER of the two ends
+    mid-sentence (``ends_mid_sentence``: a trailing comma, semicolon, colon
+    or en or em dash, never a hyphen — the recogniser cut one sentence
+    there). "It was about 40 mg,"
+    then "I think." is one hedged sentence, so both segments are hedged.
+
+    Not joined, the named residues: a bare cut (no trailing mark), a full
+    stop, a different speaker label, and any segment in between — a textless
+    one included (the neighbour is the adjacent index, never the nearest
+    segment with words). A listed hedge with other words inside it ("I
+    don't really know") is not found. The clinician is NOT excluded here: the line mark's
+    caller does that (``quoted_line_marks``). The validation harness applies
+    the same function to a script's lines (``validation.script_line_hedged``,
+    over ``validation.reference_document``) — one rule, two inputs (C5).
+    ``phrases`` as in ``text_holds_hedge``. Returns a bool; no text leaves
+    it."""
+    segments = document.transcript_segments
+    own = segments[segment_index]
+    if words_hold_hedge(own.transcript_words, phrases=phrases):
+        return True
+    for other in (segment_index - 1, segment_index + 1):
+        if not 0 <= other < len(segments):
+            continue
+        neighbour = segments[other]
+        if neighbour.speaker != own.speaker:
+            continue
+        earlier = segments[min(segment_index, other)]
+        if ends_mid_sentence(earlier.transcript_words) and words_hold_hedge(
+            neighbour.transcript_words, phrases=phrases
+        ):
+            return True
+    return False
 
 
 def line_marks(words: Sequence[TranscriptWord], *, clinician: bool) -> tuple[str, ...]:
@@ -431,9 +495,10 @@ def line_marks(words: Sequence[TranscriptWord], *, clinician: bool) -> tuple[str
     confirmed clinician's (``clinician`` — the caller's
     ``spoken_by_confirmed_clinician`` for the line's segment) and its words
     hold a spoken hedge (``words_hold_hedge``). So a transcript whose only
-    speaker is the confirmed clinician is never marked unsure. THE one rule:
-    Check 1 emits its codes from it and the line editor marks its rows from
-    it (the editor cannot read the warnings). Pure; reads no config."""
+    speaker is the confirmed clinician is never marked unsure. The per-span
+    part of THE one rule: Check 1 and the line editor (which cannot read the
+    warnings) both read it through ``quoted_line_marks``, which adds the
+    hedge scope (validation-run6 plan D5). Pure; reads no config."""
     kinds: list[str] = []
     if any(is_number_token(word.word_text) for word in words):
         kinds.append(NUMBER_LINE_MARK)
@@ -442,6 +507,28 @@ def line_marks(words: Sequence[TranscriptWord], *, clinician: bool) -> tuple[str
     if not clinician and words_hold_hedge(words):
         kinds.append(UNSURE_LINE_MARK)
     return tuple(kinds)
+
+
+def quoted_line_marks(
+    document: TranscriptDocument,
+    segment_index: int,
+    words: Sequence[TranscriptWord],
+    *,
+    clinician: bool,
+) -> tuple[str, ...]:
+    """The line-mark kinds a quoted line earns in its transcript: the
+    per-span ``line_marks`` of ``words`` (the line's words in segment
+    ``segment_index``), with ``UNSURE_LINE_MARK`` also earned through the
+    hedge scope (validation-run6 plan D5): when the line is not the
+    confirmed clinician's and its segment is hedged (``segment_hedged`` —
+    its own words, or a same-speaker neighbour joined mid-sentence). THE one
+    rule for a quoted line: Check 1 emits its codes from it and the line
+    editor marks its rows from it, so the two always agree. Unsure stays
+    last, in ``LINE_MARK_CODES`` order. Pure; reads no config."""
+    kinds = line_marks(words, clinician=clinician)
+    if not clinician and UNSURE_LINE_MARK not in kinds and segment_hedged(document, segment_index):
+        kinds = (*kinds, UNSURE_LINE_MARK)
+    return kinds
 
 
 class SourceCoords(NamedTuple):
@@ -985,35 +1072,68 @@ def line_marks_by_assertion(
     return marks
 
 
-def input_texts_digest(texts: Sequence[str]) -> str:
+# The tag that separates a patient-framed section's digest from a plain one
+# (note-content-design D3): the NUL never occurs in a transcript or typed line.
+_OTHER_VOICE_DIGEST_TAG: Final = "other_voice\x00"
+
+
+def input_texts_digest(texts: Sequence[str], *, other_voice: bool = False) -> str:
     """The digest ``section_input_digest`` is built on, over the texts
     themselves: the exact texts, in order, joined by newlines. The prose
     stage (Phase 4) stamps this on the ``StyleRendering`` it produces from
     exactly those texts, so the two sides of the binding share ONE
-    implementation."""
-    return text_digest("\n".join(texts))
+    implementation. ``other_voice`` (note-content-design D3, codex PR-MED-001
+    / -009) folds the section's speaker flag in — the flag that admits the
+    speaker frame in Check 5 — so a rendering judged WITH the frame never
+    binds to the same texts once no line of the section is another
+    speaker's (an edit that keeps a patient line's wording but makes it the
+    clinician's own typed line), nor the reverse. False keeps the digest
+    exactly what it was before the flag existed."""
+    digest = text_digest("\n".join(texts))
+    return text_digest(_OTHER_VOICE_DIGEST_TAG + digest) if other_voice else digest
 
 
-def section_input_digest(section: GeneratedSection) -> str:
+def section_other_voice(section: GeneratedSection, clinician_speaker: str | None) -> bool:
+    """True when a TRANSCRIPT-provenance line of the section was spoken by
+    someone other than the confirmed clinician (note-content-design D2): the
+    one derivation of the prose stage's speaker frame and of the digest's
+    flag. Fail-closed: no confirmed clinician, a typed or config line (which
+    carries a speaker too) or a line with no speaker never counts."""
+    if clinician_speaker is None:
+        return False
+    return any(
+        assertion.note_span.provenance == "transcript"
+        and assertion.speaker is not None
+        and not spoken_by_confirmed_clinician(assertion.speaker, clinician_speaker)
+        for assertion in section.note_assertions
+    )
+
+
+def section_input_digest(section: GeneratedSection, clinician_speaker: str | None) -> str:
     """THE binding between a section's confirmed assertion texts and a prose
     rendering (D7): ``input_texts_digest`` over the section's texts in
-    order. Phase 4's prose stage stamps this on each ``StyleRendering``
-    it produces; ``usable_rendering`` recomputes it before any prose is
-    shown, so an edit to any line of the section (a different text, an
-    added or removed line, a re-ordering) invalidates the rendering."""
-    return input_texts_digest([assertion.text for assertion in section.note_assertions])
+    order, with its ``section_other_voice`` flag under ``clinician_speaker``
+    (the note's). Phase 4's prose stage stamps this on each
+    ``StyleRendering`` it produces; ``usable_rendering`` recomputes it before
+    any prose is shown, so an edit to any line of the section (a different
+    text, an added or removed line, a re-ordering, a line that changes whose
+    it is) invalidates the rendering."""
+    return input_texts_digest(
+        [assertion.text for assertion in section.note_assertions],
+        other_voice=section_other_voice(section, clinician_speaker),
+    )
 
 
 def bound_rendering(note: GeneratedNote, section: GeneratedSection) -> StyleRendering | None:
     """The section's rendering — ``passed`` OR ``failed`` — when the note
-    carries one whose ``input_digest`` is ``section_input_digest(section)``
-    now; None otherwise. The prose stage asks this to know which sections
-    still need the model (a bound ``failed`` verdict is an answer too: the
-    same lines are never asked twice in one review)."""
+    carries one whose ``input_digest`` is ``section_input_digest(section,
+    note.clinician_speaker)`` now; None otherwise. The prose stage asks this
+    to know which sections still need the model (a bound ``failed`` verdict
+    is an answer too: the same lines are never asked twice in one review)."""
     for rendering in note.style_renderings:
         if rendering.section_key != section.section_key:
             continue
-        if rendering.input_digest != section_input_digest(section):
+        if rendering.input_digest != section_input_digest(section, note.clinician_speaker):
             return None
         return rendering
     return None
@@ -1022,7 +1142,8 @@ def bound_rendering(note: GeneratedNote, section: GeneratedSection) -> StyleRend
 def usable_rendering(note: GeneratedNote, section: GeneratedSection) -> StyleRendering | None:
     """The section's prose rendering, or None when the note carries none for
     it, the verdict is ``failed`` (no prose — C4) or its ``input_digest``
-    differs from ``section_input_digest(section)`` (stale — D7)."""
+    differs from ``section_input_digest(section, note.clinician_speaker)``
+    (stale — D7)."""
     rendering = bound_rendering(note, section)
     if rendering is None or rendering.verdict != "passed":
         return None
@@ -1035,7 +1156,7 @@ def note_input_digest(note: GeneratedNote) -> str:
     rendering job can be bound to the note it was started for and a result
     for a note that has since changed is recognised (Phase 4, D7)."""
     parts = [
-        f"{section.section_key}\n{section_input_digest(section)}"
+        f"{section.section_key}\n{section_input_digest(section, note.clinician_speaker)}"
         for section in note.note_sections
         if section.note_assertions
     ]
@@ -1062,7 +1183,9 @@ def attach_style_renderings(
     chosen: dict[NoteSectionKey, StyleRendering] = {}
     for rendering in renderings:
         section = sections.get(rendering.section_key)
-        if section is None or rendering.input_digest != section_input_digest(section):
+        if section is None or rendering.input_digest != section_input_digest(
+            section, note.clinician_speaker
+        ):
             continue
         chosen[rendering.section_key] = rendering
     kept = tuple(chosen[key] for key in CANONICAL_SECTION_KEYS if key in chosen)
@@ -1461,15 +1584,40 @@ def _parse_shipped_section_cues(
     return tuple(loaded)
 
 
+def _refuse_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """``json``'s object hook for every shipped defaults file: two equal keys
+    in one object are refused, where ``json`` alone keeps the last silently
+    (codex round 8 PR-LOW-016 — ``"class": [], "class": "anatomy"`` would pass
+    as anatomy; note-content-design Step H carried it to the older loaders)."""
+    decoded: dict[str, object] = {}
+    for key, value in pairs:
+        if key in decoded:
+            raise ValueError(f"the key {key!r} is repeated in one object")
+        decoded[key] = value
+    return decoded
+
+
+def _decode_shipped_json(data: bytes, filename: str) -> object:
+    """A shipped defaults file's bytes decoded, a repeated object key or a
+    nesting too deep to decode refused as a broken install (the test seam for
+    the decode step; each file's own parser checks the shape). Shared with
+    ``note_config``'s shipped loaders, which cannot live here the other way
+    round (``note_config`` imports this module)."""
+    try:
+        return json.loads(data, object_pairs_hook=_refuse_duplicate_keys)
+    except (ValueError, RecursionError) as exc:
+        raise RuntimeError(f"shipped {filename} unreadable (broken install): {exc}") from exc
+
+
 def _load_shipped_section_cues() -> tuple[tuple[NoteSectionKey, tuple[str, ...]], ...]:
     resource = resources.files("scribe_desktop") / _DEFAULTS_RESOURCE_DIR / SECTION_CUES_FILENAME
     try:
-        payload = json.loads(resource.read_bytes())
-    except (OSError, ValueError) as exc:
+        data = resource.read_bytes()
+    except OSError as exc:
         raise RuntimeError(
             f"shipped {SECTION_CUES_FILENAME} unreadable (broken install): {exc}"
         ) from exc
-    return _parse_shipped_section_cues(payload)
+    return _parse_shipped_section_cues(_decode_shipped_json(data, SECTION_CUES_FILENAME))
 
 
 _RAW_SECTION_CUES: Final[tuple[tuple[NoteSectionKey, tuple[str, ...]], ...]] = (
@@ -1686,6 +1834,140 @@ def ends_mid_sentence(words: Sequence[TranscriptWord]) -> bool:
             text = text.rstrip(_CLOSING_MARKS)
             return bool(text) and text[-1] in _CONTINUATION_MARKS
     return False
+
+
+# The answer hop's guard G (answers-follow-question plan D2): what ends a
+# sentence for its sentence cut, once closing quotes and brackets are peeled
+# off as ``ends_mid_sentence`` does.
+_SENTENCE_END_MARKS: Final[frozenset[str]] = frozenset({".", "?", "!"})
+
+
+def _last_sentence_text(words: Sequence[TranscriptWord]) -> str:
+    """The span text of the line's last sentence with text, or "" (plan D2).
+    A sentence ends after any word whose text, closing marks peeled off, ends
+    in ``.``, ``?`` or ``!``; a line with no such word is one sentence. No
+    abbreviation handling: "Dr." cuts a sentence (a named limit of G)."""
+    sentences: list[list[TranscriptWord]] = [[]]
+    for word in words:
+        sentences[-1].append(word)
+        text = word.word_text.strip().rstrip(_CLOSING_MARKS)
+        if text and text[-1] in _SENTENCE_END_MARKS:
+            sentences.append([])
+    for sentence in reversed(sentences):
+        if span := reconstruct_span_text(sentence):
+            return span
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# Check 4's coverage rule and its unit (validation-run7 plan D1): ONE
+# implementation each, read by the checker (``note_check``), the chooser
+# (``ui.models.flagged_segments``) and the validation harness (C5).
+# ---------------------------------------------------------------------------
+
+
+def _words_for_coords(
+    document: TranscriptDocument, coords: SourceCoords
+) -> tuple[TranscriptWord, ...] | None:
+    """The words ``coords`` address in the immutable transcript, or None.
+
+    Segment coordinates address positions in ``transcript_segments`` — the
+    exact enumeration ``_assemble_note_request`` performed, so a span
+    verified here agrees with one verified against the ``NoteRequest``. Only
+    an interval ``0 <= first <= last < len(words)`` in a segment that exists
+    resolves; a negative index, a reversed interval or one past the end is
+    None. A span's coordinates are validated so at construction, but a
+    warning's are not (``validation`` resolves a ``hedged_source`` mark's),
+    and a raw slice would read a negative index from the end or return an
+    empty tuple for a reversed one (review rounds 15 and 16 PR-LOW-001).
+    """
+    if not 0 <= coords.segment_index < len(document.transcript_segments):
+        return None
+    words = document.transcript_segments[coords.segment_index].transcript_words
+    if not 0 <= coords.first_word_index <= coords.last_word_index < len(words):
+        return None
+    return words[coords.first_word_index : coords.last_word_index + 1]
+
+
+def _resolved_coords(assertion: NoteAssertion) -> SourceCoords:
+    coords = assertion.note_span.source_coords
+    if coords is None:  # pragma: no cover - NoteSpan validates this away
+        raise AssertionError("unreachable: a transcript span always carries source_coords")
+    return coords
+
+
+def covered_words(note: GeneratedNote, document: TranscriptDocument) -> frozenset[tuple[int, int]]:
+    """The ``(segment, word)`` positions some ``transcript`` assertion's
+    resolvable coordinates carry — Check 4's ONE coverage rule, read by both
+    of its codes, by the chooser's joined runs and by the validation harness
+    (moved here from ``note_check`` by validation-run7 plan D1, C5)."""
+    covered: set[tuple[int, int]] = set()
+    for section in note.note_sections:
+        for assertion in section.note_assertions:
+            if assertion.provenance != "transcript":
+                # Coverage is coordinate CARRIAGE: a typed ``clinician`` line
+                # (schema v2) that mentions the same number covers nothing.
+                continue
+            coords = _resolved_coords(assertion)
+            if _words_for_coords(document, coords) is None:
+                continue
+            for word_index in range(coords.first_word_index, coords.last_word_index + 1):
+                covered.add((coords.segment_index, word_index))
+    return frozenset(covered)
+
+
+def wholly_uncovered(
+    document: TranscriptDocument, segment_index: int, covered: Set[tuple[int, int]]
+) -> bool:
+    """True when no word of segment ``segment_index`` is in ``covered``
+    (``covered_words``) — the note quotes none of that line."""
+    words = document.transcript_segments[segment_index].transcript_words
+    return not any((segment_index, word_index) in covered for word_index in range(len(words)))
+
+
+def joined_run(
+    document: TranscriptDocument, i: int, *, covered: Set[tuple[int, int]], end: int
+) -> range:
+    """THE unit of Check 4's second code (validation-run7 plan D1, V1): the
+    maximal run of adjacent segments CONTAINING ``i``, within ``[0, end)``
+    (the caller's cut — the next-patient boundary, or the segment count),
+    where each adjacent pair ``k``, ``k + 1`` joins when ALL hold: the same
+    ``speaker`` label; segment ``k`` ends mid-sentence (``ends_mid_sentence``
+    — a trailing comma, semicolon, colon or en or em dash: the recogniser cut
+    one sentence there); segment ``k + 1`` has text (``segment_has_text``);
+    and both are wholly uncovered (``wholly_uncovered`` over ``covered``,
+    ``covered_words``). A length-1 run is a line the recogniser did not split.
+
+    What breaks a run, the named residues: a bare cut (no trailing mark), a
+    full stop, a speaker change, a textless segment (it never joins, forward
+    or backward — the ``segment_hedged`` precedent), a partly or wholly
+    quoted piece, and the cut (a run that spans it is truncated, never
+    dropped). The speaker is not judged here — the callers do that. Raises
+    ``ValueError`` unless ``0 <= i < end <= len(transcript_segments)``.
+    Returns indices; no text leaves it."""
+    segments = document.transcript_segments
+    if not 0 <= i < end <= len(segments):
+        raise ValueError("joined_run needs 0 <= i < end <= the segment count")
+
+    def joins(k: int) -> bool:
+        if k + 1 >= end:
+            return False
+        earlier, later = segments[k], segments[k + 1]
+        return (
+            earlier.speaker == later.speaker
+            and ends_mid_sentence(earlier.transcript_words)
+            and segment_has_text(later)
+            and wholly_uncovered(document, k, covered)
+            and wholly_uncovered(document, k + 1, covered)
+        )
+
+    start = i
+    while start > 0 and joins(start - 1):
+        start -= 1
+    stop = i + 1
+    while joins(stop - 1):
+        stop += 1
+    return range(start, stop)
 
 
 def any_cue_matches(
@@ -1950,6 +2232,32 @@ class ExtractiveNoteProvider:
     …" opener of unrelated content is carried (misplaced, not lost), and a
     fenced-off clause after a marker is quoted, as after a comma.
 
+    The answer hop (answers-follow-question plan D1, in the form its Task 0.6
+    chose: unlimited reach, guard G and switch S on): an utterance no cue
+    routes and the carry does not take JOINS the section of the confirmed
+    clinician's cue-routed question before it, so a patient's uncued reply
+    sits right after the question it answers. The window opens only after a
+    question by the CONFIRMED clinician (none without one) that holds no
+    suspect word, is not in a clinician-owned section, and whose last
+    sentence is itself a question that alone routes there (guard G,
+    ``_last_sentence_text``); a cue-routed line plus its one carried piece
+    opens it too, a question if either piece is, the two read as one line for
+    the guard (switch S). A reply joins when someone other than the clinician
+    said it, it holds no suspect word, is not itself a question and carries
+    no cue of either layer in any section; from the second joined line on it
+    must be the first reply's speaker. The reach is unlimited, so a reply the
+    recogniser split at a comma, or a correction after it, joins as a line of
+    its own (D1's carried-piece row adds nothing at this reach). A cue-routed
+    utterance, or anything else, closes the window; a joined line closes the
+    carry's chain. A joined line is an ordinary quoted line (D3):
+    the same ``transcript`` assertion and ``x`` id as a cued or carried one.
+    Named residues: a patient's "don't write this down" given as the FIRST
+    reply is quoted (accepted at Task 0.6, 2026-11-17); a bare "No." beside
+    its question carries no claim of its own for Check 2, and a phrase
+    learned from a clinician's added question later routes it and pulls its
+    reply in (the plan's Codebase Integration Notes); and G's sentence cut
+    has no abbreviation handling, so "Dr." cuts a sentence (D2).
+
     Deliberately NOT excluded (invented-text guard decision 0.1, D6): the
     router reads a suspect word like any other, so a cue in a suspect line
     still routes it — into the note with its ``[check: possibly not
@@ -1981,7 +2289,66 @@ class ExtractiveNoteProvider:
             question=is_interrogative(utterance.text),
         )
 
+    def _question_routes_alone(
+        self,
+        request: NoteRequest,
+        speaker: str,
+        words: Sequence[TranscriptWord],
+        key: NoteSectionKey,
+    ) -> bool:
+        """Guard G (answers-follow-question plan D2): the line's last sentence
+        is itself a question and alone routes to ``key`` (``layered_section``
+        with ``_route``'s arguments)."""
+        last = _last_sentence_text(words)
+        if not last or not is_interrogative(last):
+            return False
+        routed = layered_section(
+            self._cues,
+            self._fallback_cues,
+            content_tokens(last),
+            request.section_keys,
+            speaker=speaker,
+            clinician_speaker=request.clinician_speaker,
+            question=True,
+        )
+        return routed == key
+
+    def _opens_answer_window(
+        self,
+        request: NoteRequest,
+        speaker: str,
+        question_words: Sequence[Sequence[TranscriptWord]],
+        key: NoteSectionKey,
+    ) -> bool:
+        """The answer hop's window opens after ``question_words`` — one
+        cue-routed line, or that line and its one carried piece (switch S) —
+        when the CONFIRMED clinician said it, no piece holds a suspect word,
+        ``key`` is not clinician-owned, some piece is a question, and guard G
+        passes over the pieces read as one line (plan D1 (a) and (d), D2)."""
+        if not spoken_by_confirmed_clinician(speaker, request.clinician_speaker):
+            return False
+        if any(words_hold_suspect(piece) for piece in question_words):
+            return False
+        if key in CLINICIAN_OWNED_SECTIONS:
+            return False
+        if not any(is_interrogative(reconstruct_span_text(piece)) for piece in question_words):
+            return False
+        joined = tuple(word for piece in question_words for word in piece)
+        return self._question_routes_alone(request, speaker, joined, key)
+
+    def _answer_is_clean(self, utterance: NoteUtterance) -> bool:
+        """Plan D1 (c): no suspect word, not itself a question, and no cue of
+        either layer in any section."""
+        return (
+            not words_hold_suspect(utterance.transcript_words)
+            and not is_interrogative(utterance.text)
+            and not any_cue_matches(
+                self._cues, self._fallback_cues, content_tokens(utterance.text)
+            )
+        )
+
     def generate_sections(self, request: NoteRequest) -> tuple[GeneratedSection, ...]:
+        clinician = request.clinician_speaker
         routed: dict[NoteSectionKey, list[NoteAssertion]] = {}
         # The carry's state (D11): the previous non-transparent utterance's
         # section, whether a cue routed it, its speaker, whether it may open a
@@ -1992,11 +2359,17 @@ class ExtractiveNoteProvider:
         prev_speaker: str | None = None
         prev_clean = False
         prev_open = False
+        # The answer hop's state (answers-follow-question plan D1): the last
+        # cue-routed line's words (switch S), the open window's section (None:
+        # closed) and the first joined reply's speaker.
+        cue_words: tuple[TranscriptWord, ...] = ()
+        window_key: NoteSectionKey | None = None
+        reply_speaker: str | None = None
         for utterance in request.transcript_utterances:
             words = utterance.transcript_words
             # (0) Transparent BEFORE routing (``_route`` would read nothing as
             # "dropped"): nothing to quote, and the state is left untouched,
-            # so a blank utterance never breaks a chain.
+            # so a blank utterance never breaks a chain or closes a window.
             if not words or not utterance.text:
                 continue
             key = self._route(request, utterance)
@@ -2008,6 +2381,29 @@ class ExtractiveNoteProvider:
                 prev_speaker = utterance.speaker
                 prev_clean = not words_hold_suspect(words)
                 prev_open = ends_mid_sentence(words)
+                # Any open window closes; a question may open a new one.
+                cue_words = words
+                window_key = (
+                    key
+                    if self._opens_answer_window(request, utterance.speaker, (words,), key)
+                    else None
+                )
+                reply_speaker = None
+            elif (
+                window_key is not None
+                and not spoken_by_confirmed_clinician(utterance.speaker, clinician)
+                and (reply_speaker is None or utterance.speaker == reply_speaker)
+                and self._answer_is_clean(utterance)
+            ):
+                # (4) The answer hop (plan D1 row 3): a reply joins its
+                # question's section, and the carry's chain is closed. With
+                # the unlimited reach D1's row 4 (one carried piece after a
+                # joined reply) is subsumed here: such a piece is the same
+                # speaker's and meets the same tests, so it joins.
+                key = window_key
+                if reply_speaker is None:
+                    reply_speaker = utterance.speaker
+                prev_cued = False
             elif (
                 prev_cued
                 and prev_key is not None
@@ -2022,12 +2418,23 @@ class ExtractiveNoteProvider:
                     self._cues, self._fallback_cues, content_tokens(utterance.text)
                 )
             ):
-                # (2) Carried into the previous section; one hop only.
+                # (2) Carried into the previous section; one hop only. Any
+                # open window closes; the question and its carried piece may
+                # open a new one (switch S).
                 key = prev_key
                 prev_cued = False
+                window_key = (
+                    key
+                    if self._opens_answer_window(
+                        request, utterance.speaker, (cue_words, words), key
+                    )
+                    else None
+                )
+                reply_speaker = None
             else:
-                # (3) Dropped: the chain breaks.
+                # (3) Dropped: the chain breaks and any open window closes.
                 prev_cued = False
+                window_key = None
                 continue
             assertion = whole_utterance_assertion(
                 provider_assertion_id(utterance.segment_index),
@@ -3069,12 +3476,14 @@ __all__ = [
     "check_mark",
     "compose_draft",
     "content_tokens",
+    "covered_words",
     "digest_bytes",
     "ends_mid_sentence",
     "finalise_note",
     "first_matching_section",
     "is_interrogative",
     "is_prefilled",
+    "joined_run",
     "layered_section",
     "line_marks",
     "line_marks_by_assertion",
@@ -3083,11 +3492,14 @@ __all__ = [
     "opens_with_correction",
     "provenance_label",
     "provider_assertion_id",
+    "quoted_line_marks",
     "reconstruct_span_text",
     "render_note",
     "section_admits_utterance",
     "section_input_digest",
     "section_marks_line",
+    "section_other_voice",
+    "segment_hedged",
     "speaker_role",
     "spoken_by_confirmed_clinician",
     "strip_token_punctuation",
@@ -3096,5 +3508,6 @@ __all__ = [
     "transcript_digest",
     "usable_rendering",
     "whole_utterance_assertion",
+    "wholly_uncovered",
     "words_hold_hedge",
 ]

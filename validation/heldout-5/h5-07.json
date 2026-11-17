@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h5-07",
+  "appointment_type": "follow_up",
+  "axes": ["laterality", "numbers", "uncertain"],
+  "lines": [
+    {"role": "clinician", "text": "Come in, both of you. How's the neck been since last time?"},
+    {"role": "patient", "text": "Since last time the headaches have dropped to about two a week."},
+    {"role": "partner", "text": "From last time I'd guess it's more like three headaches a week."},
+    {"role": "clinician", "text": "Either way it's heading the right direction. The needles seemed to help, so I'll do those again today along with some work on the joints."},
+    {"role": "patient", "text": "Yes please, the needles were brilliant, I've no doubt that's what's made the difference."},
+    {"role": "clinician", "text": "Turning to the left is still the stiffer direction, you're about 20 degrees short of the right."},
+    {"role": "clinician", "text": "When you're at the laptop, prop it up on a couple of books so your eyes are level with the top of the screen."},
+    {"role": "partner", "text": "I'll make sure he does that."},
+    {"role": "clinician", "text": "Right, hop on the couch, shirt off, and we'll get started."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["headaches", "have", "dropped", "to", "about", "two", "a", "week"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["more", "like", "three", "headaches", "a", "week"], "line": 2, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["the", "needles", "were", "brilliant"], "line": 4, "material": true},
+    {"kind": "laterality", "tokens": ["turning", "to", "the", "left"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["level", "with", "the", "top", "of", "the", "screen"], "line": 6, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "partner": 1}}
+}

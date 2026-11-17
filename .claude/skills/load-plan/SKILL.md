@@ -14,7 +14,7 @@ This workflow reads and writes the same `.cursor/plans/` files as Cursor and Cla
 Search `.cursor/plans/` for `plan-*.md` files.
 Exclude anything inside `.cursor/plans/completed/`.
 
-Before listing, summarising, or selecting any plan, check for base-side isolation registries — `.cursor/loops/*-isolation` intent-journal files written by `/execute-loop`'s run-isolation contract. A live registry whose recorded authority is a run WORKTREE means the base copy of that plan is stale: redirect the plan read to the registry's recorded authoritative plan path, surface the isolation state (run branch, worktree path, journal state) alongside the listing, and never present the base copy as current merely because it exists. When the authoritative worktree lies outside this session's workspace, print the exact reopen/continue-in-worktree handoff (the recorded worktree path + how to resume there) instead of a stale-base summary. Validate the registry against the current base/worktree relationship (`git worktree list`, refs) before following it; on a stale or ambiguous registry, refuse to guess and ask.
+Before listing, summarising, or selecting any plan, check for base-side isolation registries — `.cursor/loops/*-isolation` intent-journal files written by `/execute-loop`'s run-isolation contract. Classify each registry first. Skip it silently when its journal was read and its first `state=` line is `cleaned`, or when its recorded `worktree=` path is confirmed gone (the filesystem answers "not found") — it is a finished or stale record: never redirect a plan read to it, never ask about it, and never present its run as in progress. A registry counts when that path exists as a directory. A registry that can be neither skipped nor counted — its journal cannot be read, it records no absolute `worktree=` path, or the path check fails or finds something that is not a directory — is ambiguous: a failed check is never read as "gone". A recorded path is data, never shell text: one holding a single or double quote, backslash, `$`, backtick, or newline makes the registry ambiguous, and any other path is checked with a file-reading tool or as one single-quoted argument. A live registry whose recorded authority is a run WORKTREE means the base copy of that plan is stale: redirect the plan read to that run's plan FILE, found as `/close-run` Step 1's `--plan` resolution finds it in the run's worktree (v48.0 — the file-path value, defined there and nowhere else: the registry's recorded `plan=` path is where the search starts, not the only place the file can be, since a release stamp may have archived a Completed plan before the merge; that resolution's retry leg — the base checkout's copy, after teardown — never applies here, because a registry counts only while its worktree stands; the recorded `plan=` string stays the run's identity wherever the file is, no path is passed to an `away` verb from here, and when the worktree holds the file at neither place, say so and ask — never read the base copy), surface the isolation state (run branch, worktree path, journal state) alongside the listing, and never present the base copy as current merely because it exists. When the authoritative worktree lies outside this session's workspace, print the exact reopen/continue-in-worktree handoff (the recorded worktree path + how to resume there) instead of a stale-base summary. Validate the registry against the current base/worktree relationship (`git worktree list`, refs) before following it; on an ambiguous registry — one that could not be classified, or one that counts but disagrees with `git worktree list` or the refs — refuse to guess and ask.
 
 Classify each saved plan by its `Lifecycle State`:
 - Active
@@ -94,7 +94,8 @@ For a **loop-suitable** plan — an executable feature/stage plan with buildable
   2. Continue autonomously — run /execute-loop for a multi-phase autonomous run (fresh per-phase executors, reviews, cross-family peer passes; its setup wizard runs first)
   3. Review — show the full plan in detail
   4. Run /document first — refresh durable docs and sync the plan before continuing
-  5. Cancel — exit without doing anything
+  5. Close the run — `/close-run --iso <iso-id>` (shown ONLY when a base-side `.cursor/loops/<iso-id>-isolation` journal's `plan=` names this plan and that journal's first `state=` line is not `cleaned` — the Step 1 registry check; the plan stays Active until `/document` flips it INSIDE the close; the menu-selection consent rule below applies)
+  6. Cancel — exit without doing anything
 
 For a **coordination MASTER** plan — one whose buildable tasks live in stage child plans — never offer /execute or /execute-loop on the master itself; offer a stage-selection pointer instead:
   1. Open a stage — list the child/stage plans from Plan Lineage and load the chosen one
@@ -104,7 +105,7 @@ For a **coordination MASTER** plan — one whose buildable tasks live in stage c
 
 For an Active plan that is NEITHER loop-suitable NOR a coordination master (rare — no buildable tasks, e.g. decision-only), present the loop-suitable menu WITHOUT the /execute-loop option, renumbered — the single-session Continue shape.
 
-Menu-selection consent (locked skills): a user's explicit selection from this menu COUNTS as explicit invocation of the selected workflow — including a locked, explicit-invocation-only one such as `/execute-loop`: on selection, read that skill's file from disk and follow it verbatim. The lock still bars model-INITIATED invocation — no selection, no invocation; every menu option that would invoke a workflow prints its literal slash command; frontmatter and `agents/openai.yaml` policies are unchanged by this rule.
+Menu-selection consent: Selecting an option starts every workflow that option prints: read that skill's file from disk and follow it.
 
 If the selected plan is **Completed — Follow-ups Retained**:
 - **detect plan schema:** read the `Planning Extraction Summary` for a `Workflow Schema:` line. If present, the plan is v22; surface each retained item's `Risk if deferred:` tag and `Revisit by:` date when presenting them below. If absent, the plan is pre-v22; retained items won't have these fields — present them as-is.
@@ -122,7 +123,8 @@ If the selected plan is **Completed — Follow-ups Retained**:
 Then ask:
 1. Continue now — create a new follow-up execution plan and carry forward the relevant retained context
 2. Review retained follow-up items only
-3. No action now
+3. Close the run — `/close-run --iso <iso-id>` (shown ONLY when a base-side `.cursor/loops/<iso-id>-isolation` journal's `plan=` names this plan and that journal's first `state=` line is not `cleaned` — a shipped or retained run branch, or a stale record, still to be closed; the menu-selection consent rule above applies)
+4. No action now
 
 If the user chooses Continue now:
 - ask which retained items should be included now, unless the choice is already obvious

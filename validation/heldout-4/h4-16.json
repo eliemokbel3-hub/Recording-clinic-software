@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h4-16",
+  "appointment_type": "acute",
+  "axes": ["laterality", "end_and_new_patient", "small_talk", "numbers", "noise"],
+  "lines": [
+    {"role": "clinician", "text": "So it went mid-run on Saturday?"},
+    {"role": "patient", "text": "Yeah, I'm coming in with a pulled right calf, it felt like someone kicked me."},
+    {"role": "clinician", "text": "Let me have a look. Rise up onto your toes on the right leg for me."},
+    {"role": "patient", "text": "Can't do it, it's too sore."},
+    {"role": "clinician", "text": "There's a tender spot in the middle of the muscle about a hand's width below the knee, it's a grade one strain."},
+    {"role": "clinician", "text": "Walk normally as much as you can, and no jogging for two weeks, then start with one minute running and one minute walking."},
+    {"role": "patient", "text": "Two weeks, okay. Thanks."},
+    {"role": "clinician", "text": "No worries, look after yourself. Hello there, you must be Mrs Haddad, how was the drive in?"},
+    {"role": "next_patient", "text": "Not bad, the bypass was clear for once."},
+    {"role": "clinician", "text": "Oh good. Come and sit down, what's been going on?"},
+    {"role": "next_patient", "text": "It's my neck, I woke up last Tuesday and couldn't turn it to the left at all."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["pulled", "right", "calf"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["it's", "a", "grade", "one", "strain"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["no", "jogging", "for", "two", "weeks"], "line": 5, "material": true},
+    {"kind": "absent", "tokens": ["the", "bypass", "was", "clear"], "line": 8, "material": false},
+    {"kind": "absent", "tokens": ["couldn't", "turn", "it", "to", "the", "left"], "line": 10, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}, "snr_db": 15}
+}

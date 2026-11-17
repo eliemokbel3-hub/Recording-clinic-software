@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h4-12",
+  "appointment_type": "post_operative",
+  "axes": ["numbers", "uncertain", "contradictory"],
+  "lines": [
+    {"role": "clinician", "text": "So you're ten weeks out from the reconstruction. How's the knee since last time?"},
+    {"role": "patient", "text": "Since last time I'm definitely moving a bit better, no doubt about it, I'm sure the swelling's gone down."},
+    {"role": "patient", "text": "Actually, I wanted to ask about getting back on my bike."},
+    {"role": "clinician", "text": "Yes, the stationary one is fine now, and outdoors on the flat from twelve weeks."},
+    {"role": "clinician", "text": "Let me have a look at the bend. Heel towards your bottom as far as it goes."},
+    {"role": "clinician", "text": "That's a hundred and twenty degrees of bend, and the knee straightens fully."},
+    {"role": "patient", "text": "That's more than I thought."},
+    {"role": "clinician", "text": "Still no running until we've tested your hop at four months."},
+    {"role": "patient", "text": "No running, got it. Can I still do the squats to the chair?"},
+    {"role": "clinician", "text": "Yes, and add a backpack with a couple of bags of rice in it once they feel easy."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["definitely", "moving", "a", "bit", "better"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["outdoors", "on", "the", "flat", "from", "twelve", "weeks"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["a", "hundred", "and", "twenty", "degrees"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["no", "running", "until", "we've", "tested", "your", "hop"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["add", "a", "backpack", "with", "a", "couple", "of", "bags", "of", "rice"], "line": 9, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

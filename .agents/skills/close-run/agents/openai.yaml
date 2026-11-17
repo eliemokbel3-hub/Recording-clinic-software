@@ -1,0 +1,18 @@
+# Codex Skill metadata for $close-run.
+#
+# Close-run is side-effecting: it commits the run's records, pushes the
+# run branch (or the base on --no-pr), opens ONE pull request, and invokes
+# the run-close helper's verified-merge teardown (worktree + branch +
+# journal). As of v34.0, implicit ($close-run) invocation is permitted so
+# an agent asked to ship a finished run takes this careful path instead of
+# merging by hand; safety comes from the in-skill gates (the preconditions;
+# the Step 5 confirm table before any push or pull request and before the
+# helper call of a shipping close — the re-entry that finishes or
+# re-reports a close already made skips it, and the Reconcile route, which
+# ships nothing, asks its own one-line confirm before its record-only
+# helper write; and the helper's merge verification before any teardown),
+# not from invocation-locking. On an unshipped tip, its preparation (the
+# flush, $retro, $document, and one records commit) runs before the Step 5
+# confirm. It can still be invoked explicitly.
+policy:
+  allow_implicit_invocation: true

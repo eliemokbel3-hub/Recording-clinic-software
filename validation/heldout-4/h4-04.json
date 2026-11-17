@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h4-04",
+  "appointment_type": "chronic",
+  "axes": ["uncertain", "laterality", "numbers", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Good afternoon. So this is the neck that's been grumbling for a few months?"},
+    {"role": "patient", "text": "That's the one. Since last time the morning stiffness lasts about an hour before I can turn my head."},
+    {"role": "patient", "text": "Might be less than that, I don't time it."},
+    {"role": "clinician", "text": "And how is it by the evening?"},
+    {"role": "patient", "text": "Evening pain is worse after a day at the laptop, since last time I've had tingling into my left thumb twice."},
+    {"role": "clinician", "text": "Let me have a look. Turn your head to each side for me."},
+    {"role": "clinician", "text": "Turning left you only get about half of what you get to the right, and pressing on the left side of your lower neck reproduces the thumb symptoms."},
+    {"role": "clinician", "text": "I wonder whether a joint low down in the neck is irritating the nerve, though it could just as easily be the muscles around it."},
+    {"role": "clinician", "text": "Set a timer to get up from the laptop every forty minutes, and raise the screen so the top is level with your eyes."},
+    {"role": "patient", "text": "I can do that."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["morning", "stiffness", "lasts", "about", "an", "hour"], "line": 1, "material": true, "expect_uncertain": true},
+    {"kind": "laterality", "tokens": ["tingling", "into", "my", "left", "thumb"], "line": 4, "material": true},
+    {"kind": "laterality", "tokens": ["pressing", "on", "the", "left", "side", "of", "your", "lower", "neck"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["a", "joint", "low", "down", "in", "the", "neck"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["get", "up", "from", "the", "laptop", "every", "forty", "minutes"], "line": 8, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

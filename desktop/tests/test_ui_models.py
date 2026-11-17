@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import dataclasses
+import inspect
 import json
+import re
 import sys
 import time
 import uuid
@@ -13,16 +16,35 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from fixtures.joined_runs import (
+    CLINICIAN,
+    SPLIT_CASES,
+    SplitCase,
+    clinician_line_anchors_v034,
+    every_small_tail,
+    flagged_v034,
+    quoted_note,
+    split_document,
+)
 from scribe_desktop import install_layout
+from scribe_desktop.language_model import LanguageModelError, MockLanguageModel
 from scribe_desktop.note import (
     CANONICAL_SECTION_KEYS,
     CLINICIAN_OWNED_SECTIONS,
+    ConfirmationDecision,
     ExtractiveNoteProvider,
+    GeneratedSection,
+    NoteAssertion,
     NoteModelProvider,
+    NoteRequest,
+    NoteSpan,
+    NoteUtterance,
     admissible_sections,
     compose_draft,
+    digest_bytes,
     manual_assertion_id,
     reconstruct_span_text,
+    text_digest,
     whole_utterance_assertion,
 )
 from scribe_desktop.note_config import (
@@ -31,6 +53,7 @@ from scribe_desktop.note_config import (
     NoteConfig,
     load_note_config,
 )
+from scribe_desktop.note_suggest import SuggestionInput, SuggestionStageResult
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session import SessionState
 from scribe_desktop.session_store import (
@@ -1487,8 +1510,27 @@ class TestReviewEditModels:
             "A side, negation, number, dose, name or medication someone said is not in the note"
         )
         assert "clinician" not in copy.title
-        assert "tick 'Show flagged lines only' to find them" in copy.clear_hint
+        # Note-content-design D6 (Task C.4): the filter's widened name.
+        assert "tick 'Show flagged or suggested lines only' to find them" in copy.clear_hint
+        assert f"'{models.FLAGGED_FILTER_LABEL}'" in copy.clear_hint
         assert copy.clear_hint.endswith("then acknowledge.")
+
+    def test_the_clinician_line_copy(self) -> None:
+        """Validation-run6 plan D1 (Task 1.2): the second code's own copy —
+        a review, never a block, naming the filter and the add path."""
+        copy = models.WARNING_COPY["clinician_line_omitted"]
+        assert copy.title == "A line you said is not in the note"
+        assert copy.blocks is None
+        assert copy.clear_hint == (
+            # Answers-follow-question Task 1.2: the bracket is the executor's
+            # draft until D.4.
+            "Check the transcript beside the note, tick 'Show flagged or suggested lines only' "
+            "to find it (if it was a question, its answer is flagged too), add it with Add line "
+            "to section if it belongs, then acknowledge."
+        )
+        assert models.SEPARATELY_ACKNOWLEDGED_NAMES["clinician_line_omitted"] == (
+            "a line you said that is not in the note (check its flagged lines)"
+        )
 
     # --- the flagged lines (note-routing-omissions D4, Task 2.2) ------------
 
@@ -1793,7 +1835,111 @@ class TestReviewEditModels:
             for row in models.editable_lines(unconfirmed, document, removed=set(), additions={})
         } == {0: ("unsure",), 1: ("unsure",)}
 
-    def test_flagged_segments_reads_only_the_omission_warnings(self) -> None:
+    def test_the_hedge_scope_marks_the_same_rows_as_check_1(self, tmp_path: Path) -> None:
+        """Validation-run6 plan D5: a row whose segment is joined mid-sentence
+        to a same-speaker hedge carries ``[check: unsure]`` exactly where
+        Check 1 emits ``hedged_source`` — one rule (``note.quoted_line_marks``)
+        for both. Every line is in the note (routed, or added by hand)."""
+        from scribe_desktop.note import (
+            SECTION_INDEX,
+            GeneratedNote,
+            GeneratedSection,
+            transcript_digest,
+        )
+        from scribe_desktop.note_check import reconstruction_warnings
+
+        turns = (
+            ("It started on the Monday,", SPEAKER_1),  # joined to the next line's hedge
+            ("I think.", SPEAKER_1),  # its own hedge
+            ("It eased by the Friday.", SPEAKER_1),  # after a full stop: not joined
+            ("The knee is stable,", SPEAKER_2),  # the clinician's: never marked
+            ("probably.", SPEAKER_2),
+        )
+        document = _document(
+            tuple(
+                TranscriptSegment(
+                    start_seconds=float(index * 10),
+                    end_seconds=float(index * 10 + 5),
+                    speaker=speaker,
+                    transcript_words=_review_words(text),
+                )
+                for index, (text, speaker) in enumerate(turns)
+            )
+        )
+        config = load_note_config(tmp_path / "config")
+        draft = compose_draft(
+            document,
+            config,
+            ExtractiveNoteProvider(cues=config.normalised_cues()),
+            "template-a",
+            clinician_speaker=SPEAKER_2,
+        )
+        routed = [
+            assertion for section in draft.note_sections for assertion in section.note_assertions
+        ]
+        in_note = {
+            assertion.note_span.source_coords.segment_index
+            for assertion in routed
+            if assertion.note_span.source_coords is not None
+        }
+        additions = {
+            line.assertion_id: line
+            for line in (
+                _manual_line(document, index, "presenting_complaint")
+                for index in range(len(turns))
+                if index not in in_note
+            )
+        }
+        grouped: dict[Any, list[Any]] = {}
+        for assertion in (*routed, *additions.values()):
+            grouped.setdefault(assertion.section_key, []).append(assertion)
+        digest = transcript_digest(document)
+
+        def marked(clinician: str | None) -> tuple[set[int], set[str], set[str]]:
+            rows = models.editable_lines(
+                draft.model_copy(update={"clinician_speaker": clinician}),
+                document,
+                removed=set(),
+                additions=additions,
+            )
+            assert {row.segment_index for row in rows} == set(range(len(turns)))
+            note = GeneratedNote(
+                session_id=draft.session_id,
+                created_at=datetime(2026, 10, 24, tzinfo=UTC),
+                template_profile_id=draft.template_profile_id,
+                provider_name="extractive-v1",
+                clinician_speaker=clinician,
+                transcript_digest=digest,
+                config_digest=digest,
+                note_sections=tuple(
+                    GeneratedSection(section_key=key, note_assertions=tuple(grouped[key]))
+                    for key in sorted(grouped, key=lambda key: SECTION_INDEX[key])
+                ),
+            )
+            checked = {
+                warning.assertion_id
+                for warning in reconstruction_warnings(note, document)
+                if warning.note_warning_code == "hedged_source"
+            }
+            unsure = [row for row in rows if "unsure" in row.marks]
+            return (
+                {row.segment_index for row in unsure},
+                {row.assertion_id for row in unsure},
+                checked,
+            )
+
+        segments, rows_marked, checked = marked(SPEAKER_2)
+        assert segments == {0, 1}
+        assert rows_marked == checked
+        # With no confirmed clinician the clinician's joined pair is marked too.
+        segments, rows_marked, checked = marked(None)
+        assert segments == {0, 1, 3, 4}
+        assert rows_marked == checked
+
+    def test_the_omission_anchors_are_read_only_from_the_omission_warnings(self) -> None:
+        """Every anchor of either Check 4 code — what 0.3.4's
+        ``flagged_segments(warnings)`` returned, and where 0.3.5's starts
+        (validation-run7 plan D1)."""
         from scribe_desktop.note import NoteWarning, SourceCoords
 
         warnings = (
@@ -1812,28 +1958,167 @@ class TestReviewEditModels:
                 severity="review",
                 source_coords=SourceCoords(6, 3, 3),
             ),
+            # Validation-run6 plan D1 (Task 1.2): Check 4's second code flags
+            # its line too.
+            NoteWarning(
+                note_warning_code="clinician_line_omitted",
+                severity="review",
+                source_coords=SourceCoords(8, 0, 5),
+            ),
+            NoteWarning(
+                note_warning_code="possible_next_patient",
+                severity="review",
+                source_coords=SourceCoords(9, 0, 1),
+            ),
         )
-        assert models.flagged_segments(warnings) == frozenset({4, 6})
-        assert models.flagged_segments(()) == frozenset()
+        assert models.omission_anchors(warnings) == frozenset({4, 6, 8})
+        assert models.omission_anchors(()) == frozenset()
+        assert models.OMISSION_CODES == frozenset({"high_risk_omission", "clinician_line_omitted"})
+
+    @pytest.mark.parametrize("case", SPLIT_CASES, ids=lambda case: case.name)
+    def test_every_piece_of_a_flagged_joined_run_is_marked(self, case: SplitCase) -> None:
+        """Validation-run7 plan D1 (Task 1.2): the ``[flagged]`` lines over
+        the fixture matrix, as each cell's data says."""
+        assert models.flagged_segments(case.note(), case.document()) == case.flagged
+
+    @pytest.mark.parametrize("case", SPLIT_CASES, ids=lambda case: case.name)
+    def test_no_line_0_3_4_flagged_loses_its_mark(self, case: SplitCase) -> None:
+        """C4 (load-bearing), both rules on the same note: every line 0.3.4's
+        chooser marked — the oracle's (``fixtures.joined_runs.flagged_v034``)
+        — is still marked; the count line counts the same rows wherever
+        0.3.4 and 0.3.5 agree, and never fewer."""
+        note, document = case.note(), case.document()
+        before = flagged_v034(note, document)
+        after = models.flagged_segments(note, document)
+        assert before <= after
+        # Only the suspect-first-piece cell adds a line (its first piece
+        # anchors the run; 0.3.4 anchored the second): D1 marks a run whole.
+        assert (after - before) == (frozenset({0}) if case.name == "suspect-first-piece" else set())
+
+    def test_no_line_0_3_4_flagged_loses_its_mark_over_every_small_tail(self) -> None:
+        """C4 holds by construction (review round 14 LOW-001), pinned here
+        over every three-piece tail (``fixtures.joined_runs.every_small_tail``,
+        1,728 notes from the real checker). The argument: a
+        ``high_risk_omission`` anchor is unchanged and ``omission_anchors``
+        keeps every one; a segment 0.3.4 anchored per segment (clinician,
+        wholly uncovered, a non-suspect content word, before the boundary)
+        lies in a joined run whose pieces are all wholly uncovered and the
+        same speaker's — so that run either holds a ``high_risk_omission``
+        piece, whose anchor ``flagged_runs`` expands, or draws ONE
+        ``clinician_line_omitted`` on its first piece, which it expands; the
+        checker's runs and the chooser's are the same maximal runs, and Check
+        6's warning is the checker's boundary. So no 0.3.4 mark is lost, and
+        the run's code never draws more warnings than 0.3.4's per-segment one."""
+        failures = [
+            name
+            for name, document, note in every_small_tail()
+            if not flagged_v034(note, document) <= models.flagged_segments(note, document)
+            or sum(w.note_warning_code == "clinician_line_omitted" for w in note.note_warnings)
+            > len(clinician_line_anchors_v034(note, document))
+        ]
+        assert failures == []
+        # The space reaches what the claim is about: a boundary, and a run
+        # wider than its anchors.
+        assert any(
+            models.next_patient_segment(note.note_warnings) is not None
+            for _name, _document, note in every_small_tail()
+        )
+        assert any(
+            models.flagged_runs(note, document) - models.omission_anchors(note.note_warnings)
+            for _name, document, note in every_small_tail()
+        )
+
+    def test_the_flagged_runs_are_the_anchors_runs_before_the_cut(self) -> None:
+        """``flagged_runs`` — THE rule the harness's credit reads (C5) —
+        expands only clinician-spoken, wholly uncovered anchors before the
+        cut; a patient's anchor, a partly covered one and one at or past the
+        cut stay out of it (peer round 1 PR-MED-001: they keep their own
+        marks through ``omission_anchors``)."""
+        expected = {
+            "comma-split": {1, 2, 3},
+            "high-risk-piece": {0, 1, 2},
+            "suspect-first-piece": {0, 1},
+            "boundary-truncates": {2, 3},
+            "tail-anchors": {2},
+            "patient-split": set(),
+            "no-confirmed-clinician": set(),
+        }
+        for case in SPLIT_CASES:
+            if case.name in expected:
+                got = models.flagged_runs(case.note(), case.document())
+                assert got == expected[case.name], case.name
+        (tail,) = [case for case in SPLIT_CASES if case.name == "tail-anchors"]
+        note = tail.note()
+        assert models.next_patient_segment(note.note_warnings) == 3
+        # The clinician's high_risk_omission anchors AT (3) and PAST (4) the
+        # cut: marked, never expanded.
+        assert models.omission_anchors(note.note_warnings) == frozenset({2, 3, 4})
+        assert models.flagged_segments(note, tail.document()) == frozenset({2, 3, 4})
+
+    @pytest.mark.parametrize("anchor", [-1, -5, 2, 7])
+    def test_an_anchor_outside_the_transcript_keeps_its_own_mark_and_adds_no_run(
+        self, anchor: int
+    ) -> None:
+        """Review round 15 PR-LOW-001: a warning's coordinates are not
+        validated, so a stored note could anchor a negative index or one past
+        the segment count. Such an anchor adds no run and raises nothing (a
+        negative one would otherwise index from the end and reach
+        ``joined_run``'s ``ValueError``, or an ``IndexError``); the chooser
+        returns it as its own mark, as 0.3.4 did. Both ways: the same note
+        anchored INSIDE, on segment 1, expands the comma-joined run 0-1."""
+        from scribe_desktop.note import NoteWarning, SourceCoords
+
+        document = split_document(("keep walking,", CLINICIAN), ("every morning.", CLINICIAN))
+
+        def anchored(index: int) -> Any:
+            warning = NoteWarning(
+                note_warning_code="high_risk_omission",
+                severity="review",
+                source_coords=SourceCoords(index, 0, 0),
+            )
+            return quoted_note(document, (), warnings=(warning,))
+
+        outside = anchored(anchor)
+        assert models.flagged_runs(outside, document) == frozenset()
+        assert models.flagged_segments(outside, document) == frozenset({anchor})
+        inside = anchored(1)
+        assert models.flagged_runs(inside, document) == frozenset({0, 1})
+        assert models.flagged_segments(inside, document) == frozenset({0, 1})
+
+    def test_the_count_line_counts_left_out_lines_with_every_piece(self) -> None:
+        """The count line's text is unchanged: it counts the flagged ROWS,
+        every piece of a split line among them, as 0.3.4 did."""
+        (case,) = [c for c in SPLIT_CASES if c.name == "comma-split"]
+        flagged = models.flagged_segments(case.note(), case.document())
+        assert models.flagged_count_line(flagged, flagged).startswith(
+            "3 flagged lines are not in the note"
+        )
 
     def test_the_count_line_counts_and_names_the_lines_the_chooser_cannot_offer(
         self,
     ) -> None:
-        classes = "with a side, negation, number, dose, name or medication"
+        """Validation-run6 plan Task 1.2: the wording covers both omission
+        codes — a line the clinician said, or a flagged word anyone said —
+        and, since answers-follow-question Task 1.2, the reply to a question
+        the clinician asked (the executor's draft until D.4)."""
+        classes = (
+            "(a line you said, an answer to a question you asked, or a side, negation, "
+            "number, dose, name or medication someone said)."
+        )
         assert models.flagged_count_line((), ()) == ""
         assert models.flagged_count_line({4}, {4, 5}) == (
-            f"1 line {classes} is not in the note."
+            f"1 flagged line is not in the note {classes}"
         )
         assert models.flagged_count_line({4, 6}, {4, 6}) == (
-            f"2 lines {classes} are not in the note."
+            f"2 flagged lines are not in the note {classes}"
         )
         # Segment 6 (line 7) is not offered: named by its transcript line number.
         assert models.flagged_count_line({4, 6}, {4}) == (
-            f"2 lines {classes} are not in the note. "
+            f"2 flagged lines are not in the note {classes} "
             "Line 7 is replaced or partly in the note - see its row below."
         )
         assert models.flagged_count_line({11, 4, 6}, {4}) == (
-            f"3 lines {classes} are not in the note. "
+            f"3 flagged lines are not in the note {classes} "
             "Lines 7, 12 are replaced or partly in the note - see their rows below."
         )
 
@@ -1848,9 +2133,16 @@ class TestReviewEditModels:
             review=(group("clinician_asserted"), group("high_risk_omission"), group("mapping_drop"))
         )
         # Invented-text guard D5: the two per-line codes joined the set;
-        # validation-pass plan D5 (Task 1.3): Check 6 joined it.
+        # validation-pass plan D5 (Task 1.3): Check 6 joined it; validation-run6
+        # plan D1 (Task 1.2): Check 4's second code joined it.
         assert models.SEPARATELY_ACKNOWLEDGED_CODES == frozenset(
-            {"high_risk_omission", "number_source", "suspect_source", "possible_next_patient"}
+            {
+                "high_risk_omission",
+                "clinician_line_omitted",
+                "number_source",
+                "suspect_source",
+                "possible_next_patient",
+            }
         )
         assert models.acknowledge_all_codes(summary, ()) == ("clinician_asserted", "mapping_drop")
         assert models.acknowledge_all_codes(summary, {"mapping_drop"}) == ("clinician_asserted",)
@@ -1980,11 +2272,14 @@ class TestPossibleNextPatient:
         assert models.ACKNOWLEDGE_ALL_TOOLTIP == (
             "Acknowledges every review warning except those that each need their own "
             "Acknowledge: something said that is not in the note (check its flagged lines), "
+            "a line you said that is not in the note (check its flagged lines), "
             "a quoted line with a number (check each line marked [check: number]), "
             "a quoted line that may not be speech (check each line marked "
             "[check: possibly not speech]) and a note that stops where a new patient may "
-            "have arrived (check the lines marked [after possible next patient])."
+            "have arrived (check the lines marked [next patient?])."
         )
+        # Validation-run6 plan D3: the name quotes the chooser's mark itself.
+        assert models.NEXT_PATIENT_LINE_MARK.strip() in names["possible_next_patient"]
 
     def test_acknowledge_all_leaves_it_and_its_own_acknowledge_clears_it(self) -> None:
         from scribe_desktop.note import NoteWarning
@@ -2023,9 +2318,9 @@ class TestPossibleNextPatient:
 
     def test_the_front_mark_order(self) -> None:
         """The practitioner's front-mark decision (2026-10-13): ``N.``, then
-        ``[flagged]``, then ``[after possible next patient]``, then the
-        speaker, then the guard's ``[possibly not speech]`` before the
-        words — and a line before the boundary carries no new mark."""
+        ``[flagged]``, then ``[next patient?]`` (short since the validation-run6
+        plan's D3), then the speaker, then the guard's ``[possibly not speech]``
+        before the words — and a line before the boundary carries no new mark."""
         document = _boundary_document()
         choices = {
             choice.segment_index: choice
@@ -2037,23 +2332,35 @@ class TestPossibleNextPatient:
                 boundary=3,
             )
         }
-        assert models.NEXT_PATIENT_LINE_MARK == "[after possible next patient] "
+        assert models.NEXT_PATIENT_LINE_MARK == "[next patient?] "
         assert choices[1].label == "2. [flagged] speaker_2: See you next week."
         assert choices[2].label == "3. speaker_1: Hello, come in."
-        assert choices[3].label == (
-            "4. [flagged] [after possible next patient] speaker_1: My left hip is sore."
-        )
+        assert choices[3].label == "4. [flagged] [next patient?] speaker_1: My left hip is sore."
         assert choices[4].label == (
-            "5. [flagged] [after possible next patient] speaker_1: "
-            "[possibly not speech] Left knee two."
+            "5. [flagged] [next patient?] speaker_1: [possibly not speech] Left knee two."
         )
         assert choices[3].flagged is True
         # Not flagged, after the boundary: the mark alone after the number.
         unflagged = models.eligible_utterances(
             document, clinician_speaker=SPEAKER_2, in_note={0}, boundary=3
         )
-        assert unflagged[2].label == (
-            "4. [after possible next patient] speaker_1: My left hip is sore."
+        assert unflagged[2].label == "4. [next patient?] speaker_1: My left hip is sore."
+        # Validation-run6 plan D3: both front marks sit before the speaker, and
+        # the 60-character cut applies to the words alone — a long line keeps
+        # all its marks whole.
+        words = " ".join(["walking"] * 20)
+        segments = list(document.transcript_segments)
+        segments[3] = segments[3].model_copy(update={"transcript_words": _review_words(words)})
+        long_document = document.model_copy(update={"transcript_segments": tuple(segments)})
+        [long_choice] = [
+            c
+            for c in models.eligible_utterances(
+                long_document, clinician_speaker=SPEAKER_2, in_note={0}, flagged={3}, boundary=3
+            )
+            if c.segment_index == 3
+        ]
+        assert long_choice.label == (
+            "4. [flagged] [next patient?] speaker_1: " + words[:60].rstrip() + "..."
         )
         # No boundary: today's labels, unchanged.
         plain = models.eligible_utterances(document, clinician_speaker=SPEAKER_2, in_note={0})
@@ -2569,3 +2876,516 @@ class TestHeaderAndRailCue:
     def test_the_rail_cue_for_every_state(self, state: SessionState) -> None:
         expected = {SessionState.RECORDING: "REC", SessionState.PAUSED: "PAUSED"}.get(state, "")
         assert models.rail_cue_text(state) == expected
+
+
+# --- the section suggestions (note-content-design plan Task C.3; D6, D9; C8, C10) ---
+
+
+def _suggestion_document(turns: tuple[tuple[str, str], ...]) -> TranscriptDocument:
+    """Invented lines, one segment per ``(speaker, text)``."""
+    return TranscriptDocument(
+        session_id="f" * 32,
+        created_at=datetime(2026, 11, 9, 12, 0, tzinfo=UTC),
+        model_name="mock",
+        sample_rate=SAMPLE_RATE,
+        transcript_segments=tuple(
+            TranscriptSegment(
+                start_seconds=float(index * 10),
+                end_seconds=float(index * 10 + 5),
+                speaker=speaker,
+                transcript_words=_review_words(text),
+            )
+            for index, (speaker, text) in enumerate(turns)
+        ),
+    )
+
+
+def _document_request(document: TranscriptDocument, clinician: str | None) -> NoteRequest:
+    """A raw request over ``document``'s segments (fixture construction is
+    legal in tests; segment index = position)."""
+    return NoteRequest(
+        session_id=document.session_id,
+        template_profile_id="clinic-a",
+        clinician_speaker=clinician,
+        transcript_digest=digest_bytes(b"ui-suggest-transcript"),
+        config_digest=digest_bytes(b"ui-suggest-config"),
+        transcript_utterances=tuple(
+            NoteUtterance(
+                segment_index=index,
+                speaker=segment.speaker,
+                start_seconds=segment.start_seconds,
+                end_seconds=segment.end_seconds,
+                transcript_words=segment.transcript_words,
+            )
+            for index, segment in enumerate(document.transcript_segments)
+        ),
+    )
+
+
+def _answer_every_asked(key: str) -> Any:
+    """A responder answering every asked number of a window with ``key``."""
+
+    def respond(_system: str, user_text: str) -> str:
+        numbers = re.findall(r"^(\d+)\? ", user_text, flags=re.MULTILINE)
+        return "\n".join(f"{number} {key}" for number in numbers)
+
+    return respond
+
+
+def _suggestion_result(
+    *, reason: Any = "completed", not_assessed: int = 0
+) -> SuggestionStageResult:
+    return SuggestionStageResult(
+        model_id="mock-language-model",
+        prompt_version="suggest-v1",
+        suggestions=(),
+        windows_run=1,
+        windows_failed=0,
+        lines_asked=3,
+        lines_not_assessed=not_assessed,
+        lines_withheld=0,
+        seconds=0.0,
+        reason=reason,
+    )
+
+
+class TestPlacedSegments:
+    """Note-content-design follow-up S.1 (review round 18 SIMP-005): ONE
+    placed-context map for the Note tab's suggestion job and the harness."""
+
+    def test_the_map_is_every_quoted_transcript_line_by_its_section(
+        self, tmp_path: Path
+    ) -> None:
+        draft, _document = _review_draft(tmp_path)
+        expected = {
+            assertion.note_span.source_coords.segment_index: section.section_key
+            for section in reversed(draft.note_sections)
+            for assertion in section.note_assertions
+            if assertion.provenance == "transcript"
+            and assertion.note_span.source_coords is not None
+        }
+        placed = models.placed_segments(draft.note_sections)
+        assert placed, "the review draft must quote transcript lines"
+        assert placed == expected
+
+    def test_the_first_section_wins_a_line_quoted_twice(self, tmp_path: Path) -> None:
+        _draft, document = _review_draft(tmp_path)
+        sections = (
+            GeneratedSection(
+                section_key="assessment", note_assertions=(_manual_line(document, 0, "assessment"),)
+            ),
+            GeneratedSection(
+                section_key="diagnosis", note_assertions=(_manual_line(document, 0, "diagnosis"),)
+            ),
+        )
+        assert models.placed_segments(sections) == {0: "assessment"}
+
+    def test_a_typed_line_places_nothing(self, tmp_path: Path) -> None:
+        draft, document = _review_draft(tmp_path)
+        wording = "Typed by the clinician"
+        typed = NoteAssertion(
+            assertion_id="t0001",
+            section_key="management_plan",
+            note_span=NoteSpan(span_text=wording, provenance="clinician"),
+            shown_text_digest=text_digest(wording),
+            config_digest=draft.config_digest,
+            confirmation=ConfirmationDecision(
+                proposal_id="t0001",
+                note_confirmation="confirmed",
+                decided_at=datetime(2026, 11, 14, 9, 0, tzinfo=UTC),
+            ),
+        )
+        sections = (
+            GeneratedSection(section_key="management_plan", note_assertions=(typed,)),
+            GeneratedSection(
+                section_key="assessment", note_assertions=(_manual_line(document, 1, "assessment"),)
+            ),
+        )
+        assert typed.note_span.source_coords is None
+        assert models.placed_segments(sections) == {1: "assessment"}
+
+    def test_no_sections_place_nothing(self) -> None:
+        assert models.placed_segments(()) == {}
+
+
+class TestSuggestedSections:
+    """Note-content-design D6 (Task C.3): a model suggestion is a mark and a
+    pre-selected section on the existing chooser, accepted only through
+    ``eligible_utterances``' own ownership rule; D9's status strings."""
+
+    def _choices(self, document: TranscriptDocument, **kwargs: Any) -> dict[int, Any]:
+        kwargs.setdefault("clinician_speaker", SPEAKER_2)
+        kwargs.setdefault("in_note", set())
+        return {
+            choice.segment_index: choice
+            for choice in models.eligible_utterances(document, **kwargs)
+        }
+
+    def test_no_suggestion_by_default(self) -> None:
+        choice = models.UtteranceChoice(0, "1. speaker_1: x", ("presenting_complaint",))
+        assert choice.suggested is None
+        document = _boundary_document()
+        plain = models.eligible_utterances(document, clinician_speaker=SPEAKER_2, in_note={0})
+        empty = models.eligible_utterances(
+            document, clinician_speaker=SPEAKER_2, in_note={0}, suggested={}
+        )
+        assert plain == empty
+        assert all(c.suggested is None and "[suggested:" not in c.label for c in plain)
+
+    def test_the_front_mark_order(self) -> None:
+        """``N.``, ``[flagged]``, ``[next patient?]``, then ``[suggested: …]``,
+        then the speaker, then the guard's prefix before the words."""
+        assert models.SUGGESTED_LINE_MARK == "[suggested: {title}] "
+        document = _boundary_document()
+        choices = self._choices(
+            document,
+            in_note={0},
+            flagged={1},
+            suggested={
+                1: "follow_up_review",
+                2: "presenting_complaint",
+                4: "objective_examination",
+            },
+        )
+        assert choices[1].label == (
+            "2. [flagged] [suggested: Follow-up and review] speaker_2: See you next week."
+        )
+        assert choices[1].suggested == "follow_up_review"
+        assert choices[2].label == "3. [suggested: Presenting complaint] speaker_1: Hello, come in."
+        assert choices[3].label == "4. speaker_1: My left hip is sore."
+        assert choices[3].suggested is None
+        assert choices[4].label == (
+            "5. [suggested: Objective examination] speaker_1: [possibly not speech] Left knee two."
+        )
+        # The 60-character cut applies to the words alone: every mark stays whole.
+        words = " ".join(["walking"] * 20)
+        segments = list(document.transcript_segments)
+        segments[2] = segments[2].model_copy(update={"transcript_words": _review_words(words)})
+        long_document = document.model_copy(update={"transcript_segments": tuple(segments)})
+        long_choices = self._choices(
+            long_document, in_note={0}, flagged={2}, suggested={2: "presenting_complaint"}
+        )
+        assert long_choices[2].label == (
+            "3. [flagged] [suggested: Presenting complaint] speaker_1: "
+            + words[:60].rstrip()
+            + "..."
+        )
+
+    def test_every_mark_is_ascii_and_names_its_title(self) -> None:
+        for key in CANONICAL_SECTION_KEYS:
+            mark = models.suggested_line_mark(key)
+            assert mark.isascii() and "{" not in mark
+            assert mark == f"[suggested: {models.SECTION_TITLES[key]}] "
+
+    def test_a_past_boundary_line_is_marked_never_suggested_never_asked(self) -> None:
+        document = _boundary_document()
+        every = dict.fromkeys(range(5), "presenting_complaint")
+        choices = self._choices(document, in_note={0}, flagged={3}, boundary=3, suggested=every)
+        assert choices[2].label == "3. [suggested: Presenting complaint] speaker_1: Hello, come in."
+        assert choices[3].label == "4. [flagged] [next patient?] speaker_1: My left hip is sore."
+        assert choices[4].label == (
+            "5. [next patient?] speaker_1: [possibly not speech] Left knee two."
+        )
+        assert choices[3].suggested is None and choices[4].suggested is None
+        # Never asked: the input stops at the boundary, so the stage cannot
+        # suggest for a later line.
+        suggestion_input = SuggestionInput.from_request(
+            _document_request(document, SPEAKER_2),
+            in_note={0: "presenting_complaint"},
+            clinician_speaker=SPEAKER_2,
+            boundary=3,
+        )
+        assert [line.segment_index for line in suggestion_input.asked_lines] == [0, 1, 2]
+        assert [line.segment_index for line in suggestion_input.asked_lines if line.asked] == [1, 2]
+        model = MockLanguageModel(responder=_answer_every_asked("presenting_complaint"))
+        stage = models.build_suggestion_stage(
+            model_factory=lambda: model, cache=None, available=lambda: True
+        )
+        outcome = stage(suggestion_input)
+        assert outcome.result is not None
+        assert dict(outcome.result.suggestions) == {
+            1: "presenting_complaint",
+            2: "presenting_complaint",
+        }
+        prompts = [user for _system, user, _tokens in model.calls]
+        assert all("Left knee" not in user and "left hip" not in user for user in prompts)
+
+    def test_an_owned_key_for_another_speakers_line_is_refused(self) -> None:
+        document = _boundary_document()
+        for key in sorted(CLINICIAN_OWNED_SECTIONS):
+            choices = self._choices(document, suggested={0: key, 1: key})
+            # Segment 0 is the patient's; segment 1 is the clinician's statement.
+            assert key not in choices[0].allowed_sections
+            assert choices[0].suggested is None
+            assert "[suggested:" not in choices[0].label
+            assert choices[1].suggested == key
+            # With no confirmed clinician an owned key is refused on every line.
+            unconfirmed = self._choices(
+                document, clinician_speaker=None, suggested={0: key, 1: key}
+            )
+            assert unconfirmed[0].suggested is None and unconfirmed[1].suggested is None
+
+    def test_an_owned_key_for_a_question_is_refused(self) -> None:
+        document = _suggestion_document(
+            ((SPEAKER_2, "How long has it been sore?"), (SPEAKER_2, "It is a strain."))
+        )
+        for key in sorted(CLINICIAN_OWNED_SECTIONS):
+            choices = self._choices(document, suggested={0: key, 1: key})
+            assert choices[0].suggested is None
+            assert "[suggested:" not in choices[0].label
+            assert choices[1].suggested == key
+        accepted = self._choices(document, suggested={0: "history_presenting_complaint"})
+        assert accepted[0].suggested == "history_presenting_complaint"
+
+    def test_a_line_in_the_note_gets_no_choice(self) -> None:
+        document = _boundary_document()
+        choices = self._choices(document, in_note={2}, suggested={2: "presenting_complaint"})
+        assert 2 not in choices
+        assert all("[suggested:" not in choice.label for choice in choices.values())
+
+    def test_an_unknown_key_is_refused(self) -> None:
+        document = _boundary_document()
+        unknown: dict[int, Any] = {2: "not_a_section", 3: ""}
+        choices = self._choices(document, suggested=unknown)
+        assert choices[2].suggested is None and choices[3].suggested is None
+        assert all("[suggested:" not in choice.label for choice in choices.values())
+
+    def test_the_count_line_carries_the_suggestion_clause(self) -> None:
+        flagged_text = models.flagged_count_line({4}, {4})
+        assert flagged_text == (
+            "1 flagged line is not in the note (a line you said, an answer to a question you "
+            "asked, or a side, negation, number, dose, name or medication someone said)."
+        )
+        assert models.flagged_count_line({4}, {4}, suggested={4, 5}, not_assessed=3) == (
+            flagged_text + " 2 lines have a suggested section (3 not assessed)."
+        )
+        assert models.flagged_count_line((), (), suggested={5}) == (
+            "1 line has a suggested section."
+        )
+        assert models.flagged_count_line((), (), not_assessed=2) == (
+            "0 lines have a suggested section (2 not assessed)."
+        )
+        assert models.flagged_count_line((), ()) == ""
+        assert models.suggestion_count_clause(3, 0) == "3 lines have a suggested section."
+
+    def test_the_status_lines(self) -> None:
+        assert models.suggestion_in_flight_line(1) == "Suggesting sections for 1 left-out line..."
+        assert models.suggestion_in_flight_line(3) == (
+            "Suggesting sections for 3 left-out lines..."
+        )
+        assert models.SUGGESTION_NOTHING_LINE == "Nothing to suggest."
+        assert models.SUGGESTION_NONE_LINE == "No suggestions."
+        absent = models.suggestion_model_absent_line()
+        assert absent == f"Suggested sections {models.language_model_absent_reason()}."
+        # D8 as amended 2026-11-09 (review round 19 Q1 (b)): the two new stops.
+        assert models.SUGGESTION_SAVED_LINE == (
+            "Suggested sections: stopped because the note was saved."
+        )
+        assert models.SUGGESTION_DELETE_LINE == (
+            "Suggested sections: stopped because the note is being deleted."
+        )
+        for line in (
+            models.SUGGESTION_NOTHING_LINE,
+            models.SUGGESTION_NONE_LINE,
+            models.suggestion_in_flight_line(2),
+            models.SUGGESTION_LOAD_FAILED_LINE.format(reason="x"),
+            absent,
+            models.SUGGESTION_STOPPED_LINE,
+            models.SUGGESTION_SAVED_LINE,
+            models.SUGGESTION_DELETE_LINE,
+        ):
+            assert line.isascii() and "{" not in line and "\n" not in line
+
+    def test_the_stage_line_after_a_job(self) -> None:
+        line = models.suggestion_stage_line
+        no_job = models.SuggestionStageOutcome(None, "Suggested sections: reason.")
+        assert line(no_job, accepted=0) == "Suggested sections: reason."
+        assert line(models.SuggestionStageOutcome(None), accepted=0) == "No suggestions."
+        nothing = models.SuggestionStageOutcome(_suggestion_result(reason="nothing_to_suggest"))
+        assert line(nothing, accepted=0) == "Nothing to suggest."
+        done = models.SuggestionStageOutcome(_suggestion_result())
+        assert line(done, accepted=0) == "No suggestions."
+        assert line(done, accepted=2) == "2 lines have a suggested section."
+        capped = models.SuggestionStageOutcome(
+            _suggestion_result(reason="cap_reached", not_assessed=4)
+        )
+        assert line(capped, accepted=0) == "No suggestions (4 not assessed)."
+        assert line(capped, accepted=1) == "1 line has a suggested section (4 not assessed)."
+
+
+class TestSuggestionStageBuilder:
+    """Task C.3 (C10): ``build_suggestion_stage`` under injected seams — the
+    model present, absent, and its load failed — mirroring the prose stage."""
+
+    def _input(self) -> SuggestionInput:
+        document = _boundary_document()
+        return SuggestionInput.from_request(
+            _document_request(document, SPEAKER_2),
+            in_note={0: "presenting_complaint"},
+            clinician_speaker=SPEAKER_2,
+            boundary=3,
+        )
+
+    def test_it_mirrors_the_prose_stages_seams(self) -> None:
+        suggest = inspect.signature(models.build_suggestion_stage).parameters
+        prose = inspect.signature(models.build_prose_stage).parameters
+        for name in ("model_factory", "cache", "available"):
+            assert suggest[name].default is prose[name].default
+        assert suggest["cache"].default is models._LANGUAGE_MODEL_CACHE
+
+    def test_nothing_asked_loads_nothing_and_asks_nothing(self) -> None:
+        calls: list[str] = []
+
+        def available() -> bool:
+            calls.append("available")
+            return True
+
+        def factory() -> MockLanguageModel:
+            calls.append("factory")
+            return MockLanguageModel()
+
+        stage = models.build_suggestion_stage(
+            model_factory=factory, cache=None, available=available
+        )
+        document = _boundary_document()
+        suggestion_input = SuggestionInput.from_request(
+            _document_request(document, SPEAKER_2),
+            in_note=dict.fromkeys(range(5), "presenting_complaint"),
+            clinician_speaker=SPEAKER_2,
+        )
+        assert suggestion_input.lines_asked == 0
+        assert stage(suggestion_input) == models.SuggestionStageOutcome(
+            None, models.SUGGESTION_NOTHING_LINE
+        )
+        assert stage(SuggestionInput(())).reason == models.SUGGESTION_NOTHING_LINE
+        assert calls == []
+
+    def test_the_model_present(self) -> None:
+        model = MockLanguageModel(responder=_answer_every_asked("presenting_complaint"))
+        stage = models.build_suggestion_stage(
+            model_factory=lambda: model, cache=None, available=lambda: True
+        )
+        yields: list[None] = []
+        outcome = stage(self._input(), yield_to=lambda: yields.append(None))
+        assert outcome.reason is None
+        result = outcome.result
+        assert result is not None
+        assert result.model_id == "mock-language-model"
+        assert result.reason == "completed"
+        assert (result.windows_run, result.lines_asked, result.lines_not_assessed) == (1, 2, 0)
+        assert result.suggestions == ((1, "presenting_complaint"), (2, "presenting_complaint"))
+        assert len(model.calls) == 1 and yields == [None]
+        # The tab re-filters through the chooser; its count feeds the line.
+        choices = models.eligible_utterances(
+            _boundary_document(),
+            clinician_speaker=SPEAKER_2,
+            in_note={0},
+            boundary=3,
+            suggested=dict(result.suggestions),
+        )
+        accepted = sum(1 for choice in choices if choice.suggested is not None)
+        assert accepted == 2
+        assert models.suggestion_stage_line(outcome, accepted=accepted) == (
+            "2 lines have a suggested section."
+        )
+
+    def test_an_abort_stops_before_any_call(self) -> None:
+        model = MockLanguageModel(responder=_answer_every_asked("presenting_complaint"))
+        stage = models.build_suggestion_stage(
+            model_factory=lambda: model, cache=None, available=lambda: True
+        )
+        outcome = stage(self._input(), abort=lambda: True)
+        assert outcome.result is not None
+        assert outcome.result.reason == "aborted"
+        assert outcome.result.suggestions == ()
+        assert model.calls == []
+
+    def test_the_model_absent_is_asked_every_job_and_never_remembered(self) -> None:
+        cache = models._LanguageModelCache()
+        built: list[MockLanguageModel] = []
+        present = False
+
+        def factory() -> MockLanguageModel:
+            model = MockLanguageModel(responder=_answer_every_asked("presenting_complaint"))
+            built.append(model)
+            return model
+
+        stage = models.build_suggestion_stage(
+            model_factory=factory, cache=cache, available=lambda: present
+        )
+        outcome = stage(self._input())
+        assert outcome == models.SuggestionStageOutcome(None, models.suggestion_model_absent_line())
+        assert built == []
+        assert cache._failure is None and cache._model is None
+        present = True
+        later = stage(self._input())
+        assert later.result is not None and later.reason is None
+        assert len(built) == 1
+
+    def test_a_failed_load_is_named_and_remembered(self) -> None:
+        cache = models._LanguageModelCache()
+        loads: list[None] = []
+
+        def factory() -> MockLanguageModel:
+            loads.append(None)
+            raise LanguageModelError("the model file did not verify")
+
+        stage = models.build_suggestion_stage(
+            model_factory=factory, cache=cache, available=lambda: True
+        )
+        # As the prose stage (`test_ui_prose_stage.py`'s absent-model test): the
+        # job whose load failed names the load's own reason; the cache then
+        # remembers it with the restart advice, and every later job names that
+        # without loading again.
+        first = stage(self._input())
+        assert first == models.SuggestionStageOutcome(
+            None,
+            "Suggested sections: the language model could not be loaded "
+            "(the model file did not verify).",
+        )
+        second = stage(self._input())
+        assert second == models.SuggestionStageOutcome(
+            None,
+            models.SUGGESTION_LOAD_FAILED_LINE.format(
+                reason="the model file did not verify; restart the app after fixing this"
+            ),
+        )
+        assert len(loads) == 1
+        assert stage(self._input()) == second and len(loads) == 1
+        # With no cache (tests) the load is tried again and the raw reason named.
+        uncached = models.build_suggestion_stage(
+            model_factory=factory, cache=None, available=lambda: True
+        )
+        assert uncached(self._input()).reason == models.SUGGESTION_LOAD_FAILED_LINE.format(
+            reason="the model file did not verify"
+        )
+        assert len(loads) == 2
+
+    def test_one_resident_model_over_two_jobs(self) -> None:
+        cache = models._LanguageModelCache()
+        built: list[MockLanguageModel] = []
+
+        def factory() -> MockLanguageModel:
+            model = MockLanguageModel(responder=_answer_every_asked("presenting_complaint"))
+            built.append(model)
+            return model
+
+        stage = models.build_suggestion_stage(
+            model_factory=factory, cache=cache, available=lambda: True
+        )
+        assert stage(self._input()).result is not None
+        assert stage(self._input()).result is not None
+        assert len(built) == 1 and len(built[0].calls) == 2
+
+    def test_the_style_stage_result_is_untouched(self) -> None:
+        assert [field.name for field in dataclasses.fields(models.StyleStageResult)] == [
+            "style",
+            "note_digest",
+            "renderings",
+            "passed",
+            "failed",
+            "errored",
+            "seconds",
+            "reason",
+            "too_long",
+        ]

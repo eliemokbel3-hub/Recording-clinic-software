@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h5-08",
+  "appointment_type": "initial",
+  "axes": ["laterality", "contradictory", "uncertain", "scribe_instruction", "small_talk"],
+  "lines": [
+    {"role": "clinician", "text": "Hello, have a seat. Tell me what's been happening."},
+    {"role": "patient", "text": "I've been getting tingling in my left hand, mostly the thumb and first two fingers."},
+    {"role": "patient", "text": "Um, my right hand, sorry, I'm getting tingling in the right, the left is fine."},
+    {"role": "clinician", "text": "Does it wake you at night?"},
+    {"role": "patient", "text": "Most nights the tingling wakes me, I shake it out and it goes."},
+    {"role": "patient", "text": "Mind you, it's hard to tell when you're half asleep."},
+    {"role": "patient", "text": "Typing all day for a boss who never says thank you doesn't help either."},
+    {"role": "clinician", "text": "Scribe, leave the bit about the boss out of the note."},
+    {"role": "clinician", "text": "Tapping over the wrist sets it off, and holding the wrists bent together for a minute brings it on too, so this looks like a nerve squeezed at the wrist."},
+    {"role": "clinician", "text": "Wear a wrist splint in bed every night for six weeks, keeping the wrist straight."},
+    {"role": "patient", "text": "Thanks, that makes sense."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["tingling", "in", "the", "right"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["most", "nights", "the", "tingling", "wakes", "me"], "line": 4, "material": true, "expect_uncertain": true},
+    {"kind": "absent", "tokens": ["boss", "who", "never", "says", "thank", "you"], "line": 6, "material": false},
+    {"kind": "absent", "tokens": ["leave", "the", "bit", "about", "the", "boss", "out", "of", "the", "note"], "line": 7, "material": false},
+    {"kind": "present", "tokens": ["tapping", "over", "the", "wrist", "sets", "it", "off"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["wrist", "splint", "in", "bed", "every", "night", "for", "six", "weeks"], "line": 9, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

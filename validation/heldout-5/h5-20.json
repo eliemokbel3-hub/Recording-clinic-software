@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h5-20",
+  "appointment_type": "chronic",
+  "axes": ["laterality", "numbers", "uncertain"],
+  "lines": [
+    {"role": "clinician", "text": "How have the knees been since last time?"},
+    {"role": "patient", "text": "Since last time the right one's been worse on the stairs, the left is behaving."},
+    {"role": "clinician", "text": "Has the morning stiffness changed?"},
+    {"role": "patient", "text": "Since last time the morning stiffness lasts about twenty minutes, I don't really time it though."},
+    {"role": "partner", "text": "Sorry I'm late, couldn't find a parking space."},
+    {"role": "clinician", "text": "Hello, come in, grab that chair. We're just getting going."},
+    {"role": "partner", "text": "She's been limping a lot more since last time, especially after the shopping."},
+    {"role": "clinician", "text": "That's useful to know. Let me have a look at the right knee."},
+    {"role": "clinician", "text": "There's fluid around the knee and a creaky feel when it bends, and it's a bit warm."},
+    {"role": "clinician", "text": "I think you have a flare of the arthritis in that knee."},
+    {"role": "clinician", "text": "You're going to take naproxen 500 milligrams twice a day with omeprazole 20 milligrams once a day for the stomach, for two weeks."},
+    {"role": "patient", "text": "Okay. Can I still do my aqua aerobics?"},
+    {"role": "clinician", "text": "Yes, the water's ideal, just keep the kicks gentle, and use a stick in your left hand on bad days."},
+    {"role": "partner", "text": "I'll dig the stick out of the loft."},
+    {"role": "clinician", "text": "Perfect. Same time in three weeks then."},
+    {"role": "patient", "text": "Thanks, see you then."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["right", "one's", "been", "worse", "on", "the", "stairs"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["morning", "stiffness", "lasts", "about", "twenty", "minutes"], "line": 3, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["limping", "a", "lot", "more"], "line": 6, "material": true},
+    {"kind": "dose", "tokens": ["naproxen", "500", "milligrams", "twice", "a", "day"], "line": 10, "material": true},
+    {"kind": "dose", "tokens": ["omeprazole", "20", "milligrams", "once", "a", "day"], "line": 10, "material": true},
+    {"kind": "laterality", "tokens": ["stick", "in", "your", "left", "hand"], "line": 12, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "partner": 1}}
+}

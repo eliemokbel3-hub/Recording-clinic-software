@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h5-11",
+  "appointment_type": "follow_up",
+  "axes": ["contradictory", "overlap"],
+  "lines": [
+    {"role": "clinician", "text": "How's the heel been since last time?"},
+    {"role": "patient", "text": "Since last time the first steps in the morning are much easier."},
+    {"role": "clinician", "text": "Good. The fascia's still tender right at the inner heel when I press, but less than before."},
+    {"role": "clinician", "text": "Roll the sole over a frozen water bottle for five minutes after work, and keep the trainers on around the house rather than going barefoot."},
+    {"role": "clinician", "text": "Let's book you in for Thursday at ten."},
+    {"role": "clinician", "text": "Sorry, Thursday at half two, the morning's full."},
+    {"role": "patient", "text": "Half two's fine. Bye then."},
+    {"role": "clinician", "text": "Bye now."},
+    {"role": "patient", "text": "Oh, sorry, one more thing, I've had some tingling in my toes since last time, is that related?"},
+    {"role": "clinician", "text": "Unlikely, but sit back down a sec and I'll check the feeling in your feet."},
+    {"role": "clinician", "text": "Sensation's normal in both feet, so we'll just watch it for now."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["first", "steps", "in", "the", "morning", "are", "much", "easier"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["still", "tender", "right", "at", "the", "inner", "heel"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["rather", "than", "going", "barefoot"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["thursday", "at", "half", "two"], "line": 5, "material": false},
+    {"kind": "present", "tokens": ["some", "tingling", "in", "my", "toes"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["sensation's", "normal", "in", "both", "feet"], "line": 10, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}, "overlap_seconds": 1.5, "overlap_lines": [7, 9]}
+}

@@ -23,7 +23,9 @@ from typing import get_args
 import pytest
 from pydantic import ValidationError
 
-from fixtures.heldout_transcripts import HELD_OUT_CASES, HeldOutCase
+from fixtures.answer_hops import ANSWER_HOP_CASES, QUESTION, RED, REPLY, AnswerHopCase
+from fixtures.heldout_transcripts import HELD_OUT_CASES, HeldOutCase, by_case, misfiled
+from fixtures.joined_runs import CLINICIAN, PATIENT, SPLIT_CASES, quoted_note, split_document
 from scribe_desktop import note as note_module
 from scribe_desktop.logging_setup import PayloadTripwireFilter, dropped_record_count
 from scribe_desktop.note import (
@@ -61,25 +63,31 @@ from scribe_desktop.note import (
     ProposalResolution,
     SourceCoords,
     SpeakerRolePreselection,
+    _decode_shipped_json,
     _parse_shipped_section_cues,
     admissible_sections,
     any_cue_matches,
     content_tokens,
+    covered_words,
     digest_bytes,
     ends_mid_sentence,
     first_matching_section,
     is_interrogative,
+    joined_run,
     layered_section,
     manual_assertion_id,
     normalise_token,
     opens_with_correction,
     provider_assertion_id,
+    quoted_line_marks,
     reconstruct_span_text,
     section_admits_utterance,
+    segment_hedged,
     speaker_role,
     spoken_by_confirmed_clinician,
     text_digest,
     whole_utterance_assertion,
+    wholly_uncovered,
 )
 from scribe_desktop.note_check import reconstruction_warnings
 from scribe_desktop.note_config import (
@@ -674,6 +682,10 @@ class TestWarningTaxonomy:
         assert note_module.UNKNOWN_REVIEW_WARNING == "unknown_review_warning"
         # Validation-pass plan D7: the hedge mark's code.
         assert NOTE_WARNING_SEVERITY["hedged_source"] == "review"
+        # Validation-run6 plan D1: Check 4's second code; 20 codes in all (19
+        # before it, the unknown-version code included).
+        assert NOTE_WARNING_SEVERITY["clinician_line_omitted"] == "review"
+        assert len(NOTE_WARNING_SEVERITY) == 20
 
 
 def _stored_with_warning(warning: dict[str, object]) -> bytes:
@@ -728,6 +740,65 @@ class TestForwardTolerantWarningReader:
         assert read.note_warning_code == "unknown_review_warning"
         assert read.assertion_id == aid
         assert read.source_coords == SourceCoords(0, 0, 1)
+
+    def test_the_new_omission_code_reads_back_and_a_0_3_3_reader_groups_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Validation-run6 plan Task 1.3 (the rollback line of its Task 5.2):
+        0.3.4 reads its own ``clinician_line_omitted`` back unchanged; a 0.3.3
+        reader — this registry without the code — reads each one as
+        ``unknown_review_warning`` with its coordinates kept, grouped as ONE
+        review code that its "Acknowledge all" clears (the separately
+        acknowledged control is lost; no warning is dropped)."""
+        from scribe_desktop.ui import models
+
+        payload = json.loads(_note().to_bytes())
+        payload["note_warnings"] = [
+            {"note_warning_code": "mapping_drop", "severity": "review"},
+            {
+                "note_warning_code": "clinician_line_omitted",
+                "severity": "review",
+                "source_coords": [0, 0, 1],
+            },
+            {
+                "note_warning_code": "clinician_line_omitted",
+                "severity": "review",
+                "source_coords": [2, 0, 4],
+            },
+        ]
+        blob = json.dumps(payload).encode("utf-8")
+        current = GeneratedNote.from_bytes(blob)
+        assert [w.note_warning_code for w in current.note_warnings] == [
+            "mapping_drop",
+            "clinician_line_omitted",
+            "clinician_line_omitted",
+        ]
+        assert GeneratedNote.from_bytes(current.to_bytes()) == current
+
+        registry_0_3_3 = {
+            code: severity
+            for code, severity in NOTE_WARNING_SEVERITY.items()
+            if code != "clinician_line_omitted"
+        }
+        monkeypatch.setattr(note_module, "NOTE_WARNING_SEVERITY", registry_0_3_3)
+        rolled_back = GeneratedNote.from_bytes(blob)
+        assert [
+            (w.note_warning_code, w.severity, w.source_coords) for w in rolled_back.note_warnings
+        ] == [
+            ("mapping_drop", "review", None),
+            ("unknown_review_warning", "review", SourceCoords(0, 0, 1)),
+            ("unknown_review_warning", "review", SourceCoords(2, 0, 4)),
+        ]
+        assert rolled_back.blocking_warnings() == ()
+        summary = models.summarise_warnings(rolled_back.note_warnings)
+        assert [(group.code, group.count) for group in summary.review] == [
+            ("mapping_drop", 1),
+            ("unknown_review_warning", 2),
+        ]
+        assert models.acknowledge_all_codes(summary, ()) == (
+            "mapping_drop",
+            "unknown_review_warning",
+        )
 
     def test_an_unknown_error_code_is_still_refused(self) -> None:
         blob = _stored_with_warning({"note_warning_code": "a_code_from_0_4_0", "severity": "error"})
@@ -959,6 +1030,31 @@ class TestShippedSectionCues:
     def test_the_packaged_file_parses_to_the_module_constant(self) -> None:
         resource = resources.files("scribe_desktop") / "config_defaults" / SECTION_CUES_FILENAME
         assert _parse_shipped_section_cues(json.loads(resource.read_bytes())) == _RAW_SECTION_CUES
+
+    def test_the_packaged_file_decodes_through_the_shipped_decode_step(self) -> None:
+        resource = resources.files("scribe_desktop") / "config_defaults" / SECTION_CUES_FILENAME
+        data = resource.read_bytes()
+        decoded = _decode_shipped_json(data, SECTION_CUES_FILENAME)
+        assert decoded == json.loads(data)
+        assert _parse_shipped_section_cues(decoded) == _RAW_SECTION_CUES
+
+    def test_a_repeated_key_is_refused_at_decode(self) -> None:
+        """Note-content-design Step H (carried from codex round 8 PR-LOW-016):
+        plain `json` keeps the LAST of two equal keys, so a section repeated
+        in the file would import as complete with its first list silently lost."""
+        raw = (
+            '{"schema_version": 1, "section_cues": {"consent": ["a phrase"], '
+            '"consent": ["another phrase"]}}'
+        )
+        assert json.loads(raw) is not None  # plain `json` accepts it silently
+        with pytest.raises(RuntimeError, match="broken install.*repeated"):
+            _decode_shipped_json(raw.encode(), SECTION_CUES_FILENAME)
+
+    def test_undecodable_bytes_and_deep_nesting_are_the_named_refusal(self) -> None:
+        with pytest.raises(RuntimeError, match="broken install"):
+            _decode_shipped_json(b"\x80 not json", SECTION_CUES_FILENAME)
+        with pytest.raises(RuntimeError, match="broken install"):
+            _decode_shipped_json(b"[" * 1_000_000, SECTION_CUES_FILENAME)
 
     def test_seventeen_sections_and_ninety_nine_phrases_in_canonical_order(self) -> None:
         # 98 → 99 with "out of 10" (invented-text guard plan Task 6.1).
@@ -2579,6 +2675,304 @@ class TestEndsMidSentence:
         assert not ends_mid_sentence(())
 
 
+class TestJoinedRun:
+    """Validation-run7 plan D1 (Task 1.1): ``joined_run`` — THE unit of
+    Check 4's second code — and ``covered_words``, moved here from
+    ``note_check``. Every join condition and every named residue that breaks
+    a run is pinned both ways."""
+
+    _NONE: frozenset[tuple[int, int]] = frozenset()
+
+    def _runs(
+        self,
+        *turns: tuple[str, str],
+        covered: frozenset[tuple[int, int]] = frozenset(),
+        end: int | None = None,
+    ) -> list[range]:
+        document = split_document(*turns)
+        stop = len(turns) if end is None else end
+        return [joined_run(document, i, covered=covered, end=stop) for i in range(stop)]
+
+    def test_a_comma_split_line_is_one_maximal_run_from_any_of_its_pieces(self) -> None:
+        """A run containing ``i`` mid-way extends both ways to its ends."""
+        (case,) = [c for c in SPLIT_CASES if c.name == "comma-split"]
+        document = case.document()
+        runs = [joined_run(document, i, covered=self._NONE, end=5) for i in range(5)]
+        assert runs == [range(0, 1), range(1, 4), range(1, 4), range(1, 4), range(4, 5)]
+
+    @pytest.mark.parametrize("mark", [",", ";", ":", " –", " —"])
+    def test_a_piece_ending_mid_sentence_joins_the_next(self, mark: str) -> None:
+        assert self._runs((f"keep walking{mark}", CLINICIAN), ("every morning.", CLINICIAN)) == [
+            range(0, 2),
+            range(0, 2),
+        ]
+
+    @pytest.mark.parametrize("cut", [".", "", "?", "!", " -"])
+    def test_a_full_stop_a_bare_cut_or_a_hyphen_does_not_join(self, cut: str) -> None:
+        """A bare cut (no trailing mark) is the named residue D1 keeps."""
+        assert self._runs((f"keep walking{cut}", CLINICIAN), ("every morning.", CLINICIAN)) == [
+            range(0, 1),
+            range(1, 2),
+        ]
+
+    def test_a_speaker_change_breaks_a_run_whoever_speaks(self) -> None:
+        assert self._runs(
+            ("keep walking,", CLINICIAN), ("every morning,", PATIENT), ("and rest.", PATIENT)
+        ) == [range(0, 1), range(1, 3), range(1, 3)]
+
+    def test_a_textless_segment_never_joins_forward_or_backward(self) -> None:
+        assert self._runs(
+            ("keep walking,", CLINICIAN),
+            ("", CLINICIAN),
+            ("every morning,", CLINICIAN),
+            ("and rest.", CLINICIAN),
+        ) == [range(0, 1), range(1, 2), range(2, 4), range(2, 4)]
+
+    @pytest.mark.parametrize(("covered", "expected"), [
+        # A covered word on the first piece, then on the second: either piece
+        # partly quoted breaks the join on its side.
+        (frozenset({(0, 1)}), [range(0, 1), range(1, 3), range(1, 3)]),
+        (frozenset({(1, 0)}), [range(0, 1), range(1, 2), range(2, 3)]),
+        (frozenset({(2, 0), (2, 1)}), [range(0, 2), range(0, 2), range(2, 3)]),
+    ])
+    def test_a_quoted_piece_breaks_a_run(
+        self, covered: frozenset[tuple[int, int]], expected: list[range]
+    ) -> None:
+        assert self._runs(
+            ("keep walking,", CLINICIAN),
+            ("every morning,", CLINICIAN),
+            ("and rest.", CLINICIAN),
+            covered=covered,
+        ) == expected
+
+    def test_the_cut_truncates_a_run_and_never_drops_it(self) -> None:
+        turns = (
+            ("keep walking,", CLINICIAN),
+            ("every morning,", CLINICIAN),
+            ("and rest.", CLINICIAN),
+        )
+        assert self._runs(*turns) == [range(0, 3)] * 3
+        assert self._runs(*turns, end=2) == [range(0, 2)] * 2
+        assert self._runs(*turns, end=1) == [range(0, 1)]
+
+    @pytest.mark.parametrize(("i", "end"), [(-1, 2), (2, 2), (0, 0), (0, 4), (3, 4)])
+    def test_out_of_range_is_refused(self, i: int, end: int) -> None:
+        document = split_document(("keep walking,", CLINICIAN), ("every morning.", CLINICIAN))
+        with pytest.raises(ValueError, match="joined_run needs"):
+            joined_run(document, i, covered=self._NONE, end=end)
+
+    def test_covered_words_is_coordinate_carriage(self) -> None:
+        """Moved verbatim from ``note_check._covered_words``: a transcript
+        assertion's resolvable coordinates, nothing else."""
+        document = split_document(("keep walking,", CLINICIAN), ("every morning.", CLINICIAN))
+        note = quoted_note(document, ((0, 1, 1), (1, 0, 1)))
+        assert covered_words(note, document) == frozenset({(0, 1), (1, 0), (1, 1)})
+        assert not wholly_uncovered(document, 0, covered_words(note, document))
+        assert wholly_uncovered(document, 0, frozenset({(1, 0)}))
+        assert covered_words(quoted_note(document, ()), document) == frozenset()
+
+    @pytest.mark.parametrize(
+        ("coords", "resolved"),
+        [
+            (SourceCoords(1, 0, 1), 2),
+            (SourceCoords(0, 1, 1), 1),
+            (SourceCoords(-1, 0, 1), None),
+            (SourceCoords(-3, 0, 0), None),
+            (SourceCoords(2, 0, 0), None),
+            (SourceCoords(0, -1, 1), None),
+            (SourceCoords(0, 0, 2), None),
+            # Round 16 PR-LOW-001: a negative LAST index (a raw slice reads
+            # "keep" from the end) and a reversed interval (a raw slice is
+            # empty, not None).
+            (SourceCoords(0, 0, -1), None),
+            (SourceCoords(1, 0, -2), None),
+            (SourceCoords(1, 1, 0), None),
+            (SourceCoords(0, 1, 0), None),
+            (SourceCoords(0, 0, 0), 1),
+            (SourceCoords(1, 1, 1), 1),
+        ],
+    )
+    def test_the_coordinate_resolver_never_indexes_from_the_end(
+        self, coords: SourceCoords, resolved: int | None
+    ) -> None:
+        """Review rounds 15 and 16 PR-LOW-001: a warning's coordinates are not
+        validated (a span's are), so only ``0 <= first <= last < len(words)``
+        in a segment that exists resolves; a negative segment or word index —
+        which a raw slice reads from the end, or past it raises — a reversed
+        interval and one past the end resolve to None. Every valid interval
+        is unchanged."""
+        from scribe_desktop.note import _words_for_coords
+
+        document = split_document(("keep walking,", CLINICIAN), ("every morning.", CLINICIAN))
+        words = _words_for_coords(document, coords)
+        assert (None if words is None else len(words)) == resolved
+
+
+def _hedged_segments(*texts: tuple[str, str]) -> list[int]:
+    """The indices ``segment_hedged`` holds for, over one document."""
+    document = _document(texts=texts)
+    return [
+        index
+        for index in range(len(document.transcript_segments))
+        if segment_hedged(document, index)
+    ]
+
+
+class TestSegmentHedged:
+    """Validation-run6 plan D5 (decision 0.6 (ii)): a segment is hedged by its
+    own words, or by a same-speaker neighbour when the EARLIER of the two ends
+    mid-sentence (``ends_mid_sentence``). Every case is three segments, so a
+    neighbour on each side is tried."""
+
+    @pytest.mark.parametrize("mark", [",", ";", ":", " –", " —"])
+    def test_a_hedge_in_the_next_segment_joined_mid_sentence(self, mark: str) -> None:
+        assert _hedged_segments(
+            (f"It was about forty{mark}", SPEAKER_1),
+            ("I think.", SPEAKER_1),
+            ("Okay.", SPEAKER_2),
+        ) == [0, 1]
+
+    def test_a_hedge_in_the_previous_segment_joined_mid_sentence(self) -> None:
+        assert _hedged_segments(
+            ("Okay.", SPEAKER_2),
+            ("I think,", SPEAKER_1),
+            ("it was the left one.", SPEAKER_1),
+        ) == [1, 2]
+
+    @pytest.mark.parametrize("cut", [".", "", "?", "!", " -"])
+    def test_a_full_stop_a_bare_cut_or_a_hyphen_does_not_join(self, cut: str) -> None:
+        assert _hedged_segments(
+            (f"It was about forty{cut}", SPEAKER_1),
+            ("I think.", SPEAKER_1),
+            ("It eased by Friday.", SPEAKER_1),
+        ) == [1]
+
+    def test_only_the_earlier_segments_mark_joins(self) -> None:
+        """The later segment's own trailing comma joins it to what FOLLOWS,
+        never back to what came before."""
+        assert _hedged_segments(
+            ("I think.", SPEAKER_1),
+            ("It was about forty,", SPEAKER_1),
+            ("Okay.", SPEAKER_2),
+        ) == [0]
+
+    def test_another_speaker_never_joins(self) -> None:
+        assert _hedged_segments(
+            ("It was about forty,", SPEAKER_1),
+            ("I think.", SPEAKER_2),
+            ("Okay.", SPEAKER_1),
+        ) == [1]
+
+    def test_a_segment_in_between_breaks_the_join(self) -> None:
+        """The neighbour is the adjacent segment only: a hedge two segments
+        away is not joined, a textless segment between included (the named
+        residue)."""
+        assert _hedged_segments(
+            ("It was about forty,", SPEAKER_1),
+            ("and it hurt,", SPEAKER_1),
+            ("I think.", SPEAKER_1),
+        ) == [1, 2]
+        assert _hedged_segments(
+            ("It was about forty,", SPEAKER_1),
+            ("", SPEAKER_1),
+            ("I think.", SPEAKER_1),
+        ) == [2]
+
+    def test_a_hedge_spoken_in_the_segment_itself_needs_no_neighbour(self) -> None:
+        assert _hedged_segments(
+            ("Okay.", SPEAKER_2),
+            ("Maybe it was Monday.", SPEAKER_1),
+            ("Okay.", SPEAKER_2),
+        ) == [1]
+
+    def test_a_listed_hedge_with_other_words_inside_it_is_not_found(self) -> None:
+        """The named residue the threat model and the harness document state:
+        the phrase's words must stand in a row ("I don't really know" holds
+        no listed hedge). Punctuation is not a word, so a hedge broken only by
+        commas ("Not, I think, sure") still holds "i think"."""
+        assert _hedged_segments(
+            ("Okay.", SPEAKER_1),
+            ("I don't really know.", SPEAKER_2),
+            ("Okay.", SPEAKER_1),
+        ) == []
+        assert _hedged_segments(
+            ("Okay.", SPEAKER_1),
+            ("Not, I think, sure.", SPEAKER_2),
+            ("Okay.", SPEAKER_1),
+        ) == [1]
+
+    def test_a_suspect_hedge_supplies_nothing(self) -> None:
+        document = _document(
+            texts=(("It was about forty,", SPEAKER_1), ("I think.", SPEAKER_1))
+        )
+        hedge = document.transcript_segments[1]
+        guarded = document.model_copy(
+            update={
+                "transcript_segments": (
+                    document.transcript_segments[0],
+                    hedge.model_copy(
+                        update={
+                            "transcript_words": tuple(
+                                word.model_copy(update={"suspect": True})
+                                for word in hedge.transcript_words
+                            )
+                        }
+                    ),
+                )
+            }
+        )
+        assert segment_hedged(document, 0)
+        assert not segment_hedged(guarded, 0)
+        assert not segment_hedged(guarded, 1)
+
+    def test_phrases_replace_the_products_list(self) -> None:
+        """The harness's reference lexicon (D8's R2) goes through the same
+        scope: a phrase outside the product's list hedges only when passed."""
+        document = _document(
+            texts=(("It was about forty,", SPEAKER_1), ("it might be.", SPEAKER_1))
+        )
+        assert not segment_hedged(document, 0)
+        assert segment_hedged(document, 0, phrases=("might",))
+        assert segment_hedged(document, 1, phrases=("might",))
+        assert not segment_hedged(document, 0, phrases=("probably",))
+
+
+class TestQuotedLineMarks:
+    """Validation-run6 plan D5: a quoted line's marks are ``line_marks`` of
+    its words plus ``unsure`` through the hedge scope — never for the
+    confirmed clinician's line, always last, never twice."""
+
+    def test_the_scope_adds_unsure_to_a_joined_line(self) -> None:
+        document = _document(
+            texts=(("It was 40 mg,", SPEAKER_1), ("I think.", SPEAKER_1))
+        )
+        first = document.transcript_segments[0].transcript_words
+        assert quoted_line_marks(document, 0, first, clinician=False) == ("number", "unsure")
+        assert quoted_line_marks(document, 0, first, clinician=True) == ("number",)
+
+    def test_a_line_hedged_in_its_own_words_is_marked_once(self) -> None:
+        document = _document(
+            texts=(("I think it is maybe sore,", SPEAKER_1), ("probably.", SPEAKER_1))
+        )
+        words = document.transcript_segments[0].transcript_words
+        assert quoted_line_marks(document, 0, words, clinician=False) == ("unsure",)
+
+    def test_an_unjoined_line_keeps_line_marks(self) -> None:
+        document = _document(
+            texts=(("It was 40 mg.", SPEAKER_1), ("I think.", SPEAKER_1))
+        )
+        first = document.transcript_segments[0].transcript_words
+        assert quoted_line_marks(document, 0, first, clinician=False) == ("number",)
+
+    def test_a_partly_quoted_line_is_judged_by_its_segment(self) -> None:
+        """The scope is a SEGMENT's: a span that leaves the hedge words out
+        of its own segment is still marked (the one rule the harness credits
+        by)."""
+        document = _document(texts=(("I think the knee is sore.", SPEAKER_1),))
+        words = document.transcript_segments[0].transcript_words
+        assert quoted_line_marks(document, 0, words[2:], clinician=False) == ("unsure",)
+
+
 class TestAnyCueMatches:
     def test_empty_tokens_match_nothing(self) -> None:
         assert not any_cue_matches(DEFAULT_SECTION_CUES, DEFAULT_SECTION_CUES, ())
@@ -2936,18 +3330,210 @@ class TestBoundedCarry:
         else:
             assert got == case.corrections, case.case_id
 
-    def test_every_predicted_correction_divergence_is_a_held_out_case(self) -> None:
-        assert set(_PREDICTED_CORRECTION_DIVERGENCES) <= {c.case_id for c in HELD_OUT_CASES}
+    def test_every_predicted_correction_divergence_is_a_case_of_its_set(self) -> None:
+        assert misfiled(_PREDICTED_CORRECTION_DIVERGENCES_BY_SET) == []
+        counts = {
+            name: len(cases) for name, cases in _PREDICTED_CORRECTION_DIVERGENCES_BY_SET.items()
+        }
+        assert counts == {
+            "heldout": 2,
+            "heldout-2": 4,
+            "heldout-3": 2,
+            "heldout-4": 1,
+            "heldout-5": 0,
+            "heldout-6": 2,
+        }
+
+
+def _hop_request(case: AnswerHopCase) -> NoteRequest:
+    return _request(document=case.document(), clinician_speaker=case.clinician)
+
+
+def _hop_joined(case: AnswerHopCase) -> frozenset[int]:
+    """The case's lines in the note that no cue routes and that its
+    confirmed clinician did not say — the lines only the hop places."""
+    request = _hop_request(case)
+    provider = ExtractiveNoteProvider()
+    utterances = {u.segment_index: u for u in request.transcript_utterances}
+    return frozenset(
+        index
+        for index in _placed(request)
+        if provider._route(request, utterances[index]) is None
+        and not spoken_by_confirmed_clinician(utterances[index].speaker, case.clinician)
+    )
+
+
+class TestAnswerHop:
+    """Answers-follow-question plan Task 1.1: the answer hop in the form its
+    Task 0.6 chose — D1's transition table with the unlimited reach, guard G
+    and switch S — read from the plain expectations in
+    ``fixtures.answer_hops``: every row, G and S condition in both
+    directions."""
+
+    @pytest.mark.parametrize("case", ANSWER_HOP_CASES, ids=lambda case: case.name)
+    def test_the_case_places_its_lines(self, case: AnswerHopCase) -> None:
+        assert _placed(_hop_request(case)) == dict(case.placed), case.name
+
+    def test_both_directions_are_exercised(self) -> None:
+        names = [case.name for case in ANSWER_HOP_CASES]
+        assert len(names) == len(set(names))
+        joining = {case.name for case in ANSWER_HOP_CASES if _hop_joined(case)}
+        assert joining == {
+            "joins",
+            "joins-the-whole-turn",
+            "joins-a-reply-split-at-a-comma",
+            "joins-a-correction-after-a-reply",
+            "joins-another-speakers-reply",
+            "joins-after-an-unmarked-question-and-statement",
+            "joins-after-an-abbreviation-leaves-a-question",
+            "joins-a-first-reply-dont-write-this-down",
+            "joins-a-later-reply-dont-write-this-down",
+            "a-second-reply-speaker-closes",
+            "a-textless-line-is-transparent",
+            "a-cued-question-opens-its-own-window",
+            "a-joined-reply-closes-the-carry-chain",
+            "s-the-carried-piece-is-the-question",
+            "s-the-cue-routed-piece-is-the-question",
+        }
+        assert set(names) - joining  # and every other case joins nothing
+
+    def test_the_first_reply_dont_write_this_down_is_quoted(self) -> None:
+        """Task 0.6's accepted residue (3), 2026-11-17, pinned as behaviour:
+        the hop quotes a patient's "don't write this down" when it is the
+        FIRST reply to the clinician's in-note question. No seen script has
+        the case (clean by absence); the app honours no spoken instruction,
+        and the clinician reviews every note."""
+        (case,) = (
+            c for c in ANSWER_HOP_CASES if c.name == "joins-a-first-reply-dont-write-this-down"
+        )
+        assert _hop_joined(case) == {1}
+
+    def test_a_later_reply_dont_write_this_down_is_quoted(self) -> None:
+        """The same instruction as a LATER line of the reply turn (review
+        round 15 SEC-001): the unlimited reach quotes it beside the uncued
+        first reply. Pinned as behaviour, a named residue reported for the
+        practitioner's word at D.4; the app honours no spoken instruction,
+        and the clinician reviews every note."""
+        (case,) = (
+            c for c in ANSWER_HOP_CASES if c.name == "joins-a-later-reply-dont-write-this-down"
+        )
+        assert _hop_joined(case) == {1, 2}
+
+    def test_route_stays_cue_only(self) -> None:
+        """``_route`` is unchanged: a joined reply has no route of its own."""
+        request = _request(document=_document(texts=((QUESTION, CLINICIAN), (REPLY, PATIENT))))
+        provider = ExtractiveNoteProvider()
+        question, reply = request.transcript_utterances
+        assert provider._route(request, question) == RED
+        assert provider._route(request, reply) is None
+        assert _placed(request) == {0: RED, 1: RED}
+
+    def test_a_clinician_owned_section_opens_no_window(self) -> None:
+        """D1 (d): automatic for a question (ownership refuses one), tested
+        anyway on the window test itself."""
+        request = _request(document=_document(texts=((QUESTION, CLINICIAN),)))
+        provider = ExtractiveNoteProvider()
+        words = request.transcript_utterances[0].transcript_words
+        assert provider._opens_answer_window(request, CLINICIAN, (words,), RED)
+        for owned in sorted(CLINICIAN_OWNED_SECTIONS):
+            assert not provider._opens_answer_window(request, CLINICIAN, (words,), owned)
+
+    def test_a_joined_line_is_an_ordinary_quoted_line(self) -> None:
+        """D3: a joined reply is field for field what a carried line is — the
+        same ``transcript`` assertion with an ``x`` id, the whole utterance at
+        its contiguous coordinates, no new field — and it reconstructs."""
+        document = _document(texts=((QUESTION, CLINICIAN), (REPLY, PATIENT)))
+        sections = ExtractiveNoteProvider().generate_sections(_request(document=document))
+        (section,) = sections
+        question, joined = section.note_assertions
+        words = document.transcript_segments[1].transcript_words
+        assert joined == whole_utterance_assertion(
+            provider_assertion_id(1), RED, segment_index=1, speaker=PATIENT, words=words
+        )
+        assert joined.assertion_id == provider_assertion_id(1)
+        assert joined.note_span.provenance == "transcript"
+        assert joined.note_span.source_coords == SourceCoords(1, 0, len(words) - 1)
+        assert (question.text, joined.text) == (QUESTION, REPLY)
+        carried_document = _document(texts=((_SPLIT_OPEN, SPEAKER_1), (_SPLIT_REST, SPEAKER_1)))
+        (carried_section,) = ExtractiveNoteProvider().generate_sections(
+            _request(document=carried_document)
+        )
+        _first, carried = carried_section.note_assertions
+        per_line = {"assertion_id", "section_key", "speaker", "note_span"}
+        assert joined.model_dump(exclude=per_line) == carried.model_dump(exclude=per_line)
+        per_span = {"span_text", "source_coords"}
+        assert joined.note_span.model_dump(exclude=per_span) == carried.note_span.model_dump(
+            exclude=per_span
+        )
+        errors = [
+            warning
+            for warning in reconstruction_warnings(_note(note_sections=sections), document)
+            if warning.severity == "error"
+        ]
+        assert errors == []
+
+    @pytest.mark.parametrize(
+        ("text", "last"),
+        [
+            ("Any numbness?", "Any numbness?"),
+            ("My knee is sore. Any numbness?", "Any numbness?"),
+            ("Any numbness? It was sore.", "It was sore."),
+            ("Any numbness? It was sore", "It was sore"),
+            ('Is it "sore?" Yes it is', "Yes it is"),
+            ("Tell Dr. how it is", "how it is"),
+            ("Any numbness… at all", "Any numbness… at all"),
+            ("Any numbness, at all", "Any numbness, at all"),
+            ("", ""),
+        ],
+    )
+    def test_the_guards_sentence_cut(self, text: str, last: str) -> None:
+        """D2's cut, as Task 0.6 measured it: after a word ending in ``.``,
+        ``?`` or ``!`` once closing quotes and brackets are peeled; no
+        abbreviation handling; an ellipsis character or a comma cuts
+        nothing; a line with no such word is one sentence."""
+        assert note_module._last_sentence_text(_words(text)) == last
 
 
 _VALIDATION_CONFIG_DIR = Path(__file__).resolve().parents[2] / "validation" / "config"
 
 # Task 0.10's predicted correction divergences under the frozen markers (C3):
-# case id -> (the case's expected corrections, the frozen-marker result).
-_PREDICTED_CORRECTION_DIVERGENCES: dict[str, tuple[tuple[int, ...], tuple[int, ...]]] = {
-    "hld-16": ((2,), ()),  # its opener is not a frozen marker
-    "hld-18": ((2,), ()),  # its opener is not a frozen marker
+# held-out set -> case id -> (the case's expected corrections, the
+# frozen-marker result). Keyed per set since validation-run6 Task 0.11;
+# ``heldout-2``'s entries were written in its Task 0.12 (2026-10-24).
+_PREDICTED_CORRECTION_DIVERGENCES_BY_SET: dict[
+    str, dict[str, tuple[tuple[int, ...], tuple[int, ...]]]
+] = {
+    "heldout": {
+        "hld-16": ((2,), ()),  # its opener is not a frozen marker
+        "hld-18": ((2,), ()),  # its opener is not a frozen marker
+    },
+    # Task 0.12 (2026-10-24), read off the product before run 6.
+    "heldout-2": {
+        "h2-02": ((2,), ()),  # its opener is not a frozen marker
+        "h2-08": ((2,), ()),  # its opener is not a frozen marker
+        "h2-15": ((), (2,)),  # a marker opening new information is carried (D4's residue)
+        "h2-19": ((3,), ()),  # its opener is not a frozen marker (the marker comes later)
+    },
+    # Task P.4 (2026-10-25), read off the product after run 6.
+    "heldout-3": {
+        "h3-15": ((3,), ()),  # its opener is not a frozen marker
+        "h3-19": ((3,), ()),  # its opener is not a frozen marker
+    },
+    # Validation-run7 Task P.4 (2026-11-04), read off the product after run 7.
+    "heldout-4": {
+        "h4-12": ((), (2,)),  # a marker opening new information is carried (D4's residue)
+    },
+    # Validation-run8 Task P.3 (2026-11-07), read off the product after run 8:
+    # no line opens with a frozen marker, and every fix is a clinician's,
+    # routes on its own cue or follows an unrouted line, so none diverges.
+    "heldout-5": {},
+    # Note-content-design Task P.5 (2026-11-10), read off the product after run 9.
+    "heldout-6": {
+        "h6-09": ((), (6,)),  # a marker opening new information is carried (D4's residue)
+        "h6-16": ((6,), ()),  # its opener is not a frozen marker
+    },
 }
+_PREDICTED_CORRECTION_DIVERGENCES =by_case(_PREDICTED_CORRECTION_DIVERGENCES_BY_SET)
 
 
 def _held_out_corrections(case: HeldOutCase) -> tuple[int, ...]:

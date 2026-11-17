@@ -1505,7 +1505,7 @@ def _provenance(
     *,
     digest: str | None = None,
     language_model_id: str | None = "qwen3-4b-instruct-2507-q4km",
-    prompt_version: str | None = "narrative-v2",
+    prompt_version: str | None = "narrative-v7",
 ) -> None:
     session_store.write_saved_provenance(
         session_dir,
@@ -1538,7 +1538,7 @@ class TestCompletionFacts:
             template_profile="clinic-a",
             note_style="clean",
             language_model_id="qwen3-4b-instruct-2507-q4km",
-            prompt_version="narrative-v2",
+            prompt_version="narrative-v7",
             note_provenance="known",
         )
         assert facts.past_session == "none"
@@ -1706,14 +1706,14 @@ class TestWriteSavedNote:
             note,
             config,
             language_model_id="qwen3-4b-instruct-2507-q4km",
-            prompt_version="narrative-v2",
+            prompt_version="narrative-v7",
         )
         provenance = session_store.read_saved_provenance(session_dir, crypto, session_dir.name)
         assert provenance is not None
         assert provenance.note_digest == saved_note_identity(session_dir, crypto)
         assert (provenance.language_model_id, provenance.prompt_version) == (
             "qwen3-4b-instruct-2507-q4km",
-            "narrative-v2",
+            "narrative-v7",
         )
 
     def test_provenance_then_note(

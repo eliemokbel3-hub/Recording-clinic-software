@@ -79,14 +79,21 @@ from scribe_desktop.speech import (
     vad_model_available,
 )
 from scribe_desktop.transcription import (
+    # Package-private by name, shared deliberately (larger-model D8): the
+    # ``--model`` value's shape, the replay tool's own.
+    _MODEL_NAME_RE,
     CLINICAL_INITIAL_PROMPT,
+    COMPUTE_DEVICES,
     DEFAULT_WHISPER_MODEL,
+    ComputeDevice,
+    ComputeDeviceError,
     GuardFeatures,
     MarkedSegment,
     TranscriptDocument,
     WhisperSpeechProvider,
     assign_words_to_segments,
     guard_features,
+    model_label,
     pack_transcription_windows,
     resolve_whisper_model,
     suspect_decision,
@@ -826,7 +833,30 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--allow-small",
         action="store_true",
-        help="measure with whisper `small` when `medium` is not installed (the report says so)",
+        help=(
+            "measure with whisper `small` when `medium` is not installed (the report says "
+            "so); not needed with --model"
+        ),
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        metavar="NAME",
+        help=(
+            "measure with this installed Whisper model, named as its folder in the models "
+            f"folder (default: `{DEFAULT_WHISPER_MODEL}`, or the fallback with --allow-small); "
+            "a model named here is never a fallback, and the report names it"
+        ),
+    )
+    parser.add_argument(
+        "--device",
+        choices=COMPUTE_DEVICES,
+        default="cpu",
+        help=(
+            "decode on the processor (default) or the NVIDIA graphics card (`cuda`; the "
+            "report names the model as `<model>@cuda`); a graphics card that cannot decode "
+            "is refused, never replaced by the processor"
+        ),
     )
     parser.add_argument(
         "--all-rows",
@@ -845,10 +875,13 @@ def main(
     """Exit status 0 when every case ran; 2 for a refusal before any case
     runs; 1 otherwise. Refusals, in ``validation.main``'s order: a packaged
     build (``install_layout.channel``, read at call time), then the offline
-    environment is applied and asserted, a missing set folder, the models
+    environment is applied and asserted, a ``--model`` value not shaped as a
+    model name (never echoed), a missing set folder, the models
     (by name, before any is constructed), an unreadable set, a set holding
-    an unusable or non-synthetic script, no installed voice, and models that
-    cannot be loaded (by exception type)."""
+    an unusable or non-synthetic script, no installed voice, a ``--device
+    cuda`` the graphics card cannot decode on (by its code — gpu-decoding
+    plan D7; never a fall back to the processor), and models that cannot be
+    loaded (by exception type)."""
     configure_output()
     args = _parser().parse_args(argv)
     if install_layout.channel() != "dev":
@@ -856,6 +889,12 @@ def main(
         return 2
     apply_offline_env()
     assert_offline_env()
+    # Larger-model D8: a --model value is the practitioner's typing,
+    # shape-checked before it names any path and never echoed in a refusal.
+    model: str | None = args.model
+    if model is not None and not _MODEL_NAME_RE.fullmatch(model):
+        print("[refused] --model: not a Whisper model name")
+        return 2
     set_dir: Path = args.set_dir
     if not set_dir.is_dir():
         print(f"[refused] --set {set_dir} is not a folder")
@@ -869,14 +908,17 @@ def main(
     if models_failure is not None:
         print(f"[refused] the models folder cannot be located ({models_failure})")
         return 2
-    whisper = resolve_whisper_model()
+    whisper = model or resolve_whisper_model()
     if not whisper_model_available(whisper):
-        print(
-            f"[refused] no Whisper model is installed in {models}: "
-            f"{install_layout.model_remedy()}"
+        absent = (
+            "the Whisper model named by --model is not"
+            if model is not None
+            else "no Whisper model is"
         )
+        print(f"[refused] {absent} installed in {models}: {install_layout.model_remedy()}")
         return 2
-    if whisper != DEFAULT_WHISPER_MODEL and not args.allow_small:
+    # A model named by --model is measured as named, never as a fallback.
+    if model is None and whisper != DEFAULT_WHISPER_MODEL and not args.allow_small:
         print(
             f"[refused] Whisper `{DEFAULT_WHISPER_MODEL}` is not installed in {models} (only "
             f"`{whisper}` is): {install_layout.model_remedy()}, or pass --allow-small to "
@@ -924,17 +966,24 @@ def main(
 
     primer = PRIMERS[args.primer]
     load_failure: str | None = None
+    device_failure: str | None = None
     load_interrupted = False
+    device: ComputeDevice = args.device
     try:
         vad = SileroVad()
-        provider = WhisperSpeechProvider(model_name=whisper, initial_prompt=primer)
+        provider = WhisperSpeechProvider(model_name=whisper, initial_prompt=primer, device=device)
     except KeyboardInterrupt:
         load_interrupted = True
+    except ComputeDeviceError as exc:
+        device_failure = exc.error_code  # a type name or a fixed reason
     except Exception as exc:  # noqa: BLE001 - reported by TYPE
         load_failure = _error_type(exc)
     if load_interrupted:
         print("[stopped] the run was interrupted while the models loaded; nothing was run")
         return 1
+    if device_failure is not None:
+        print(f"[refused] --device {device}: the graphics card cannot decode ({device_failure})")
+        return 2
     if load_failure is not None:
         print(f"[refused] the models could not be loaded ({load_failure})")
         return 2
@@ -964,7 +1013,7 @@ def main(
             rows,
             args.candidates,
             errors,
-            whisper_model=whisper,
+            whisper_model=model_label(whisper, device),
             primer_name=args.primer,
             cases=len(cases),
             all_rows=args.all_rows,

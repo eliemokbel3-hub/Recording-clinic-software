@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h3-02",
+  "appointment_type": "initial",
+  "axes": ["end_and_new_patient", "laterality", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "Good afternoon, Mrs Achterberg. What are you coming in with today?"},
+    {"role": "patient", "text": "I'm coming in with a swollen left knee after a long walk in the hills on Saturday."},
+    {"role": "clinician", "text": "Has your doctor given you anything for it?"},
+    {"role": "patient", "text": "Yes, I brought the box. Here."},
+    {"role": "clinician", "text": "So this says naproxen 250 milligrams, one tablet twice a day with food."},
+    {"role": "clinician", "text": "Lie back for me and let me have a look. There's fluid around the kneecap and it only bends to about ninety degrees."},
+    {"role": "clinician", "text": "Keep it raised in the evenings and use a bag of frozen peas wrapped in a tea towel for fifteen minutes at a time."},
+    {"role": "clinician", "text": "That concludes today's session. Do book a follow up at the desk on your way out."},
+    {"role": "patient", "text": "Thank you, I will."},
+    {"role": "clinician", "text": "Good afternoon. Mr Feeney, is it? Please, have a seat."},
+    {"role": "next_patient", "text": "That's right. I've had pins and needles in my fingers for a month now."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["swollen", "left", "knee"], "line": 1, "material": true},
+    {"kind": "dose", "tokens": ["naproxen", "250", "milligrams", "one", "tablet", "twice", "a", "day"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["only", "bends", "to", "about", "ninety", "degrees"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["for", "fifteen", "minutes", "at", "a", "time"], "line": 6, "material": true},
+    {"kind": "absent", "tokens": ["pins", "and", "needles", "in", "my", "fingers"], "line": 10, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

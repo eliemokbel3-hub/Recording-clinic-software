@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h5-12",
+  "appointment_type": "initial",
+  "axes": ["laterality", "negation", "small_talk", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Hiya, come and sit down. Did you find us alright?"},
+    {"role": "patient", "text": "Eventually, the satnav sent me round the industrial estate twice."},
+    {"role": "clinician", "text": "It does that to everyone. So what's going on?"},
+    {"role": "patient", "text": "I'm coming in with a groin ache on the left side, it's been building for about three months."},
+    {"role": "clinician", "text": "How did it start?"},
+    {"role": "patient", "text": "It just crept up, it's worse after I've been gardening."},
+    {"role": "clinician", "text": "Any previous surgery on that hip or your back?"},
+    {"role": "patient", "text": "No previous surgeries on the hip or back, ever."},
+    {"role": "clinician", "text": "Let me have a look. Lie back for me."},
+    {"role": "clinician", "text": "Bringing the knee across and turning it in gives you that groin pain, and you've lost about a third of the inward turn compared with the right."},
+    {"role": "clinician", "text": "That fits with early wear and tear in the hip joint, but I'd want an X ray to be sure, so I'll ask your doctor for one."},
+    {"role": "patient", "text": "Fair enough. Can I keep playing bowls?"},
+    {"role": "clinician", "text": "Bowls is fine, just keep the lunges shallow on the delivery, and stop if it catches sharply."},
+    {"role": "clinician", "text": "Okay, that's us for today. Lovely to meet you, see you in a fortnight."},
+    {"role": "patient", "text": "Thanks, bye."},
+    {"role": "clinician", "text": "Alright, come through, pet. Are you the half past?"},
+    {"role": "next_patient", "text": "That's me. Sorry, the buses are a nightmare round here."},
+    {"role": "clinician", "text": "Tell me about it. Sit yourself down."},
+    {"role": "next_patient", "text": "So it's my lower back, it's been seizing up every time I stand up from the desk."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["groin", "ache", "on", "the", "left", "side"], "line": 3, "material": true},
+    {"kind": "negation", "tokens": ["no", "previous", "surgeries", "on", "the", "hip", "or", "back"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["lost", "about", "a", "third", "of", "the", "inward", "turn"], "line": 9, "material": true},
+    {"kind": "present", "tokens": ["early", "wear", "and", "tear", "in", "the", "hip", "joint"], "line": 10, "material": true},
+    {"kind": "present", "tokens": ["stop", "if", "it", "catches", "sharply"], "line": 12, "material": true},
+    {"kind": "absent", "tokens": ["seizing", "up", "every", "time", "i", "stand", "up"], "line": 18, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

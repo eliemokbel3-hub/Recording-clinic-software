@@ -7,7 +7,7 @@
 
 Draft 1 (2026-10-01; the record of a recording and "How we use it" updated 2026-10-07 for
 the pilot build, approved by the practitioner the same day; the kept recording added
-2026-10-08 for version 0.3.0, awaiting the practitioner's approval).
+2026-10-08 for version 0.3.0, approved by the practitioner on 2026-11-10).
 Text for the practice's privacy policy and collection notice, describing what Clinic
 Scribe does with patients' information. Fill in the bracketed parts; keep it in step with
 the [patient information](patient-information-and-consent.md) (`patient-info-v3`) and

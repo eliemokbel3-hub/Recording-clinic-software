@@ -626,6 +626,15 @@ class MainWindow(QMainWindow):
             # Draft-write D5 (R22-03): the Write button reads the session's
             # record through the controller's content-free accessor only.
             write_status_provider=controller.write_record_status,
+            # Note-content-design D8 (Task C.4): the section suggestions - the
+            # prose stage's resident model and presence seam (one load, one
+            # remembered failure).
+            suggestion_stage=models.build_suggestion_stage(
+                available=self._language_model_available
+            ),
+            # ...and the same seam asked before a job starts: with the model
+            # absent the Note tab names it and runs no thread.
+            suggestion_model_present=self._language_model_available,
         )
         # UI refresh plan D6: the Review page holds both engines — the
         # transcript on the left, the note on the right, one button row. Built
@@ -1596,6 +1605,11 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(models.write_line("write_in_flight"))
             event.ignore()
             return
+        # Note-content-design D8 (codex PR-HIGH-002): an accepted close calls no
+        # `clear()`, and after Save the review no longer holds it - so a live
+        # suggestion job is aborted and orphaned FIRST, and `is_busy` below
+        # then holds the close only until its in-flight window returns.
+        self.note_screen.prepare_close()
         if (
             self.session_screen.is_busy
             or self.recovery_screen.is_busy

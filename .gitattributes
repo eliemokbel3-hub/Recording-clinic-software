@@ -17,3 +17,7 @@ bootstrap.md text eol=lf
 # be the same on every checkout (the practitioner's and the CI runner's).
 packaging/speaker-model-ATTRIBUTION.txt text eol=lf
 packaging/models-manifest.json text eol=lf
+
+# The validation rule files are pinned byte for byte by their tests (LF, a
+# final newline): without this a Windows CI checkout rewrites them to CRLF.
+validation/rules/*.json text eol=lf

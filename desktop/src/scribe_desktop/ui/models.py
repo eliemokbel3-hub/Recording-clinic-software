@@ -91,19 +91,25 @@ from scribe_desktop.note import (
     bound_rendering,
     check_mark,
     compose_draft,
+    covered_words,
+    is_interrogative,
     is_prefilled,
-    line_marks,
+    joined_run,
     line_marks_by_assertion,
+    manual_assertion_id,
     note_input_digest,
     provenance_label,
+    quoted_line_marks,
     reconstruct_span_text,
     render_note,
     spoken_by_confirmed_clinician,
+    wholly_uncovered,
 )
 from scribe_desktop.note_config import (
     # ``_no_control_chars`` is package-private by name, shared deliberately
     # (the note.py convention): ONE config-text validator, applied here to
     # typed wording that may become config.
+    CLINICAL_EQUIVALENTS,
     DEFAULT_NOTE_STYLE,
     LearnedRuleEntry,
     NoteConfig,
@@ -118,6 +124,11 @@ from scribe_desktop.note_config import (
     load_note_config,
     load_practitioner_settings,
     save_practitioner_settings,
+)
+from scribe_desktop.note_suggest import (
+    SuggestionInput,
+    SuggestionStageResult,
+    run_suggestion_stage,
 )
 from scribe_desktop.past_sessions import KeepLabel
 from scribe_desktop.practitioner_profile import (
@@ -194,6 +205,7 @@ from scribe_desktop.transcription import (
     read_transcript,
     recover_session_transcription,
     resolve_whisper_model,
+    segment_has_text,
     transcribe_session,
     whisper_model_available,
     words_hold_suspect,
@@ -2278,7 +2290,8 @@ WARNING_COPY: Final[Mapping[str, WarningCopy]] = {
         "the note, remove or keep it, then acknowledge.",
     ),
     # Validation-pass plan D7: one per quoted line someone other than the
-    # clinician said with a spoken hedge, marking it "[check: unsure]". Unlike
+    # clinician said with a spoken hedge (within the hedge scope since the
+    # validation-run6 plan's D5), marking it "[check: unsure]". Unlike
     # the two above, "Acknowledge all" clears it (not in
     # ``SEPARATELY_ACKNOWLEDGED_CODES``).
     "hedged_source": WarningCopy(
@@ -2341,7 +2354,22 @@ WARNING_COPY: Final[Mapping[str, WarningCopy]] = {
         "A side, negation, number, dose, name or medication someone said is not in the note",
         None,
         "Check the transcript beside the note (a line you removed can raise this too), "
-        "tick 'Show flagged lines only' to find them, then acknowledge.",
+        "tick 'Show flagged or suggested lines only' to find them, then acknowledge.",
+    ),
+    # Validation-run6 plan D1 (Check 4's second code): a whole line the
+    # confirmed clinician said is in no section — no cue routed it and it holds
+    # no word ``high_risk_omission`` flags (advice, a plan, safety-netting).
+    # Its line is marked ``[flagged]`` in the chooser like the first code's, and
+    # only this row's own Acknowledge clears it. Answers-follow-question plan
+    # D4/D5 (Task 1.2): the hint's bracket points to the reply flagged after a
+    # left-out question (``replies_after``) — the wording approved as drafted by
+    # the practitioner on 2026-11-17 (D.4).
+    "clinician_line_omitted": WarningCopy(
+        "A line you said is not in the note",
+        None,
+        "Check the transcript beside the note, tick 'Show flagged or suggested lines only' "
+        "to find it (if it was a question, its answer is flagged too), add it with Add line "
+        "to section if it belongs, then acknowledge.",
     ),
     # Note-learning plan Task 4.2 (D6, C8): the prose the language model
     # wrote for a section did not pass the fidelity check, so that section is
@@ -2454,12 +2482,14 @@ def summarise_warnings(warnings: Sequence[NoteWarning]) -> WarningSummary:
 # the note that must be looked at, which one click must not wave through. The
 # validation-pass plan (D5) adds Check 6: rare, and it withholds content. Its
 # hedge mark (D7, ``hedged_source``) is deliberately NOT here: "Acknowledge
-# all" clears it.
+# all" clears it. The validation-run6 plan (D1, C4) adds Check 4's second
+# code: a whole line of the clinician's left out is an omission like the first.
 # ONE source (peer round 14 PR-LOW-001): each code with the plain words the
 # button's tooltip names it by, so the set the button skips and the list its
 # tooltip gives cannot drift apart.
 SEPARATELY_ACKNOWLEDGED_NAMES: Final[Mapping[str, str]] = {
     "high_risk_omission": "something said that is not in the note (check its flagged lines)",
+    "clinician_line_omitted": "a line you said that is not in the note (check its flagged lines)",
     "number_source": "a quoted line with a number (check each line marked [check: number])",
     "suspect_source": (
         "a quoted line that may not be speech "
@@ -2467,7 +2497,7 @@ SEPARATELY_ACKNOWLEDGED_NAMES: Final[Mapping[str, str]] = {
     ),
     "possible_next_patient": (
         "a note that stops where a new patient may have arrived "
-        "(check the lines marked [after possible next patient])"
+        "(check the lines marked [next patient?])"
     ),
 }
 SEPARATELY_ACKNOWLEDGED_CODES: frozenset[str] = frozenset(SEPARATELY_ACKNOWLEDGED_NAMES)
@@ -2732,7 +2762,10 @@ def _lead_words(text: str, *, max_chars: int = 60) -> str:
 
 
 # Note-routing-omissions plan D4: the mark on a chooser entry or a line-editor
-# row whose transcript line carries a Check 4 omission (``high_risk_omission``).
+# row whose transcript line carries a Check 4 omission (``high_risk_omission``,
+# and since the validation-run6 plan's D1 ``clinician_line_omitted``, counted
+# per joined run since the validation-run7 plan's D1 — every piece of the run
+# is marked, ``flagged_segments``).
 # At the FRONT of the label (2026-10-11 live smoke, round 11 SMOKE-MED-001):
 # the closed chooser cuts a long label's END and its open list elides the
 # MIDDLE, so a suffix was never readable. A chooser entry keeps its transcript
@@ -2744,18 +2777,205 @@ FLAGGED_LINE_MARK = "[flagged] "
 # choice, 2026-10-13): the mark on a chooser entry at or after a possible next
 # patient, after any ``FLAGGED_LINE_MARK`` and before the speaker, for the
 # same reason the flagged mark is at the front — a clinician adding a line
-# back is never steered blindly to the other person's lines.
-NEXT_PATIENT_LINE_MARK = "[after possible next patient] "
+# back is never steered blindly to the other person's lines. Validation-run6
+# plan D3 (the 0.3.3 P.2 observation): a SHORT fixed token, so the open
+# chooser's middle elision of a long label cannot cut it.
+NEXT_PATIENT_LINE_MARK = "[next patient?] "
+# Note-content-design plan D6 (Task C.3): the mark on a chooser entry the
+# local model suggested a section for, after any ``FLAGGED_LINE_MARK`` and
+# ``NEXT_PATIENT_LINE_MARK`` (the existing mark order) and before the speaker;
+# ``{title}`` is the section's ``SECTION_TITLES`` title. Plain ASCII, as the
+# other marks. A mark only: choosing the line pre-selects that section, and
+# the clinician's own Add is the only way it enters the note.
+SUGGESTED_LINE_MARK: Final = "[suggested: {title}] "
+# The codes whose segment the chooser and the line editor mark
+# ``FLAGGED_LINE_MARK``: Check 4's two (validation-run6 plan D1).
+OMISSION_CODES: Final[frozenset[str]] = frozenset({"high_risk_omission", "clinician_line_omitted"})
 
 
-def flagged_segments(warnings: Sequence[NoteWarning]) -> frozenset[int]:
-    """The transcript segments Check 4 flags in ``warnings``: one
-    ``high_risk_omission`` per segment, located by its coordinates."""
+def omission_anchors(warnings: Sequence[NoteWarning]) -> frozenset[int]:
+    """The segments a Check 4 warning of either ``OMISSION_CODES`` code
+    anchors in ``warnings``, located by its coordinates (the two codes never
+    share one)."""
     return frozenset(
         coords.segment_index
         for warning in warnings
-        if warning.note_warning_code == "high_risk_omission"
+        if warning.note_warning_code in OMISSION_CODES
         and (coords := warning.source_coords) is not None
+    )
+
+
+def flagged_runs(note: GeneratedNote, document: TranscriptDocument) -> frozenset[int]:
+    """The whole joined runs (``note.joined_run``, validation-run7 plan D1)
+    of the omission anchors that lie before the next-patient cut
+    (``next_patient_segment`` — the note's own Check 6 warning), that the
+    confirmed clinician spoke (``spoken_by_confirmed_clinician``) and that the
+    note leaves wholly uncovered (``note.covered_words``): the left-out lines
+    the clinician restores by adding them. ONE rule for the chooser
+    (``flagged_segments``) and the validation harness's flagged-line credit
+    (``validation.credited_segments``), so the credit is a subset of the
+    ``[flagged]`` lines by construction (C5). A warning's coordinates are
+    not validated (a stored note could carry any index), so an anchor outside
+    ``[0, end)`` — negative, at or past the cut, past the segment count — adds
+    no run and raises nothing; ``flagged_segments`` keeps it as its own mark,
+    as 0.3.4 did (review round 15 PR-LOW-001)."""
+    covered = covered_words(note, document)
+    runs = _flagged_run_ranges(note, document, covered=covered, end=_flagged_end(note, document))
+    return frozenset(index for run in runs for index in run)
+
+
+def _flagged_end(note: GeneratedNote, document: TranscriptDocument) -> int:
+    """Where ``flagged_runs`` and ``replies_after`` stop: the next-patient
+    cut (``next_patient_segment``), or the segment count."""
+    count = len(document.transcript_segments)
+    cut = next_patient_segment(note.note_warnings)
+    return count if cut is None else min(cut, count)
+
+
+def _flagged_run_ranges(
+    note: GeneratedNote,
+    document: TranscriptDocument,
+    *,
+    covered: frozenset[tuple[int, int]],
+    end: int,
+) -> tuple[range, ...]:
+    """``flagged_runs``' runs, one range each, in anchor order without
+    repeats: their union IS ``flagged_runs``."""
+    segments = document.transcript_segments
+    runs: list[range] = []
+    for anchor in sorted(omission_anchors(note.note_warnings)):
+        if (
+            0 <= anchor < end
+            and spoken_by_confirmed_clinician(segments[anchor].speaker, note.clinician_speaker)
+            and wholly_uncovered(document, anchor, covered)
+        ):
+            run = joined_run(document, anchor, covered=covered, end=end)
+            if run not in runs:
+                runs.append(run)
+    return tuple(runs)
+
+
+def _reply_turn(
+    document: TranscriptDocument,
+    after: int,
+    *,
+    clinician: str | None,
+    covered: frozenset[tuple[int, int]],
+    end: int,
+) -> frozenset[int]:
+    """The reply turn from segment ``after`` on, before ``end``: the first
+    text-bearing segment's speaker, unless it is the confirmed clinician (or
+    none is confirmed), and every wholly uncovered segment of that speaker's
+    turn. A textless segment is passed over, a covered one is passed over
+    without being taken, and a speaker change ends the turn."""
+    segments = document.transcript_segments
+    index = after
+    while index < end and not segment_has_text(segments[index]):
+        index += 1
+    if index >= end:
+        return frozenset()
+    speaker = segments[index].speaker
+    if clinician is None or spoken_by_confirmed_clinician(speaker, clinician):
+        return frozenset()
+    turn: set[int] = set()
+    while index < end:
+        segment = segments[index]
+        if segment_has_text(segment):
+            if segment.speaker != speaker:
+                break
+            if wholly_uncovered(document, index, covered):
+                turn.add(index)
+        index += 1
+    return frozenset(turn)
+
+
+def _added_only_clinician_lines(note: GeneratedNote, document: TranscriptDocument) -> list[int]:
+    """The confirmed clinician's segments that are in the note SOLELY
+    through the clinician's own Add: a ``transcript`` assertion with the
+    segment's ``manual_assertion_id``, and no other ``transcript`` assertion
+    on that segment."""
+    added: set[int] = set()
+    other: set[int] = set()
+    for section in note.note_sections:
+        for assertion in section.note_assertions:
+            coords = assertion.note_span.source_coords
+            if assertion.provenance != "transcript" or coords is None:
+                continue
+            index = coords.segment_index
+            (added if assertion.assertion_id == manual_assertion_id(index) else other).add(index)
+    segments = document.transcript_segments
+    return sorted(
+        index
+        for index in added - other
+        if 0 <= index < len(segments)
+        and spoken_by_confirmed_clinician(segments[index].speaker, note.clinician_speaker)
+    )
+
+
+def replies_after(
+    note: GeneratedNote, document: TranscriptDocument, *, added_questions: bool = False
+) -> frozenset[int]:
+    """The reply credit (answers-follow-question plan D4, as Task 0.6
+    defined it on 2026-11-17: questions only, whole turn): after each run of
+    ``flagged_runs`` that holds a question (any piece passing
+    ``is_interrogative``), the wholly uncovered, text-bearing lines of the
+    one speaker other than the confirmed clinician who speaks next, through
+    that speaker's turn (``_reply_turn``), before the next-patient cut. A
+    reply is credited only while its clinician run still carries the
+    warning. ONE helper for the chooser (``flagged_segments``) and the
+    validation harness's ``warned`` (``validation.encounter_metrics``), so
+    the credit is a subset of the ``[flagged]`` lines by construction.
+
+    ``added_questions`` (the chooser's mark only; the harness never passes
+    it): also the reply turn after a confirmed-clinician question that is
+    in the note solely through the clinician's own Add
+    (``_added_only_clinician_lines``), so the reply stays marked once its
+    question is added by hand. Named consequences (D4): a reply can be
+    ``[flagged]`` with no warning row behind it (Save is not held back), and
+    after a cue-routed question a refused reply is unmarked while after an
+    added one it is marked. Returns indices; no text leaves it."""
+    segments = document.transcript_segments
+    end = _flagged_end(note, document)
+    covered = covered_words(note, document)
+    clinician = note.clinician_speaker
+    replies: set[int] = set()
+    for run in _flagged_run_ranges(note, document, covered=covered, end=end):
+        if any(is_interrogative(_segment_line(segments[k])) for k in run):
+            replies |= _reply_turn(
+                document, run.stop, clinician=clinician, covered=covered, end=end
+            )
+    if added_questions:
+        for index in _added_only_clinician_lines(note, document):
+            if index < end and is_interrogative(_segment_line(segments[index])):
+                replies |= _reply_turn(
+                    document, index + 1, clinician=clinician, covered=covered, end=end
+                )
+    return frozenset(replies)
+
+
+def _segment_line(segment: TranscriptSegment) -> str:
+    """A segment's line as Check 1 rebuilds it (``reconstruct_span_text``)."""
+    return reconstruct_span_text(segment.transcript_words)
+
+
+def flagged_segments(note: GeneratedNote, document: TranscriptDocument) -> frozenset[int]:
+    """The transcript lines the chooser and the line editor mark
+    ``FLAGGED_LINE_MARK``: EVERY omission anchor of either code
+    (``omission_anchors`` — the tail included: ``high_risk_omission`` is
+    raised over the whole transcript, so an anchor at or past the cut keeps
+    its own mark) and, since validation-run7 plan D1, the whole joined run of
+    every anchor ``flagged_runs`` expands — so a line the recogniser split
+    draws ONE ``clinician_line_omitted`` and still has every piece marked,
+    and no line 0.3.4 marked loses its mark (C4). A patient's
+    ``high_risk_omission``, a partly covered anchor or an anchor at or past
+    the cut marks its own segment only, as before. Since the
+    answers-follow-question plan's D4 (Task 1.2), also the reply to a
+    left-out question and to an added one (``replies_after`` with
+    ``added_questions``)."""
+    return (
+        omission_anchors(note.note_warnings)
+        | flagged_runs(note, document)
+        | replies_after(note, document, added_questions=True)
     )
 
 
@@ -2846,36 +3066,77 @@ def remove_tail_failed_line(exc: BaseException) -> str:
     )
 
 
-# Said on the count line while "Show flagged lines only" hides every line the
-# chooser could offer (nothing offered is flagged — the last flagged line was
-# added back, or the flagged ones are typed over or partly in the note), so an
-# empty chooser and a disabled Add never go unexplained (Phase 2 review LOW).
+# The chooser's filter tick (note-routing-omissions D4; widened by
+# note-content-design D6, Task C.4, to the lines the local model suggested a
+# section for).
+FLAGGED_FILTER_LABEL: Final = "Show flagged or suggested lines only"
+
+# Said on the count line while the filter tick hides every line the chooser
+# could offer (nothing offered is flagged or suggested — the last flagged line
+# was added back, or the flagged ones are typed over or partly in the note),
+# so an empty chooser and a disabled Add never go unexplained (Phase 2 review
+# LOW).
 FLAGGED_FILTER_EMPTY_LINE = (
-    "No line in the list is flagged - untick 'Show flagged lines only' to see every line."
+    "No line in the list is flagged or suggested - untick "
+    f"'{FLAGGED_FILTER_LABEL}' to see every line."
 )
 
 
-def flagged_count_line(flagged: Collection[int], offered: Collection[int]) -> str:
-    """The Note tab's count line (D4): how many transcript lines carry a
-    flagged word the note does not, and — by transcript line number — each
-    flagged line the chooser does NOT offer (replaced by a typed line, or
-    only partly in the note; PR-MED-001), which is found on its row in the
-    line editor instead. Empty when nothing is flagged."""
-    if not flagged:
-        return ""
-    count = len(flagged)
+def flagged_count_line(
+    flagged: Collection[int],
+    offered: Collection[int],
+    *,
+    suggested: Collection[int] = (),
+    not_assessed: int = 0,
+) -> str:
+    """The Note tab's count line (D4): how many flagged transcript lines the
+    note leaves out — a line the clinician said, or a flagged word anyone said
+    (Check 4's two codes, validation-run6 plan D1), and since the
+    answers-follow-question plan's D4 the answer to a question the clinician
+    asked (``replies_after``) — and, by transcript line
+    number, each flagged line the chooser does NOT offer (replaced by a typed
+    line, or only partly in the note; PR-MED-001), which is found on its row
+    in the line editor instead. Note-content-design D6 (Task C.3) adds the
+    suggestion clause (``suggestion_count_clause``) when the chooser offers
+    a line with a suggested section (``suggested``: their segments) or the
+    suggestion job left lines ``not_assessed``. Empty when there is neither."""
+    parts: list[str] = []
+    if flagged:
+        count = len(flagged)
+        # Answers-follow-question plan D5 (Task 1.2): the parenthesis also
+        # names the reply flagged after a question (``replies_after``) — the
+        # wording approved as drafted by the practitioner on 2026-11-17 (D.4).
+        text = (
+            f"{count} flagged {'line is' if count == 1 else 'lines are'} not in the note (a "
+            "line you said, an answer to a question you asked, or a side, negation, number, "
+            "dose, name or medication someone said)."
+        )
+        elsewhere = sorted(index + 1 for index in flagged if index not in offered)
+        if elsewhere:
+            numbers = ", ".join(str(number) for number in elsewhere)
+            if len(elsewhere) == 1:
+                text += f" Line {numbers} is replaced or partly in the note - see its row below."
+            else:
+                text += (
+                    f" Lines {numbers} are replaced or partly in the note - see their rows "
+                    "below."
+                )
+        parts.append(text)
+    if suggested or not_assessed:
+        parts.append(suggestion_count_clause(len(suggested), not_assessed))
+    return " ".join(parts)
+
+
+def suggestion_count_clause(suggested: int, not_assessed: int) -> str:
+    """D9's count string: "K lines have a suggested section (M not assessed)",
+    the bracket only when the job left lines unassessed (the cap, or a
+    window that failed)."""
     text = (
-        f"{count} {'line' if count == 1 else 'lines'} with a side, negation, number, "
-        f"dose, name or medication {'is' if count == 1 else 'are'} not in the note."
+        f"{suggested} {'line has' if suggested == 1 else 'lines have'} a suggested section"
     )
-    elsewhere = sorted(index + 1 for index in flagged if index not in offered)
-    if elsewhere:
-        numbers = ", ".join(str(number) for number in elsewhere)
-        if len(elsewhere) == 1:
-            text += f" Line {numbers} is replaced or partly in the note - see its row below."
-        else:
-            text += f" Lines {numbers} are replaced or partly in the note - see their rows below."
-    return text
+    if not_assessed:
+        text += f" ({not_assessed} not assessed)"
+    return text + "."
 
 
 @dataclass(frozen=True)
@@ -2885,12 +3146,30 @@ class UtteranceChoice:
     only, like the transcript panel) and the sections it may enter under the
     ownership rule (``note.admissible_sections``, the router's own rule).
     ``flagged`` (note-routing-omissions D4): the line carries a Check 4
-    omission, and its label carries ``FLAGGED_LINE_MARK`` after its number."""
+    omission, and its label carries ``FLAGGED_LINE_MARK`` after its number.
+    ``suggested`` (note-content-design D6): the section the local model
+    suggested for the line — always one of ``allowed_sections`` — and its
+    label carries ``SUGGESTED_LINE_MARK``; None when there is none."""
 
     segment_index: int
     label: str
     allowed_sections: tuple[NoteSectionKey, ...]
     flagged: bool = False
+    suggested: NoteSectionKey | None = None
+
+
+def placed_segments(sections: Sequence[GeneratedSection]) -> dict[int, NoteSectionKey]:
+    """The transcript lines a note quotes, by segment, with the section each
+    is in (the first section wins) — the suggestion input's placed context.
+    ONE rule for the Note tab's job and the harness's ``confirm-all`` pass
+    (note-content-design D6; review round 18 SIMP-005)."""
+    placed: dict[int, NoteSectionKey] = {}
+    for section in sections:
+        for assertion in section.note_assertions:
+            coords = assertion.note_span.source_coords
+            if assertion.provenance == "transcript" and coords is not None:
+                placed.setdefault(coords.segment_index, section.section_key)
+    return placed
 
 
 def eligible_utterances(
@@ -2900,6 +3179,7 @@ def eligible_utterances(
     in_note: Collection[int],
     flagged: Collection[int] = (),
     boundary: int | None = None,
+    suggested: Mapping[int, NoteSectionKey] | None = None,
 ) -> tuple[UtteranceChoice, ...]:
     """The utterances the clinician may ADD: every segment with quotable
     text whose index is not already carried by the working note (a line
@@ -2909,8 +3189,23 @@ def eligible_utterances(
     segment, ``next_patient_segment``) carries ``NEXT_PATIENT_LINE_MARK``
     after that, flagged or not (validation-pass plan D6); a segment holding a
     suspect word carries ``suspect_prefix`` before its words (invented-text
-    guard D4). So a label reads
-    ``"<n>. [flagged] [after possible next patient] <speaker>: …"``."""
+    guard D4). So a label reads ``"<n>. [flagged] [next patient?] <speaker>: …"``:
+    both front marks before the speaker, the suspect prefix after it (the
+    practitioner's front-mark decision, 2026-10-13), and ``_lead_words``' cut
+    applies to the words only, so no mark is ever cut (validation-run6 plan
+    D3).
+
+    ``suggested`` (note-content-design D6, Task C.3): the local model's
+    section per segment (``note_suggest.SuggestionStageResult.suggestions``).
+    A suggestion is ACCEPTED only through this function's own ownership rule
+    — its key must be in the entry's ``allowed_sections`` (so a
+    clinician-owned key for another speaker's line or for a question is
+    refused) — on an entry this function offers (a segment in the note is
+    refused) and before ``boundary`` (the suggestion input is cut there, so
+    a later segment is never asked; one arriving anyway is refused). An
+    accepted one sets ``UtteranceChoice.suggested`` and puts
+    ``SUGGESTED_LINE_MARK`` after the other two front marks:
+    ``"<n>. [flagged] [suggested: <title>] <speaker>: …"``."""
     choices: list[UtteranceChoice] = []
     for index, segment in enumerate(document.transcript_segments):
         if index in in_note:
@@ -2926,13 +3221,22 @@ def eligible_utterances(
         )
         mark = index in flagged
         flag = FLAGGED_LINE_MARK if mark else ""
-        after = NEXT_PATIENT_LINE_MARK if boundary is not None and index >= boundary else ""
+        past_boundary = boundary is not None and index >= boundary
+        after = NEXT_PATIENT_LINE_MARK if past_boundary else ""
+        key = suggested.get(index) if suggested is not None else None
+        accepted = key if key in allowed and not past_boundary else None
+        hint = suggested_line_mark(accepted) if accepted is not None else ""
         label = (
-            f"{index + 1}. {flag}{after}{segment.speaker}: "
+            f"{index + 1}. {flag}{after}{hint}{segment.speaker}: "
             f"{suspect_prefix(segment)}{_lead_words(text)}"
         )
-        choices.append(UtteranceChoice(index, label, allowed, mark))
+        choices.append(UtteranceChoice(index, label, allowed, mark, suggested=accepted))
     return tuple(choices)
+
+
+def suggested_line_mark(key: NoteSectionKey) -> str:
+    """``SUGGESTED_LINE_MARK`` for ``key``'s section title."""
+    return SUGGESTED_LINE_MARK.format(title=SECTION_TITLES[key])
 
 
 LineState = Literal["routed", "removed", "moved", "added", "replaced"]
@@ -2951,7 +3255,7 @@ class EditableLine:
     the row's transcript line carries a Check 4 omission although the
     chooser does not offer it (replaced, or only partly in the note), and
     its label starts with ``FLAGGED_LINE_MARK``. ``marks`` (invented-text
-    guard D5): the line-mark kinds (``note.line_marks``) of a row whose line
+    guard D5): the line-mark kinds (``note.quoted_line_marks``) of a row whose line
     IS in the note (routed, moved or added), shown at the front of its label
     after any ``FLAGGED_LINE_MARK`` as ``[check: <kind>] ``."""
 
@@ -3103,9 +3407,11 @@ def _row_marks(
     *,
     clinician_speaker: str | None,
 ) -> tuple[str, ...]:
-    """The mark kinds of a row whose line is in the note — ``line_marks``
-    over the words under ``assertion``'s coordinates (the editor reads the
-    document, never the warnings, which it cannot see), its ``clinician``
+    """The mark kinds of a row whose line is in the note —
+    ``quoted_line_marks`` over the words under ``assertion``'s coordinates
+    and their segment's hedge scope (validation-run6 plan D5; the editor
+    reads the document, never the warnings, which it cannot see), its
+    ``clinician``
     the same test Check 1 makes against the draft's confirmed clinician
     (validation-pass plan D7: ``spoken_by_confirmed_clinician`` for the
     line's segment); none for a removed
@@ -3125,7 +3431,7 @@ def _row_marks(
     if reconstruct_span_text(span) != assertion.text:
         return ()
     clinician = spoken_by_confirmed_clinician(segment.speaker, clinician_speaker)
-    return line_marks(span, clinician=clinician)
+    return quoted_line_marks(document, coords.segment_index, span, clinician=clinician)
 
 
 @dataclass(frozen=True)
@@ -4005,7 +4311,12 @@ def build_prose_stage(
                         label=label, reason=STYLE_CONSENT_STALE_REASON
                     )
                 )
-        provider = ProseStyleProvider(model, style=prose_style, profile=profile)
+        # Note-content-design D3: the register is wired ONCE, here — always on
+        # for the two prose styles, so every stage caller (the Note tab, the
+        # Status-tab benchmark, the harness) inherits it with no change.
+        provider = ProseStyleProvider(
+            model, style=prose_style, profile=profile, register=CLINICAL_EQUIVALENTS
+        )
         result = provider.render(
             ProseInput.from_note(note), only=sections_to_render(note), abort=abort
         )
@@ -4125,6 +4436,134 @@ def carry_renderings(note: GeneratedNote, previous: GeneratedNote | None) -> Gen
     if previous is None or not previous.style_renderings:
         return attach_style_renderings(note, ())
     return attach_style_renderings(note, previous.style_renderings)
+
+
+# --- the section suggestions (note-content-design plan Task C.3; D6, D7, D9; C8) ---
+#
+# The Note tab runs ONE suggestion job per review on its second job slot (Task
+# C.4), under ANY writing style: it reuses the prose stage's resident model
+# (``_LANGUAGE_MODEL_CACHE`` — one copy, one load, the same remembered
+# failure), asks ``note_suggest.run_suggestion_stage`` for the left-out lines
+# and returns ids, keys and counts; the tab re-filters the suggestions through
+# ``eligible_utterances`` against the note it holds when the job lands. Every
+# fallback names its reason on screen (C8); no clinical text rides any line.
+
+SUGGESTION_NOTHING_LINE: Final = "Nothing to suggest."
+SUGGESTION_NONE_LINE: Final = "No suggestions."
+SUGGESTION_IN_FLIGHT_LINE: Final = "Suggesting sections for {count} left-out {lines}..."
+SUGGESTION_LOAD_FAILED_LINE: Final = (
+    "Suggested sections: the language model could not be loaded ({reason})."
+)
+# Task C.4 (C8): the Note tab's two other fallbacks — the job raised (only the
+# exception's TYPE name is shown: its message could carry an input value),
+# and the job was stopped because the window was asked to close
+# (`NoteScreen.prepare_close`, D8).
+SUGGESTION_FAILED_LINE: Final = "Suggested sections: the suggestion job failed ({reason})."
+SUGGESTION_STOPPED_LINE: Final = (
+    "Suggested sections: stopped because the window was asked to close."
+)
+# Note-content-design D8 as amended 2026-11-09 (review round 19 Q1 (b)): the
+# job is also stopped once the note is saved (the chooser and Add are closed
+# from then on) and before Delete note and complete destroys the session key
+# (`NoteScreen._stop_suggestions`).
+SUGGESTION_SAVED_LINE: Final = "Suggested sections: stopped because the note was saved."
+SUGGESTION_DELETE_LINE: Final = (
+    "Suggested sections: stopped because the note is being deleted."
+)
+
+
+def suggestion_model_absent_line() -> str:
+    """The C8 line when the language model or its runtime is missing (the
+    prose styles' reason, ``language_model_absent_reason``, for this build)."""
+    return f"Suggested sections {language_model_absent_reason()}."
+
+
+def suggestion_in_flight_line(count: int) -> str:
+    """D9's "Suggesting sections for N left-out lines..." line."""
+    return SUGGESTION_IN_FLIGHT_LINE.format(
+        count=count, lines="line" if count == 1 else "lines"
+    )
+
+
+@dataclass(frozen=True)
+class SuggestionStageOutcome:
+    """One suggestion job's outcome: the stage's ``result`` (ids, keys and
+    counts only), or — when no job could run — None and the C8 ``reason``
+    line (nothing to suggest, the model absent, its load failed)."""
+
+    result: SuggestionStageResult | None
+    reason: str | None = None
+
+
+class SuggestionStage(Protocol):
+    """The callable the Note tab runs on its second TaskThread: the input it
+    was started for, ``abort`` (consulted before each window) and
+    ``yield_to`` (the wait while a prose job is pending — D8)."""
+
+    def __call__(
+        self,
+        suggestion_input: SuggestionInput,
+        /,
+        *,
+        abort: Callable[[], bool] | None = None,
+        yield_to: Callable[[], None] | None = None,
+    ) -> SuggestionStageOutcome: ...
+
+
+def build_suggestion_stage(
+    *,
+    model_factory: Callable[[], LanguageModel] = LocalLanguageModel,
+    cache: _LanguageModelCache | None = _LANGUAGE_MODEL_CACHE,
+    available: Callable[[], bool] = language_model_available,
+) -> SuggestionStage:
+    """The suggestion stage callable, mirroring ``build_prose_stage``: the
+    same seams (``model_factory``, ``cache`` — None builds a fresh model per
+    job, tests — and the presence stat ``available``) and the same resident
+    model. It never touches a widget, never logs, and asks for nothing when
+    no line is left out (no load, no call)."""
+
+    def stage(
+        suggestion_input: SuggestionInput,
+        /,
+        *,
+        abort: Callable[[], bool] | None = None,
+        yield_to: Callable[[], None] | None = None,
+    ) -> SuggestionStageOutcome:
+        if not suggestion_input.lines_asked:
+            return SuggestionStageOutcome(None, SUGGESTION_NOTHING_LINE)
+        # As the prose stage (round 20 MED-002): presence is a STAT asked on
+        # every job and never remembered; only a LOAD that failed with the
+        # file present is remembered for the process (the cache's own rule).
+        if not available():
+            return SuggestionStageOutcome(None, suggestion_model_absent_line())
+        try:
+            model = cache.get(model_factory) if cache is not None else model_factory()
+        except LanguageModelError as exc:
+            return SuggestionStageOutcome(None, SUGGESTION_LOAD_FAILED_LINE.format(reason=exc))
+        return SuggestionStageOutcome(
+            run_suggestion_stage(suggestion_input, model, abort=abort, yield_to=yield_to)
+        )
+
+    return stage
+
+
+def suggestion_stage_line(outcome: SuggestionStageOutcome, *, accepted: int) -> str:
+    """The Note tab's suggestion status line once a job landed (D9):
+    ``accepted`` is how many suggestions the chooser accepted
+    (``eligible_utterances``) against the note as it stands. The C8 reason
+    when no job ran; "Nothing to suggest." when no line was left out; "No
+    suggestions." (with any lines not assessed) when none was accepted; else
+    ``suggestion_count_clause``."""
+    result = outcome.result
+    if result is None:
+        return outcome.reason or SUGGESTION_NONE_LINE
+    if result.reason == "nothing_to_suggest":
+        return SUGGESTION_NOTHING_LINE
+    if not accepted:
+        if result.lines_not_assessed:
+            return f"No suggestions ({result.lines_not_assessed} not assessed)."
+        return SUGGESTION_NONE_LINE
+    return suggestion_count_clause(accepted, result.lines_not_assessed)
 
 
 STYLE_NOT_LEARNED_LINE: Final = (
@@ -4728,6 +5167,23 @@ __all__ = [
     "sections_to_render",
     "style_stage_line",
     "with_retained_prose",
+    "SUGGESTED_LINE_MARK",
+    "SUGGESTION_DELETE_LINE",
+    "SUGGESTION_FAILED_LINE",
+    "SUGGESTION_IN_FLIGHT_LINE",
+    "SUGGESTION_LOAD_FAILED_LINE",
+    "SUGGESTION_NONE_LINE",
+    "SUGGESTION_NOTHING_LINE",
+    "SUGGESTION_SAVED_LINE",
+    "SUGGESTION_STOPPED_LINE",
+    "SuggestionStage",
+    "SuggestionStageOutcome",
+    "build_suggestion_stage",
+    "suggested_line_mark",
+    "suggestion_count_clause",
+    "suggestion_in_flight_line",
+    "suggestion_model_absent_line",
+    "suggestion_stage_line",
     "STYLE_LABELS",
     "STYLE_NOT_LEARNED_LINE",
     "STYLE_PROFILE_EMPTY_REASON",
@@ -4860,8 +5316,10 @@ __all__ = [
     "speaker_model_missing_reason",
     "UNFINISHED_STORE_WARNING",
     "FLAGGED_FILTER_EMPTY_LINE",
+    "FLAGGED_FILTER_LABEL",
     "FLAGGED_LINE_MARK",
     "NEXT_PATIENT_LINE_MARK",
+    "OMISSION_CODES",
     "REMOVE_TAIL_ACTION",
     "REMOVE_TAIL_ATTRIBUTION_DROPPED",
     "REMOVE_TAIL_CANCEL",
@@ -4911,6 +5369,7 @@ __all__ = [
     "editable_lines",
     "eligible_utterances",
     "flagged_count_line",
+    "flagged_runs",
     "flagged_segments",
     "format_live_segments",
     "format_note_body",
@@ -4926,11 +5385,13 @@ __all__ = [
     "models_ready",
     "next_patient_segment",
     "next_patient_transcript_line",
+    "omission_anchors",
     "prefilled_lines",
     "remove_tail_done_line",
     "remove_tail_failed_line",
     "remove_tail_label",
     "remove_tail_question",
+    "replies_after",
     "provenance_label",
     "render_note_sections",
     "render_proposal",

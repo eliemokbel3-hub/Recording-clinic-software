@@ -258,6 +258,37 @@ Tasks may carry an executor label:
 - no label = default; runs on whatever model is active
 - `[executor: premium-only]` = must run on a premium reasoning model;
   /execute hard-stops at the boundary
+- `[operator]` = a task whose act the executor never takes — a merge, a
+  release dispatch, a ceremony, a production edit that redeploying the
+  previous version undoes (an irreversible one is stop 3 of
+  `/execute-loop`'s away mode — covered in ONE case only: the merge of
+  the run's own pull request that carries it, when the departure file
+  lists that merge `pre-approved` under the `operator-merge` class;
+  a merge the project's rules or this plan reserve for the operator is
+  listed the same way — `/execute-loop` → Away mode → The use-time
+  check → Pre-approvals): the executor prepares
+  the exact commands and records what it finds, never runs them; the
+  composer takes the act under an away grant whose scope reaches it
+  (`/execute-loop` → Away mode → Release work), or goes around or parks
+  it by its recorded disposition (that section's pre-departure check,
+  item 2); attended, the task is the operator's whenever they choose
+  (`/execute`'s interactive branch), and a phase closes around it.
+  "Operator-supplied" means only what the operator alone can produce —
+  a credential, a file only they hold, a decision only they may take;
+  a public artefact at a pinned source (an immutable commit id with a
+  recorded digest, never a tag or a branch) is fetched by the composer
+  under a grant, recorded, and the pre-departure check's item 2 offers
+  `agent` for such a task — its exclusions stated there, once
+  (`/execute-loop` → Away mode → item 2; "The composer decides"). The
+  label never makes a stop on its own: a hard stop is one of the four
+  stops or an always-the-operator's item (`/execute-loop` → Away mode),
+  which the composer never takes whatever the scope (the listed merge
+  under `operator-merge`, above, is the one exception), or a plan line
+  saying the task needs the operator in person (their machine, a
+  credential). A task that depends on a release act its own group's
+  close must precede — the merge, a dispatch — belongs in the next
+  release group, and a release group made only of `[operator]` tasks is
+  a plan error (a pull request with nothing to merge).
 
 Where the dependency graph permits, cluster premium-only tasks
 adjacent to each other to reduce model-switching. Do not reorder
@@ -271,7 +302,8 @@ contiguous low-risk tasks together. While grouping, accumulate a
 shared-helpers inventory in `Key Findings` — the helpers, utilities,
 and cross-phase touch points more than one phase will use — so later
 phases reuse them instead of re-inventing them. Phase headings carry NO
-autonomy labels: the per-phase `[gates: high-auto-ok]` label grammar was
+autonomy labels (they MAY carry a release-group tag — the paragraph
+below): the per-phase `[gates: high-auto-ok]` label grammar was
 RETIRED at v32 — HIGH auto-routing is authorized per RUN by the
 `high-auto=on|off` `Loop config:` key (wizard default on since v32.3;
 an absent or malformed key still fails closed to off; run-start-attested,
@@ -281,6 +313,18 @@ by plan text. A task auto-appended by that route carries the
 authority — `/execute` task selection and the loop's phase advance both
 refuse it — until a successful scoped `/review-plan` over it removes
 the marker (a failed or aborted hardening leaves it in place).
+
+Release groups (only when the plan ships as more than one pull
+request): tag EACH phase heading with its release group `(PR-<x>)`,
+written in the heading's LAST parenthesised group — e.g.
+`### Phase 2 — Client: the wizard (PR-B)`. Leading untagged phases
+form a group of their own, so tag the first phase too; write each
+group's hardening step inside that group. A plan with no tag is one
+group — one run, one pull request; a tagged plan is one run with a pull
+request per group. The tag pattern, the grouping, the scope, and the
+stage numbering are stated once in `/execute-loop` → Run isolation →
+**Release groups** — point there, never restate them here. No plan
+field carries the grouping (Workflow Schema v22).
 
 A task may also be a **decision-point task (optional)**. A
 decision-point task carries a `[decision]` label and its deliverable is

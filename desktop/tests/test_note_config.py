@@ -2827,3 +2827,122 @@ def test_no_production_module_names_the_retired_default_source_surface() -> None
             if name in text:
                 hits.append(f"{path.relative_to(package)}: {name}")
     assert hits == []
+
+
+# ---------------------------------------------------------------------------
+# Note-content-design follow-up S.2 (review round 19 SEC-008): a key repeated
+# in one object of a config file is refused, at any depth, by a message that
+# names the file only — pydantic alone would keep the last value silently.
+# ---------------------------------------------------------------------------
+
+
+def _shipped_config_text(filename: str) -> str:
+    resource = resources.files("scribe_desktop") / "config_defaults" / filename
+    return resource.read_text(encoding="utf-8")
+
+
+def _repeat_once(text: str, old: str, new: str) -> str:
+    assert text.count(old) >= 1
+    return text.replace(old, new, 1)
+
+
+_AUTOFILL_ONE_RULE = (
+    '{"schema_version": 1, "autofill_rules": [{"rule_id": "r1", '
+    '"section_key": "advice_home_exercise", "trigger_phrase": "home exercise", '
+    '"expansion": ["Advice recorded"]}]}'
+)
+_PREFILL_ONE_TEMPLATE = (
+    '{"schema_version": 1, "prefill_templates": [{"prefill_id": "pf1", '
+    '"display_name": "Knee", "region_keywords": ["knee"], "seed_assertions": '
+    '[{"section_key": "objective_examination", "seed_text": "Full range"}]}]}'
+)
+_CUES_ONE_SECTION = '{"schema_version": 1, "section_cues": {"assessment": ["consistent with"]}}'
+
+
+def _repeated_key_cases() -> list[tuple[str, str, str, str]]:
+    """(file, a valid text, the same text with one key repeated, that key)."""
+    cases = []
+    for filename in (
+        TEMPLATE_PROFILES_FILENAME,
+        AUTOFILL_RULES_FILENAME,
+        PREFILL_TEMPLATES_FILENAME,
+        SECTION_CUES_FILENAME,
+    ):
+        shipped = _shipped_config_text(filename)
+        top = _repeat_once(shipped, "{", '{"schema_version": 1, ')
+        cases.append((filename, shipped, top, "schema_version"))
+    profile_id = '"template_profile_id": "template-a",'
+    cases.append(
+        (
+            TEMPLATE_PROFILES_FILENAME,
+            _shipped_config_text(TEMPLATE_PROFILES_FILENAME),
+            _repeat_once(
+                _shipped_config_text(TEMPLATE_PROFILES_FILENAME), profile_id, profile_id * 2
+            ),
+            "template_profile_id",
+        )
+    )
+    cases.append(
+        (
+            AUTOFILL_RULES_FILENAME,
+            _AUTOFILL_ONE_RULE,
+            _repeat_once(_AUTOFILL_ONE_RULE, '"rule_id": "r1", ', '"rule_id": "r1", ' * 2),
+            "rule_id",
+        )
+    )
+    seed_key = '"section_key": "objective_examination", '
+    cases.append(
+        (
+            PREFILL_TEMPLATES_FILENAME,
+            _PREFILL_ONE_TEMPLATE,
+            _repeat_once(_PREFILL_ONE_TEMPLATE, seed_key, seed_key * 2),
+            "section_key",
+        )
+    )
+    cases.append(
+        (
+            SECTION_CUES_FILENAME,
+            _CUES_ONE_SECTION,
+            _repeat_once(
+                _CUES_ONE_SECTION,
+                '{"assessment"',
+                '{"assessment": ["clinically this is"], "assessment"',
+            ),
+            "assessment",
+        )
+    )
+    return cases
+
+
+class TestRepeatedKeys:
+    @pytest.mark.parametrize(
+        ("filename", "valid", "repeated", "key"),
+        _repeated_key_cases(),
+        ids=lambda value: value if isinstance(value, str) and len(value) < 30 else "",
+    )
+    def test_a_repeated_key_is_refused_naming_the_file_only(
+        self, tmp_path: Path, filename: str, valid: str, repeated: str, key: str
+    ) -> None:
+        good = tmp_path / "good"
+        good.mkdir()
+        (good / filename).write_text(valid, encoding="utf-8")
+        load_note_config(good)  # the same text without the repeat loads
+
+        bad = tmp_path / "bad"
+        bad.mkdir()
+        (bad / filename).write_text(repeated, encoding="utf-8")
+        with pytest.raises(NoteConfigInvalidError) as excinfo:
+            load_note_config(bad)
+        message = str(excinfo.value)
+        assert message == f"user config {filename} is malformed: a key is repeated in one object"
+        assert key not in message
+        assert excinfo.value.__cause__ is None
+
+    def test_invalid_json_keeps_its_existing_message(self, tmp_path: Path) -> None:
+        root = tmp_path / "config"
+        root.mkdir()
+        (root / SECTION_CUES_FILENAME).write_text("{not json", encoding="utf-8")
+        with pytest.raises(NoteConfigInvalidError) as excinfo:
+            load_note_config(root)
+        assert "repeated" not in str(excinfo.value)
+        assert "Invalid JSON" in str(excinfo.value)

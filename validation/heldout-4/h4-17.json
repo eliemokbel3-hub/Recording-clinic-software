@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h4-17",
+  "appointment_type": "discharge",
+  "axes": ["scribe_instruction", "small_talk", "numbers", "overlap"],
+  "lines": [
+    {"role": "clinician", "text": "Last session today, Priya. How's the shoulder since last time?"},
+    {"role": "patient", "text": "Since last time I can reach the top cupboard again without wincing."},
+    {"role": "clinician", "text": "Fantastic. Let me have a look at the movement."},
+    {"role": "patient", "text": "Go for it, it needs to be working for my sister's wedding in June."},
+    {"role": "clinician", "text": "That's full movement overhead and the strength is equal on both sides now."},
+    {"role": "clinician", "text": "Note for the scribe, don't put the wedding in the letter."},
+    {"role": "clinician", "text": "Keep going with the band rows and the wall slides three times a week for the next couple of months, then once a week is enough to hold on to it."},
+    {"role": "patient", "text": "And if it starts aching again?"},
+    {"role": "clinician", "text": "Drop back to the gentle range work for a few days, and if it's no better in a fortnight, ring the department and we'll see you without a new referral."},
+    {"role": "patient", "text": "Brilliant. Thanks for everything."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["reach", "the", "top", "cupboard", "again"], "line": 1, "material": true},
+    {"kind": "absent", "tokens": ["my", "sister's", "wedding", "in", "june"], "line": 3, "material": false},
+    {"kind": "present", "tokens": ["full", "movement", "overhead"], "line": 4, "material": true},
+    {"kind": "absent", "tokens": ["don't", "put", "the", "wedding", "in", "the", "letter"], "line": 5, "material": false},
+    {"kind": "present", "tokens": ["three", "times", "a", "week", "for", "the", "next", "couple", "of", "months"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["ring", "the", "department"], "line": 8, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}, "overlap_seconds": 1.5, "overlap_lines": [3, 7]}
+}

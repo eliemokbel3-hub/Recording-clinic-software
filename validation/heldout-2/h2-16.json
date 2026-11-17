@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h2-16",
+  "appointment_type": "follow_up",
+  "axes": ["numbers", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "How's the knee since last time?"},
+    {"role": "patient", "text": "Since last time it's swollen less, but it still gives way on uneven ground."},
+    {"role": "clinician", "text": "Let me have a look. The swelling's down, and the thigh muscle's still weaker than the other side."},
+    {"role": "clinician", "text": "Practise standing up from a dining chair, slowly, ten times, three times a day, without using your hands."},
+    {"role": "clinician", "text": "Lovely, that's us for today, see you next week."},
+    {"role": "patient", "text": "Thanks, bye now."},
+    {"role": "patient", "text": "Oh, sorry, one more thing, I forgot to say I've got a holiday in Spain in three weeks, will I be okay walking a lot?"},
+    {"role": "clinician", "text": "You should be fine, just pace yourself, and take a break every hour or so on long walks."},
+    {"role": "patient", "text": "Brilliant, thank you, bye."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["swollen", "less"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["still", "gives", "way", "on", "uneven", "ground"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["thigh", "muscle's", "still", "weaker"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["standing", "up", "from", "a", "dining", "chair"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["without", "using", "your", "hands"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["a", "holiday", "in", "spain", "in", "three", "weeks"], "line": 6, "material": false},
+    {"kind": "present", "tokens": ["take", "a", "break", "every", "hour"], "line": 7, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

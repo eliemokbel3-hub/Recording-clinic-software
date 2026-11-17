@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h2-07",
+  "appointment_type": "initial",
+  "axes": ["laterality", "numbers", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Right then, what's brought you in?"},
+    {"role": "patient", "text": "It's my left heel, it's agony first thing when I put my foot down."},
+    {"role": "clinician", "text": "And did it start after anything in particular?"},
+    {"role": "patient", "text": "I started a new job on a shop floor, standing all day, on concrete."},
+    {"role": "patient", "text": "It eases off once I've walked about a bit, then it's bad again by teatime."},
+    {"role": "clinician", "text": "Let me have a look. It's tender right on the inside of the heel bone, and your calf is pretty tight."},
+    {"role": "clinician", "text": "I think you have plantar fasciitis, it's very common in people on their feet all day."},
+    {"role": "clinician", "text": "Roll your foot over a frozen water bottle for five minutes before bed, and wear trainers with a decent heel at work, not flat shoes."},
+    {"role": "patient", "text": "Grand, I'll give it a go."},
+    {"role": "clinician", "text": "Lovely, ta-ra for now, see you in three weeks."},
+    {"role": "clinician", "text": "Right, Shaz, come in love, sit yourself down."},
+    {"role": "next_patient", "text": "Ta. My back's gone again, I bent down to pick up the dog's bowl and it locked."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["my", "left", "heel"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["agony", "first", "thing"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["standing", "all", "day"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["on", "concrete"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["eases", "off", "once", "i've", "walked", "about"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["bad", "again", "by", "teatime"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["tender", "right", "on", "the", "inside", "of", "the", "heel", "bone"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["plantar", "fasciitis"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["roll", "your", "foot", "over", "a", "frozen", "water", "bottle"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["not", "flat", "shoes"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["see", "you", "in", "three", "weeks"], "line": 9, "material": true},
+    {"kind": "absent", "tokens": ["my", "back's", "gone", "again"], "line": 11, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

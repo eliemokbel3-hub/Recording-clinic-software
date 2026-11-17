@@ -143,6 +143,19 @@ What each check claims — and, recorded with equal care, what it does NOT:
   producer); an uncued sentence with none of those words stays unflagged.
   With no confirmed role there is no clinician to scope names by, and the
   check honestly emits nothing.
+  Its second code, ``clinician_line_omissions`` (validation-run6 plan D1,
+  decision 0.3 (b)), reaches the uncued sentence on the CLINICIAN's side only:
+  one ``clinician_line_omitted`` review warning per joined run (since
+  validation-run7 plan D1, ``note.joined_run``: the pieces the recogniser
+  split one line into, a same-speaker piece ending mid-sentence joined to the
+  next; a bare cut is a named residue) that the confirmed clinician spoke,
+  that no assertion's coordinates touch at all, that holds a non-suspect
+  content word (``note.content_tokens``; a one-word "okay" counts, as
+  decided), no piece of which draws a ``high_risk_omission`` already, and
+  that lies before the next-patient boundary — its coordinates spanning the
+  run's first piece, whole. A partly quoted line is the clinician's own
+  choice and draws nothing new; patient lines draw nothing new (an
+  other-voice predicate was rejected, D1). It warns, never routes.
 - **Check 5, ``fidelity_warnings``** (note-learning-and-styles plan Task
   4.2, D6) — the fidelity GATE over the local language model's prose for one
   section, run by the prose stage AFTER finalisation (it is NOT part of
@@ -187,7 +200,14 @@ What each check claims — and, recorded with equal care, what it does NOT:
   places and pass, and a rephrase that keeps every token but reverses a
   comparison passes; the practitioner's reading is the control for all of
   these, and the laterality-parser lesson (rounds 48–58) is why no binding
-  parser is attempted here.
+  parser is attempted here. Since the note-content-design plan (D2) the
+  prose stage passes the shipped clinical register: both sides are FOLDED
+  through ``canonicalise`` (a by-definition equivalent — "lower back pain" /
+  ``LBP``, "three weeks" / ``3/52`` — becomes its entry's canonical tokens)
+  before the four rules run unchanged, and a section holding a line not
+  spoken by the confirmed clinician may add the speaker frame (``Pt`` /
+  ``patient``) in rule (b) and drop the first person in rule (a) — the
+  token-not-attachment residue above covers the frame too.
 - **Check 6, ``next_patient_warnings``** (validation-pass plan D5) — one
   ``possible_next_patient`` review warning, role-free, when the transcript
   runs into a possible next patient: ``note_config.next_patient_boundary``,
@@ -228,7 +248,10 @@ from scribe_desktop.note import (
     # Package-private by name, shared deliberately (the note.py convention):
     # the mock's negation vocabulary IS the checker's negation vocabulary —
     # two sets would let the instrument express a class the checker cannot
-    # see, exactly the drift Task 1.2 pinned tokenisation against.
+    # see, exactly the drift Task 1.2 pinned tokenisation against. The
+    # tokenisation's own filler set is shared the same way: the clinical
+    # register refuses a term that is a filler (note-content-design D1).
+    _FILLER_TOKENS,
     _NEGATIONS,
     CANONICAL_SECTION_KEYS,
     CLINICIAN_OWNED_SECTIONS,
@@ -240,13 +263,23 @@ from scribe_desktop.note import (
     NoteWarning,
     SourceCoords,
     content_tokens,
+    covered_words,
     is_interrogative,
-    line_marks,
+    joined_run,
     normalise_token,
+    quoted_line_marks,
     reconstruct_span_text,
     spoken_by_confirmed_clinician,
     transcript_digest,
+    wholly_uncovered,
 )
+
+# Validation-run7 plan D1: the coordinate resolver and Check 4's coverage rule
+# moved to ``note`` (the leaf the chooser and the harness also import); the
+# two private names stay importable from here, re-exported explicitly, for
+# this module's call sites and ``validation``'s.
+from scribe_desktop.note import _resolved_coords as _resolved_coords
+from scribe_desktop.note import _words_for_coords as _words_for_coords
 from scribe_desktop.note_config import (
     # Package-private by name, shared deliberately (the note.py convention):
     # ONE definition of what ends a clause. The config authoring guard and
@@ -256,8 +289,11 @@ from scribe_desktop.note_config import (
     # token the filters refuse and a token the fidelity gate protects are
     # one class, never two drifting spellings of it.
     _TERMINAL_PUNCT,
+    CLINICAL_EQUIVALENTS,
     PROSE_CONNECTIVES,
     AutofillRule,
+    ClinicalEquivalent,
+    ClinicalRegister,
     NoteConfig,
     _canonical_config,
     _is_date_shaped,
@@ -442,23 +478,6 @@ _ADMINISTRATION_WITNESS: Final[frozenset[str]] = frozenset(
 )
 
 
-def _words_for_coords(
-    document: TranscriptDocument, coords: SourceCoords
-) -> tuple[TranscriptWord, ...] | None:
-    """The words ``coords`` address in the immutable transcript, or None.
-
-    Segment coordinates address positions in ``transcript_segments`` — the
-    exact enumeration ``_assemble_note_request`` performed, so a span
-    verified here agrees with one verified against the ``NoteRequest``.
-    """
-    if coords.segment_index >= len(document.transcript_segments):
-        return None
-    words = document.transcript_segments[coords.segment_index].transcript_words
-    if coords.last_word_index >= len(words):
-        return None
-    return words[coords.first_word_index : coords.last_word_index + 1]
-
-
 def _laterality_sides(
     tokens: _Clause, index: int
 ) -> tuple[tuple[int, ...], int] | None:
@@ -487,29 +506,34 @@ def _laterality_sides(
     return None
 
 
-def _resolved_coords(assertion: NoteAssertion) -> SourceCoords:
-    coords = assertion.note_span.source_coords
-    if coords is None:  # pragma: no cover - NoteSpan validates this away
-        raise AssertionError("unreachable: a transcript span always carries source_coords")
-    return coords
-
-
 # The spoken hedges (validation-pass plan D7, frozen in its Task 0.8 — C3;
+# widened in validation-run6 plan Task 0.9, 2026-10-23, decision 0.6 (b);
 # read by ``note.text_holds_hedge`` since the hedge mark's Task 3.1): a quoted
 # line from a speaker who is not the clinician that holds one of these phrases
 # (whole tokens, in a row, typographic apostrophes folded first) is the
-# "unsure" line mark's evidence (Check 1's ``hedged_source``). A CLOSED tuple
-# taken from two published hedging lists, never from the validation scripts
-# — Prince, Frader & Bosk (1982), "On hedging in physician-physician discourse", plausibility
-# shields; and Hyland (2005), "Metadiscourse", appendix list of hedges —
+# "unsure" line mark's evidence (Check 1's ``hedged_source``) — for that line
+# and, through the hedge scope (validation-run6 plan D5,
+# ``note.segment_hedged``), for a same-speaker line joined to it mid-sentence.
+# A CLOSED tuple
+# taken from published hedging sources, never from the validation scripts,
 # keeping only what a speaker says about their OWN certainty: no entry that
 # IS a modal verb ("may" is also a month; a fixed phrase holding one, "as far
 # as i can tell", is not), no word with a common plain sense in a
 # consultation (frequency, sensation, a description such as "unclear",
 # quantity, a preposition), no attribution to someone else's knowledge and no
-# degree word ("sort of", "a bit"). Lower-case, in ``content_tokens`` form. The plan's Task 0.8
-# records the source, the rule and the contamination note (A3). A change is
-# a new dated decision with a repeated validation run.
+# degree word ("sort of", "a bit"). A listed stance verb enters in the first
+# person ("i doubt"), except the bare forms of "seem" ("seem", "seems",
+# "seemed"), which hedge whatever their subject; a phrase another entry
+# already holds is not repeated ("it seems"); a contraction and its full
+# form are both listed. Lower-case, in
+# ``content_tokens`` form; a plain apostrophe only. The 0.3.3 sixteen came
+# from Prince, Frader & Bosk (1982), "On hedging in physician-physician
+# discourse" (plausibility shields), and Hyland (2005), "Metadiscourse"
+# (appendix hedges); Task 0.9's additions from a BLIND session given only this
+# rule and named sources (the run6 plan's Task 0.9 records each source and
+# the contamination note). ``validation.REFERENCE_HEDGES`` is the harness's
+# broader superset. A change is a new dated decision with a repeated
+# validation run.
 HEDGE_PHRASES: Final[tuple[str, ...]] = (
     # Prince, Frader & Bosk (1982), plausibility shields.
     "i think",
@@ -529,6 +553,33 @@ HEDGE_PHRASES: Final[tuple[str, ...]] = (
     "i doubt",
     "uncertain",
     "to my knowledge",
+    # Validation-run6 plan Task 0.9 (2026-10-23), the blind session's sources:
+    # Carter, McCarthy, Mark & O'Keeffe (2011), English Grammar Today, "Hedges".
+    "i reckon",
+    # Salager-Meyer (1994), personal doubt; Fraser (2010); Namsaraev (1997).
+    "i believe",
+    # Visser et al. (2020), uncertainty in diagnostic disclosure (ABIDE).
+    "i'm not sure",
+    "i am not sure",
+    "not completely sure",
+    # Weatherall (2011), "I don't know" as a prepositioned epistemic hedge.
+    "i don't know",
+    "i do not know",
+    # Fraser (2010), a conditional clause of uncertainty.
+    "if i'm correct",
+    "if i am correct",
+    # Namsaraev (1997); Hyland (2005), "assume", "doubtful".
+    "i assume",
+    "doubtful",
+    # Huddleston & Pullum (2002), p. 102, graded modal adverbs.
+    "conceivably",
+    "arguably",
+    "seemingly",
+    # Shomoossi & Shokrpour (2024), medical hedging; Namsaraev (1997).
+    "potentially",
+    "probable",
+    # Salager-Meyer (1994), the semi-auxiliary "to seem".
+    "seem",
 )
 
 
@@ -543,11 +594,13 @@ def reconstruction_warnings(
     """Errors for every ``transcript`` assertion that is not exactly what its
     coordinates say; review warnings for included low-confidence words; and
     (invented-text guard D5) ONE ``number_source`` / ``suspect_source`` per
-    line whose words earn that mark (``note.line_marks``), on the line's
-    span — and (validation-pass plan D7) ONE ``hedged_source`` the same way,
-    for a line its segment's speaker said who is not the note's confirmed
-    clinician (``note.spoken_by_confirmed_clinician``; with no confirmed
-    clinician, nobody is).
+    line whose words earn that mark (``note.quoted_line_marks``), on the
+    line's span — and (validation-pass plan D7) ONE ``hedged_source`` the
+    same way, for a line its segment's speaker said who is not the note's
+    confirmed clinician (``note.spoken_by_confirmed_clinician``; with no
+    confirmed clinician, nobody is), when the line's segment is hedged
+    within the hedge scope (validation-run6 plan D5, ``note.segment_hedged``:
+    its own words, or a same-speaker neighbour joined mid-sentence).
 
     Uncertainty warnings and line marks are emitted only for assertions that
     reconstruct exactly: when reconstruction fails, the cited words are NOT
@@ -600,7 +653,9 @@ def reconstruction_warnings(
                     )
             speaker = document.transcript_segments[coords.segment_index].speaker
             clinician = spoken_by_confirmed_clinician(speaker, note.clinician_speaker)
-            for kind in line_marks(words, clinician=clinician):
+            for kind in quoted_line_marks(
+                document, coords.segment_index, words, clinician=clinician
+            ):
                 warnings.append(
                     NoteWarning(
                         note_warning_code=mark_codes[kind],
@@ -1596,18 +1651,7 @@ def omission_warnings(
     """
     if note.clinician_speaker is None:
         return ()
-    covered: set[tuple[int, int]] = set()
-    for section in note.note_sections:
-        for assertion in section.note_assertions:
-            if assertion.provenance != "transcript":
-                # Coverage is coordinate CARRIAGE: a typed ``clinician`` line
-                # (schema v2) that mentions the same number covers nothing.
-                continue
-            coords = _resolved_coords(assertion)
-            if _words_for_coords(document, coords) is None:
-                continue
-            for word_index in range(coords.first_word_index, coords.last_word_index + 1):
-                covered.add((coords.segment_index, word_index))
+    covered = covered_words(note, document)
     warnings: list[NoteWarning] = []
     for segment_index, segment in enumerate(document.transcript_segments):
         clinician = segment.speaker == note.clinician_speaker
@@ -1631,6 +1675,68 @@ def omission_warnings(
                     source_coords=SourceCoords(segment_index, min(uncovered), max(uncovered)),
                 )
             )
+    return tuple(warnings)
+
+
+def clinician_line_omissions(
+    note: GeneratedNote, document: TranscriptDocument, config: NoteConfig
+) -> tuple[NoteWarning, ...]:
+    """One ``clinician_line_omitted`` review warning per JOINED RUN
+    (validation-run6 plan D1, decision 0.3 (b); per joined run since
+    validation-run7 plan D1 — ``note.joined_run``: the pieces the recogniser
+    split one line into, joined where a same-speaker piece ends mid-sentence)
+    when ALL hold: a clinician is confirmed; the confirmed clinician spoke
+    the run; no word of it is carried by any assertion's coordinates
+    (``note.covered_words``, Check 4's own rule); one of its non-suspect
+    words holds a content token (``note.content_tokens`` — disfluencies
+    alone draw nothing, "okay" does); no piece of it draws a
+    ``high_risk_omission`` (``omission_warnings``, so the two codes never
+    double-warn a line — one remedy, add the line); and it lies before the
+    next-patient boundary (``note_config.next_patient_boundary``, the one
+    accessor, which also truncates a run that spans it). The runs partition
+    the segments before the boundary. Coordinates: the run's FIRST piece,
+    whole (one segment — ``SourceCoords`` holds one, and a new field would be
+    refused by 0.3.3); the chooser marks every piece (``ui.models.
+    flagged_segments``). A one-piece run is 0.3.4's per-segment case
+    unchanged. ``high_risk_omission`` itself is unchanged, the tail included.
+    Codes and coordinates only, never text."""
+    if note.clinician_speaker is None:
+        return ()
+    covered = covered_words(note, document)
+    already = {
+        coords.segment_index
+        for warning in omission_warnings(note, document)
+        if (coords := warning.source_coords) is not None
+    }
+    segments = document.transcript_segments
+    boundary = next_patient_boundary(document, config)
+    end = len(segments) if boundary is None else boundary
+    warnings: list[NoteWarning] = []
+    segment_index = 0
+    while segment_index < end:
+        run = joined_run(document, segment_index, covered=covered, end=end)
+        segment_index = run.stop
+        if (
+            # One speaker label across a run (a join requires it).
+            not spoken_by_confirmed_clinician(segments[run.start].speaker, note.clinician_speaker)
+            or any(piece in already for piece in run)
+            or not all(wholly_uncovered(document, piece, covered) for piece in run)
+            or not any(
+                content_tokens(word.word_text)
+                for piece in run
+                for word in segments[piece].transcript_words
+                if not word.suspect
+            )
+        ):
+            continue
+        words = segments[run.start].transcript_words
+        warnings.append(
+            NoteWarning(
+                note_warning_code="clinician_line_omitted",
+                severity="review",
+                source_coords=SourceCoords(run.start, 0, len(words) - 1),
+            )
+        )
     return tuple(warnings)
 
 
@@ -1727,7 +1833,141 @@ def _protected_counts(tokens: Iterable[str]) -> Counter[str]:
     return Counter(token for token in tokens if _protected_class(token) is not None)
 
 
-def fidelity_verdict(inputs: Sequence[str], prose: str) -> FidelityVerdict:
+# ---------------------------------------------------------------------------
+# The clinical register (note-content-design plan D1, D2; Tasks R.0–R.2):
+# Check 5 folds BOTH sides through ``canonicalise`` before rules (a)–(d),
+# which run unchanged, so a by-definition equivalent from the shipped lexicon
+# (``note_config.CLINICAL_EQUIVALENTS``) is the same fact on either side; the
+# speaker frame is admitted in rule (b) only, and only for a section flagged
+# as holding a line not spoken by the confirmed clinician.
+# ---------------------------------------------------------------------------
+
+# The frame a patient-spoken section's prose may open with ("Pt reports",
+# "The patient reports" — the reporting verbs and articles are connectives
+# already). Admitted as ADDED tokens only: a spoken `patient` or `pt` in an
+# input line is a fact rule (a) still requires.
+SPEAKER_FRAME_TOKENS: Final[frozenset[str]] = frozenset({"pt", "patient"})
+# Task R.0, decided (a) "the swap" by the practitioner on 2026-11-08 (a gate
+# widening under C2): under the frame, these first-person tokens are glue in
+# rule (a) — "I've had pain in my lower back" may become "Pt reports pain in
+# lower back". The frame replaces the first person and nothing else: the
+# modal contractions (i'd, i'll, we'd, we'll) are NOT here, because their
+# would / will is polarity-bearing and must not become recorded fact.
+FIRST_PERSON_TOKENS: Final[frozenset[str]] = frozenset(
+    {"i", "i've", "i'm", "me", "my", "mine", "we", "we've", "our"}
+)
+# The two ratified word sets (Task 0.1, decided (a) 2026-11-08), read from the
+# shipped file and pinned exactly by test: no term may fold to an ORDINARY
+# word (the fold is symmetric, so `AS` → `as` would let an invented
+# "ankylosing spondylitis" pass over "as bad as before"), and no entry may
+# hold an EXCLUDED word (a degree, quality or sensation word: "sore" never
+# becomes "pain", "swelling" never "effusion").
+REGISTER_ORDINARY_WORDS: Final[frozenset[str]] = CLINICAL_EQUIVALENTS.ordinary_words
+REGISTER_EXCLUSIONS: Final[frozenset[str]] = CLINICAL_EQUIVALENTS.exclusions
+
+
+class RegisterMatch(NamedTuple):
+    """One fold ``canonicalise`` made: the entry, and the tokens it matched
+    (one of its phrases, or its folded term)."""
+
+    entry: ClinicalEquivalent
+    matched: tuple[str, ...]
+
+
+def _register_refusal(entry: ClinicalEquivalent, register: ClinicalRegister) -> str | None:
+    """Why ``entry`` breaks a SEMANTIC invariant (D1), or None."""
+    term = entry.term.lower()
+    if term in register.ordinary_words or term in _PROSE_CONNECTIVE_SET:
+        return "its term folds to an ordinary word"
+    if term in _FILLER_TOKENS:
+        return "its term is a filler"
+    if term in SPEAKER_FRAME_TOKENS:
+        return "its term is a speaker-frame token"
+    phrase_tokens = [token for phrase in entry.phrases for token in phrase]
+    for token in (term, *phrase_tokens):
+        if _polarity_mark(token) is not None or token in _POLARITY_BEARING_TOKENS:
+            return "it holds a polarity token"
+        protected = _protected_class(token)
+        if protected in ("laterality", "medication"):
+            return f"it holds a {protected} token"
+        if protected in ("number", "date") and entry.equivalence_class != "duration":
+            return "it holds a number or date outside the duration class"
+        if token in register.exclusions:
+            return "it holds an excluded word"
+    # Review round 19 SEC-010: the term too — `ordinary_words` covers only
+    # part of the first person (`mine`, `i've`, `i'm`, `we've` are not in it).
+    if any(token in FIRST_PERSON_TOKENS for token in (term, *phrase_tokens)):
+        return "it holds a first-person token"
+    return None
+
+
+def _refuse_register_overlap(register: ClinicalRegister) -> None:
+    """The register's SEMANTIC invariants, refused at import (the pattern of
+    ``note_config``'s connective overlap refusal): a broken install, never a
+    runtime state. The message names the term — vocabulary, not clinical
+    text."""
+    for entry in register.entries:
+        reason = _register_refusal(entry, register)
+        if reason is not None:
+            raise RuntimeError(
+                f"shipped clinical equivalent {entry.term!r} is refused (broken install): "
+                f"{reason}"
+            )
+
+
+_refuse_register_overlap(CLINICAL_EQUIVALENTS)
+
+
+def canonicalise(
+    tokens: Sequence[str], register: ClinicalRegister = CLINICAL_EQUIVALENTS
+) -> tuple[tuple[str, ...], tuple[RegisterMatch, ...]]:
+    """THE register fold (D2): ``tokens`` (``note.content_tokens`` output)
+    read left to right, the LONGEST phrase or folded term at each position
+    replaced by its entry's canonical tokens (``LBP`` and "lower back pain"
+    both → lower, back, pain; "3/52" and "three weeks" both → 3, weeks), every
+    other token kept as it is. Returns the folded tokens and the matches in
+    order. The fold sees tokens, not punctuation, so within one text a match
+    may straddle a comma; callers fold each input line alone, so it never
+    straddles two lines."""
+    folded: list[str] = []
+    matches: list[RegisterMatch] = []
+    position = 0
+    while position < len(tokens):
+        for width in range(min(register.longest, len(tokens) - position), 0, -1):
+            window = tuple(tokens[position : position + width])
+            entry = register.lookup.get(window)
+            if entry is not None:
+                folded.extend(entry.canonical)
+                matches.append(RegisterMatch(entry, window))
+                position += width
+                break
+        else:
+            folded.append(tokens[position])
+            position += 1
+    return tuple(folded), tuple(matches)
+
+
+def register_matches(
+    texts: Sequence[str], register: ClinicalRegister = CLINICAL_EQUIVALENTS
+) -> tuple[RegisterMatch, ...]:
+    """The distinct matches over ``texts``, each folded alone, in order — the
+    SAME matcher Check 5 folds with (one matcher, D2)."""
+    found = (m for text in texts for m in canonicalise(content_tokens(text), register)[1])
+    return tuple(dict.fromkeys(found))
+
+
+def _fold(text: str, register: ClinicalRegister | None) -> tuple[str, ...]:
+    tokens = content_tokens(text)
+    return tokens if register is None else canonicalise(tokens, register)[0]
+
+
+def fidelity_verdict(
+    inputs: Sequence[str],
+    prose: str,
+    *,
+    register: ClinicalRegister | None = None,
+    speaker_frame: bool = False,
+) -> FidelityVerdict:
     """Check 5 for ONE section: ``inputs`` are the section's confirmed
     assertion texts exactly as confirmed, ``prose`` the language model's
     rendering of them. Rules (a)–(d) in order (module docstring); the first
@@ -1735,23 +1975,34 @@ def fidelity_verdict(inputs: Sequence[str], prose: str) -> FidelityVerdict:
     (``missing_fact`` — a rendering must show something, and a ``passed``
     ``StyleRendering`` may not be blank; round 20 LOW-002); prose over NO
     inputs fails (b) unless it is connectives alone — a fabricated section
-    never passes."""
-    input_tokens = [token for text in inputs for token in content_tokens(text)]
-    prose_tokens = list(content_tokens(prose))
+    never passes.
+
+    ``register`` (None = off) folds each input line alone and the prose as
+    one text through ``canonicalise`` before any rule runs (D2), so the
+    rules — and every polarity and protected count — see folded tokens.
+    ``speaker_frame`` (the section holds a line not spoken by the confirmed
+    clinician) admits ``SPEAKER_FRAME_TOKENS`` as added tokens in rule (b)
+    and makes ``FIRST_PERSON_TOKENS`` droppable in rule (a) (Task R.0);
+    nothing else changes."""
+    input_tokens = [token for text in inputs for token in _fold(text, register)]
+    prose_tokens = list(_fold(prose, register))
     if not prose_tokens:
         return FidelityVerdict(False, "missing_fact")
     input_set = frozenset(input_tokens)
     prose_set = frozenset(prose_tokens)
+    droppable = _PROSE_CONNECTIVE_SET
+    addable = _PROSE_CONNECTIVE_SET
+    if speaker_frame:
+        droppable = droppable | FIRST_PERSON_TOKENS
+        addable = addable | SPEAKER_FRAME_TOKENS
     # Rule (a) over the FACT-BEARING input tokens: a token on the connective
     # allow-list is glue on both sides (it may be added, so it may be dropped
     # or re-tensed — "reports" → "reported", "for" dropped). No polarity or
     # protected token is a connective (pinned by test), so rules (c) and (d)
     # still see every one of those.
-    if any(token not in prose_set and token not in _PROSE_CONNECTIVE_SET for token in input_set):
+    if any(token not in prose_set and token not in droppable for token in input_set):
         return FidelityVerdict(False, "missing_fact")
-    if any(
-        token not in input_set and token not in _PROSE_CONNECTIVE_SET for token in prose_set
-    ):
+    if any(token not in input_set and token not in addable for token in prose_set):
         return FidelityVerdict(False, "added_content")
     if _polarity_counts(input_tokens) != _polarity_counts(prose_tokens):
         return FidelityVerdict(False, "polarity")
@@ -1763,30 +2014,47 @@ def fidelity_verdict(inputs: Sequence[str], prose: str) -> FidelityVerdict:
 def fidelity_verdicts(
     section_inputs: Mapping[NoteSectionKey, Sequence[str]],
     section_prose: Mapping[NoteSectionKey, str],
+    *,
+    register: ClinicalRegister | None = None,
+    speaker_frame: Mapping[NoteSectionKey, bool] | None = None,
 ) -> dict[NoteSectionKey, FidelityVerdict]:
     """``fidelity_verdict`` per section that HAS prose, in canonical order. A
     section with inputs and no prose is not judged here — it has nothing to
     show and the prose stage keeps ``clean`` for it with its own reason; a
-    section with prose and no inputs is judged against an empty input."""
+    section with prose and no inputs is judged against an empty input.
+    ``register`` folds every section; ``speaker_frame`` names the sections
+    whose prose may carry the frame (absent = no frame, fail-closed)."""
+    frames = speaker_frame or {}
     verdicts: dict[NoteSectionKey, FidelityVerdict] = {}
     for key in CANONICAL_SECTION_KEYS:
         if key not in section_prose:
             continue
-        verdicts[key] = fidelity_verdict(section_inputs.get(key, ()), section_prose[key])
+        verdicts[key] = fidelity_verdict(
+            section_inputs.get(key, ()),
+            section_prose[key],
+            register=register,
+            speaker_frame=frames.get(key, False),
+        )
     return verdicts
 
 
 def fidelity_warnings(
     section_inputs: Mapping[NoteSectionKey, Sequence[str]],
     section_prose: Mapping[NoteSectionKey, str],
+    *,
+    register: ClinicalRegister | None = None,
+    speaker_frame: Mapping[NoteSectionKey, bool] | None = None,
 ) -> tuple[NoteWarning, ...]:
     """Check 5 as warnings: ONE ``style_fallback`` review warning per section
     whose prose failed ``fidelity_verdict`` (codes and section keys only —
     no token, no text). The prose stage reads the same verdicts to keep
     ``clean`` for that section (D6, C8)."""
+    verdicts = fidelity_verdicts(
+        section_inputs, section_prose, register=register, speaker_frame=speaker_frame
+    )
     return tuple(
         NoteWarning(note_warning_code="style_fallback", severity="review", section_key=key)
-        for key, verdict in fidelity_verdicts(section_inputs, section_prose).items()
+        for key, verdict in verdicts.items()
         if not verdict.passed
     )
 
@@ -1808,7 +2076,8 @@ def next_patient_warnings(
     segment). No section and no assertion: the warning points at the
     transcript. Role-free: it fires with no confirmed clinician too. Check 4
     is unchanged over the withheld lines (decision 0.5 (a)): their claim
-    words still draw ``high_risk_omission``."""
+    words still draw ``high_risk_omission`` (``clinician_line_omitted``
+    stops at the boundary, validation-run6 plan D1)."""
     boundary = next_patient_boundary(document, config)
     if boundary is None:
         return ()
@@ -1836,7 +2105,9 @@ def check_note(
 ) -> tuple[NoteWarning, ...]:
     """Run Checks 1-4 and Check 6 over a composed note (pipeline order:
     compose -> confirm -> CHECK -> write) and return their warnings, check by
-    check in a deterministic order, Check 6 last (validation-pass plan D5).
+    check in a deterministic order — Check 4's two codes together
+    (``high_risk_omission``, then ``clinician_line_omitted``, validation-run6
+    plan D1), Check 6 last (validation-pass plan D5).
 
     Refuses — rather than silently mis-checks — when the note's recorded
     ``transcript_digest`` or ``config_digest`` does not match the presented
@@ -1864,17 +2135,25 @@ def check_note(
             note, document, resolved, pending_proposals=pending_proposals
         ),
         *omission_warnings(note, document),
+        *clinician_line_omissions(note, document, resolved),
         *next_patient_warnings(document, resolved),
     )
 
 
 __all__ = [
+    "FIRST_PERSON_TOKENS",
     "HEDGE_PHRASES",
+    "REGISTER_EXCLUSIONS",
+    "REGISTER_ORDINARY_WORDS",
+    "SPEAKER_FRAME_TOKENS",
     "CheckTargetMismatchError",
     "FidelityRule",
     "FidelityVerdict",
     "NoteCheckError",
+    "RegisterMatch",
+    "canonicalise",
     "check_note",
+    "clinician_line_omissions",
     "contradiction_warnings",
     "fidelity_verdict",
     "fidelity_verdicts",
@@ -1883,4 +2162,5 @@ __all__ = [
     "omission_warnings",
     "provenance_warnings",
     "reconstruction_warnings",
+    "register_matches",
 ]

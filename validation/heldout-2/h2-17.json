@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h2-17",
+  "appointment_type": "acute",
+  "axes": ["laterality", "uncertain", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Oh dear, you're holding your head very stiffly. What happened?"},
+    {"role": "patient", "text": "Woke up like this on Saturday, I can't turn to the right at all."},
+    {"role": "clinician", "text": "Any tingling or weakness in your arms?"},
+    {"role": "patient", "text": "A little tingling in my right thumb, or is that just from texting, I don't know."},
+    {"role": "clinician", "text": "Let me have a look. Your reflexes and strength in both arms are normal, which is reassuring."},
+    {"role": "clinician", "text": "I'm going to take you through some gentle neck movements and do a little massage."},
+    {"role": "clinician", "text": "Tilt your ear towards your shoulder, hold it for twenty seconds, every couple of hours, and use a warm wheat bag in between."},
+    {"role": "clinician", "text": "If the tingling spreads or your hand gets weak, come straight back."},
+    {"role": "patient", "text": "Will do, cheers."},
+    {"role": "clinician", "text": "Okay, all the best, bye bye."},
+    {"role": "clinician", "text": "Hello, hello, come in, sorry for the wait, we're running behind today."},
+    {"role": "next_patient", "text": "No problem. It's my lower back again, I've had it on and off for years but it's much worse this week."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["woke", "up", "like", "this", "on", "saturday"], "line": 1, "material": true},
+    {"kind": "laterality", "tokens": ["can't", "turn", "to", "the", "right", "at", "all"], "line": 1, "material": true},
+    {"kind": "laterality", "tokens": ["tingling", "in", "my", "right", "thumb"], "line": 3, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["reflexes", "and", "strength", "in", "both", "arms", "are", "normal"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["tilt", "your", "ear", "towards", "your", "shoulder"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["hold", "it", "for", "twenty", "seconds"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["warm", "wheat", "bag"], "line": 6, "material": false},
+    {"kind": "present", "tokens": ["your", "hand", "gets", "weak"], "line": 7, "material": true},
+    {"kind": "absent", "tokens": ["my", "lower", "back", "again"], "line": 11, "material": true},
+    {"kind": "absent", "tokens": ["much", "worse", "this", "week"], "line": 11, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

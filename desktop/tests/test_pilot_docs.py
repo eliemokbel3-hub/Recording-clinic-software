@@ -20,6 +20,20 @@ REPO = Path(__file__).resolve().parents[2]
 PILOT = REPO / "docs" / "pilot"
 TEMPLATE = PILOT / "pilot-log-template.md"
 REGISTER = PILOT / "findings-register.md"
+# Note-content-design plan Task R.7 (D5 (ii)): the register's scoring sheet
+# lives under ``docs/testing`` (codex PR-LOW-002), so it is checked by its own
+# path, not through the pilot folder's list.
+REGISTER_SHEET = REPO / "docs" / "testing" / "prose-register-scoring.md"
+REGISTER_SHEET_COLUMNS = (
+    "Date",
+    "Style",
+    "Notes",
+    "Sections read",
+    "Invented or wrong shorthand",
+    "Reads as clinician-written",
+    "Shown clean",
+    "Frames used",
+)
 
 # A session id (``session_store.SESSION_ID_PATTERN``), a clinic id or any
 # other long hexadecimal run, and a long digit run (a Cliniko id).
@@ -110,7 +124,12 @@ REGISTER_CELL_PATTERNS = {
     # id); a kept recording measured in the smoke is the "smoke" stage, and a
     # real consultation's encounter is "—".
     "Stage": r"validation|smoke|shadow|reviewed|everyday|other",
-    "Encounter": r"syn-[0-9]{2,}|—",
+    # The synthetic ids of the 50 scripts and the six held-out sets
+    # (validation run 6's register update, plan-validation-run6.md P.3;
+    # ``h4-`` since plan-validation-run7.md Task 0.5; ``h5-`` since
+    # plan-larger-model.md Task 0.1 (d); ``h6-`` since
+    # plan-note-content-design.md Task F.2).
+    "Encounter": r"(?:syn|hld|h2|h3|h4|h5|h6)-[0-9]{2,}|—",
     "Severity": r"high|medium|low",
     "Category": (
         r"wrong-side|wrong-dose|negation-flipped|patient-speculation|cross-patient"
@@ -196,6 +215,16 @@ class TestPilotDocuments:
             text = path.read_text(encoding="utf-8")
             assert _ID_SHAPED.findall(text) == [], path.name
 
+    def test_no_lone_carriage_return_in_any_pilot_document(self) -> None:
+        """Validation-run7 Task 0.5 review round 12: a Windows path written
+        through a non-raw string left two raw carriage returns in the README
+        (``\\r`` of ``\\rules``). Read as bytes, since text mode turns a lone
+        one into a newline; a CRLF line end (a Windows checkout) passes."""
+        lone = re.compile(rb"\r(?!\n)")
+        for path in sorted(PILOT.glob("*.md")):
+            assert lone.search(path.read_bytes()) is None, path.name
+        assert lone.search(b"validation\rules") and not lone.search(b"one\r\ntwo\n")
+
     def test_no_column_invites_clinical_content(self) -> None:
         for path in (TEMPLATE, REGISTER):
             for table in _tables(path):
@@ -205,6 +234,35 @@ class TestPilotDocuments:
                         path.name,
                         column,
                     )
+
+
+class TestProseRegisterSheet:
+    """Note-content-design plan Task R.7: the sheet exists at its
+    ``docs/testing`` path, names its rubric and pass line, and its one table
+    is the fixed column list holding counts only — a style name, a date or a
+    whole number in each cell, never prose (D5 (ii): text-free)."""
+
+    def test_the_sheet_names_its_rubric_and_its_pass_line(self) -> None:
+        assert REGISTER_SHEET.is_file()
+        text = REGISTER_SHEET.read_text(encoding="utf-8")
+        assert "Rubric `register-v1`, dated 2026-11-08." in text
+        assert "**Invented or wrong shorthand is 0 in both styles**" in text
+        assert "scripts\\measure-prose-fixtures.py --verbose" in text
+        assert _ID_SHAPED.findall(text) == []
+        assert re.search(rb"\r(?!\n)", REGISTER_SHEET.read_bytes()) is None
+
+    def test_the_table_is_the_fixed_columns_and_counts_only(self) -> None:
+        (table,) = _tables(REGISTER_SHEET)
+        assert tuple(table[0]) == REGISTER_SHEET_COLUMNS
+        for column in table[0]:
+            lowered = column.casefold()
+            assert not [word for word in _FORBIDDEN_COLUMN_WORDS if word in lowered], column
+        assert [row[1] for row in table[1:]] == ["narrative", "own_voice"]
+        for row in table[1:]:
+            assert len(row) == len(REGISTER_SHEET_COLUMNS), row[1]
+            assert re.fullmatch(r"(?:20[0-9]{2}-[01][0-9]-[0-3][0-9])?", row[0]), row[1]
+            for cell in row[2:]:
+                assert re.fullmatch(r"[0-9]*", cell), (row[1], "a cell holds more than a count")
 
 
 class TestPilotLogTemplate:
@@ -280,6 +338,8 @@ class TestFindingsRegister:
         }
         assert all(re.fullmatch(REGISTER_CELL_PATTERNS[k], v) for k, v in good.items())
         assert re.fullmatch(REGISTER_CELL_PATTERNS["Stage"], "smoke")
+        for synthetic in ("syn-01", "hld-22", "h2-05", "h3-17", "h4-01", "h5-01", "h6-01"):
+            assert re.fullmatch(REGISTER_CELL_PATTERNS["Encounter"], synthetic)
         for column, bad in (
             ("Encounter", "Jane Citizen"),
             ("Category", "left knee said as right"),
@@ -288,6 +348,9 @@ class TestFindingsRegister:
             ("Closed", "2026-11-02"),
             ("Stage", "role-play"),
             ("Encounter", "rp-01"),
+            ("Encounter", "h7-01"),
+            ("Encounter", "h3-1"),
+            ("Encounter", "k-01"),
         ):
             assert not re.fullmatch(REGISTER_CELL_PATTERNS[column], bad), column
         assert _ID_SHAPED.findall("session 0123456789abcdef0123456789abcdef")

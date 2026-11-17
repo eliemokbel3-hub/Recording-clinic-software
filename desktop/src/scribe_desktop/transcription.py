@@ -61,6 +61,7 @@ byte for byte.
 
 from __future__ import annotations
 
+import contextlib
 import enum
 import functools
 import math
@@ -73,7 +74,7 @@ from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 from cryptography.exceptions import InvalidTag
 from pydantic import (
@@ -93,6 +94,7 @@ from scribe_desktop.benchmark import (
     whisper_snapshot_complete,
     whisper_snapshot_missing,
 )
+from scribe_desktop.logging_setup import exception_type_name
 from scribe_desktop.practitioner_profile import PractitionerProfile
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session_store import (
@@ -147,6 +149,34 @@ from scribe_desktop.speech import (
 # one spelling lives in ``benchmark`` (H.3 SIMP-001).
 DEFAULT_WHISPER_MODEL = SHIPPED_WHISPER_MODEL
 FALLBACK_WHISPER_MODEL = "small"
+# A Whisper model name as a tool takes it from ``--model`` and a report may
+# print it; anything else is refused unechoed (or printed ``(unnamed)``). One
+# spelling for the replay tool, the harness and the guard measurement
+# (larger-model plan D8; moved here from ``replay_kept``, which imports the
+# harness and so cannot be imported by it).
+_MODEL_NAME_RE: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+# gpu-decoding plan D3: the devices a provider decodes on and the ONE compute
+# type for each — a dated decision changes the table. ``int8_float16`` keeps
+# the int8 weights, closest to the processor's path.
+ComputeDevice = Literal["cpu", "cuda"]
+COMPUTE_DEVICES: Final[tuple[ComputeDevice, ...]] = ("cpu", "cuda")
+COMPUTE_TYPES: Final[dict[ComputeDevice, str]] = {"cpu": "int8", "cuda": "int8_float16"}
+# D8: a model as a report PRINTS it — its name, with ``@cuda`` appended for a
+# graphics-card decode (``model_label``). Printing only: ``--model`` input is
+# still ``_MODEL_NAME_RE``, which is not widened.
+MODEL_LABEL_RE: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?:@cuda)?$")
+# D3: the warm decode a ``cuda`` provider makes before it is handed out — one
+# second of silence through ``transcribe_segment`` (a library may load and
+# still fail on its first use).
+WARM_DECODE_SECONDS: Final = 1
+
+
+def model_label(model_name: str, device: ComputeDevice) -> str:
+    """D8: ``model_name`` on the processor (bytes unchanged), else
+    ``<model_name>@<device>``."""
+    return model_name if device == "cpu" else f"{model_name}@{device}"
+
 
 # ---------------------------------------------------------------------------
 # Clinical vocabulary priming (Step 13 user decision 2026-07-28).
@@ -303,6 +333,19 @@ class TranscriptionError(SpeechError):
 
 class TranscriptionModelError(TranscriptionError):
     """The Whisper model is missing or unusable at its local path."""
+
+
+class ComputeDeviceError(TranscriptionModelError):
+    """gpu-decoding plan D3: the device asked for cannot decode — no CUDA
+    device, an NVIDIA library missing or refused by the loader, a load or a
+    warm decode that failed. Carries the device and a code (an exception's
+    type name, or a fixed reason); its text is those two only, never a path
+    or a library's message, so a tool may print it as a refusal."""
+
+    def __init__(self, device: str, error_code: str) -> None:
+        super().__init__(f"{device} decoding is not usable ({error_code})")
+        self.device = device
+        self.error_code = error_code
 
 
 # ---------------------------------------------------------------------------
@@ -987,6 +1030,133 @@ def resolve_whisper_model(model_name: str = DEFAULT_WHISPER_MODEL) -> str:
     return model_name
 
 
+# Larger-model plan D8: faster-whisper builds its mel filters from the model
+# folder's ``preprocessor_config.json`` and, when the file is absent, builds
+# 80 — while the CTranslate2 conversions of ``large-v3`` and its turbo and
+# distil variants expect 128, so such a load fails or mis-transcribes. The
+# count is checked after every load, in the provider and in the benchmark
+# worker (``benchmark.run_single``).
+WHISPER_PREPROCESSOR_FILE: Final = "preprocessor_config.json"
+
+
+def check_mel_filters(model: Any, path: Path) -> None:
+    """Raise ``TranscriptionModelError`` naming ``preprocessor_config.json``
+    unless the loaded faster-whisper ``model`` builds as many mel filters
+    (``feature_extractor.mel_filters``, shape ``(n_mels, 201)``) as its
+    CTranslate2 model expects (``model.n_mels``). A count that cannot be
+    read is refused the same way: the load is never trusted unchecked."""
+    try:
+        filters = int(model.feature_extractor.mel_filters.shape[0])
+        expected = int(model.model.n_mels)
+    except (AttributeError, IndexError, TypeError, ValueError) as exc:
+        raise TranscriptionModelError(
+            f"whisper model at {path}: its mel filter count could not be read "
+            f"({type(exc).__name__}); check its {WHISPER_PREPROCESSOR_FILE}"
+        ) from exc
+    if filters != expected:
+        raise TranscriptionModelError(
+            f"whisper model at {path} expects {expected} mel filters but its feature "
+            f"extractor has {filters}: its {WHISPER_PREPROCESSOR_FILE} is missing or "
+            f"wrong - {install_layout.model_remedy()}"
+        )
+
+
+# gpu-decoding plan D2: the NVIDIA libraries a CUDA decode needs, loaded by
+# ABSOLUTE path from ``install_layout.native_library_dirs()`` in dependency
+# order — cuBLAS's two first (cuDNN reaches cuBLAS only once it is loaded),
+# then cuDNN 9's seven sub-libraries (the order Task A.1 proved). NVIDIA's own
+# ``cudnn64_9.dll`` is never loaded: ctranslate2's shim of that name is
+# already resident, and two modules of one base name would leave unspecified
+# which one binds. Once loaded, a by-name load of the same base name returns
+# these modules without searching, so no folder from ``CUDA_PATH`` or
+# ``PATH`` can supply one (``benchmark.POPPED_GPU_VARIABLES`` is the second
+# line).
+CUBLAS_LIBRARIES: Final = ("cublasLt64_12.dll", "cublas64_12.dll")
+CUDNN_LIBRARIES: Final = (
+    "cudnn_graph64_9.dll",
+    "cudnn_engines_precompiled64_9.dll",
+    "cudnn_engines_runtime_compiled64_9.dll",
+    "cudnn_heuristic64_9.dll",
+    "cudnn_ops64_9.dll",
+    "cudnn_cnn64_9.dll",
+    "cudnn_adv64_9.dll",
+)
+
+
+class _CudaPreload:
+    """The process's preload: the loaded libraries' handles — held for the
+    life of the process, so the modules stay resident (a named residue) —
+    and whether every library has loaded."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.handles: list[Any] = []
+        self.done = False
+
+
+_CUDA_PRELOAD = _CudaPreload()
+
+
+def cuda_device_count() -> int:
+    """The device-count seam (D3; the test conftest pins it to 0): imports
+    ``ctranslate2`` — which loads its own ``cudnn64_9.dll`` shim — after the
+    offline environment is asserted, and returns its CUDA device count."""
+    assert_offline_env()
+    import ctranslate2
+
+    return int(ctranslate2.get_cuda_device_count())
+
+
+def _load_library(path: Path) -> Any:
+    """One library by absolute path (the test seam; the test conftest makes
+    it refuse)."""
+    import ctypes
+
+    return ctypes.WinDLL(str(path))
+
+
+def preload_cuda_libraries(device: ComputeDevice) -> None:
+    """D2's preload, called before every ``faster_whisper`` import. A no-op
+    on ``cpu``: nothing is imported, read or loaded. On ``cuda``: the offline
+    environment asserted, ``ctranslate2`` imported and at least one CUDA
+    device seen (``cuda_device_count``), every library present, then each
+    loaded by absolute path in ``CUBLAS_LIBRARIES`` + ``CUDNN_LIBRARIES``
+    order; once that has succeeded, a call loads nothing. Anything missing or
+    refused raises ``ComputeDeviceError`` BEFORE any CUDA model exists — a
+    cuDNN sub-library first missed during a decode makes cuDNN exit the
+    process, with no exception to catch. The seam the test conftest pins to
+    a no-op."""
+    if device not in COMPUTE_TYPES:
+        raise ValueError(f"unknown compute device: {device!r}")
+    if device == "cpu":
+        return
+    assert_offline_env()
+    state = _CUDA_PRELOAD
+    with state.lock:
+        if state.done:
+            return
+        try:
+            count = cuda_device_count()
+        except Exception as exc:  # noqa: BLE001 - refused by type, never by message
+            raise ComputeDeviceError(device, exception_type_name(type(exc))) from exc
+        if count < 1:
+            raise ComputeDeviceError(device, "no_device")
+        cublas, cudnn = install_layout.native_library_dirs()
+        paths = [cublas / name for name in CUBLAS_LIBRARIES]
+        paths += [cudnn / name for name in CUDNN_LIBRARIES]
+        # A network folder would be SMB I/O (the model loaders' UNC rule).
+        if any(install_layout.is_unc_path(path) for path in paths):
+            raise ComputeDeviceError(device, "unc_path")
+        if not all(path.is_file() for path in paths):
+            raise ComputeDeviceError(device, "library_missing")
+        for path in paths:
+            try:
+                state.handles.append(_load_library(path))
+            except Exception as exc:  # noqa: BLE001 - refused by type, never by message
+                raise ComputeDeviceError(device, exception_type_name(type(exc))) from exc
+        state.done = True
+
+
 class WhisperSpeechProvider:
     """Local faster-whisper transcription over one contiguous audio span
     (a packed ~30 s transcription window, or a lone VAD segment).
@@ -1002,6 +1172,17 @@ class WhisperSpeechProvider:
     fallback policy lives in ``resolve_whisper_model`` at the
     composition layer (``ui.models`` factories), never in here.
 
+    It is STRICT about the device too (gpu-decoding plan D3): ``device``
+    (default ``"cpu"``) is loaded exactly, with ``COMPUTE_TYPES``' compute
+    type, or the provider raises. On ``cuda`` the NVIDIA libraries are
+    preloaded first (``preload_cuda_libraries``) and the load is followed by
+    a warm decode of ``WARM_DECODE_SECONDS`` of silence through
+    ``transcribe_segment``, consumed to the end (faster-whisper decodes
+    nothing until its generator is iterated); a load or warm-decode failure
+    releases the model and raises ``ComputeDeviceError`` — never a half-built
+    graphics-card provider. The processor's path makes no warm decode. No
+    fallback to another device lives in here.
+
     ``initial_prompt`` (default: ``CLINICAL_INITIAL_PROMPT``) primes the
     decoder with clinical vocabulary per call — i.e. per packed window,
     which is why windows stay <= 30 s (see ``TRANSCRIBE_WINDOW_SECONDS``);
@@ -1015,8 +1196,12 @@ class WhisperSpeechProvider:
         model_name: str = DEFAULT_WHISPER_MODEL,
         language: str | None = "en",
         initial_prompt: str | None = CLINICAL_INITIAL_PROMPT,
+        device: ComputeDevice = "cpu",
     ) -> None:
         assert_offline_env()
+        if device not in COMPUTE_TYPES:
+            raise ValueError(f"unknown compute device: {device!r}")
+        self._model: Any = None
         path = model_dir if model_dir is not None else default_whisper_model_dir(model_name)
         # Defense-in-depth (PR-MED-012 precedent): refuse UNC paths so a
         # misconfigured model path cannot cause SMB network I/O.
@@ -1031,23 +1216,65 @@ class WhisperSpeechProvider:
                 f"{install_layout.model_remedy()}"
             )
         self._np = _numpy()
+        # D2: before the faster-whisper import, as at every one (a no-op on
+        # the processor; on cuda it raises before any CUDA model exists).
+        preload_cuda_libraries(device)
         from faster_whisper import WhisperModel
 
         self._language = language
         self._model_name = path.name
         self._initial_prompt = initial_prompt
+        self._device: ComputeDevice = device
         try:
             self._model = WhisperModel(
-                str(path), device="cpu", compute_type="int8", local_files_only=True
+                str(path),
+                device=device,
+                compute_type=COMPUTE_TYPES[device],
+                local_files_only=True,
             )
         except Exception as exc:
+            if device != "cpu":
+                raise ComputeDeviceError(device, exception_type_name(type(exc))) from exc
             raise TranscriptionModelError(
                 f"failed to load whisper model at {path}: {exc}"
             ) from exc
+        if device == "cpu":
+            check_mel_filters(self._model, path)
+            return
+        try:
+            check_mel_filters(self._model, path)
+        except TranscriptionModelError:
+            self._unload()
+            raise
+        try:
+            self.transcribe_segment(
+                b"\x00" * (BYTES_PER_SAMPLE * SAMPLE_RATE * WARM_DECODE_SECONDS), SAMPLE_RATE
+            )
+        except Exception as exc:
+            self._unload()
+            raise ComputeDeviceError(device, exception_type_name(type(exc))) from exc
+
+    def _unload(self) -> None:
+        """D3: a failed graphics-card provider releases its model
+        (CTranslate2's ``unload_model``) and keeps none. An unload that fails
+        never replaces the failure being raised."""
+        model, self._model = self._model, None
+        with contextlib.suppress(Exception):
+            model.model.unload_model()
 
     @property
     def model_name(self) -> str:
         return self._model_name
+
+    @property
+    def device(self) -> ComputeDevice:
+        """The device this provider decodes on — what it loaded, exactly."""
+        return self._device
+
+    @property
+    def label(self) -> str:
+        """D8: the model as a report prints it (``model_label``)."""
+        return model_label(self._model_name, self._device)
 
     def transcribe_segment(self, pcm: bytes, sample_rate: int) -> list[TranscribedWord]:
         if sample_rate != SAMPLE_RATE:
@@ -2608,7 +2835,13 @@ class LiveTranscriber:
 
 
 __all__ = [
+    "COMPUTE_DEVICES",
+    "COMPUTE_TYPES",
+    "CUBLAS_LIBRARIES",
+    "CUDNN_LIBRARIES",
     "CLINICAL_INITIAL_PROMPT",
+    "ComputeDevice",
+    "ComputeDeviceError",
     "DEFAULT_WHISPER_MODEL",
     "FALLBACK_WHISPER_MODEL",
     "GUARD_MAX_SECONDS",
@@ -2632,6 +2865,7 @@ __all__ = [
     "LiveTranscriptionError",
     "LiveTranscriptionFailed",
     "MIN_ATTRIBUTION_PCM_BYTES",
+    "MODEL_LABEL_RE",
     "MarkedSegment",
     "SPEAKER_1",
     "SPEAKER_2",
@@ -2639,6 +2873,8 @@ __all__ = [
     "TRANSCRIBE_WINDOW_MAX_GAP_SECONDS",
     "TRANSCRIBE_WINDOW_SECONDS",
     "UNCERTAINTY_THRESHOLD",
+    "WARM_DECODE_SECONDS",
+    "WHISPER_PREPROCESSOR_FILE",
     "RecoveryOutcome",
     "TranscriptDocument",
     "TranscriptSegment",
@@ -2649,6 +2885,8 @@ __all__ = [
     "assemble_transcript",
     "assign_words_to_segments",
     "attribute_speakers",
+    "check_mel_filters",
+    "cuda_device_count",
     "default_whisper_model_dir",
     "enrolled_cluster",
     "extract_segment_pcm",
@@ -2658,7 +2896,9 @@ __all__ = [
     "label_speakers",
     "mark_segment_words",
     "mark_words",
+    "model_label",
     "pack_transcription_windows",
+    "preload_cuda_libraries",
     "read_transcript",
     "recover_session_transcription",
     "resolve_whisper_model",

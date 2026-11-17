@@ -102,7 +102,45 @@ result is recorded there as a dated RUN line.
    delete it after the run (it is rebuilt from the repository).
    Record the totals and pass or fail; enter every
    failure in the findings register. A fail stops the pilot here until its
-   findings are resolved or controlled and the run is repeated.
+   findings are resolved or controlled and the run is repeated. Validation
+   run 6 (0.3.4) read the gate under rule v2
+   (`validation\rules\rule-v2.json`, each set named with `--set`) on the 50
+   scripts and the blind `heldout-3`, with `heldout` and `heldout-2` run and
+   reported in full (validation-run6 plan D15). From validation run 7
+   (0.3.5) it is read under rule v3 (`validation\rules\rule-v3.json`, each of
+   five sets named with `--set`) on the 50 scripts and the blind `heldout-4`,
+   with `heldout`, `heldout-2` and `heldout-3` run and reported in full; its
+   report prints rule v3's verdict beside the verdict without its R1
+   exemption and rule v1's (validation-run7 plan D4, D5;
+   `docs/testing/validation-harness.md`). Validation run 8 (the
+   validation-run8 plan; no new version) reads it under rule v5
+   (`validation\rules\rule-v5.json`, each of six sets named with `--set`) on
+   the 50 scripts and the blind `heldout-5`, with `heldout`, `heldout-2`,
+   `heldout-3` and `heldout-4` run and reported in full. Rule v5 keeps rule
+   v4's predicates, ceilings and gate sets (rule v4: rule v3 with `heldout-4`
+   reported and `heldout-5` the gate, the larger-model plan's D5); on
+   `heldout-5` it counts only the silent R1 facts under R1's ceiling and
+   reports each misheard material fact under a review mark beside it, with no
+   ceiling. Its report prints four verdicts: rule v5's, rule v5's with those
+   marked facts counted, rule v5's without its R1 exemption, and rule v1's
+   (validation-run8 plan D1, D3). Validation run 9 (the note-content-design
+   plan; version 0.3.6) read it under rule v6
+   (`validation\rules\rule-v6.json`, written before the run at that plan's
+   Task F.1) on the 50 scripts and a fresh blind `heldout-6`, with `heldout`
+   to `heldout-5` run and reported in full: rule v6 keeps rule v5's
+   predicates and ceilings exactly, with `heldout-5` reported and `heldout-6`
+   the blind gate set carrying rule v5's marked-R1 reading, and run 9 runs
+   with the prose stage and every suggested section accepted (`--prose
+   --suggestions confirm-all`; that plan's D11). Run 9 (2026-11-10) did NOT
+   meet the gate (`heldout-6` failed), so shadow mode stays on; its record is
+   that plan's Task P.2 and run 9's entry in the validation harness document.
+   Version 0.3.7 (the answers-follow-question plan: a patient's answer placed
+   with the question it answers, and the answer to a left-out question
+   flagged) has no validation run: its measurement over the seven seen sets
+   (that plan's Phase M) is an improvement that does not meet the gate, so
+   shadow mode stays on, there is no run 10 and `exit-gate.md` is unchanged.
+   It adds the reply credit to `warned` (the metric amendment of 2026-11-17,
+   `docs/testing/validation-harness.md`), which a later run reads.
    *Amended 2026-10-09, after run 1 failed:* the shadow consultations of
    step 4 may start while run 1's findings are controlled by shadow mode (a
    shadow note never reaches Cliniko); step 5 and the exit gate still wait for
@@ -158,8 +196,11 @@ result is recorded there as a dated RUN line.
   holds no clinical content: no name, nothing said or written in a note, no
   Cliniko id and no session id. Describe what the app did in terms of the app
   (its category and the part of the app), never the patient.
-- **Synthetic encounter ids** (`syn-01` …) may appear in the register; they
-  identify invented content only. A real consultation's encounter is `—`, and
+- **Synthetic encounter ids** (`syn-01` …, and the held-out sets' `hld-01` …
+  (`heldout`), `h2-01` … (`heldout-2`), `h3-01` … (`heldout-3`), `h4-01` …
+  (`heldout-4`), `h5-01` … (`heldout-5`) and, since validation run 9,
+  `h6-01` … (`heldout-6`)) may
+  appear in the register; they identify invented content only. A real consultation's encounter is `—`, and
   a smoke measurement's `k-01` … name stays in your pilot log.
 - **Real consultations are never fed to the validation harness** (pilot plan
   Constraint 8). Since 0.3.0 a real consultation's recording may be kept with

@@ -62,10 +62,14 @@ What this module enforces, and what it does not:
   that names a resolved path other than the folder given (C6); a Ctrl+C
   names only ``%TEMP%``, and a missing model "the developer build's models
   folder" (round 29 LOW-003) — naming the model only when it is the default
-  (a ``--model`` value is the practitioner's typing; round 30).
+  (a ``--model`` value is the practitioner's typing; round 30). ``--device
+  cuda`` (gpu-decoding plan D7) decodes on the NVIDIA graphics card; one
+  that cannot decode is refused by its code, never replaced by the
+  processor.
 - **Text-free output (C1, C6).** Session ids, numbers and fixed text only:
   no transcript, note, name or label text; a kept transcript's model name is
-  printed only when it is shaped like one. An unexpected failure is
+  printed only when it is shaped like one (``MODEL_LABEL_RE``: a name, or a
+  name and ``@cuda`` — gpu-decoding plan D8). An unexpected failure is
   reported by its exception TYPE (``validation._error_type``) and a
   Past-sessions failure by its closed reason code; besides the custody
   diagnostic, ONE exception's own text is printed — an ``EnrolmentError``'s,
@@ -132,9 +136,17 @@ from scribe_desktop.speech import (
     vad_model_available,
 )
 from scribe_desktop.transcription import (
+    # Package-private by name, shared deliberately (larger-model D8): the
+    # model-name shape the harness and the guard measurement check too.
+    _MODEL_NAME_RE,
+    COMPUTE_DEVICES,
     DEFAULT_WHISPER_MODEL,
+    MODEL_LABEL_RE,
+    ComputeDevice,
+    ComputeDeviceError,
     TranscriptDocument,
     WhisperSpeechProvider,
+    model_label,
     whisper_model_available,
 )
 from scribe_desktop.ui.models import extractive_provider_from_config
@@ -155,8 +167,6 @@ _SESSION_ID_RE: Final = re.compile(SESSION_ID_PATTERN)
 # Printed in place of an ``--only`` value that is not a session id: such a
 # value could be anything (a patient's name included), so it is never echoed.
 UNNAMED_SESSION: Final = "(a value not shaped as a session id)"
-# A model name as the report may print it; anything else is ``(unnamed)``.
-_MODEL_NAME_RE: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 # The best one-to-one label mapping is found exhaustively; a transcript with
 # more distinct speaker labels than this on either side is not mapped (the
 # shipped pipeline emits at most three).
@@ -201,26 +211,37 @@ def _open_store(folder: Path) -> PastSessionStore:
 @dataclass(frozen=True)
 class ReplayModels:
     """What one run transcribes with: the speech provider, the VAD frame
-    probability, the Whisper model's name and, with ``--enrolment``, the
-    in-memory voice profile (``speaker_eval.EnrolmentInputs``)."""
+    probability, the Whisper model's name, with ``--enrolment`` the
+    in-memory voice profile (``speaker_eval.EnrolmentInputs``), and the
+    device the provider decodes on (gpu-decoding plan D7)."""
 
     provider: SpeechProvider = field(repr=False)
     frame_probability: FrameProbabilityFn = field(repr=False)
     model_name: str
     enrolment: EnrolmentInputs | None = field(default=None, repr=False)
+    device: ComputeDevice = "cpu"
+
+    @property
+    def label(self) -> str:
+        """D8: the model as the report prints it (``model_label``)."""
+        return model_label(self.model_name, self.device)
 
 
-def _load_models(model_name: str, enrolment_wav: Path | None) -> ReplayModels:
+def _load_models(
+    model_name: str, enrolment_wav: Path | None, device: ComputeDevice = "cpu"
+) -> ReplayModels:
     """Construct the developer build's models (after the availability
-    checks in ``main``). Raises ``WavFormatError`` / ``EnrolmentError`` for an
-    unusable enrolment WAV, anything else as itself."""
+    checks in ``main``) — the Whisper model on ``device``, strictly
+    (``ComputeDeviceError`` when it cannot decode there). Raises
+    ``WavFormatError`` / ``EnrolmentError`` for an unusable enrolment WAV,
+    anything else as itself."""
     vad = SileroVad()
-    provider = WhisperSpeechProvider(model_name=model_name)
+    provider = WhisperSpeechProvider(model_name=model_name, device=device)
     enrolment: EnrolmentInputs | None = None
     if enrolment_wav is not None:
         embedder = build_speaker_embedder()
         enrolment = enrolment_inputs(read_wav_pcm(enrolment_wav), embedder, vad.frame_probability)
-    return ReplayModels(provider, vad.frame_probability, model_name, enrolment)
+    return ReplayModels(provider, vad.frame_probability, model_name, enrolment, device)
 
 
 # ---------------------------------------------------------------------------
@@ -266,11 +287,14 @@ class NoteDrift:
     """The note leg's numbers (Task 4.1b): checker warnings on the
     regenerated note by severity, and how many sections the clinician's
     saved note holds that the regenerated one does not (None with no saved
-    note). Counts only."""
+    note). ``clinician_lines_omitted`` (validation-run6 plan Task 1.4) is the
+    ``clinician_line_omitted`` count, already inside ``reviews``, kept apart
+    so the replay can follow the new code. Counts only."""
 
     errors: int
     reviews: int
     sections_missing: int | None
+    clinician_lines_omitted: int = 0
 
 
 @dataclass(frozen=True)
@@ -313,7 +337,12 @@ def note_drift(
     every proposal confirmed (``confirm_all``), ``finalise_note``, then
     ``check_note`` (Checks 1–4 and, since the validation-pass plan, Check 6's
     ``possible_next_patient``, counted among the reviews) — and section
-    coverage against ``saved``."""
+    coverage against ``saved``. Since the validation-run6 plan (Task 1.4) the
+    review count's ``clinician_line_omitted`` warnings are also counted on
+    their own, by code name — from 0.3.5 one per joined run (validation-run7
+    plan D1, ``note.joined_run``), so a line the recogniser split counts
+    once and a replay's count may fall against a 0.3.4 replay of the same
+    recording."""
     draft = compose_draft(
         document,
         config,
@@ -333,6 +362,9 @@ def note_drift(
         errors=sum(1 for warning in warnings if warning.severity == "error"),
         reviews=sum(1 for warning in warnings if warning.severity == "review"),
         sections_missing=missing,
+        clinician_lines_omitted=sum(
+            1 for warning in warnings if warning.note_warning_code == "clinician_line_omitted"
+        ),
     )
 
 
@@ -375,7 +407,8 @@ def _replay_entry(
         session_id=session_id,
         seconds=seconds,
         kept_model=kept_transcript.model_name,
-        new_model=document.model_name,
+        # D8: the device the new transcript was decoded on, as a label.
+        new_model=model_label(document.model_name, models.device),
         kept_words=alignment.words.reference_tokens,
         new_words=alignment.words.hypothesis_tokens,
         edit_distance=alignment.words.edit_distance,
@@ -391,7 +424,9 @@ def _replay_entry(
 
 
 def _model(name: str) -> str:
-    return name if _MODEL_NAME_RE.fullmatch(name) else "(unnamed)"
+    """A model as printed: its name or label (D8: ``<model>@cuda``), else
+    ``(unnamed)``."""
+    return name if MODEL_LABEL_RE.fullmatch(name) else "(unnamed)"
 
 
 def _fraction(value: float | None) -> str:
@@ -430,8 +465,8 @@ def render_report(
         "",
         "| Session | Seconds | Kept model | New model | Kept words | New words | Edit distance "
         "| Drift WER | Label agreement | Sections missing | Check errors | Check reviews "
-        "| Suspect segments |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "| Suspect segments | Clinician lines omitted |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for row in rows:
         lines.append(
@@ -439,7 +474,7 @@ def render_report(
             f"| {_model(row.new_model)} | {row.kept_words} | {row.new_words} "
             f"| {row.edit_distance} | {_fraction(row.drift)} | {_fraction(row.agreement)} "
             f"| {_count(row.note.sections_missing)} | {row.note.errors} | {row.note.reviews} "
-            f"| {row.suspect_segments} |"
+            f"| {row.suspect_segments} | {row.note.clinician_lines_omitted} |"
         )
     kept_words = sum(row.kept_words for row in rows)
     edits = sum(row.edit_distance for row in rows)
@@ -450,7 +485,9 @@ def render_report(
         f"{sum(row.seconds for row in rows):.1f} s of audio; pooled drift WER "
         f"{_fraction(pooled)} ({edits} edits over {kept_words} kept words). "
         f"Suspect segments in the new transcripts: "
-        f"{sum(row.suspect_segments for row in rows)}.",
+        f"{sum(row.suspect_segments for row in rows)}. "
+        f"Clinician lines omitted (clinician_line_omitted, among the reviews): "
+        f"{sum(row.note.clinician_lines_omitted for row in rows)}.",
     ]
     return "\n".join(lines)
 
@@ -507,6 +544,16 @@ def _parser() -> argparse.ArgumentParser:
         "--model",
         default=DEFAULT_WHISPER_MODEL,
         help=f"the Whisper model to transcribe with (default: {DEFAULT_WHISPER_MODEL})",
+    )
+    parser.add_argument(
+        "--device",
+        choices=COMPUTE_DEVICES,
+        default="cpu",
+        help=(
+            "decode on the processor (default) or the NVIDIA graphics card (`cuda`; the "
+            "report names the new model as `<model>@cuda`); a graphics card that cannot "
+            "decode is refused, never replaced by the processor"
+        ),
     )
     return parser
 
@@ -595,12 +642,18 @@ def main(argv: list[str] | None = None) -> int:
                 f"app's single-instance lock for its run ({exclusion.state})"
             )
             return 2
-        return _run(folder, only, model_name, enrolment_wav)
+        return _run(folder, only, model_name, enrolment_wav, args.device)
     finally:
         release(exclusion)
 
 
-def _run(folder: Path, only: list[str], model_name: str, enrolment_wav: Path | None) -> int:
+def _run(
+    folder: Path,
+    only: list[str],
+    model_name: str,
+    enrolment_wav: Path | None,
+    device: ComputeDevice = "cpu",
+) -> int:
     """Everything after the exclusion is held (``main`` releases it)."""
     apply_offline_env()
     assert_offline_env()
@@ -643,9 +696,14 @@ def _run(folder: Path, only: list[str], model_name: str, enrolment_wav: Path | N
     load_interrupted = False
     models: ReplayModels | None = None
     try:
-        models = _load_models(model_name, enrolment_wav)
+        models = _load_models(model_name, enrolment_wav, device)
     except KeyboardInterrupt:
         load_interrupted = True
+    except ComputeDeviceError as exc:
+        # gpu-decoding plan D7: refused, never replaced by the processor; the
+        # code is a type name or a fixed reason.
+        load_failure = exc.error_code
+        load_detail = f"--device {device}: the graphics card cannot decode"
     except WavFormatError as exc:
         # Round 29 LOW-002: ``read_wav_pcm``'s text names the file; the fixed
         # format help is printed instead.
@@ -747,7 +805,7 @@ def _replay_all(
         render_report(
             rows,
             folder=folder,
-            model_name=models.model_name,
+            model_name=models.label,
             enrolled=models.enrolment is not None,
             errors=errors,
             skipped=skipped,

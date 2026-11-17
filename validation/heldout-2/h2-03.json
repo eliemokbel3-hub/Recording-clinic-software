@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h2-03",
+  "appointment_type": "acute",
+  "axes": ["laterality", "numbers", "uncertain"],
+  "lines": [
+    {"role": "clinician", "text": "Hello, have a seat. What happened?"},
+    {"role": "patient", "text": "I turned my right ankle on Tuesday night and I'm coming in with it still really swollen."},
+    {"role": "patient", "text": "Not a hundred percent on the day though, could've been Wednesday."},
+    {"role": "clinician", "text": "Could you put weight on it straight after?"},
+    {"role": "patient", "text": "I hobbled off the court on my own, yeah."},
+    {"role": "clinician", "text": "Let me have a look. There's bruising on the outside and it's tender just in front of the ankle bone, not on the bone itself."},
+    {"role": "clinician", "text": "I think you have a sprained ligament on the outside of the ankle, probably a moderate one, though I'd want to see it again in a week to be sure."},
+    {"role": "clinician", "text": "For the pain you can take ibuprofen 400 milligrams three times a day after food, for up to five days."},
+    {"role": "clinician", "text": "Keep it raised on a cushion in the evenings, above the level of your hip."},
+    {"role": "clinician", "text": "No running for two weeks, but walking is fine."},
+    {"role": "patient", "text": "Thanks, cheers."},
+    {"role": "clinician", "text": "See you next week then."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["right", "ankle"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["on", "tuesday", "night"], "line": 1, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["hobbled", "off", "the", "court", "on", "my", "own"], "line": 4, "material": true},
+    {"kind": "negation", "tokens": ["not", "on", "the", "bone", "itself"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["sprained", "ligament", "on", "the", "outside", "of", "the", "ankle"], "line": 6, "material": true},
+    {"kind": "dose", "tokens": ["ibuprofen", "400", "milligrams", "three", "times", "a", "day", "after", "food"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["above", "the", "level", "of", "your", "hip"], "line": 8, "material": true},
+    {"kind": "present", "tokens": ["no", "running", "for", "two", "weeks"], "line": 9, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

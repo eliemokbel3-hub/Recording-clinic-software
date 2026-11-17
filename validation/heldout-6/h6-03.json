@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h6-03",
+  "appointment_type": "acute",
+  "axes": ["laterality", "negation", "numbers", "end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "Come in, grab a chair. What's happened?"},
+    {"role": "patient", "text": "I went over on my right ankle playing football on Thursday night."},
+    {"role": "clinician", "text": "Can you put weight through it?"},
+    {"role": "patient", "text": "I managed four steps at the time, but it's ballooned since."},
+    {"role": "clinician", "text": "Let me have a look. There's bruising down the outside of the foot and it's tender just in front of the ankle bone, not on the bone itself."},
+    {"role": "clinician", "text": "So I don't think it's broken, and you won't need any imaging."},
+    {"role": "clinician", "text": "You're going to take ibuprofen 400 milligrams three times a day after food, for five days."},
+    {"role": "clinician", "text": "Keep it raised above your hip whenever you're sitting, and trace the alphabet with your big toe a couple of times a day."},
+    {"role": "clinician", "text": "No running for at least two weeks."},
+    {"role": "patient", "text": "Fair enough. Cheers."},
+    {"role": "clinician", "text": "Look after yourself. Right, who's next? Come on through, have a seat."},
+    {"role": "next_patient", "text": "Hiya. My back's been in spasm since I picked up the baby yesterday."},
+    {"role": "clinician", "text": "Okay, give me two secs to grab your notes."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["right", "ankle"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["playing", "football", "on", "thursday", "night"], "line": 1, "material": false},
+    {"kind": "present", "tokens": ["managed", "four", "steps", "at", "the", "time"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["tender", "just", "in", "front", "of", "the", "ankle", "bone"], "line": 4, "material": true},
+    {"kind": "negation", "tokens": ["not", "on", "the", "bone", "itself"], "line": 4, "material": true},
+    {"kind": "negation", "tokens": ["won't", "need", "any", "imaging"], "line": 5, "material": true},
+    {"kind": "dose", "tokens": ["ibuprofen", "400", "milligrams", "three", "times", "a", "day"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["for", "five", "days"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["keep", "it", "raised", "above", "your", "hip"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["trace", "the", "alphabet", "with", "your", "big", "toe"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["no", "running", "for", "at", "least", "two", "weeks"], "line": 8, "material": true},
+    {"kind": "absent", "tokens": ["back's", "been", "in", "spasm"], "line": 11, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

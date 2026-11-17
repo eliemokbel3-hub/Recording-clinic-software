@@ -13,12 +13,30 @@ live in `test_note_matrix.py` (Task 5.5).
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from fixtures.heldout_transcripts import HELD_OUT_CASES, HeldOutCase
+from fixtures.heldout_transcripts import (
+    HELD_OUT_CASES,
+    HELD_OUT_SETS,
+    REPO,
+    HeldOutCase,
+    by_case,
+    held_out_set,
+    misfiled,
+    script_path,
+)
+from fixtures.joined_runs import (
+    CONFIG,
+    SPLIT_CASES,
+    SplitCase,
+    checked_note,
+    clinician_line_anchors_v034,
+)
 from scribe_desktop import note_check as note_check_module
 from scribe_desktop.note import (
     CANONICAL_SECTION_KEYS,
@@ -32,6 +50,9 @@ from scribe_desktop.note import (
     NoteSectionKey,
     NoteSpan,
     SourceCoords,
+    compose_draft,
+    content_tokens,
+    finalise_note,
     line_marks,
     reconstruct_span_text,
     render_note,
@@ -42,18 +63,27 @@ from scribe_desktop.note import (
 )
 from scribe_desktop.note_check import (
     HEDGE_PHRASES,
+    REGISTER_EXCLUSIONS,
+    REGISTER_ORDINARY_WORDS,
     CheckTargetMismatchError,
     NoteCheckError,
     _is_high_risk_token,
     _omission_flag_token,
+    canonicalise,
     check_note,
+    clinician_line_omissions,
     contradiction_warnings,
     omission_warnings,
     provenance_warnings,
     reconstruction_warnings,
+    register_matches,
 )
 from scribe_desktop.note_config import (
+    CLINICAL_ABBREVIATIONS,
+    CLINICAL_EQUIVALENTS,
     AutofillRule,
+    ClinicalEquivalent,
+    EquivalenceClass,
     NoteConfig,
     NoteConfigInvalidError,
     PrefillSeedAssertion,
@@ -61,10 +91,13 @@ from scribe_desktop.note_config import (
     SectionMapping,
     TemplateProfile,
     TemplateTarget,
+    _clinical_register,
     build_note_request,
     load_note_config,
+    next_patient_boundary,
 )
 from scribe_desktop.note_fill import autofill_proposals, prefill_proposals
+from scribe_desktop.speaker_eval import CLINICIAN_LABEL
 from scribe_desktop.speech import SAMPLE_RATE
 from scribe_desktop.transcription import (
     SPEAKER_1,
@@ -72,6 +105,13 @@ from scribe_desktop.transcription import (
     TranscriptDocument,
     TranscriptSegment,
     TranscriptWord,
+)
+from scribe_desktop.ui.models import extractive_provider_from_config, flagged_segments
+from scribe_desktop.validation import (
+    confirm_all,
+    first_detected_prefill,
+    load_script,
+    reference_document,
 )
 
 SESSION_ID = "c" * 32
@@ -1001,6 +1041,92 @@ class TestCheck2Contradictions:
         )
         assert contradiction_warnings(note, document) == ()
 
+    # --- Answers-follow-question plan Task 1.3: a JOINED reply is quoted
+    # evidence like any other quoted line -------------------------------------
+
+    _HOP_QUESTION = "Any numbness in your feet?"
+
+    @staticmethod
+    def _typed(text: str, *, aid: str) -> NoteAssertion:
+        """A typed ``clinician`` line (schema v2): no proposal, the decision
+        naming the line itself."""
+        return NoteAssertion(
+            assertion_id=aid,
+            section_key="red_flags_screening",
+            note_span=NoteSpan(span_text=text, provenance="clinician"),
+            shown_text_digest=text_digest(text),
+            config_digest=_CHECK_CONFIG.config_digest(),
+            confirmation=ConfirmationDecision(
+                proposal_id=aid, note_confirmation="confirmed", decided_at=_NOW
+            ),
+        )
+
+    def _joined(self, reply: Turn) -> tuple[TranscriptDocument, tuple[NoteAssertion, ...]]:
+        """The clinician's cue-routed question and the patient's ``reply``
+        through the shipped provider: the reply carries no cue, so only the
+        answer hop places it — beside its question, in Red flags."""
+        document = _document((self._HOP_QUESTION, SPEAKER_2), reply)
+        request = build_note_request(
+            document,
+            _CHECK_CONFIG,
+            _CHECK_CONFIG.template_profiles[0].template_profile_id,
+            clinician_speaker=SPEAKER_2,
+        )
+        provider = ExtractiveNoteProvider(cues=_CHECK_CONFIG.normalised_cues())
+        assert provider._route(request, request.transcript_utterances[1]) is None
+        assertions = tuple(
+            assertion
+            for section in provider.generate_sections(request)
+            for assertion in section.note_assertions
+        )
+        placed = {
+            assertion.note_span.source_coords.segment_index: assertion.section_key
+            for assertion in assertions
+            if assertion.note_span.source_coords is not None
+        }
+        assert placed == {0: "red_flags_screening", 1: "red_flags_screening"}
+        return document, assertions
+
+    @pytest.mark.parametrize("line", ["prefill", "typed"])
+    def test_a_joined_reply_that_names_what_it_negates_contradicts_at_error(
+        self, line: str
+    ) -> None:
+        """A joined "No numbness." against a pre-filled or typed "Numbness
+        reported.": the reply's negated symptom against the authored line's
+        affirmed one — error grade, on the authored line, the evidence the
+        reply's two words."""
+        document, joined = self._joined(("No numbness.", SPEAKER_1))
+        authored = (
+            _authored("Numbness reported.", "red_flags_screening", aid="a1")
+            if line == "prefill"
+            else self._typed("Numbness reported.", aid="a1")
+        )
+        warnings = contradiction_warnings(_note(document, (*joined, authored)), document)
+        assert _codes(warnings) == ["contradiction"]
+        assert warnings[0].severity == "error"
+        assert warnings[0].assertion_id == "a1"
+        assert warnings[0].source_coords == SourceCoords(1, 0, 1)
+
+    def test_a_low_confidence_joined_reply_contradicts_at_review(self) -> None:
+        """The same pair with the reply's "numbness." heard at low confidence:
+        the evidence is weak, so the low-confidence twin at review grade."""
+        document, joined = self._joined(("No numbness.", SPEAKER_1, {1: 0.3}))
+        authored = _authored("Numbness reported.", "red_flags_screening", aid="a1")
+        warnings = contradiction_warnings(_note(document, (*joined, authored)), document)
+        assert _codes(warnings) == ["contradiction_low_confidence"]
+        assert warnings[0].severity == "review"
+
+    def test_a_bare_no_beside_its_question_draws_no_contradiction(self) -> None:
+        """The named residue (the plan's Codebase Integration Notes): a bare
+        joined "No." carries no claim of its own — Check 2 parses each line
+        apart, takes no evidence from a question and needs the negated word
+        in the same line — so "No." beside "Any numbness in your feet?" is
+        never checked against "Numbness reported." The reading the two lines
+        make together is the clinician's to review."""
+        document, joined = self._joined(("No.", SPEAKER_1))
+        authored = _authored("Numbness reported.", "red_flags_screening", aid="a1")
+        assert contradiction_warnings(_note(document, (*joined, authored)), document) == ()
+
     def test_a_correlative_across_the_but_boundary_is_review_not_error(self) -> None:
         """Task H4.1, the round-58 trace that ended parser patching. `but` closes
         clause 1 as `[not, only, left, but]` - no anatomy for the stray `left`
@@ -1883,6 +2009,297 @@ class TestCheck4Omission:
         assert warnings[0].source_coords == SourceCoords(0, 10, 10)
 
 
+# The clinician's uncued advice line: no cue routes it and no word of it is a
+# Check 4 flag ("Please" is a common sentence opener, never name-like).
+_ADVICE = "Please keep walking every morning."
+
+
+class TestCheck4ClinicianLineOmission:
+    """Validation-run6 plan D1 (decision 0.3 (b), Task 1.1): Check 4's second
+    code, one per wholly uncovered line of the confirmed clinician that holds
+    a content word and draws no ``high_risk_omission``, before the boundary.
+    Since validation-run7 plan D1 one per JOINED RUN (``TestJoinedRunUnit``);
+    every case here is a line the recogniser did not split — a one-piece run,
+    0.3.4's case unchanged (re-read for run semantics, Task 1.1)."""
+
+    def test_a_wholly_uncovered_clinician_line_fires_once_over_the_whole_line(self) -> None:
+        document = _document(("My knee is sore.", SPEAKER_1), (_ADVICE, SPEAKER_2))
+        note = _note(document, (_quoted(document, 0, "presenting_complaint"),))
+        assert omission_warnings(note, document) == ()
+        warnings = clinician_line_omissions(note, document, _CHECK_CONFIG)
+        assert _codes(warnings) == ["clinician_line_omitted"]
+        assert warnings[0].severity == "review"
+        assert warnings[0].source_coords == SourceCoords(1, 0, 4)
+        assert warnings[0].section_key is None and warnings[0].assertion_id is None
+
+    def test_one_warning_per_line_in_transcript_order(self) -> None:
+        document = _document(
+            (_ADVICE, SPEAKER_2),
+            ("My knee is sore.", SPEAKER_1),
+            ("we can try that again soon", SPEAKER_2),
+        )
+        warnings = clinician_line_omissions(_note(document, ()), document, _CHECK_CONFIG)
+        assert [w.source_coords for w in warnings] == [
+            SourceCoords(0, 0, 4),
+            SourceCoords(2, 0, 5),
+        ]
+
+    def test_a_partly_quoted_line_does_not_fire(self) -> None:
+        document = _document((_ADVICE, SPEAKER_2))
+        words = document.transcript_segments[0].transcript_words
+        partial = NoteAssertion(
+            assertion_id="t0",
+            section_key="advice_home_exercise",
+            speaker=SPEAKER_2,
+            note_span=NoteSpan(
+                span_text=reconstruct_span_text(words[0:3]),
+                provenance="transcript",
+                source_coords=SourceCoords(0, 0, 2),
+            ),
+        )
+        assert clinician_line_omissions(_note(document, (partial,)), document, _CHECK_CONFIG) == ()
+
+    def test_a_whole_quoted_line_does_not_fire(self) -> None:
+        document = _document((_ADVICE, SPEAKER_2))
+        note = _note(document, (_quoted(document, 0, "advice_home_exercise"),))
+        assert clinician_line_omissions(note, document, _CHECK_CONFIG) == ()
+
+    def test_a_config_line_covers_nothing(self) -> None:
+        """Coverage is coordinate carriage (Check 4's one rule): a confirmed
+        pre-filled line covers no transcript word."""
+        document = _document((_ADVICE, SPEAKER_2))
+        note = _note(document, (_authored("Walking advised.", "advice_home_exercise", aid="a1"),))
+        assert _codes(clinician_line_omissions(note, document, _CHECK_CONFIG)) == [
+            "clinician_line_omitted"
+        ]
+
+    @pytest.mark.parametrize("text", ["um uh erm", "mm, hmm.", "..."])
+    def test_a_line_of_disfluencies_or_punctuation_does_not_fire(self, text: str) -> None:
+        document = _document((text, SPEAKER_2))
+        assert clinician_line_omissions(_note(document, ()), document, _CHECK_CONFIG) == ()
+
+    def test_a_patient_line_does_not_fire(self) -> None:
+        document = _document((_ADVICE, SPEAKER_1))
+        assert clinician_line_omissions(_note(document, ()), document, _CHECK_CONFIG) == ()
+
+    def test_a_line_that_draws_high_risk_omission_does_not_fire(self) -> None:
+        """The two codes never warn one line: a flagged word keeps the line
+        under ``high_risk_omission`` alone."""
+        document = _document(("Take paracetamol 500 twice daily.", SPEAKER_2))
+        note = _note(document, ())
+        assert _codes(omission_warnings(note, document)) == ["high_risk_omission"]
+        assert clinician_line_omissions(note, document, _CHECK_CONFIG) == ()
+
+    def test_no_confirmed_clinician_means_nothing(self) -> None:
+        document = _document((_ADVICE, SPEAKER_2))
+        note = _note(document, (), clinician_speaker=None)
+        assert clinician_line_omissions(note, document, _CHECK_CONFIG) == ()
+
+    def test_a_suspect_line_does_not_fire(self) -> None:
+        """Invented-text guard D6: a suspect word is never an omission."""
+        document = _suspect_document((_ADVICE, SPEAKER_2), suspect=(0,))
+        assert clinician_line_omissions(_note(document, ()), document, _CHECK_CONFIG) == ()
+
+    def test_a_line_past_the_next_patient_boundary_does_not_fire(self) -> None:
+        """C5: the one boundary accessor. The closing before the boundary
+        fires; the clinician's line after it does not, while Check 4's first
+        code still flags the withheld side (decision 0.5 (a))."""
+        document = _document(
+            ("My left knee is sore.", SPEAKER_1),
+            ("On examination the knee is tender to touch.", SPEAKER_2),
+            ("Okay, see you next week.", SPEAKER_2),
+            ("Hello, come on in.", SPEAKER_1),
+            ("My right shoulder hurts.", SPEAKER_1),
+            (_ADVICE, SPEAKER_2),
+        )
+        assert next_patient_boundary(document, _CHECK_CONFIG) == 3
+        note = _note(
+            document,
+            (
+                _quoted(document, 0, "presenting_complaint", aid="t0"),
+                _quoted(document, 1, "objective_examination", aid="t1"),
+            ),
+        )
+        warnings = clinician_line_omissions(note, document, _CHECK_CONFIG)
+        assert [w.source_coords for w in warnings] == [SourceCoords(2, 0, 4)]
+        assert [w.source_coords for w in omission_warnings(note, document)] == [
+            SourceCoords(4, 1, 1)
+        ]
+
+    @pytest.mark.parametrize("text", ["Okay.", "yeah", "alright", "Sure.", "Is it worse at night?"])
+    def test_an_acknowledgement_or_a_question_fires_under_b(self, text: str) -> None:
+        """Decision 0.3 (b): a one-word acknowledgement is content, and a
+        question is a line. (c)'s two exemptions were to be added only if
+        Task 0.2's real-speech counts broke the budget; its record says they
+        are NOT added, and none exists. ("right" and "no" are a side and a
+        negation, so a one-word "right" or "no" draws the FIRST code.)"""
+        document = _document((text, SPEAKER_2))
+        warnings = clinician_line_omissions(_note(document, ()), document, _CHECK_CONFIG)
+        assert _codes(warnings) == ["clinician_line_omitted"]
+        assert not hasattr(note_check_module, "ACKNOWLEDGEMENT_TOKENS")
+
+    @pytest.mark.parametrize("text", ["right", "no"])
+    def test_a_one_word_side_or_negation_draws_the_first_code_only(self, text: str) -> None:
+        document = _document((text, SPEAKER_2))
+        note = _note(document, ())
+        assert _codes(omission_warnings(note, document)) == ["high_risk_omission"]
+        assert clinician_line_omissions(note, document, _CHECK_CONFIG) == ()
+
+    def test_check_note_runs_it_after_check_4s_first_code_and_before_check_6(self) -> None:
+        document = _document(
+            ("My left knee is sore.", SPEAKER_1),
+            (_ADVICE, SPEAKER_2),
+            ("Take paracetamol 500 twice daily.", SPEAKER_2),
+            ("Okay, see you next week.", SPEAKER_2),
+            ("Hello, come on in.", SPEAKER_1),
+            ("My right shoulder hurts.", SPEAKER_1),
+        )
+        note = _note(document, (_quoted(document, 0, "presenting_complaint", aid="t0"),))
+        warnings = check_note(note, document, _CHECK_CONFIG)
+        omissions = [
+            (w.note_warning_code, w.source_coords)
+            for w in warnings
+            if w.note_warning_code
+            in ("high_risk_omission", "clinician_line_omitted", "possible_next_patient")
+        ]
+        assert omissions == [
+            ("high_risk_omission", SourceCoords(2, 0, 2)),
+            ("high_risk_omission", SourceCoords(5, 1, 1)),
+            ("clinician_line_omitted", SourceCoords(1, 0, 4)),
+            ("clinician_line_omitted", SourceCoords(3, 0, 4)),
+            ("possible_next_patient", SourceCoords(4, 0, 3)),
+        ]
+        assert warnings[-1].note_warning_code == "possible_next_patient"
+
+    @pytest.mark.parametrize("case_id", ["hld-06", "hld-12", "hld-15", "hld-19", "hld-22"])
+    def test_the_five_held_out_silent_facts_are_carried_or_flagged(self, case_id: str) -> None:
+        """Task 0.12's prediction for the five held-out facts silent under
+        0.3.3 (Tasks 0.2 / 0.2a): none stays silent. On the scripts' own
+        words, every MATERIAL fact's line is in the note or flagged by one of
+        Check 4's two codes — the shipped pipeline as the harness runs it."""
+        [case] = [c for c in held_out_set("heldout").all_cases() if c.case_id == case_id]
+        config = load_note_config(_VALIDATION_CONFIG_DIR)
+        document = case.document()
+        draft = compose_draft(
+            document,
+            config,
+            extractive_provider_from_config(config),
+            None,
+            clinician_speaker=case.clinician_speaker,
+            prefill_id=first_detected_prefill(document, config),
+            learned_rules=None,
+            decided_at=_NOW,
+        )
+        note = finalise_note(draft, confirm_all(draft, _NOW), document, config, created_at=_NOW)
+        carried = {
+            a.note_span.source_coords.segment_index
+            for section in note.note_sections
+            for a in section.note_assertions
+            if a.note_span.source_coords is not None
+        }
+        flagged = flagged_segments(note, document)
+        facts = [
+            fact
+            for fact in load_script(script_path(case_id)).facts
+            if fact.material and fact.kind != "absent"
+        ]
+        assert facts, case_id
+        for fact in facts:
+            assert fact.line in carried | flagged, (case_id, fact.line)
+
+
+def _seen_reference_scripts() -> list[Path]:
+    """The 50 and every held-out set whose cases are written — never a blind
+    set's scripts (validation-run7 plan C12: ``script_paths`` is not called
+    for a set whose cases are not written)."""
+    paths = sorted((REPO / "validation" / "scripts").glob("*.json"))
+    for held_out in HELD_OUT_SETS:
+        if held_out.cases_written:
+            paths.extend(held_out.script_paths())
+    return paths
+
+
+class TestJoinedRunUnit:
+    """Validation-run7 plan D1 (Task 1.1): Check 4's second code is drawn
+    once per JOINED RUN (``note.joined_run``), anchored on the run's first
+    piece, whole — over the fixture matrix (``fixtures.joined_runs``), each
+    cell's anchors under 0.3.5 and under 0.3.4's per-segment oracle written
+    as data."""
+
+    @pytest.mark.parametrize("case", SPLIT_CASES, ids=lambda case: case.name)
+    def test_one_warning_per_joined_run_on_its_first_piece(self, case: SplitCase) -> None:
+        document = case.document()
+        warnings = clinician_line_omissions(case.note(), document, CONFIG)
+        assert [(w.note_warning_code, w.severity) for w in warnings] == [
+            ("clinician_line_omitted", "review")
+        ] * len(case.lines)
+        segments = document.transcript_segments
+        assert [w.source_coords for w in warnings] == [
+            SourceCoords(index, 0, len(segments[index].transcript_words) - 1)
+            for index in case.lines
+        ]
+        assert all(w.section_key is None and w.assertion_id is None for w in warnings)
+        assert next_patient_boundary(document, CONFIG) == case.boundary
+
+    @pytest.mark.parametrize("case", SPLIT_CASES, ids=lambda case: case.name)
+    def test_the_0_3_4_oracle_drew_one_per_piece(self, case: SplitCase) -> None:
+        assert clinician_line_anchors_v034(case.note(), case.document()) == case.lines_v034
+
+    def test_a_three_piece_line_draws_once_where_0_3_4_drew_three(self) -> None:
+        (case,) = [c for c in SPLIT_CASES if c.name == "comma-split"]
+        document = case.document()
+        warnings = clinician_line_omissions(case.note(), document, CONFIG)
+        assert [w.source_coords for w in warnings] == [SourceCoords(1, 0, 2)]
+        assert len(clinician_line_anchors_v034(case.note(), document)) == 3
+
+    def test_a_run_with_a_high_risk_piece_draws_nothing_new(self) -> None:
+        """One remedy, add the line: the first code's anchor stands for the
+        whole run (the chooser marks every piece from it, Task 1.2)."""
+        (case,) = [c for c in SPLIT_CASES if c.name == "high-risk-piece"]
+        document = case.document()
+        note = case.note()
+        assert [w.source_coords for w in omission_warnings(note, document)] == [
+            SourceCoords(1, 0, 0)
+        ]
+        assert clinician_line_omissions(note, document, CONFIG) == ()
+
+    def test_a_run_spanning_the_cut_is_truncated_never_dropped(self) -> None:
+        """The closing piece (3) joins the advice piece (2); the greeting
+        piece (4) is the cut. One warning for 2-3; nothing past the cut."""
+        (case,) = [c for c in SPLIT_CASES if c.name == "boundary-truncates"]
+        document = case.document()
+        assert next_patient_boundary(document, CONFIG) == 4
+        warnings = clinician_line_omissions(case.note(), document, CONFIG)
+        assert [w.source_coords for w in warnings] == [SourceCoords(2, 0, 2)]
+
+    def test_the_reference_documents_are_unchanged(self) -> None:
+        """One segment per whole script line, no line ending mid-sentence:
+        on every seen script's own words the per-run code draws exactly the
+        per-segment oracle's anchors (Task 0.3's text-mode reading, pinned).
+        Nothing is quoted, so every clinician line is uncovered."""
+        paths = _seen_reference_scripts()
+        assert sum(1 for path in paths if path.stem.startswith("syn-")) == 50
+        assert {path.parent.name for path in paths} == {
+            "scripts",
+            *(held_out.name for held_out in HELD_OUT_SETS if held_out.cases_written),
+        }
+        scripts_anchored = 0
+        for path in paths:
+            document = reference_document(load_script(path))
+            note = checked_note(document, (), clinician=CLINICIAN_LABEL)
+            got = tuple(
+                warning.source_coords.segment_index
+                for warning in clinician_line_omissions(note, document, CONFIG)
+                if warning.source_coords is not None
+            )
+            assert got == clinician_line_anchors_v034(note, document), path.stem
+            scripts_anchored += bool(got)
+        # Reach (review round 23 LOW-001): the comparison is over real
+        # anchors — a role label that stopped matching ``CLINICIAN_LABEL``
+        # would leave both sides empty on every script and pass.
+        assert scripts_anchored > 0
+
+
 # ---------------------------------------------------------------------------
 # Invented-text guard (Tasks 2.3 and 2.4; D5, D6): the per-line codes and the
 # readers that never act on a suspect word.
@@ -2039,13 +2456,44 @@ class TestHedgeTest:
             "Think about the exercises.",
             "I don't think so.",  # not "i think" in a row
             "No doubt it is the knee.",  # "doubt" alone is a booster here
-            "It seem sore.",
+            # Validation-run6 Task 0.9 listed "seem" (Salager-Meyer 1994), so
+            # 0.3.3's "It seem sore." near miss went with the old list.
+            "The seam of the brace rubs.",
             "If I had to guess, the left.",  # "guess" alone, not "i guess"
             "",
         ],
     )
     def test_a_near_miss_is_not_a_hedge(self, text: str) -> None:
         assert not text_holds_hedge(text)
+
+    @pytest.mark.parametrize(
+        ("hedged", "near_miss"),
+        [
+            ("I reckon it started on Monday.", "Do you reckon it is broken?"),
+            ("I believe it was Tuesday.", "Believe me, it hurts."),
+            ("I'm not sure when it began.", "I'm sure it began on Monday."),
+            ("I am not sure when it began.", "I am sure it began on Monday."),
+            ("We're not completely sure yet.", "I'm completely sure."),
+            ("I don't know when it started.", "You don't know when it started?"),
+            ("I do not know when it started.", "I do know when it started."),
+            ("If I'm correct, it was Friday.", "I'm correct about the date."),
+            ("If I am correct, it was Friday.", "I am correct about the date."),
+            ("I assume it is the same knee.", "They assume it is the same knee."),
+            ("I'm doubtful it helped.", "There is no doubt it helped."),
+            ("It is conceivably the new shoes.", "It is inconceivable."),
+            ("It is arguably better.", "We argued about it."),
+            ("It is seemingly better.", "The seeming change was small."),
+            ("It is potentially from lifting.", "The potential is good."),
+            ("A probable sprain of the ankle.", "An improbable story."),
+            ("They seem a bit better.", "The seam of the brace rubs."),
+        ],
+    )
+    def test_each_task_0_9_hedge_against_its_near_miss(self, hedged: str, near_miss: str) -> None:
+        """Validation-run6 plan Task 0.9: every added phrase is found, and a
+        neighbouring line holding none (whole tokens, in a row) is not."""
+        assert text_holds_hedge(hedged)
+        assert text_holds_hedge(hedged.replace("'", "’"))
+        assert not text_holds_hedge(near_miss)
 
     def test_case_punctuation_fillers_and_typographic_apostrophes_are_read_through(
         self,
@@ -2217,6 +2665,85 @@ class TestCheck1HedgeMark:
             assert render_note(reloaded, style) == render_note(note, style), style
             assert "[check:" not in render_note(reloaded, style, check_marks=False), style
 
+    @pytest.mark.parametrize(
+        ("cut", "marked"),
+        [
+            (",", [0, 1]),  # joined by a comma: the fact's line is marked too
+            (";", [0, 1]),
+            (" —", [0, 1]),
+            (".", [1]),  # after a full stop: only the hedge's own line
+            ("", [1]),  # a bare cut is not joined (the named residue)
+        ],
+    )
+    def test_the_hedge_scope_marks_a_line_joined_to_a_hedge(
+        self, cut: str, marked: list[int]
+    ) -> None:
+        """Validation-run6 plan D5 (scope (ii)): the patient's "It was about
+        40 mg," then "I think." is one hedged sentence, so both quoted lines
+        draw ONE ``hedged_source`` each, on their own spans."""
+        document = _document(
+            (f"It was about 40 mg{cut}", SPEAKER_1),
+            ("I think.", SPEAKER_1),
+            ("Okay, the knee is stable.", SPEAKER_2),
+        )
+        note = _note(
+            document,
+            (
+                _quoted(document, 0, "presenting_complaint", aid="t0"),
+                _quoted(document, 1, "presenting_complaint", aid="t1"),
+            ),
+        )
+        hedged = _hedged_codes(reconstruction_warnings(note, document))
+        # "It was about 40 mg" is five words; a spaced dash is a sixth.
+        spans = {0: SourceCoords(0, 0, 5 if cut.startswith(" ") else 4), 1: SourceCoords(1, 0, 1)}
+        assert hedged == [(f"t{index}", spans[index]) for index in marked]
+
+    def test_the_hedge_scope_never_crosses_speakers(self) -> None:
+        """The patient's comma-cut line followed by the CLINICIAN's hedge: not
+        joined (another speaker), and the clinician's own line is never
+        marked."""
+        document = _document(
+            ("It was about 40 mg,", SPEAKER_1),
+            ("I think.", SPEAKER_2),
+        )
+        note = _note(
+            document,
+            (
+                _quoted(document, 0, "presenting_complaint", aid="t0"),
+                _quoted(document, 1, "assessment", aid="t1"),
+            ),
+        )
+        assert _hedged_codes(reconstruction_warnings(note, document)) == []
+
+    def test_the_clinicians_joined_line_is_still_excluded(self) -> None:
+        """The scope widens WHICH words hedge a segment, never WHO is marked:
+        the confirmed clinician's own joined lines draw none, and with no
+        confirmed clinician both do."""
+        document = _document(
+            ("The knee is stable,", SPEAKER_2),
+            ("I think.", SPEAKER_2),
+        )
+        quoted = (
+            _quoted(document, 0, "objective_examination", aid="t0"),
+            _quoted(document, 1, "objective_examination", aid="t1"),
+        )
+        assert _hedged_codes(reconstruction_warnings(_note(document, quoted), document)) == []
+        unconfirmed = _note(document, quoted, clinician_speaker=None)
+        hedged = _hedged_codes(reconstruction_warnings(unconfirmed, document))
+        assert [aid for aid, _coords in hedged] == ["t0", "t1"]
+
+    def test_a_line_joined_to_an_unquoted_hedge_is_marked_through_check_note(self) -> None:
+        """Only the fact's line is in the note; its hedge was cut into the next
+        segment, which is left out. ``check_note`` still marks the fact's
+        line (D5's purpose: the doubt reaches the line the note carries)."""
+        document = _document(
+            ("It was about 40 mg,", SPEAKER_1),
+            ("I think.", SPEAKER_1),
+        )
+        bare = _note(document, (_quoted(document, 0, "presenting_complaint", aid="t0"),))
+        warnings = check_note(bare, document, _CHECK_CONFIG)
+        assert _hedged_codes(warnings) == [("t0", SourceCoords(0, 0, 4))]
+
     @pytest.mark.parametrize("case", HELD_OUT_CASES, ids=lambda case: case.case_id)
     def test_the_held_out_unsure_lines(self, case: HeldOutCase) -> None:
         """Validation-pass Task 0.9's reading rule: every case's unsure lines
@@ -2231,19 +2758,166 @@ class TestCheck1HedgeMark:
         else:
             assert got == case.unsure, case.case_id
 
-    def test_every_predicted_unsure_divergence_is_a_held_out_case(self) -> None:
-        assert set(_PREDICTED_UNSURE_DIVERGENCES) <= {c.case_id for c in HELD_OUT_CASES}
+    def test_every_predicted_unsure_divergence_is_a_case_of_its_set(self) -> None:
+        assert misfiled(_PREDICTED_UNSURE_DIVERGENCES_BY_SET) == []
+        counts = {name: len(cases) for name, cases in _PREDICTED_UNSURE_DIVERGENCES_BY_SET.items()}
+        assert counts == {
+            "heldout": 3,
+            "heldout-2": 10,
+            "heldout-3": 7,
+            "heldout-4": 6,
+            "heldout-5": 11,
+            "heldout-6": 7,
+        }
+        heldout = {c.case_id for c in held_out_set("heldout").all_cases()}
+        assert set(_UNSURE_PREDICTIONS_BEFORE_RUN6_0_9) <= heldout
+
+    def test_the_widened_hedges_changed_these_predictions_and_no_expectation(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Validation-run6 plan Task 0.9's lexicon-only reconciliation, both
+        ways: the dated history is EXACTLY the cases whose result under the
+        0.3.3 sixteen differs from today's, each with its 0.3.3 result (peer
+        round 14 PR-LOW-011); the case's expectation is unchanged (C2, C3),
+        and today's result is the expectation (resolved) or today's recorded
+        divergence."""
+        assert _UNSURE_PREDICTIONS_BEFORE_RUN6_0_9
+        # The dated record was made over the first held-out set (Task 0.11).
+        cases = {c.case_id: c for c in held_out_set("heldout").all_cases()}
+        today = {case_id: _held_out_unsure(case) for case_id, case in cases.items()}
+        monkeypatch.setattr(note_check_module, "HEDGE_PHRASES", _HEDGE_PHRASES_0_3_3)
+        before = {case_id: _held_out_unsure(case) for case_id, case in cases.items()}
+        monkeypatch.undo()
+        changed = {
+            case_id: (case.unsure, before[case_id])
+            for case_id, case in cases.items()
+            if before[case_id] != today[case_id]
+        }
+        assert changed == _UNSURE_PREDICTIONS_BEFORE_RUN6_0_9
+        for case_id, (expected, _predicted_0_3_3) in _UNSURE_PREDICTIONS_BEFORE_RUN6_0_9.items():
+            assert cases[case_id].unsure == expected, case_id
+            got = today[case_id]
+            if case_id in _PREDICTED_UNSURE_DIVERGENCES:
+                assert _PREDICTED_UNSURE_DIVERGENCES[case_id] == (expected, got), case_id
+            else:
+                assert got == expected, case_id
 
 
 _VALIDATION_CONFIG_DIR = Path(__file__).resolve().parents[2] / "validation" / "config"
 
 # Task 0.10's predicted unsure divergences under the frozen hedges (C3):
-# case id -> (the case's expected unsure lines, the frozen-hedge result).
-_PREDICTED_UNSURE_DIVERGENCES: dict[str, tuple[tuple[int, ...], tuple[int, ...]]] = {
-    "hld-19": ((3, 5), ()),  # both hedges are outside the frozen list
-    "hld-20": ((3, 5), (5,)),  # line 3's hedge is not a contiguous frozen phrase
-    "hld-21": ((3, 5), ()),  # both hedges are outside the frozen list
+# held-out set -> case id -> (the case's expected unsure lines, the
+# frozen-hedge result). Since validation-run6 Task 0.9 (2026-10-23) the
+# result is under the widened list; an entry it changed keeps its 0.3.3
+# value below. Keyed per set since Task 0.11; ``heldout-2``'s entries are
+# written in its Task 0.12 (2026-10-24).
+_PREDICTED_UNSURE_DIVERGENCES_BY_SET: dict[
+    str, dict[str, tuple[tuple[int, ...], tuple[int, ...]]]
+] = {
+    "heldout": {
+        "hld-19": ((3, 5), (3,)),  # line 5's hedge is still outside the list
+        "hld-20": ((3, 5), (5,)),  # line 3's hedge is not a contiguous frozen phrase
+        "hld-21": ((3, 5), ()),  # both hedges are outside the frozen list
+    },
+    # Task 0.12 (2026-10-24), read off the product before run 6 (the
+    # widened list): no hedge here is listed, and scope (ii) joins none.
+    "heldout-2": {
+        "h2-01": ((3,), ()),  # its hedge is outside the frozen list
+        "h2-03": ((1,), ()),  # the doubt is a separate line, its hedge unlisted
+        "h2-05": ((1,), ()),  # its hedge is outside the frozen list
+        "h2-08": ((7,), ()),  # its hedge is outside the frozen list
+        "h2-10": ((1,), ()),  # its hedge is outside the frozen list
+        "h2-12": ((2,), ()),  # the doubt is a separate line, its hedge unlisted
+        "h2-13": ((3,), ()),  # its hedge is outside the frozen list
+        "h2-15": ((1,), ()),  # its hedge is outside the frozen list
+        "h2-18": ((1, 6), (6,)),  # line 1's hedge is outside the frozen list
+        "h2-21": ((4,), ()),  # its hedge is outside the frozen list
+    },
+    # Task P.4 (2026-10-25), read off the product after run 6: no hedge here
+    # is listed.
+    "heldout-3": {
+        "h3-04": ((1,), ()),  # its hedge is outside the frozen list
+        "h3-10": ((6,), ()),  # a self-question, no hedge word
+        "h3-12": ((1,), ()),  # the doubt is a separate line, its hedge unlisted
+        "h3-14": ((3,), ()),  # its hedge is outside the frozen list
+        "h3-19": ((1,), ()),  # its hedge is outside the frozen list
+        "h3-20": ((1,), ()),  # its hedge is outside the frozen list
+        "h3-21": ((8,), ()),  # the doubt is a separate line, its hedge unlisted
+    },
+    # Validation-run7 Task P.4 (2026-11-04), read off the product after run 7: no
+    # hedge here is listed; ``h4-08``'s is, and it matches.
+    "heldout-4": {
+        "h4-01": ((6,), ()),  # its hedge is outside the frozen list
+        "h4-04": ((1,), ()),  # the doubt is a separate line, its hedge a bare modal
+        "h4-14": ((4,), ()),  # its hedge is outside the frozen list
+        "h4-15": ((3,), ()),  # its hedge is outside the frozen list (an idiom)
+        "h4-18": ((1,), ()),  # its hedge is outside the frozen list (an idiom)
+        "h4-22": ((4,), ()),  # a bare-modal hedge, outside the frozen list
+    },
+    # Validation-run8 Task P.3 (2026-11-07), read off the product after run 8: no
+    # hedge here is listed; ``h5-17``'s line holds one, and it matches.
+    "heldout-5": {
+        "h5-02": ((1,), ()),  # the doubt is a separate line, its hedge unlisted
+        "h5-04": ((1,), ()),  # its hedge is outside the frozen list
+        "h5-07": ((2,), ()),  # its hedge is outside the frozen list (a contraction)
+        "h5-08": ((4,), ()),  # the doubt is a separate line, its hedge unlisted
+        "h5-10": ((4,), ()),  # a bare-modal hedge, outside the frozen list
+        "h5-13": ((3,), ()),  # its hedge is outside the frozen list
+        "h5-14": ((4,), ()),  # a bare-modal hedge, outside the frozen list
+        # Answers-follow-question plan Task 1.1 (2026-11-17), read off the
+        # product: the hop joins the patient's uncued "maybe" reply (script
+        # line and segment 3) to the clinician's cue-routed question before it
+        # (segment 2, "did it start"), so its listed hedge is now marked too.
+        "h5-17": ((5,), (3, 5)),
+        "h5-19": ((1,), ()),  # the doubt is a separate line, its hedge unlisted
+        "h5-20": ((3,), ()),  # its hedge is outside the frozen list
+        "h5-22": ((2,), ()),  # its hedge is outside the frozen list
+    },
+    # Note-content-design Task P.5 (2026-11-10), read off the product after run
+    # 9: ``h6-12``'s lines 5 and 9 hold a listed hedge, and they match.
+    "heldout-6": {
+        "h6-01": ((7,), ()),  # its hedge has a word inside it, outside the frozen list
+        "h6-04": ((4,), ()),  # the doubt is a separate line, its hedge unlisted
+        "h6-09": ((5,), ()),  # its hedge is outside the frozen list (an idiom)
+        "h6-12": ((1, 5, 9), (5, 9)),  # line 1's hedge is outside the frozen list
+        # The doubt is a separate line; its hedge is listed, but that line is
+        # left out and the fact's line ends in a full stop, so none is joined.
+        "h6-15": ((5,), ()),
+        "h6-18": ((6,), ()),  # its hedge has words inside it, outside the frozen list
+        "h6-20": ((2,), ()),  # its hedge is outside the frozen list
+    },
 }
+_PREDICTED_UNSURE_DIVERGENCES = by_case(_PREDICTED_UNSURE_DIVERGENCES_BY_SET)
+
+
+# Validation-run6 plan Task 0.9 (2026-10-23), the dated record: case id ->
+# (its expected unsure lines, the 0.3.3 frozen-hedge result), for each
+# prediction the widened ``HEDGE_PHRASES`` changed. History only — no
+# expectation was edited.
+_UNSURE_PREDICTIONS_BEFORE_RUN6_0_9: dict[str, tuple[tuple[int, ...], tuple[int, ...]]] = {
+    "hld-19": ((3, 5), ()),  # both hedges were outside the 0.3.3 list
+}
+
+# The 0.3.3 sixteen (validation-pass plan Task 0.8), frozen history: the
+# list the dated record above was predicted under.
+_HEDGE_PHRASES_0_3_3: tuple[str, ...] = (
+    "i think",
+    "as far as i can tell",
+    "probably",
+    "maybe",
+    "perhaps",
+    "possibly",
+    "likely",
+    "unlikely",
+    "seems",
+    "seemed",
+    "i guess",
+    "i suppose",
+    "i suspect",
+    "i doubt",
+    "uncertain",
+    "to my knowledge",
+)
 
 
 def _held_out_unsure(case: HeldOutCase) -> tuple[int, ...]:
@@ -2408,3 +3082,324 @@ class TestCheckNote:
         source = Path(note_check_module.__file__).read_text(encoding="utf-8")
         assert "import logging" not in source
         assert "print(" not in source
+
+
+# ---------------------------------------------------------------------------
+# Note-content-design plan Task R.1 (D1, D2): the clinical register's fold and
+# its SEMANTIC invariants, which refuse at `note_check` import (the
+# STRUCTURAL ones refuse in `note_config` — `test_vocabularies_and_settings`).
+# ---------------------------------------------------------------------------
+
+# The two word sets as ratified on Task 0.1 (decided (a) 2026-11-08), pinned
+# EXACTLY: a word removed from either is a gate change, never a quiet edit.
+_RATIFIED_EXCLUSIONS = frozenset(
+    {
+        "sore", "ache", "tight", "stiff", "dull", "sharp", "numb", "swelling",
+        "aches", "aching", "burning", "heavy", "numbness", "shooting", "soreness",
+        "stabbing", "stiffness", "swollen", "throbbing", "tightness", "tingling",
+        "weak", "weakness",
+    }
+)
+_RATIFIED_ORDINARY_WORDS = frozenset(
+    {
+        "a", "i", "am", "an", "as", "at", "be", "by", "do", "go", "he", "hi", "if", "in",
+        "is", "it", "me", "my", "no", "of", "oh", "ok", "on", "or", "so", "to", "up", "us",
+        "we", "all", "and", "any", "but", "can", "for", "had", "has", "her", "him", "his",
+        "how", "its", "may", "not", "now", "off", "our", "out", "see", "she", "the", "too",
+        "was", "who", "why", "yes", "you", "yeah",
+        "add", "ant", "art", "flex", "glut", "hams", "met", "mob", "nags", "pa", "post",
+        "prom", "quads", "rot", "snags", "sob", "sup", "ta", "tens", "traps", "wad",
+        "ev", "hep", "hr", "lat", "med", "ot", "tp",
+    }
+)
+# Every shipped abbreviation whose folded form is an everyday word — D1's 23
+# and the 7 Task 0.1's audit found — each a regression case below.
+_ORDINARY_WORD_ABBREVIATIONS = (
+    "AS", "US", "SOB", "MET", "Post", "Traps", "Add", "Ant", "ART", "Flex", "Glut",
+    "Hams", "Mob", "NAGS", "PA", "PROM", "Quads", "Rot", "SNAGS", "Sup", "TA", "TENS",
+    "WAD",
+    "Ev", "HEP", "HR", "Lat", "Med", "OT", "TP",
+)
+
+
+def _fold(text: str) -> tuple[str, ...]:
+    return canonicalise(content_tokens(text))[0]
+
+
+def _matched_terms(text: str) -> list[str]:
+    return [match.entry.term for match in canonicalise(content_tokens(text))[1]]
+
+
+def _equivalent(
+    term: str, *phrases: str, klass: EquivalenceClass = "anatomy"
+) -> ClinicalEquivalent:
+    return ClinicalEquivalent(term, tuple(content_tokens(p) for p in phrases), klass)
+
+
+def _refuse(*entries: ClinicalEquivalent) -> None:
+    note_check_module._refuse_register_overlap(
+        _clinical_register(
+            entries, exclusions=REGISTER_EXCLUSIONS, ordinary_words=REGISTER_ORDINARY_WORDS
+        )
+    )
+
+
+class TestCanonicalise:
+    def test_a_term_and_its_phrases_expand_to_one_canonical_token_set(self) -> None:
+        canonical = ("lower", "back", "pain")
+        assert _fold("LBP") == _fold("lower back pain") == _fold("low back pain") == canonical
+        # The expansion, never the bare abbreviation.
+        assert "lbp" not in _fold("LBP")
+
+    def test_the_longest_match_wins(self) -> None:
+        # "straight leg raise" (SLR) sits inside "active straight leg raise"
+        # (ASLR); "range of motion" (ROM) inside "active range of motion".
+        assert _matched_terms("active straight leg raise") == ["ASLR"]
+        assert _matched_terms("straight leg raise") == ["SLR"]
+        assert _matched_terms("active range of movement") == ["AROM"]
+        assert _fold("AROM") == ("active", "range", "of", "motion")
+
+    def test_each_line_folds_alone_so_a_match_never_spans_two_lines(self) -> None:
+        assert register_matches(["lower back", "pain on sitting"]) == ()
+        [match] = register_matches(["lower back pain on sitting"])
+        assert match.entry.term == "LBP" and match.matched == ("lower", "back", "pain")
+
+    def test_an_interrupted_spoken_phrase_holds_a_prose_terms_expansion_as_a_set(self) -> None:
+        spoken = _fold("pain in my lower back")
+        assert spoken == ("pain", "in", "my", "lower", "back")  # nothing matched
+        assert set(_fold("LBP")) <= set(spoken)
+
+    def test_a_week_count_folds_to_its_numeral_on_both_sides(self) -> None:
+        # The raw `3/52` is date-SHAPED at the token classifier (the `3/5`
+        # prefix); once folded it never reaches rule (d) — `3` is a number.
+        assert note_check_module._protected_class("3/52") == "date"
+        assert _fold("3/52") == _fold("three weeks") == _fold("3 weeks") == ("3", "weeks")
+        assert note_check_module._protected_class("3") == "number"
+        assert _fold("1/52") == _fold("one week") == ("1", "week")
+
+    def test_every_duration_entry_expands_exactly(self) -> None:
+        words = (
+            "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+            "eleven", "twelve",
+        )
+        durations = [e for e in CLINICAL_EQUIVALENTS.entries if e.equivalence_class == "duration"]
+        assert [e.term for e in durations] == [f"{n}/52" for n in range(1, 13)]
+        for n, (entry, word) in enumerate(zip(durations, words, strict=True), start=1):
+            unit = "week" if n == 1 else "weeks"
+            assert entry.phrases == ((str(n), unit), (word, unit))
+            assert entry.canonical == (str(n), unit)
+            assert _fold(entry.term) == _fold(f"{word} {unit}") == (str(n), unit)
+
+    def test_days_and_months_are_not_entries(self) -> None:
+        assert canonicalise(("3/7",)) == (("3/7",), ())
+        assert canonicalise(("3/12",)) == (("3/12",), ())
+        # "a week" is not a duration phrase: "three times a week" stays as said.
+        assert _fold("three times a week") == ("three", "times", "a", "week")
+
+    def test_a_range_of_weeks_folds_only_its_last_count(self) -> None:
+        assert _fold("two to three weeks") == ("two", "to", "3", "weeks")
+
+    def test_case_is_folded_and_the_display_case_is_kept(self) -> None:
+        assert _fold("Lbp") == _fold("LBP") == _fold("lbp")
+        assert _fold("CX") == ("cervical",)
+        assert _matched_terms("lower back pain") == ["LBP"]  # the display term
+        # The fold reads the ONE tokenisation's output (lower case): a raw
+        # upper-case token is not a key.
+        assert canonicalise(("LBP",)) == (("LBP",), ())
+
+    def test_the_straddle_edge(self) -> None:
+        # The fold sees tokens, not punctuation: within ONE line a phrase may
+        # straddle a comma ("low back, pain on sitting" folds "low back pain").
+        # Pinned as the named edge: it folds identically on both sides of
+        # Check 5 (the same text either side), and never across two lines.
+        straddled = _fold("low back, pain on sitting")
+        assert straddled == ("lower", "back", "pain", "on", "sitting")
+        assert straddled == _fold("low back pain on sitting")
+        assert _matched_terms("low back, pain on sitting") == ["LBP"]
+        assert register_matches(["low back", "pain on sitting"]) == ()
+
+    def test_the_matched_terms_are_returned_in_order(self) -> None:
+        folded, matches = canonicalise(
+            content_tokens("Lower back pain for three weeks, SLR positive, LBP")
+        )
+        assert folded == (
+            "lower", "back", "pain", "for", "3", "weeks", "straight", "leg", "raise",
+            "positive", "lower", "back", "pain",
+        )
+        assert [(m.entry.term, m.matched) for m in matches] == [
+            ("LBP", ("lower", "back", "pain")),
+            ("3/52", ("three", "weeks")),
+            ("SLR", ("slr",)),
+            ("LBP", ("lbp",)),
+        ]
+
+    def test_register_matches_is_the_distinct_matches_over_lines(self) -> None:
+        matches = register_matches(["Three weeks of LBP", "three weeks", "No match here"])
+        assert [(m.entry.term, m.matched) for m in matches] == [
+            ("3/52", ("three", "weeks")),
+            ("LBP", ("lbp",)),
+        ]
+
+    def test_an_empty_input_folds_to_nothing(self) -> None:
+        assert canonicalise(()) == ((), ())
+        assert register_matches([]) == ()
+
+
+class TestRegisterSemanticInvariants:
+    def test_the_shipped_register_passes(self) -> None:
+        note_check_module._refuse_register_overlap(CLINICAL_EQUIVALENTS)
+
+    def test_the_two_ratified_sets_are_pinned_exactly(self) -> None:
+        assert REGISTER_EXCLUSIONS == _RATIFIED_EXCLUSIONS
+        assert len(REGISTER_EXCLUSIONS) == 23
+        assert REGISTER_ORDINARY_WORDS == _RATIFIED_ORDINARY_WORDS
+        assert len(REGISTER_ORDINARY_WORDS) == 86
+
+    def test_no_shipped_term_folds_to_an_ordinary_word(self) -> None:
+        for entry in CLINICAL_EQUIVALENTS.entries:
+            assert entry.term.lower() not in REGISTER_ORDINARY_WORDS, entry.term
+
+    @pytest.mark.parametrize("term", _ORDINARY_WORD_ABBREVIATIONS)
+    def test_an_ordinary_word_abbreviation_is_refused_as_a_term(self, term: str) -> None:
+        assert term in CLINICAL_ABBREVIATIONS
+        assert term.lower() in REGISTER_ORDINARY_WORDS
+        with pytest.raises(RuntimeError, match="broken install.*ordinary word"):
+            _refuse(_equivalent(term, "ankylosing spondylitis"))
+
+    def test_a_connective_term_is_refused_as_an_ordinary_word(self) -> None:
+        with pytest.raises(RuntimeError, match="ordinary word"):
+            _refuse(_equivalent("Via", "venous access"))
+
+    def test_a_filler_term_is_refused(self) -> None:
+        with pytest.raises(RuntimeError, match="filler"):
+            _refuse(_equivalent("Er", "emergency room"))
+
+    def test_a_speaker_frame_term_is_refused(self) -> None:
+        with pytest.raises(RuntimeError, match="speaker-frame"):
+            _refuse(_equivalent("PT", "physiotherapy"))
+
+    @pytest.mark.parametrize(
+        "entry",
+        [
+            _equivalent("NAD", "nothing abnormal detected", "no abnormality detected"),
+            _equivalent("O/E", "on examination"),
+            _equivalent("Nwx", "doesn't weight bear"),
+            _equivalent("Nil", "nil"),
+            _equivalent("PRX", "pain after exercise"),
+        ],
+        ids=["negation", "polarity-bearing", "contraction", "nil", "after"],
+    )
+    def test_a_polarity_token_is_refused(self, entry: ClinicalEquivalent) -> None:
+        with pytest.raises(RuntimeError, match="polarity"):
+            _refuse(entry)
+
+    def test_a_laterality_token_is_refused(self) -> None:
+        with pytest.raises(RuntimeError, match="laterality"):
+            _refuse(_equivalent("LKP", "left knee pain"))
+
+    @pytest.mark.parametrize("phrase", ["paracetamol", "atorvastatin", "mg dose"])
+    def test_a_medication_token_is_refused(self, phrase: str) -> None:
+        with pytest.raises(RuntimeError, match="medication"):
+            _refuse(_equivalent("Medx", phrase))
+
+    @pytest.mark.parametrize(
+        "entry",
+        [
+            _equivalent("TDS", "three times daily", klass="measure"),
+            _equivalent("Mar", "march", klass="measure"),
+            _equivalent("3/7", "three days", klass="measure"),
+        ],
+        ids=["number", "month", "date-shaped-term"],
+    )
+    def test_a_number_or_date_outside_the_duration_class_is_refused(
+        self, entry: ClinicalEquivalent
+    ) -> None:
+        with pytest.raises(RuntimeError, match="number or date"):
+            _refuse(entry)
+
+    def test_the_duration_class_alone_is_exempt_from_the_number_rule(self) -> None:
+        _refuse(_equivalent("3/52", "3 weeks", "three weeks", klass="duration"))
+
+    @pytest.mark.parametrize("word", sorted(_RATIFIED_EXCLUSIONS))
+    def test_an_excluded_word_is_refused(self, word: str) -> None:
+        with pytest.raises(RuntimeError, match="excluded word"):
+            _refuse(_equivalent("Xq", word))
+
+    def test_a_first_person_phrase_token_is_refused(self) -> None:
+        # The swap (Task R.0) runs on FOLDED tokens: a phrase holding the
+        # first person would hide it from rule (a).
+        with pytest.raises(RuntimeError, match="first-person"):
+            _refuse(_equivalent("MB", "my back"))
+
+    def test_a_first_person_term_is_refused(self) -> None:
+        # Review round 19 SEC-010: `mine` is first person but not an
+        # ordinary word of the ratified set, so only this rule refuses it.
+        assert "mine" not in REGISTER_ORDINARY_WORDS
+        with pytest.raises(RuntimeError, match="first-person"):
+            _refuse(_equivalent("Mine", "mineral deposit"))
+
+
+class TestRegisterImportCycle:
+    """Codex PR-MED-005: the structural invariants live in `note_config`, the
+    semantic ones in `note_check` (which imports `note_config`) — so each
+    module imports alone in a fresh interpreter with no cycle and no
+    refusal; and (codex round 8 PR-LOW-017) the import-time refusal itself is
+    pinned: a structurally valid but semantically forbidden register put in
+    `note_config`'s place before `note_check` is first imported fails that
+    import by name. Every child pins the graphics-card seams in ONE shared
+    source line (gpu-decoding plan C12; the inventory in
+    `test_frozen_runtime.py` counts one child here) — after `note_config`'s
+    import, which already loaded ``transcription``, so the pin changes
+    nothing the import proves."""
+
+    GPU_PIN = (
+        "import scribe_desktop.transcription as transcription; "
+        "transcription.cuda_device_count = lambda: 0; "
+        "transcription.preload_cuda_libraries = lambda device: None"
+    )
+
+    @staticmethod
+    def _child(*lines: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-c", "\n".join(lines)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+
+    @pytest.mark.parametrize("module", ["note_config", "note_check"])
+    def test_the_module_imports_alone(self, module: str) -> None:
+        result = self._child(f"import scribe_desktop.{module}", self.GPU_PIN)
+        assert result.returncode == 0, result.stderr[-2000:]
+
+    def test_a_forbidden_register_fails_note_checks_import_by_name(self) -> None:
+        """No seam is added to the production path: the child imports
+        `note_config` (the shipped file, structurally valid), replaces its
+        module attribute `CLINICAL_EQUIVALENTS` with the shipped register
+        plus one entry holding a laterality token (`_clinical_register`
+        builds without checking — the structural loader is not involved),
+        then imports `note_check`, whose own `from … import
+        CLINICAL_EQUIVALENTS` reads the replaced attribute. Removing the
+        import-time `_refuse_register_overlap(CLINICAL_EQUIVALENTS)` call
+        would let that import succeed."""
+        result = self._child(
+            "import sys",
+            "import scribe_desktop.note_config as note_config",
+            self.GPU_PIN,
+            "assert 'scribe_desktop.note_check' not in sys.modules, 'too late to inject'",
+            "from scribe_desktop.note import content_tokens",
+            "shipped = note_config.CLINICAL_EQUIVALENTS",
+            "forbidden = note_config.ClinicalEquivalent("
+            "'LKP', (content_tokens('left knee pain'),), 'symptom')",
+            "note_config.CLINICAL_EQUIVALENTS = note_config._clinical_register("
+            "(*shipped.entries, forbidden), exclusions=shipped.exclusions, "
+            "ordinary_words=shipped.ordinary_words)",
+            "import scribe_desktop.note_check",
+        )
+        assert result.returncode != 0
+        assert "too late to inject" not in result.stderr
+        assert (
+            "shipped clinical equivalent 'LKP' is refused (broken install): "
+            "it holds a laterality token"
+        ) in result.stderr

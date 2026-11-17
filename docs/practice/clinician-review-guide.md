@@ -7,11 +7,17 @@
 
 Draft 1 (2026-10-01; the shadow-recording lines added 2026-10-07 for the pilot build,
 approved by the practitioner the same day; the kept-recording line added 2026-10-08 for
-version 0.3.0, awaiting the practitioner's approval; the background-music, marked-line and
-number lines added 2026-10-12 for version 0.3.2, awaiting the practitioner's approval; the
+version 0.3.0, approved by the practitioner on 2026-11-10; the background-music, marked-line and
+number lines added 2026-10-12 for version 0.3.2, approved by the practitioner on 2026-11-10; the
 next-patient, removing-lines, self-correction and "unsure" lines added 2026-10-13 for
-version 0.3.3, awaiting the practitioner's approval). For the practitioner, before saving a
-note and before finalising it in Cliniko.
+version 0.3.3, approved by the practitioner on 2026-10-22; the left-out-line, wider-doubt and
+shorter next-patient-mark lines added 2026-10-24 for version 0.3.4, approved by the
+practitioner on 2026-11-04; the longer goodbye-and-greeting list lines added 2026-10-26 and
+the split-line line added 2026-10-27 for version 0.3.5, approved by the practitioner on
+2026-11-04; the misheard number, unit and abbreviation lines
+added after validation run 7 and the larger-model measurement, 2026-11, with no new
+version, approved by the practitioner on 2026-11-07, their counts refreshed with validation run 8's; the shadow-mode-off line added with them, approved by the practitioner on 2026-11-10 (its wording only: shadow mode stays on); the clinical-shorthand, suggested-section and suggested-next-patient lines and the renamed tick added 2026-11-09 for version 0.3.6, approved by the practitioner on 2026-11-10; the placed-answer and flagged-answer lines added 2026-11-17 for version 0.3.7, approved by the practitioner on 2026-11-17). For the
+practitioner, before saving a note and before finalising it in Cliniko.
 
 **Why this matters.** Ahpra's guidance on AI in healthcare ("Meeting your professional
 obligations when using AI in healthcare") makes you responsible for checking the accuracy
@@ -42,6 +48,17 @@ note.
 
 - Words the speech software was unsure of — and numbers and names — are marked like
   `[word?]`. Check every mark that matters clinically against what you remember.
+- **The speech software can mishear a number, a unit (milligrams, weeks) or an
+  abbreviation said letter by letter, and write a different one.** In the program's own
+  testing (161 invented consultations read aloud by computer voices, a few with a steady
+  hiss mixed in) 9 facts came out wrong this way: for 6 the line carried a mark —
+  `[word?]` on a word, or the line marked `[check: number]`, `[check: unsure]` or
+  `[check: possibly not speech]` — and 3 carried no mark at all. Real voices and accents
+  and everyday background sound were not measured, so the true rate may be higher. A
+  larger speech model was measured and did no better, so these marks and your reading are
+  the control. A mark does not point at the wrong word: `[check: number]` is on every
+  quoted number, and a `[word?]` may be on another word of the same line. Read every
+  number, unit and abbreviation against what you remember, marked or not.
 - A line that starts `[possibly not speech]` holds a short burst of words the app
   suspects may be music or noise, not speech — for example a few words packed in faster
   than ordinary talk that the software was also unsure of.
@@ -89,6 +106,16 @@ where each line came from: the transcript, something you typed, or your own pre-
    was taken back. It is not placed there under the assessment, diagnosis, advice or
    management plan headings, and a correction said any other way may be left out — the
    transcript shows it.
+   **From version 0.3.7 (approved 2026-11-17):** when you ask a question the
+   app placed under a heading, the other person's answer is usually placed straight after
+   it, under the same heading, even if none of your headings' phrases is in it — often
+   several lines, up to where someone else speaks. Read it as carefully as any line: the answer
+   stays under your question's heading even where it belongs elsewhere; if the speakers
+   were mixed up, a line of yours may be placed as the answer; a bare "No" means nothing
+   without its question; and anything the patient asks you not to write down is placed
+   too — remove it. It is never placed under the assessment, diagnosis, advice or
+   management plan headings. If the app did not spot a next patient, the next patient's
+   answer can be placed this way: check the end of the transcript.
 3. **Pre-filled lines** from your own settings are marked as pre-filled. Remove any that
    are not true for this appointment; Save confirms the rest.
 4. **Marked lines.** A line quoted from the transcript that holds a number is marked
@@ -96,45 +123,124 @@ where each line came from: the transcript, something you typed, or your own pre-
    `[check: possibly not speech]` — after the line in the Clean clinical style, inside its
    label in Verbatim, and at the front of its row when you edit the note (a prose style
    says how many of a section's lines are marked). Check each one against the transcript:
-   remove anything that was not said, keep the rest. Each kind has its own review warning
+   remove anything that was not said, keep the rest. A misheard number, unit or
+   abbreviation is the known kind of error (Reading the transcript, above): check each
+   marked line against the transcript AND against what you remember, because the
+   transcript can be wrong too. Each kind has its own review warning
    ("A quoted line contains a number", "A quoted line may be music or noise, not
    speech") that **"Acknowledge all review warnings" does not clear** — press its own
    Acknowledge. Most notes quote a number, so most notes need that click before you can
    save. A line someone other than you said with words of doubt ("I think", "probably",
-   "maybe", "I guess" and a few others) is marked `[check: unsure]` the same way, with
+   "maybe", "I guess", "I'm not sure", "I don't know", "I reckon" and others) is marked
+   `[check: unsure]` the same way, with
    the review warning "A quoted line says the speaker was unsure": check that the note
-   does not state as fact what they were unsure of. "Acknowledge all review warnings"
-   does clear that one, and doubt said in other words ("not sure", "I don't know") is
-   not marked. The copied note and the draft written to Cliniko leave the check marks out.
+   does not state as fact what they were unsure of. When the speech software split one
+   sentence of theirs into two lines at a comma (or a semicolon, colon or long dash), and the
+   words of doubt are in one half, both halves are marked. "Acknowledge all review
+   warnings" does clear that one. Doubt said in other words (for example "not too sure" or
+   "I dunno"), or shown only by tone, is not marked, and words of doubt in a separate
+   sentence (after a full stop) mark only their own line. The copied note and the draft written to Cliniko leave the check marks out.
 5. **The note stops where a new patient may have arrived.** When the Review screen
    named a possible next patient (above) and you generated anyway, the note leaves out
    every line from there on, and the review warning "The note stops where a new patient
    may have arrived" is shown. In the line list under **Edit the note**, those lines are
-   marked `[after possible next patient]`. If any of them belongs to this patient — the
+   marked `[next patient?]`. If any of them belongs to this patient — the
    goodbye and greeting were part of this consultation — add it back with **Add line to
    section**. If they are another patient's, use **Cancel review and regenerate**, then
    remove them on the Review screen. This warning, too, is cleared only by its own
-   Acknowledge. The app recognises only a few common goodbyes and greetings, so a next
-   patient greeted in other words is not caught: check the end of every transcript.
+   Acknowledge. The app recognises only a set list of common goodbyes and greetings, so a
+   next patient greeted in other words is not caught: check the end of every transcript.
+   From version 0.3.5 the list is longer and includes everyday words you may also say
+   during a visit, such as "thank you", "see you" and "how are you doing", so a goodbye
+   and then a greeting within one consultation may stop the note early more often. A
+   single greeting can now do it too: if someone joins you partway through and you say
+   "Oh, nice to see you, come on in", the note may stop there. Add those lines back as
+   above. The warning shown while you record that a new consultation may have started
+   uses the same list, so it can appear more often too — for example after "Nice to see
+   you, come on in" at the start of a visit. It changes nothing by itself, and it
+   appears only once per recording: if it has already appeared, it will not appear
+   again for a later new patient in the same recording.
 6. **Blocking warnings must be fixed** before you can save — for example a symptom the
    transcript negates, or a dose in clear conflict with it. **Review warnings must be
    read and acknowledged** — for example most other dose differences, a left/right
    difference, or a side, number, dose, "not" or medicine someone said (or a name you
    said) that the note left out; that last warning, too, is cleared only by its own
-   Acknowledge, and it ignores words marked as possibly not speech. The checks are a
-   safety net, not a guarantee: they look for particular kinds of mismatch and cannot
-   tell you the note is complete or correct.
-7. **Writing styles.** If you use a prose style (Narrative or Own voice), the app turns
+   Acknowledge, and it ignores words marked as possibly not speech. A whole line you said,
+   with none of those words, that the note leaves out — advice, a plan, a safety-net line that none of your
+   headings' phrases picked up — has its own review warning, "A line you said is not in
+   the note", also cleared only by its own Acknowledge. Tick **Show flagged or suggested
+   lines only** (called **Show flagged lines only** before version 0.3.6) under **Edit the
+   note** to find these lines (each is marked `[flagged]`), and add any that belongs with
+   **Add line to section**. From version 0.3.5, when the speech software
+   split one line of yours into pieces at a comma (or a semicolon, colon or long dash), the
+   warning counts that line once, however many pieces it has, and every piece is still
+   marked `[flagged]`: add back each piece that belongs. A line split with no comma or
+   other mark is still counted once for each piece. A short reply such as "okay" can raise it
+   too: acknowledge it once you have looked. A line of yours that the app labelled as the
+   other speaker's raises no such warning, and neither does a line whose words are all
+   marked as possibly not speech, so still read the transcript through. **From version
+   0.3.7 (approved 2026-11-17):** when a left-out line of yours is a question,
+   the other person's answer after it is marked `[flagged]` too, and so is the answer to a
+   question you added back yourself; the hint says "if it was a question, its answer is
+   flagged too". A flagged answer has no warning of its own and never stops you saving:
+   add it if it belongs. A flagged line can be one that must stay out — small talk, or
+   the next patient's words — so leave those out. The
+   checks are a safety net, not a guarantee: they look for particular kinds of mismatch
+   and cannot tell you the note is complete or correct.
+7. **Suggested headings (from version 0.3.6).** For the lines the note left out, the app
+   asks the language model on this computer which heading each one may belong under —
+   whatever writing style you use. After the note appears (for a long consultation this
+   can take a few minutes; the line under the note says "Suggesting sections for …"), a
+   line may be marked `[suggested: <heading>]` in the line list under **Edit the note**,
+   and the count line says how many are. Choosing that line picks its suggested heading
+   for you; nothing goes into the note until you press **Add line to section**, and then
+   only that line's own words from the transcript, as when you add any line — so the app
+   still only takes words from the transcript. A suggestion is a guess: check the heading
+   and the line against the transcript, and leave the line out if it does not belong. A
+   line someone else said is never suggested for your assessment, diagnosis, advice or
+   plan. A suggestion never stops you saving, and adding a suggested line of yours teaches
+   the app a phrase just as adding any line of yours does (when learning is on).
+   **A suggested line may be the next patient's.** The app holds suggestions back only
+   after a change of patient it has spotted (the lines marked `[next patient?]`); where it
+   spotted none, a line from the next patient can be suggested like any other line, with
+   no `[next patient?]` mark. In the program's own testing on invented consultations,
+   with every suggestion added, a next patient's line reached the note three times this
+   way, and twice a misheard line that had been left out reached it. Check the end of the
+   transcript before adding a suggested line near it, and read a suggested line's numbers
+   and names as carefully as any other. In a long consultation some lines may be counted
+   "not assessed": they stay as they were — left out, with any warning they already had.
+   Many left-out lines have no warning at all, so still read the whole transcript.
+8. **Writing styles.** If you use a prose style (Narrative or Own voice), the app turns
    your confirmed lines into sentences on this computer and checks each section against
    them; a section that fails the check is shown as plain lines instead, and you
    acknowledge it. Read the prose as carefully as the lines — the check is not a
-   certificate that the meaning survived.
-8. **Fill the gaps yourself.** Headings the app had nothing for stay empty. Beyond your
+   certificate that the meaning survived. From version 0.3.6 a prose section may use
+   clinical shorthand for a phrase that was said, but only from the fixed list you
+   approved on 2026-11-08 — an abbreviation for its usual words ("LBP" for "lower back
+   pain"), a clinical name for a body part ("patella" for "kneecap") or weeks written as
+   "3/52" — and, where someone other than you said a line in that section, it may open
+   "Pt reports" or "The patient reports" in place of their "I" or "my". Words for how
+   something feels ("sore", "tight", "swelling" and the like) are never swapped. The
+   check treats the shorthand and its words as the same, so it cannot tell you that the
+   shorthand fits, and it does not check who did what: "Pt reports" may be attached to a
+   line you said in the same section ("Pt tested the knee" for your "I tested the knee"),
+   or to a carer's, parent's or interpreter's words, and a week count written "3/52" may
+   have traded places with another number in the section. Because the check reads an
+   abbreviation as its separate words, it also cannot tell one shorthand from a close
+   relative using the same words: "UMN" and "LMN", or "FWB", "PWB" and "NWB", can swap
+   with the words around them ("LMN signs, upper limb" for "UMN signs, lower limb";
+   "PWB, full ROM" for "FWB, partial ROM") — read nerve-sign and weight-bearing
+   shorthand against the transcript every time. "Pt" or "patient" may also appear in
+   the middle of a sentence, not only at its start. And two abbreviations on the list
+   have another meaning: "Inv" means inversion here, never investigations, and "AP" means
+   anteroposterior, never assessment and plan. Clean clinical, the default, uses none
+   of this.
+9. **Fill the gaps yourself.** Headings the app had nothing for stay empty. Beyond your
    own proposals and pre-filled text, it never fills in examination findings, a
    diagnosis, treatment or advice that is not in the transcript — but words the speech
    software invented over background sound are in the transcript (step 2), so check
    every line, marked or not.
-9. **Save** only when the note is right. Save is what makes the note copyable and
+10. **Save** only when the note is right. Save is what makes the note copyable and
    writable to Cliniko.
 
 ## Writing it into Cliniko
@@ -167,6 +273,9 @@ where each line came from: the transcript, something you typed, or your own pre-
   shown, the note's text cannot be selected (a line you open to edit can be changed, but
   not copied or cut), and saving it teaches the app nothing. Review
   and score it as the pilot asks, then write your own note in Cliniko the usual way.
+  Once shadow mode is turned off (after a validation run passes), Write and Copy
+  work, and your review is the only check between the app's draft and your Cliniko draft
+  note: the checks above are what the testing relied on.
 
 ## If something looks wrong
 

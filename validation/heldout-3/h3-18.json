@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "encounter_id": "h3-18",
+  "appointment_type": "chronic",
+  "axes": ["end_and_new_patient", "negation", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "How's the Achilles been from last time?"},
+    {"role": "patient", "text": "From last time it's less stiff in the mornings, no tingling or anything, just tight."},
+    {"role": "clinician", "text": "Let me have a look. The thickening halfway up the tendon is a little smaller, and it's less tender to squeeze."},
+    {"role": "clinician", "text": "The GP letter says you're on amitriptyline 10 milligrams at night for sleep."},
+    {"role": "patient", "text": "That's right, ten at bedtime."},
+    {"role": "clinician", "text": "Carry on with the heel drops off the step, three sets of fifteen, with a backpack on now, five kilos to start."},
+    {"role": "clinician", "text": "Thank you, that's all for today. The nurse will book your next appointment."},
+    {"role": "patient", "text": "Thanks very much."},
+    {"role": "clinician", "text": "Next patient, please. Mr Abara? Good morning, I'm one of the physiotherapists."},
+    {"role": "next_patient", "text": "Morning. I've been sent about my hip replacement, it's been six weeks and I still can't put my socks on."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["less", "stiff", "in", "the", "mornings"], "line": 1, "material": true},
+    {"kind": "negation", "tokens": ["no", "tingling", "or", "anything"], "line": 1, "material": true},
+    {"kind": "dose", "tokens": ["amitriptyline", "10", "milligrams", "at", "night"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["five", "kilos", "to", "start"], "line": 5, "material": true},
+    {"kind": "absent", "tokens": ["still", "can't", "put", "my", "socks", "on"], "line": 9, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

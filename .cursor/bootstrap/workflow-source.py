@@ -9,7 +9,11 @@ transaction's inventory / snapshot / delta / restore pipeline
 DELTA (the actual delta minus gitignored paths) -> STAGED set; this
 helper COMPUTES inventory/snapshot/delta only -- the check-ignore
 split, staging, and the empty-COMMITTABLE routing stay CALLER-owned
-per the update SKILL's Step 9).
+per the update SKILL's Step 9). The ACTUAL DELTA is the 'changed' /
+'created' / 'deleted' lines 'delta' prints. An 'eol-only' line -- a
+file that differs from the snapshot only in CRLF/LF line endings -- is
+printed beside it and belongs neither to the ACTUAL DELTA nor to the
+COMMITTABLE DELTA; what the caller does with such a path is Step 9's.
 
 Both installed skills CALL this helper instead of re-implementing any of
 those rules; the source repo's sync verifier reuses the same grammar.
@@ -47,7 +51,9 @@ Subcommands (contract=1):
   marker-write --target <dir> --version <v> --identity <id>
                                        write '<v> <id>' + read-back verify
   pin --state <dir>                    copy THIS file to <state>/pinned-helper.py
-                                       (0600, state dir 0700); print its sha256
+                                       (0600, state dir 0700 -- where the host
+                                       enforces modes; see State format);
+                                       print its sha256
   inventory --bootstrap <file> --target <dir> --state <dir>
                                        TOUCH inventory -> state: the UNION of
                                        manifest targets, discovered SECTION
@@ -64,7 +70,12 @@ Subcommands (contract=1):
                                        before the first real write)
   delta --state <dir>                  print 'changed|created|deleted <path>'
                                        for every inventoried path whose
-                                       post-state differs from the snapshot
+                                       post-state differs from the snapshot,
+                                       or 'eol-only <path>' when a file
+                                       differs only in CRLF/LF line endings
+                                       (same mode); then 'delta-ok count=N',
+                                       N counting the first three kinds --
+                                       'eol-only' lines are NOT counted
   restore --state <dir>                restore every inventoried path from the
                                        snapshot (bytes/type/mode identical;
                                        created files removed, created dirs
@@ -74,7 +85,8 @@ Subcommands (contract=1):
 Exit codes (contract=1):
   0 success            1 operation/verification failure
   2 usage/state error  4 malformed version/header/marker/bootstrap input
-  5 containment refusal (symlinked component, non-regular target)
+  5 containment refusal (symlinked or reparse-point component -- a Windows
+    junction, for example -- or a non-regular target)
 Note: marker-read is a state QUERY -- printing 'state=malformed ...'
 with exit 0 IS its successful result (the caller routes on the printed
 state); exit 4 applies to malformed INPUT arguments (e.g. marker-write
@@ -86,7 +98,11 @@ target, bootstrap, marker_path, inventory[], snapshot{path: {exists,
 type, mode, size, sha256}}, dirs_preexist{dir: bool}; payload bytes at
 <state>/blobs/<sha256> (0600). Temp copies and snapshot state carry
 restrictive permissions and are removed by 'cleanup' on success and on
-restored failure alike.
+restored failure alike. Every mode this docstring names (0600, 0700,
+"restrictive") holds where the host enforces POSIX modes. On a
+Windows-native host they are NOT enforced -- os.chmod sets only the
+read-only bit there -- and the protection is that of the directory the
+caller put the state under (the user profile's temp directory).
 
 Grammar: a version is EXACTLY TWO unsigned decimal components in
 canonical decimal spelling -- no leading zeros, no third component
@@ -277,8 +293,18 @@ def read_marker(target: Path):
         return "malformed", None, None, "unreadable marker: " + str(e)
     # Framing: exactly one line with ONE optional trailing newline --
     # extra lines, blank lines, or other surrounding whitespace are
-    # malformed, never silently normalized away.
-    content = raw[:-1] if raw.endswith("\n") else raw
+    # malformed, never silently normalized away. v45.0 (T1.7, D25): ONE
+    # trailing CRLF counts as that newline -- a checkout under
+    # core.autocrlf=true (Git for Windows' default) may hand this reader a
+    # CRLF-terminated marker, and the version grammar below is exact. A CR
+    # anywhere else (a bare trailing CR, a CR before a second newline) stays
+    # malformed.
+    if raw.endswith("\r\n"):
+        content = raw[:-2]
+    elif raw.endswith("\n"):
+        content = raw[:-1]
+    else:
+        content = raw
     if not content or "\n" in content:
         return "malformed", None, None, ("marker must be exactly one line "
                                          "with one optional trailing newline")
@@ -386,22 +412,42 @@ def payload_paths(text: str):
 
 def safe_relpath(path: str):
     p = Path(path)
-    if p.is_absolute() or ".." in p.parts or not p.parts:
+    # p.anchor (drive + root) is tested beside is_absolute(): on Windows a
+    # rooted path without a drive ('/tmp/x') or a drive-relative one
+    # ('C:x') is NOT absolute to pathlib, yet joining it to the target
+    # leaves the target.
+    if p.is_absolute() or p.anchor or ".." in p.parts or not p.parts:
         return None
     return p
 
 
 # ---------------------------------------------------------- containment ----
 
+# Windows FILE_ATTRIBUTE_REPARSE_POINT -- set on a directory JUNCTION (and
+# every other reparse point), whose lstat reports a directory with the link
+# bit CLEAR. A POSIX stat result has no st_file_attributes, so the test
+# reads 0 there.
+_FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+
+
+def _is_redirect(st):
+    """A symlink OR a Windows reparse point (a junction, for example): the
+    one "this component redirects" test the containment walk applies -- the
+    link bit alone would admit a junction."""
+    return stat.S_ISLNK(st.st_mode) or bool(
+        getattr(st, "st_file_attributes", 0) & _FILE_ATTRIBUTE_REPARSE_POINT)
+
+
 def containment_walk(target: Path, relpaths):
     """No-follow lstat walk over every write path (fail-closed).
 
-    Returns a list of 'path: reason' violation strings. A symlinked final
-    component or ancestor, or an existing non-regular write target, is a
-    violation -- lexical checks are not containment, and the extractor's
-    own open() follows links, so an external referent could otherwise
-    change. Deliberate workflow-dir symlinks get a manual-remediation
-    pause upstream, never silent traversal.
+    Returns a list of 'path: reason' violation strings. A symlinked or
+    reparse-point (a Windows junction, for example) final component or
+    ancestor, or an existing non-regular write target, is a violation --
+    lexical checks are not containment, and the extractor's own open()
+    follows links and junctions, so an external referent could otherwise
+    change. Deliberate workflow-dir symlinks or junctions get a
+    manual-remediation pause upstream, never silent traversal.
     """
     violations = []
     root = target.resolve()
@@ -423,8 +469,10 @@ def containment_walk(target: Path, relpaths):
                                   + " (" + str(e) + ")")
                 break
             is_final = i == len(parts) - 1
-            if stat.S_ISLNK(st.st_mode):
-                violations.append(rel + ": symlinked "
+            if _is_redirect(st):
+                violations.append(rel + ": "
+                                  + ("symlinked" if stat.S_ISLNK(st.st_mode)
+                                     else "reparse-point") + " "
                                   + ("final component" if is_final
                                      else "ancestor") + " at " + str(cur))
                 break
@@ -569,8 +617,28 @@ def cmd_verify_containment(state_dir: Path) -> int:
     return EXIT_OK
 
 
-def compute_delta(data):
-    """Return (kind, rel) pairs where post-state differs from the snapshot."""
+def _eol_only(p: Path, pre, blobs) -> bool:
+    """True when `p` equals its snapshot blob once CRLF is read as LF on
+    both sides (either direction; a lone CR is not normalised). A blob that
+    is missing or unreadable answers False -- the path stays 'changed'."""
+    if blobs is None:
+        return False
+    try:
+        old = (Path(blobs) / pre["sha256"]).read_bytes()
+        new = p.read_bytes()
+    except (OSError, KeyError, TypeError):
+        return False
+    return old.replace(b"\r\n", b"\n") == new.replace(b"\r\n", b"\n")
+
+
+def compute_delta(data, blobs=None):
+    """Return (kind, rel) pairs where post-state differs from the snapshot.
+
+    kind is 'changed', 'created', 'deleted' or 'eol-only'. 'eol-only'
+    replaces 'changed' for a regular file that was a file in the snapshot,
+    kept its mode bits, and differs from the snapshot blob (under `blobs`)
+    only in CRLF/LF line endings. Without `blobs` no path is 'eol-only'.
+    """
     target = Path(data["target"])
     delta = []
     for rel in data["inventory"]:
@@ -587,10 +655,15 @@ def compute_delta(data):
             delta.append(("deleted", rel))
         elif exists and pre["exists"]:
             if stat.S_ISREG(st.st_mode) and pre.get("type") == "file":
+                same_mode = (stat.S_IMODE(st.st_mode)
+                             == stat.S_IMODE(pre["mode"]))
                 if (st.st_size != pre["size"]
                         or sha256_bytes(p.read_bytes()) != pre["sha256"]
-                        or stat.S_IMODE(st.st_mode) != stat.S_IMODE(pre["mode"])):
-                    delta.append(("changed", rel))
+                        or not same_mode):
+                    if same_mode and _eol_only(p, pre, blobs):
+                        delta.append(("eol-only", rel))
+                    else:
+                        delta.append(("changed", rel))
             elif stat.S_ISREG(st.st_mode) != (pre.get("type") == "file"):
                 delta.append(("changed", rel))
     return delta
@@ -602,10 +675,13 @@ def cmd_delta(state_dir: Path) -> int:
         return fail(EXIT_USAGE, err)
     if not data.get("snapshot"):
         return fail(EXIT_USAGE, "no snapshot in state (run snapshot first)")
-    delta = compute_delta(data)
+    _, blobs = state_paths(state_dir)
+    delta = compute_delta(data, blobs)
     for kind, rel in delta:
         print(kind + " " + rel)
-    print("delta-ok count=" + str(len(delta)))
+    # 'eol-only' lines are printed, never counted: count= is the ACTUAL DELTA.
+    counted = [kind for kind, _ in delta if kind != "eol-only"]
+    print("delta-ok count=" + str(len(counted)))
     return EXIT_OK
 
 
@@ -644,8 +720,9 @@ def cmd_restore(state_dir: Path) -> int:
                 dp.rmdir()
         except OSError:
             pass  # non-empty or busy: leave it; the delta check reports state
-    # Verify: post-restore state must match the snapshot exactly.
-    residue = compute_delta(data)
+    # Verify: post-restore state must match the snapshot exactly -- an
+    # 'eol-only' pair is a residue like any other kind.
+    residue = compute_delta(data, blobs)
     for kind, rel in residue:
         print("FAIL residue " + kind + " " + rel, file=sys.stderr)
     if failures or residue:
