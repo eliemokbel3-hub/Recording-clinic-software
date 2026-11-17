@@ -1852,7 +1852,7 @@ Each document's line endings are kept (C8; check `git ls-files --eol` first). No
     - F-155 gets a dated control line and stays `controlled` (D9);
     - a row per accepted residue the measurement shows, within the closed vocabularies (`test_pilot_docs.py`).
   - `AGENTS.md`, `CHANGELOG.md`, the lifecycle state and the Retained Follow-Up Items, then `/document`.
-  - The practitioner deletes `C:\afq-sets\` (synthetic only).
+  - The practitioner deletes `C:\afq-sets\` (synthetic only). Done 2026-11-17 (see the Retained Follow-Up Items).
   - Done when: the plan's lifecycle state reads Completed (or Completed — Follow-ups Retained).
   - Recorded 2026-11-17 (leg px1):
     - The findings register (`docs/pilot/findings-register.md`), within `test_pilot_docs.py`'s closed vocabularies, month-only and id-free:
@@ -1883,6 +1883,7 @@ Each document's line endings are kept (C8; check `git ls-files --eol` first). No
 - **The Deferred items above** stay deferred, unchanged: a left-out question added from the Line list does not bring its reply; a long reply's later lines get no mark; the single derived question-and-answer line; the window-edge carry and "add all suggested lines".
 - **The speaker-labelling observation from the P.3 smoke**: a first take put both voices under one label, and the second still put one clinician fragment under the other. This is the existing Known Issue (`AGENTS.md`, "Diarization quality tuning", with a dated 2026-11-17 observation), not a new item; its revisit point is unchanged.
 - **The practitioner deletes `C:\afq-sets\`** (synthetic only; the agent must not, C7). The git-ignored scratch under `.cursor/loops/` (`afq_lib.py`, the measurement scripts and their outputs) may go with it.
+  - DONE 2026-11-17: the practitioner deleted `C:\afq-sets\` from a normal terminal (930 files, about 0.3 GB, synthetic only). The close commits `5e83b4a`, `4298c85` and `e77206b` were pushed the same day on the practitioner's "Commit and push (Recommended)". The git-ignored scratch under `.cursor/loops/` is kept.
   - Risk if deferred: minor (disk space).
   - Revisit by: the next session.
 - **The close commit and the push, on the practitioner's word** (C7). `5e83b4a` (F.3's record) is committed and not pushed; P.3's and P.5's records are uncommitted. The composer runs the suite gate and the codex document pass first.
