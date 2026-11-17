@@ -647,6 +647,7 @@ Named now, and not this plan's to decide: if even the best harm-free form is not
   - Practicality: 2 HIGH (the real-speech script reviewed and dry-run before it runs → Task 0.4a and C5; which cue file → the practitioner's "Both"); 6 MED and 3 LOW (the script's shape, the simulation recipe, the comparison mechanism, Phase 1's dependence on 0.6, the Phase M comparison, the host split, time, the no-change proof, the scratch's own document entry) → applied.
   - Simplicity: adopted — join and credit measured separately then combined; a joined answer may be followed by one carried piece (no separate comma variant; made its own guarded row of D1's table by peer round 1); S as a counter; V4t text-only; a report line instead of a new column; later phases in outline; Phase M as a replay on the improvement exit; the Phase M decision replaced by a stop rule. Kept as planned — the scratch location, the new helper, the persistence rule, the version order, the install decision after the build.
 - Last plan sync: 2026-11-15
+- Retro report: .cursor/loops/retro-answers-follow-question-20261115-192900-2af4-2026-11-17.md (2026-11-17)
 
 ## Review History
 - 2026-11-15 round 1: 0 CRIT / 1 HIGH / 7 MED / 1 LOW; skew=plan peer-review (codex); action=all nine verified and applied
