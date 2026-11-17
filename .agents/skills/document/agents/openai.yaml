@@ -15,6 +15,11 @@
 # (allow_implicit_invocation: true), while $push, $end-session,
 # $create-branch, $review-loop, and $document-review stayed explicit-only
 # (allow_implicit_invocation: false). $create-branch itself was retired in
-# v32.0 (branch naming folded into project-workflow.mdc).
+# v32.0 (branch naming folded into project-workflow.mdc). In v34.0 the
+# remaining locks were lifted: all eleven side-effecting Skills ($push,
+# $end-session, $review-loop, $document-review, $peer-loop, $execute-loop,
+# $update-workflow, $close-run, and the three above) are agent-invocable
+# (allow_implicit_invocation: true), each protected by its own in-skill
+# gates.
 policy:
   allow_implicit_invocation: true

@@ -1,8 +1,11 @@
 # Codex Skill metadata for $end-session.
 #
-# End-session is side-effecting: it can update AGENTS.md and CHANGELOG.md
-# and optionally stage, commit, and push git changes. Require explicit
-# $end-session invocation so Codex does not run closeout actions without
-# the user asking for them.
+# End-session is side-effecting: it updates AGENTS.md and CHANGELOG.md
+# and optionally stages, commits, and pushes git changes. As of v34.0,
+# implicit ($end-session) invocation is permitted so an agent can close
+# out a session when the user asks for it; safety comes from the in-skill
+# gates (the closeout choice — nothing is committed or pushed until the
+# user picks a mode and a message), not from invocation-locking. The
+# notes are edited before that choice. It can still be invoked explicitly.
 policy:
-  allow_implicit_invocation: false
+  allow_implicit_invocation: true

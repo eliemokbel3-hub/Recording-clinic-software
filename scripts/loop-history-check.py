@@ -1282,7 +1282,25 @@ def self_test():
     return failed == 0
 
 
+def _configure_std_streams():
+    """v45.0 (T2.5; PR-MED-002 round 8): UTF-8 + LF on this entrypoint's own
+    text streams, guarded — the success line prints the FULL plan path and the
+    census line the plan's basename; under Windows Python's piped cp1252 a
+    non-cp1252 character in an admitted plan or checkout path would otherwise
+    raise at print and turn a valid census into the launcher's `baseline`
+    refusal. The parser and the exit semantics are untouched."""
+    for name in ("stdout", "stderr"):
+        s = getattr(sys, name, None)
+        if s is None or not hasattr(s, "reconfigure"):
+            continue
+        try:
+            s.reconfigure(encoding="utf-8", newline="\n")
+        except Exception:
+            pass
+
+
 def main(argv):
+    _configure_std_streams()
     args = list(argv[1:])
     phase_close = False
     census_flag = False

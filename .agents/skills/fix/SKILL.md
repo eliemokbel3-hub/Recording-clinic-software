@@ -365,7 +365,11 @@ For each confirmed finding:
    per-finding update — the tuple block is round state, not scratch,
    and /fix owns the copy (the composer routes; it never edits round
    records on /fix's behalf). No tuple block present = nothing extra
-   owed.
+   owed. On `/execute-loop`'s verify-then-fix leg (v47.0) the SAME
+   activation wrote that block a moment earlier, before its first
+   edit, and the copy duty is unchanged: the block is complete before
+   /fix starts, and /fix updates its decision lines as it applies
+   each finding.
 
    **Not reproducible decision (v22).** If /fix attempts the fix but
    cannot reproduce the underlying issue — the finding appears to

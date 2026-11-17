@@ -17,7 +17,8 @@ field names, nesting, and status vocabulary are normative; values illustrate):
   "probe_schema": 1,
   "generated": "2026-07-10T13:20:00+10:00",
   "host": {"platform": "linux", "is_wsl": true, "python": "3.12.3"},
-  "capabilities": ["profile-dir-filter"],
+  "capabilities": ["profile-dir-filter", "week-model", "org-id", "print-only",
+                   "codex-homes", "no-session-persistence"],
   "codex": {
     "status": "ok",
     "error": null,
@@ -37,7 +38,19 @@ field names, nesting, and status vocabulary are normative; values illustrate):
               "session_pct": 12, "session_resets": "2026-07-11T02:40+10:00",
               "session_resets_at": 1783622400,
               "week_pct": 42, "week_resets": "2026-07-16T14:00+10:00",
-              "week_resets_at": 1784095200}
+              "week_resets_at": 1784095200},
+    "accounts": [
+      {"home": "/home/user/.codex", "is_default": true, "status": "ok",
+       "error": null, "email": "user@example.com", "plan": "pro",
+       "account_id": "5b2e0c1d-0000-4a8e-9f10-c0ffee000003",
+       "session_pct": 12, "session_resets_at": 1783622400,
+       "week_pct": 42, "week_resets_at": 1784095200,
+       "reset_credits": {"available_count": 1, "items": [
+           {"id": "credit-1", "status": "available",
+            "granted_at": 1783000000, "expires_at": null, "title": null}]},
+       "daily_tokens": [{"date": "2026-07-09", "tokens": 120345}],
+       "additional_limits": null}
+    ]
   },
   "claude": {
     "status": "ok",
@@ -52,19 +65,24 @@ field names, nesting, and status vocabulary are normative; values illustrate):
     ],
     "pinned": "/home/user/.nvm/versions/node/v24.17.0/bin/claude",
     "help": {"status": "ok", "aliases": ["fable", "opus", "sonnet"],
-             "efforts": ["low", "medium", "high", "xhigh", "max"]},
+             "efforts": ["low", "medium", "high", "xhigh", "max"],
+             "no_session_persistence": true},
     "version": {"value": "2.1.201 (Claude Code)", "status": "ok", "error": null},
     "advisor": {"value": null, "status": "skipped", "error": null, "version": null},
     "profile_dir_filter": null,
     "default_account": {"identity": "user@example.com (Example Org)", "status": "ok",
                         "plan": "max",
+                        "org_id": "3f9c1a2e-0000-4d51-9b77-c0ffee000001",
+                        "auth_state": "logged-in",
                         "usage": {"status": "skipped", "headline": null,
                                   "session_pct": null, "session_resets": null,
                                   "week_pct": null, "week_resets": null,
                                   "usage_quality": "none", "usage_source": "none",
                                   "availability_band": "unknown",
                                   "limit_status": null, "limit_utilization": null,
-                                  "limit_resets_at": null, "limit_resets": null},
+                                  "limit_resets_at": null, "limit_resets": null,
+                                  "week_model_pct": null, "week_model_name": null,
+                                  "week_model_resets": null},
                         "config_dir": "/home/user/.claude",
                         "config_source": "builtin",
                         "aliases_profile": null,
@@ -75,6 +93,8 @@ field names, nesting, and status vocabulary are normative; values illustrate):
     "profiles": [
       {"dir": "/home/user/.claude-work", "identity": "work@example.com (Work Org)",
        "status": "ok", "plan": "max",
+       "org_id": "3f9c1a2e-0000-4d51-9b77-c0ffee000002",
+       "auth_state": "logged-in",
        "marker_email": null,
        "usage": {"status": "ok",
                  "headline": "Current session: 12% used - resets Jul 20, 9pm "
@@ -85,7 +105,9 @@ field names, nesting, and status vocabulary are normative; values illustrate):
                  "usage_quality": "exact", "usage_source": "panel",
                  "availability_band": "allowed",
                  "limit_status": null, "limit_utilization": null,
-                 "limit_resets_at": null, "limit_resets": null},
+                 "limit_resets_at": null, "limit_resets": null,
+                 "week_model_pct": 88, "week_model_name": "Fable",
+                 "week_model_resets": "Jul 27, 1pm (Area/City)"},
        "recent_repos": {"status": "ok", "error": null, "entries": [
            {"name": "-home-user-projects-other-repo",
             "age_min": 3.0, "in_use": true}]}}
@@ -121,7 +143,8 @@ field names, nesting, and status vocabulary are normative; values illustrate):
 
 Status vocabulary (per-probe "status" fields; the only legal values):
     ok | degraded | absent | failed | timeout | no-candidate-passed |
-    in-context | skipped | partial
+    in-context | skipped | partial |
+    logged-out (v33.6; codex.accounts[].status only)
 
 Null/error representation: a probe that did not produce a value carries value
 null (never a sentinel string) plus a status from the vocabulary; failure
@@ -179,40 +202,103 @@ extensions (probe_schema stays 1; every Stage B field is additive-optional
 
 - claude usage (LAYERED probe, v32 TD.1 -- only behind --usage; probe_schema
   stays 1, every new field ADDITIVE-optional in both UPDATE ONLY skew
-  directions). Print-mode /usage on CLI 2.1.226+ NEVER returns quota lines
-  (verified live 2026-08-10), so the probe layers three evidence sources,
-  best-first, each failure falling through silently:
-    1. tmux interactive-panel probe (preferred; UNBILLED; exact at every
-       usage level). Runs the pinned CLI interactively inside a throwaway
-       private-socket tmux session (unique -L label + session name; killed
-       in finally on every path; bounded by a hard deadline), sends
-       "/usage", captures the pane, and parses the panel: line-wrapped
-       bars are parsed ACROSS lines; "Per-model breakdown unavailable
-       (rate limited)" can coexist with valid bars and never blocks; a
-       panel missing the week line gets ONE "r" retry; a workspace-trust
-       prompt is answered once. SEATED-STORE ONLY: the canonical
+  directions). Print-mode /usage returns exact quota lines on CLI 2.1.278
+  (verified live 2026-09-20) and returned none at 2.1.226 on Cursor Cloud
+  VMs -- the probe tries the one-call print path first and falls back to
+  the tmux panel only where print-mode is dark (v33.3 order):
+    1. ONE billed call, FIRST: '<pinned> -p "/usage" --output-format
+       stream-json --verbose' (retry-once on timeout/failed per v30.1;
+       absent never retries; v33.6: every attempt appends
+       --no-session-persistence when the pinned CLI's --help advertises
+       it, so no session log is written -- verified live 2026-09-26 on
+       CLI 2.1.282: the flagged call parses exact, with the same field
+       set as the unflagged one). A result text carrying an ANCHORED quota
+       field (the exact-prefix anchors below; a partial parse stays
+       exact) is EXACT print evidence (usage_source "print") and returns
+       at once -- the panel never launches. A bare "%" line
+       (contribution stats, promo lines) is NEVER exact. Where
+       print-mode is dark the stream's rate_limit_event yields THRESHOLD
+       evidence: rate_limit_info.status allowed | allowed_warning |
+       rejected (+ utilization/resetsAt when exposed). Exact utilization
+       only appears past the ~75% warning threshold -- below it "allowed"
+       means healthy headroom, never a percentage. A DEGRADED
+       classification on a store the identity probe observed as
+       auth_state "logged-in" runs the same call ONCE more and
+       re-classifies (v33.5; max 2 attempts on that branch) -- a
+       logged-out / indeterminate / unknown auth_state never pays it,
+       since a logged-out store has no quota lines to recover.
+       v33.7 (CLI 2.1.286, read live and from its bundle 2026-10-02):
+       the quota lines come from the CLI's own GET /api/oauth/usage
+       (5 s timeout; a 60 s snapshot and a 1 h seed kept in the store's
+       .claude.json). When that read fails with no seed left the CLI
+       OMITS the quota lines and prints only its subscription banner
+       ("You are currently using your subscription/overages ...") plus
+       the "What's contributing to your limits usage?" report -- this
+       FAILED-READ shape degrades with the fixed percentage-free
+       headline USAGE_READ_FAILED_HEADLINE, never the report's
+       unrelated percentages. The exact headline carries quota-shaped
+       lines only. The same call's assistant event (observed on
+       2.1.286) carries a structured twin, usage_report.rate_limits.limits[] ({kind:
+       session | weekly_all | weekly_scoped, percent, resets_at ISO,
+       scope.model.display_name}): when the text has NO anchored line
+       the twin is exact print evidence too (percent floored like the
+       print line; resets as the local ISO minute string; the first
+       named weekly_scoped fills week_model_*, never week_*); text
+       lines always outrank it, and on the failed-read shape it is
+       null as well.
+       -> usage_quality "exact"/"threshold", usage_source
+       "print"/"rate-limit-event".
+    2. tmux interactive-panel probe, ONLY when call 1 produced no exact
+       evidence (threshold, degraded, timeout, failed) AND --print-only
+       was not passed (v33.5: that flag pins the probe to layer 1 --
+       every non-exact layer-1 outcome is returned exactly as
+       computed): UNBILLED; exact
+       at every usage level; a PARSED panel outranks the call-1 outcome,
+       and every panel failure returns that outcome exactly as computed.
+       Runs the pinned CLI interactively inside a throwaway
+       private-socket tmux session (per-call unique -L label + session
+       name; killed in finally on every path; bounded by a hard
+       deadline), sends "/usage", captures the pane, and parses the
+       panel: line-wrapped bars are parsed ACROSS lines; "Per-model
+       breakdown unavailable (rate limited)" can coexist with valid bars
+       and never blocks; a panel missing the week line gets ONE "r"
+       retry; a workspace-trust prompt is answered once, by EXPLICIT
+       selection of the trust option (the highlighted option is read
+       from the pane; an unrecognized highlight is re-captured and never
+       confirmed); the 2.1.278 "Chrome extension detected" interstitial
+       is declined with Enter only while its decline option is
+       highlighted; input readiness = any PANEL_READY_MARKERS entry (the
+       legacy "? for shortcuts" line, or the 2.1.278 permission-mode
+       status line); a pane showing the CLI's failed-read text ("Failed
+       to load usage data") with no parsable bars ends the panel at once
+       (v33.7: the panel reads the same endpoint, so nothing would parse
+       before the deadline). SEATED-STORE ONLY: the canonical
        CLAUDE_CODE_OAUTH_TOKEN is stripped from the panel subprocess env
        (a token in the env suppresses the quota bars -- verified live
-       2026-08-10). tmux absent/timeout/unparseable -> fall through.
+       2026-08-10). tmux absent/timeout/unparseable -> the call-1
+       outcome stands.
        No-file-creation note: the tmux SERVER creates its own socket
        under the system tmux dir OUTSIDE the repo (plus the CLI's own
        store writes, as any probe invocation); the script itself still
        creates nothing.
+       Neutral-cwd trust note: every usage subprocess runs from the
+       neutral probe cwd -- the first usable temp dir (TMPDIR / TEMP /
+       TMP, then /tmp, /var/tmp, /usr/tmp), normally a SHARED,
+       world-writable directory. Answering the trust prompt tells the
+       CLI to trust THAT directory, and the CLI may record the answer in
+       the probed store (its own store write; persistence is CLI
+       behaviour, not verified here); print-mode never asks, and either
+       mode may read project-level CLI config found in that directory.
+       On a multi-user host whose other local users are not trusted,
+       point TMPDIR at an EXISTING private directory before running
+       --usage: the resolver honours it first (a missing one falls
+       through to /tmp), so the probes and the trust answer move there
+       (the old temp dir's projects/ entry is then no longer
+       excluded from recent_repos).
        -> usage_quality "exact", usage_source "panel".
-    2. ONE billed fallback call: '<pinned> -p "/usage" --output-format
-       stream-json --verbose' (retry-once on timeout/failed per v30.1;
-       absent never retries). An older CLI that still prints quota lines
-       yields EXACT print evidence from the result text (usage_source
-       "print" -- the old/new-CLI skew path, exact-prefix anchors below);
-       on 2.1.226+ the stream's rate_limit_event yields THRESHOLD
-       evidence: rate_limit_info.status allowed | allowed_warning |
-       rejected (+ utilization/resetsAt when exposed). Exact utilization
-       only appears past the ~75% warning threshold -- below it "allowed"
-       means healthy headroom, never a percentage.
-       -> usage_quality "exact"/"threshold", usage_source
-       "print"/"rate-limit-event".
-    3. Degraded: no panel, no % lines, no event -> the existing
-       degraded/headline path (usage_quality "none", usage_source "none").
+    3. Degraded: no anchored quota line, no event, no panel -> the
+       existing degraded/headline path (usage_quality "none",
+       usage_source "none").
   Threshold evidence is NEVER rendered as a percentage: session_pct /
   week_pct stay null on threshold evidence; the raw event rides the
   additive limit_status / limit_utilization / limit_resets_at /
@@ -229,7 +315,16 @@ extensions (probe_schema stays 1; every Stage B field is additive-optional
   week_resets ONLY from the exact "Current week (all models):" line;
   model-specific "Current week (<Model>):" lines and insight/contribution
   percentage lines are NEVER substituted (all-models line absent ->
-  week_pct stays null, never another percentage). The separator between
+  week_pct stays null, never another percentage). The model-specific line
+  is instead REPORTED separately (v33.5, additive): the FIRST "Current
+  week (<name>):" line/block that is not the all-models one fills
+  week_model_pct, week_model_name (the parenthesised name, stripped) and
+  week_model_resets (verbatim, null when the line carries no resets
+  clause) -- later model lines are
+  ignored, the fields are null when no model line exists, and a model line
+  ALONE is never exact evidence (it neither makes a print result exact nor
+  turns a panel with no session/week block into a usage block). The
+  separator between
   the percent and the resets clause is a non-ASCII middle dot on observed
   hosts and is never keyed on; resets text is carried verbatim (hour-only
   shapes observed; minute-bearing tolerated as forward-compat). A 0% cell
@@ -266,10 +361,12 @@ extensions (probe_schema stays 1; every Stage B field is additive-optional
 
 - codex.usage -- the app-server account/rateLimits/read exchange (only
   behind --usage; SKIPPED when --profile-dir is present -- that flag names
-  claude dirs and the Q1R re-check needs no codex leg). Popen-based BY
+  claude dirs and the Q1R re-check needs no codex leg -- and under a
+  --codex-home list that does not include ~/.codex, v33.6). Popen-based BY
   DESIGN, never run_cli: the server exits on closed stdin, so stdin stays
-  OPEN across scripted write+sleep windows; the deadline is max(--timeout,
-  30) with the sleeps INSIDE it, and the recorded child is terminated ->
+  OPEN across the whole read-until-reply exchange (no scripted sleeps since
+  v33.3); the deadline max(--timeout, 30) is the ceiling of that whole
+  exchange, and the recorded child is terminated ->
   bounded-waited -> killed -> reaped on every success/failure/timeout path
   (recorded identity only, never broad process matching). The response is
   correlated on the rate-limit request id ONLY; initialize responses,
@@ -279,15 +376,119 @@ extensions (probe_schema stays 1; every Stage B field is additive-optional
   the weekly window with secondary null); an absent window leaves its
   fields null and the table renders "not exposed". resetsAt rides verbatim
   as *_resets_at (epoch seconds) plus a derived local-ISO *_resets string.
-  plan <- rateLimits.planType when present. The response exposes NO account
-  identity; the accounts table's codex account cell renders "not exposed".
+  plan <- rateLimits.planType when present. Account identity rides
+  codex.accounts[] (v33.6); codex.usage carries no identity fields, and
+  the accounts table's codex account cell still renders "not exposed".
   statuses: ok (>=1 window classified) | degraded (id:2 parsed but no
   rateLimits object / no recognizable window: shape drift) | failed (no
   id:2 response, rpc error object, or spawn/write failure) | timeout |
-  absent (no codex executable) | skipped. Edge: a response that arrives
-  only during the bounded post-deadline reap still parses (status ok --
-  data present beats a timeout label); "timeout" means no id-correlated
-  response was ever captured.
+  absent (no codex executable) | skipped. Edge: a reply present in the
+  wait-end transcript beats the timeout label; a reply arriving during
+  the shutdown is not parsed; "timeout" means no id-correlated response
+  was captured.
+
+- codex.accounts (v33.6; ALWAYS emitted, possibly []) -- ONE codex account
+  per eligible CODEX_HOME. is_eligible_codex_home() is the ONE named
+  predicate shared by enumeration, --codex-home, and every consumer: a
+  real directory at ~/.codex or ~/.codex-cut<digits> (so never a *.lock
+  control dir or a quarantine-marked dir) holding an auth.json file, its
+  parent realpathing to $HOME. Unlike the claude profile predicate, a
+  SYMLINKED home is INELIGIBLE -- never realpath-resolved: the app-server
+  writes state files into whatever home it is pointed at, so the
+  predicate runs before every spawn and an ineligible dir is never
+  spawned. A symlinked ~/.codex is therefore itself never listed, while
+  every other eligible home still is (the list is [] only when none
+  exists); is_default = realpath(home) == realpath($HOME/.codex), so a
+  link targeting an eligible cut home makes THAT entry the default.
+  Consumer fallback: codex.accounts == [] with codex.usage ok (a
+  symlinked default and no other home) -> render the codex.usage row.
+  Enumeration (sorted glob ~/.codex*, predicate-filtered, realpath-
+  deduped) includes the default home. --codex-home replaces enumeration
+  with the requested homes in argument order: eligible spellings dedup
+  by realpath (first wins), ineligible ones by their normalized path,
+  and each ineligible dir is an entry with status "failed", error
+  "ineligible home" -- with or without --usage. Homes are probed only
+  behind --usage and never under --profile-dir (entries "skipped",
+  every value field null, otherwise). Each probed home runs ONE
+  app-server exchange (the codex.usage transport) with CODEX_HOME SET to
+  the home -- the script's own ambient CODEX_HOME is ignored here (the
+  codex.usage exchange and the models catalog still inherit it) -- and
+  OPENAI_API_KEY / CODEX_API_KEY / CODEX_ACCESS_TOKEN removed by NAME
+  (the binary honours them ahead of the home's auth.json), sending
+  initialize, account/read, account/rateLimits/read, and
+  account/usage/read; homes run in parallel through the --workers pool
+  and are assembled in input order.
+  Entry keys (every key in every entry, null when unknown, in this
+  order): home, is_default, status, error, email (account/read's
+  account.email, chatgpt accounts only), plan (rateLimits.planType, else
+  account.planType), account_id (the rate-limit reply's accountId, else
+  workspaceRouting.chatgptAccountId), session_pct / session_resets_at and
+  week_pct / week_resets_at (the codex.usage window rules; epoch seconds
+  verbatim, no derived ISO string), reset_credits ({"available_count",
+  "items": null | [{id, status, granted_at, expires_at, title}]} from
+  rateLimitResetCredits; null when that object is absent), daily_tokens
+  ([{date, tokens}] from dailyUsageBuckets; null passthrough),
+  additional_limits (null, reserved). Null-vs-empty passes through
+  untouched.
+  statuses, REPLY-FIRST in this fixed order (only replies in the
+  wait-end transcript count): (1) spawn / write failure -> failed
+  ("executable not found: codex" when the binary is absent -- an entry
+  has no "absent" status); (2) account/read answering a null account ->
+  logged-out (value fields null, error null; the authentication errors
+  the other reads then return are expected); (3) no rate-limit reply ->
+  timeout under the deadline, else failed; (4) the rate-limit reply
+  decides: rpc error -> failed, no rateLimits object / no recognizable
+  window -> degraded; (5) ok needs account/read and account/usage/read
+  as parsed results too, else degraded with the error naming the read
+  and the cause (e.g. "account/usage/read: no reply (eof)"). Value
+  fields carry whatever replies were captured. An internal error becomes
+  that home's own failed "internal: ..." entry. Worst-case codex leg
+  wall clock (no global deadline): ceil(homes / workers) x
+  (max(--timeout, 30) + ~16 s -- the shutdown ladder on a stubborn
+  server: 2 s grace + 5 s terminate + 5 s kill + two 2 s reader joins),
+  plus one such exchange for codex.usage.
+
+- Consume mode (v33.6; the script's ONLY write-capable mode, env-gated):
+  --consume-codex-reset --codex-home DIR --credit-id ID --idempotency-key
+  KEY consumes ONE codex rate-limit reset credit for DIR's account and
+  prints a mode-specific document INSTEAD of the probe document -- no
+  probe runs. Grammar: ID and KEY each match [A-Za-z0-9_-]{1,128}; every
+  argument is required exactly once. Refusals are usage errors (exit 2,
+  argparse's usage text + one error line on stderr, NO JSON, no
+  process) in two layers: (i) argparse syntax errors first (an
+  unrecognized or abbreviated flag -- abbreviations are never expanded
+  --, a missing value, an invalid --timeout); then (ii) the semantic
+  checks IN THIS ORDER -- PROBE_ALLOW_CONSUME not exactly "1" (checked
+  FIRST, so a well-formed mis-invocation reveals only "not enabled"),
+  --credit-id / --idempotency-key missing or repeated, a value outside
+  the grammar, any of the four mode flags --usage / --profile-dir /
+  --print-only / --probe-advisor present, --codex-home not given exactly
+  once. --workers, --plans-dir, and --timeout are accepted and inert
+  (only --timeout is read: the exchange ceiling max(--timeout, 30));
+  --credit-id / --idempotency-key without the mode flag are refused.
+  The consume runner RE-CHECKS the gate and the --timeout bound before
+  any spawn, so no direct call bypasses them. Otherwise the document is
+  {"probe_schema": 1, "consume": {"home": DIR, "status": "ok" | "failed"
+  | "timeout", "outcome": "reset" | "nothingToReset" | "noCredit" |
+  "alreadyRedeemed" | null, "error": <string> | null}} at exit 0: an
+  ineligible DIR (the codex.accounts predicate) -> failed "ineligible
+  home" WITHOUT a spawn; else ONE app-server exchange on the per-home env
+  (CODEX_HOME = DIR, the API-key variables removed) sending initialize
+  and the consume request -- nothing else -- classified REPLY-FIRST: no
+  process (codex absent -> "executable not found: codex", another spawn
+  error -> its text) -> failed; a correlated consume reply decides
+  whatever the transport verdict (an outcome in the four-value set ->
+  ok; an rpc error or any other value -> failed, never an invented
+  outcome); no reply -> failed "request write failed: ..." / timeout /
+  failed "stdout closed before the consume reply". An internal error
+  after the gate -> failed "internal: ..." at exit 0. The child is reaped
+  by the same shutdown ladder on every path. INDETERMINACY: a timeout or
+  failed returned AFTER the request was written does NOT mean "not
+  consumed" -- the consumer re-reads account/rateLimits/read (the
+  rateLimitResetCredits list) before retrying with the SAME idempotency
+  key; the probe itself never retries. Run it only from the consumer, on
+  the user's explicit instruction -- never from a test, a review, an
+  acceptance run, or this repo.
 
 - recent_repos (per claude account; ALWAYS-ON, no CLI call) -- a read-only
   mtime scan of <config-root>/projects/ entries, snapshotted in
@@ -335,9 +536,26 @@ extensions (probe_schema stays 1; every Stage B field is additive-optional
   or accepted as a profile.
 
 - capabilities / profile_dir_filter -- the top-level capabilities list
-  advertises optional behaviours (currently "profile-dir-filter");
+  advertises optional behaviours (currently "profile-dir-filter", plus the
+  three INFORMATIONAL v33.5 tokens "week-model" (the additive week_model_*
+  usage fields), "org-id" (the additive org_id / auth_state account fields)
+  and "print-only" (the --print-only flag exists), and the v33.6
+  "codex-homes" (codex.accounts and --codex-home exist) and
+  "no-session-persistence" -- a SUPPORT token, listed only when
+  claude.help.no_session_persistence is true: the pinned CLI's --help
+  advertises --no-session-persistence, so every print-mode claude call
+  this run makes (each stream-json /usage attempt and the advisor probe;
+  never auth status, --version, or the tmux panel) carries it -- present
+  even when the run made no print-mode call, absent under --codex-home
+  (the help probe never runs). claude.help.no_session_persistence is the
+  additive bool beside aliases / efforts, computed from ACQUIRED help
+  text alone (the alias / effort metadata status never suppresses it);
+  false when no help text was acquired or the leg was skipped);
   consumers MUST treat it as optional (older scripts omit it -- absence
-  means fall back to the full run). When --profile-dir is passed,
+  means fall back to the full
+  run) and MUST detect the FLAG itself via --help, never by reading a
+  capabilities token out of a probe document they did not run. When
+  --profile-dir is passed,
   claude.profile_dir_filter records {"requested", "selected", "invalid"};
   ineligible values land in "invalid", are never probed, and never change
   the exit code. The reserved literal 'default' is exclusive: when present,
@@ -382,11 +600,15 @@ extensions (probe_schema stays 1; every Stage B field is additive-optional
 
 Flags:
     --usage          run the per-account usage probes for BOTH families:
-                     the claude LAYERED probe per account (tmux panel,
-                     unbilled/exact, up to ~45s -> one billed stream-json
-                     fallback carrying print or rate_limit_event evidence
-                     -> degraded; the claude-usage mapping block above)
-                     and the codex app-server rateLimits exchange (~10s).
+                     the claude LAYERED probe per account (one billed
+                     stream-json call carrying print or rate_limit_event
+                     evidence -> the tmux panel, unbilled/exact, up to
+                     ~45s, only when that call was not exact -> degraded;
+                     the claude-usage mapping block above), the codex
+                     app-server rateLimits exchange (returns on the
+                     reply), and one three-read exchange per eligible
+                     codex home (codex.accounts, v33.6). Accounts are
+                     probed in parallel (--workers).
                      Default off: usage entries report status "skipped".
                      The wizard and the accounts probe submode run this
                      LAZILY -- only when a menu or table actually needs
@@ -398,30 +620,77 @@ Flags:
                      the default account alone (the Q1R re-check shapes)
                      and is EXCLUSIVE -- when present, co-specified dirs
                      are reported invalid and never probed. Skips the
-                     codex usage leg. Ineligible values land in
-                     claude.profile_dir_filter.invalid (exit stays 0).
+                     codex usage leg and the codex accounts pool (every
+                     codex.accounts entry "skipped"). Ineligible values
+                     land in claude.profile_dir_filter.invalid (exit
+                     stays 0).
+    --codex-home D   (v33.6) repeatable: limit the codex accounts leg to
+                     the named CODEX_HOME dir(s) -- codex.accounts lists
+                     exactly those, in argument order -- and SKIP the
+                     claude leg (claude is the "skipped" skeleton: no
+                     candidate probe, subprocess, or projects/ snapshot;
+                     report line "claude SKIPPED (--codex-home)").
+                     codex.usage is probed only when ~/.codex is among
+                     them. An ineligible dir is a failed "ineligible
+                     home" entry, never spawned (with or without
+                     --usage). Not with --profile-dir (usage error, exit
+                     2); with --print-only accepted and inert.
+    --print-only     (v33.5) pin the claude usage probe to layer 1: the
+                     tmux interactive panel never launches, so a
+                     threshold / degraded / timeout / failed print
+                     outcome is reported exactly as computed. ADDITIVE
+                     and defaulted (off); consumers detect it via --help.
     --probe-advisor  run the BILLED advisor acceptance probe (one cheap
                      advisored invocation). Default off: status "skipped".
     --timeout N      per-subprocess timeout in seconds (default 15; the
                      advisor probe uses max(N, 180), usage max(N, 30) --
-                     the codex usage exchange's scripted sleeps run INSIDE
-                     that deadline).
+                     the ceiling of each whole codex app-server exchange,
+                     which returns as soon as its replies arrive). N must
+                     be finite and at most PROBE_TIMEOUT_MAX_S (86400 s,
+                     one day): anything else is a usage error (exit 2).
     --plans-dir P    plans directory for the Q1 scan (default .cursor/plans).
+    --workers N      parallel per-account probe workers, N >= 1 (default 8,
+                     capped at the account count; 1 = serial). ADDITIVE and
+                     defaulted: an older skill never passes it. The JSON
+                     document is identical at every N -- accounts are
+                     assembled in enumeration order, never completion
+                     order; wall clock scales with ceil(accounts / N)
+                     batches. The same pool size governs the codex homes
+                     separately (the codex.accounts worst-case bound).
+    --consume-codex-reset
+                     (v33.6) the env-gated, WRITE-capable consume mode (the
+                     "Consume mode" block above): refused -- exit 2, no
+                     JSON, no process -- unless PROBE_ALLOW_CONSUME=1;
+                     needs --codex-home, --credit-id, and
+                     --idempotency-key exactly once each and none of the
+                     four mode flags. Consumers detect it via --help.
+    --credit-id ID   (v33.6) consume mode only: the reset credit id,
+                     [A-Za-z0-9_-]{1,128}.
+    --idempotency-key KEY
+                     (v33.6) consume mode only: the caller's idempotency
+                     key, [A-Za-z0-9_-]{1,128}; reuse the SAME key when
+                     retrying one attempt.
 
-Behaviour contract: ASCII-only source, stdlib-only, strictly read-only (the
-only outputs are stdout/stderr; every subprocess is a read-only probe; the
-optional advisor probe bills tokens but writes nothing; the script itself
-never creates a file or directory anywhere -- the usage panel probe's
-throwaway tmux SERVER creates its own socket under the system tmux dir
-outside the repo, and CLI probe invocations refresh their own stores, both
-disclosed subprocess effects, not script writes), no literal triple-backtick
-sequences (fence tokens are built programmatically), every subprocess
-carries a timeout and stdin=DEVNULL so the script never hangs (single
-exception: the codex usage exchange holds stdin OPEN by protocol necessity
--- Popen-recorded, deadline-bounded, terminated/killed/reaped in finally),
-and the JSON document is ALWAYS emitted with exit code 0 -- per-probe
-failures land in statuses, never in the exit code. Exit 2 only when the JSON
-itself could not be produced.
+Behaviour contract: ASCII-only source, stdlib-only, read-only except the
+env-gated --consume-codex-reset mode (the ONLY write-capable mode: one
+account/rateLimitResetCredit/consume request, refused as a usage error --
+exit 2, no JSON, no process -- unless PROBE_ALLOW_CONSUME=1; every other
+subprocess is a read-only probe; the script itself still creates nothing):
+the only outputs are stdout/stderr; the optional advisor probe bills
+tokens but writes nothing; the script itself never creates a file or
+directory anywhere -- the usage panel probe's throwaway tmux SERVER creates
+its own socket under the system tmux dir outside the repo, and CLI probe
+invocations refresh their own stores, both disclosed subprocess effects,
+not script writes. No literal triple-backtick sequences (fence tokens are
+built programmatically), every subprocess carries a timeout and
+stdin=DEVNULL so the script never hangs (single exception: the codex
+app-server exchanges -- codex.usage, each codex.accounts home, and the
+consume exchange -- hold stdin OPEN by protocol necessity -- Popen-
+recorded, deadline-bounded, terminated/killed/reaped in finally), and the
+JSON document (the probe document, or consume mode's own) is ALWAYS
+emitted with exit code 0 -- per-probe failures land in statuses, never in
+the exit code. Exit 2 only when no JSON could be produced: a usage error,
+including every consume refusal.
 
 Usage (from the project root; use plain 'python' if 'python3' is absent):
     python3 .cursor/bootstrap/probe-models.py
@@ -434,13 +703,17 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+import math
 import os
 import platform
 import re
 import stat
 import subprocess
 import sys
+import threading
 import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
@@ -501,6 +774,27 @@ IN_USE_THRESHOLD_MIN = 10.0  # projects-entry age below this reads "in use" (heu
 QUARANTINE_MARKER = ".quarantined-"  # delete-path rename marker; predicate-excluded
 SESSION_LINE_PREFIX = "Current session:"
 WEEK_ALL_LINE_PREFIX = "Current week (all models):"
+# v33.5 model-specific weekly line/heading (the FIRST one observed wins;
+# its values ride the additive week_model_* fields and are NEVER
+# substituted into week_pct): the print shape carries the colon, the
+# panel heading is colon-less
+WEEK_MODEL_LINE_RE = re.compile(r"^Current week \((?!all models\))([^()]+)\):")
+WEEK_MODEL_NAME_RE = re.compile(r"^Current week \(([^()]+)\)")
+# v33.7 (CLI 2.1.286, read from its bundle 2026-10-02): print-mode /usage
+# opens with one of these banners whenever the store is a logged-in
+# subscription. The quota lines that follow come from the CLI's own
+# GET /api/oauth/usage (5 s timeout; a fresh-60s / seed-1h snapshot in the
+# store's .claude.json); when that read fails and no seed is left the CLI
+# OMITS them and prints the banner + the contribution report only -- the
+# "usage read failed" shape, which gets a fixed percentage-free headline.
+SUBSCRIPTION_BANNER_PREFIXES = (
+    "You are currently using your subscription",
+    "You are currently using your overages")
+USAGE_READ_FAILED_HEADLINE = ("usage limits not reported: the CLI's usage "
+                              "read failed (subscription banner only)")
+# the interactive panel's text for the same failed read (2.1.286 bundle):
+# the panel can never parse once it shows this, so it stops waiting
+PANEL_USAGE_FAILED_MARKER = "Failed to load usage data"
 
 # Token-pool environment matrix (v32 TD.2 / PR-HIGH-009). The numbered
 # pool variables and the wrapper's selector are SPAWN-TRANSPORT inputs,
@@ -522,13 +816,42 @@ TOKEN_SELECTOR_VAR = "LOOP_OAUTH_TOKEN_ENV"
 RATE_WARNING_PCT = 75
 RATE_REJECTED_PCT = 100
 RATE_LIMIT_STATUSES = ("allowed", "allowed_warning", "rejected")
+PROBE_WORKERS = 8               # per-account probe pool ceiling (--workers N)
+PROBE_TIMEOUT_MAX_S = 86400.0   # --timeout ceiling (one day; v33.6 PR-MED-012)
 USAGE_PANEL_DEADLINE_S = 45.0   # hard ceiling on the whole tmux panel probe
 USAGE_PANEL_POLL_S = 1.0        # capture-pane poll interval
 TRUST_PROMPT_MARKER = "trust this folder"        # workspace-trust prompt
 # (observed live 2026-08-11, CLI 2.1.226: "Quick safety check: Is this a
 # project you created or one you trust? ... 1. Yes, I trust this folder";
-# Enter confirms the highlighted trust option)
-PANEL_READY_MARKER = "? for shortcuts"           # interactive input ready
+# Enter confirms the highlighted trust option; observed live 2026-09-20,
+# CLI 2.1.278: "No, exit" is listed AND highlighted first, no option
+# numbers -- so the answer is an explicit selection, never a bare Enter)
+# group 1 = the highlight glyph (U+276F, or the legacy ">"), group 2 = the
+# option text; the optional "N." option number is never keyed on
+TRUST_OPTION_RE = re.compile(
+    "^\\s*([\\u276f>])?\\s*(?:\\d+\\.\\s*)?(Yes, I trust|No, exit)\\b",
+    re.IGNORECASE)
+# Interactive-input readiness: ANY marker present = the idle input screen.
+# "? for shortcuts" is the 2.1.226-era hint line (kept: older CLIs, and
+# any host where it still shows). On the CLI 2.1.278 hand-run host (auto
+# permission mode, 2026-09-20) it never appeared (waited 30 s twice) --
+# the idle screen carried the permission-mode status line instead:
+# "<U+23F5><U+23F5> auto mode on (shift+tab to cycle)". Both the glyph
+# prefix and the ASCII "(shift+tab to cycle)" tail are accepted (the tail
+# rides every non-default mode's status line). The input-prompt hint text
+# ('Try "edit <filepath> ..."') varies per launch and is never keyed on.
+PANEL_READY_MARKERS = ("? for shortcuts", chr(0x23F5) * 2 + " ",
+                       "(shift+tab to cycle)")
+# Second interstitial (observed live 2026-09-20, CLI 2.1.278, first launch
+# only): "Claude in Chrome extension detected ... <glyph> No, keep browser
+# tools off / Yes, use my browser / Enter to confirm - Esc to keep browser
+# tools off". Declined by Enter ONLY while the decline option carries the
+# highlight; never Down, never treated as the trust prompt.
+CHROME_PROMPT_MARKERS = ("chrome extension detected", "keep browser tools off")
+CHROME_OPTION_RE = re.compile(
+    "^\\s*([\\u276f>])?\\s*(?:\\d+\\.\\s*)?"
+    "(No, keep browser tools off|Yes, use my browser)\\b",
+    re.IGNORECASE)
 
 # profile-email.txt identity marker (v32 TD.3 / PR-MED-005).
 PROFILE_EMAIL_MARKER = "profile-email.txt"
@@ -542,10 +865,32 @@ CODEX_USAGE_INIT_REQ = ('{"jsonrpc":"2.0","id":1,"method":"initialize","params":
 CODEX_USAGE_RATE_REQ = ('{"jsonrpc":"2.0","id":2,'
                         '"method":"account/rateLimits/read","params":{}}')
 CODEX_USAGE_RATE_ID = 2
-CODEX_USAGE_INIT_WINDOW_S = 2.0      # scripted sleep after the initialize write
-CODEX_USAGE_RESPONSE_WINDOW_S = 8.0  # scripted sleep after the rate-limit write
+CODEX_USAGE_DEADLINE_FLOOR_S = 30.0  # exchange ceiling = max(--timeout, this)
+CODEX_USAGE_INIT_WINDOW_S = 2.0      # CEILING on the id:1 (initialize) reply wait
+CODEX_USAGE_EXIT_GRACE_S = 2.0       # clean-exit wait after stdin closes, pre-terminate
+CODEX_USAGE_READER_JOIN_S = 2.0      # per-reader join bound; a live reader is abandoned
 CODEX_SESSION_WINDOW_MINS = 300      # windowDurationMins value classifying "session"
 CODEX_WEEK_WINDOW_MINS = 10080       # windowDurationMins value classifying "week"
+# v33.6 per-home accounts exchange: initialize (id:1) + three reads, one id each
+CODEX_HOME_NAME_RE = re.compile(r"\.codex(-cut[0-9]+)?")
+CODEX_ACCOUNT_READ_REQ = ('{"jsonrpc":"2.0","id":2,'
+                          '"method":"account/read","params":{}}')
+CODEX_ACCOUNT_RATE_REQ = ('{"jsonrpc":"2.0","id":3,'
+                          '"method":"account/rateLimits/read","params":{}}')
+CODEX_ACCOUNT_USAGE_REQ = ('{"jsonrpc":"2.0","id":4,'
+                           '"method":"account/usage/read","params":{}}')
+CODEX_ACCOUNT_READ_ID = 2
+CODEX_ACCOUNT_RATE_ID = 3
+CODEX_ACCOUNT_USAGE_ID = 4
+# auth-source variables the codex binary honours ahead of CODEX_HOME's
+# auth.json -- popped BY NAME from every per-home env (D20), never read
+CODEX_API_KEY_VARS = ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN")
+# v33.6 consume mode: the env gate (exactly "1"), the argument grammar, the
+# consume request id, and the four legal outcomes
+CONSUME_GATE_VAR = "PROBE_ALLOW_CONSUME"
+CONSUME_ARG_RE = re.compile(r"[A-Za-z0-9_-]{1,128}")
+CODEX_CONSUME_ID = 2
+CODEX_CONSUME_OUTCOMES = ("reset", "nothingToReset", "noCredit", "alreadyRedeemed")
 
 
 def host_is_wsl() -> bool:
@@ -699,14 +1044,17 @@ def iter_json_objects(chunk: str):
 
 
 def parse_auth_status(stdout: str, stderr: str):
-    """Classify an 'auth status' probe: (state, identity, plan).
+    """Classify an 'auth status' probe: (state, identity, plan, org_id).
 
     state: logged-in | logged-out | indeterminate. Prefers the JSON shape
     (2.1.201 emits a JSON object with a loggedIn field; banner-wrapped JSON
     is found by raw_decode scanning, and only a dict carrying loggedIn
     counts); falls back to string matching for older text output. plan is
     the JSON subscriptionType field (the claude plan-tier source evidenced
-    live) or None -- the text fallback never yields one.
+    live) or None -- the text fallback never yields one. org_id (v33.5) is
+    the JSON orgId field on a LOGGED-IN answer only, and only when it is a
+    non-empty string: logged-out, the text fallback, and indeterminate all
+    yield None.
     """
     text = (stdout or "").strip()
     for chunk in (text, (stderr or "").strip()):
@@ -718,18 +1066,20 @@ def parse_auth_status(stdout: str, stderr: str):
             plan = data.get("subscriptionType")
             plan = plan if isinstance(plan, str) and plan else None
             if not data.get("loggedIn"):
-                return "logged-out", None, plan
+                return "logged-out", None, plan, None
+            org_id = data.get("orgId")
+            org_id = org_id if isinstance(org_id, str) and org_id else None
             email = data.get("email") or ""
             org = data.get("orgName") or ""
             identity = (email + (" (" + org + ")" if org else "")).strip() or "logged in"
-            return "logged-in", identity, plan
+            return "logged-in", identity, plan, org_id
     blob = (text + "\n" + (stderr or "")).lower()
     if re.search(r"not logged in|logged out|no credentials|unauthenticated|please log ?in", blob):
-        return "logged-out", None, None
+        return "logged-out", None, None, None
     if "logged in" in blob or "email" in blob:
         m = re.search(r"[\w.+-]+@[\w.-]+", text + " " + (stderr or ""))
-        return "logged-in", (m.group(0) if m else "logged in"), None
-    return "indeterminate", None, None
+        return "logged-in", (m.group(0) if m else "logged in"), None, None
+    return "indeterminate", None, None, None
 
 
 def munge_project_path(path: str) -> str:
@@ -808,6 +1158,49 @@ def enumerate_profile_dirs() -> list[dict]:
         seen.add(real)
         out.append({"dir": d, "real": real})
     return out
+
+
+def is_eligible_codex_home(path: str) -> bool:
+    """The NAMED codex-home eligibility predicate (v33.6) -- shared by
+    enumeration, --codex-home validation, and consume mode, and checked
+    BEFORE every app-server spawn (the server writes state files into
+    whatever home it is pointed at): a real directory (NOT a symlink) at
+    ~/.codex or ~/.codex-cut<digits> containing an auth.json file. The name
+    rule excludes *.lock control dirs and quarantine-marked dirs by
+    construction. Unlike is_eligible_profile_dir() a symlinked home is
+    INELIGIBLE -- never realpath-resolved (a link would let the server
+    write through it); the parent must still realpath to $HOME."""
+    p = os.path.abspath(os.path.expanduser(path))
+    if os.path.realpath(os.path.dirname(p)) != os.path.realpath(os.path.expanduser("~")):
+        return False
+    if not CODEX_HOME_NAME_RE.fullmatch(os.path.basename(p)):
+        return False
+    if os.path.islink(p) or not os.path.isdir(p):
+        return False
+    return os.path.isfile(os.path.join(p, "auth.json"))
+
+
+def enumerate_codex_homes() -> list[dict]:
+    """Eligible codex homes (predicate-filtered), realpath-deduped, in
+    sorted glob order -- the default ~/.codex INCLUDED (unlike the claude
+    enumerator). Items: {"home": <glob path>, "real": <realpath>}."""
+    out: list[dict] = []
+    seen: set[str] = set()
+    for d in sorted(glob.glob(os.path.expanduser("~/.codex*"))):
+        if not is_eligible_codex_home(d):
+            continue
+        real = os.path.realpath(d)
+        if real in seen:
+            continue
+        seen.add(real)
+        out.append({"home": d, "real": real})
+    return out
+
+
+def codex_default_home_real() -> str:
+    """Realpath of $HOME/.codex -- the is_default key (a symlinked default
+    resolves to its target, so the target's own entry is the default)."""
+    return os.path.realpath(os.path.expanduser("~/.codex"))
 
 
 def is_memory_only_entry(entry_path: str):
@@ -921,13 +1314,15 @@ def enumerate_projects(config_root: str, excluded_names: set,
 
 def usage_skipped() -> dict:
     """The claude usage placeholder (structured fields present, null; the
-    v32 additive evidence fields present at their fail-closed values)."""
+    v32 additive evidence fields present at their fail-closed values, plus
+    the v33.5 additive week_model_* fields)."""
     return {"status": "skipped", "headline": None, "session_pct": None,
             "session_resets": None, "week_pct": None, "week_resets": None,
             "usage_quality": "none", "usage_source": "none",
             "availability_band": "unknown", "limit_status": None,
             "limit_utilization": None, "limit_resets_at": None,
-            "limit_resets": None}
+            "limit_resets": None, "week_model_pct": None,
+            "week_model_name": None, "week_model_resets": None}
 
 
 def codex_usage_skipped() -> dict:
@@ -1042,24 +1437,88 @@ def panel_has_trust_prompt(text: str) -> bool:
     return TRUST_PROMPT_MARKER in text.lower()
 
 
+def trust_prompt_keys(text: str):
+    """The key sequence that selects the TRUST option on a captured
+    workspace-trust prompt, or None when the selection is not established
+    (v33.3 D2 -- the caller re-captures and NEVER confirms on None).
+
+    Observed shapes: CLI 2.1.226 lists " > 1. Yes, I trust this folder" /
+    "   2. No, exit" (Yes highlighted first); CLI 2.1.278 lists
+    "<glyph> No, exit" / "  Yes, I trust this folder" with NO option
+    numbers and "No, exit" highlighted first (verified live 2026-09-20),
+    so a bare Enter there quits the CLI. Three outcomes:
+      highlighted Yes                      -> ["Enter"]
+      highlighted No, Yes listed BELOW it  -> ["Down", "Enter"]
+      anything else -- no highlight, both highlighted, a duplicated
+      option line (the capture is the whole scrollback, so a stale frame
+      can ride along), an unexpected layout -> None.
+    """
+    options = []  # (kind, highlighted) in pane order
+    for ln in (text or "").split("\n"):
+        m = TRUST_OPTION_RE.match(ln)
+        if m:
+            options.append(("yes" if m.group(2).lower().startswith("yes")
+                            else "no", bool(m.group(1))))
+    kinds = [k for k, _h in options]
+    if kinds.count("yes") != 1 or kinds.count("no") != 1:
+        return None
+    lit = [k for k, h in options if h]
+    if lit == ["yes"]:
+        return ["Enter"]
+    if lit == ["no"] and kinds == ["no", "yes"]:
+        return ["Down", "Enter"]
+    return None
+
+
+def panel_has_chrome_prompt(text: str) -> bool:
+    """The "Claude in Chrome extension detected" interstitial (2.1.278:
+    can follow the trust answer on a first launch). Marker-based; shares
+    no marker with the workspace-trust prompt."""
+    low = (text or "").lower()
+    return any(marker in low for marker in CHROME_PROMPT_MARKERS)
+
+
+def chrome_prompt_keys(text: str):
+    """["Enter"] when the Chrome interstitial's DECLINE option ("No, keep
+    browser tools off") is the one highlighted option, else None (the
+    caller re-captures and never confirms -- the D2 rule; Down is never
+    sent, so the probe can never turn browser tools ON)."""
+    options = []
+    for ln in (text or "").split("\n"):
+        m = CHROME_OPTION_RE.match(ln)
+        if m:
+            options.append(("no" if m.group(2).lower().startswith("no")
+                            else "yes", bool(m.group(1))))
+    kinds = [k for k, _h in options]
+    if kinds.count("no") != 1 or kinds.count("yes") > 1:
+        return None
+    if [k for k, h in options if h] == ["no"]:
+        return ["Enter"]
+    return None
+
+
 def panel_input_ready(text: str) -> bool:
-    """Interactive-input readiness on a captured pane: the CLI's shortcut
-    hint line is the stable marker across observed 2.1.x builds."""
-    return PANEL_READY_MARKER in text
+    """Interactive-input readiness on a captured pane: any of the
+    PANEL_READY_MARKERS (the legacy shortcut hint line, or the 2.1.278
+    permission-mode status line)."""
+    return any(marker in (text or "") for marker in PANEL_READY_MARKERS)
 
 
 def _panel_heading(line: str):
     """Classify a panel line as a segment boundary. Returns 'session' /
-    'week' (the two PARSED anchors), 'other' (a boundary that ends the
-    current segment without opening a parsed one -- a model-specific
-    weekly block, the contribution/skills sections), or None."""
+    'week' (the two PARSED anchors), 'model' (v33.5: a model-specific
+    weekly block, parsed into the additive week_model_* fields and NEVER
+    substituted into the week anchors), 'other' (a boundary that ends the
+    current segment without opening a parsed one -- the contribution/
+    skills sections, or a model block whose name is unextractable), or
+    None."""
     s = line.strip()
     if s.startswith("Current session"):
         return "session"
     if s.startswith("Current week (all models)"):
         return "week"
     if s.startswith("Current week ("):
-        return "other"  # model-specific weekly: NEVER substituted
+        return "model" if WEEK_MODEL_NAME_RE.match(s) else "other"
     if (s.startswith("What's contributing") or s.startswith("Skills")
             or s.startswith("Usage credits")):
         return "other"
@@ -1082,21 +1541,25 @@ def parse_usage_panel(text: str):
     inline print-form shape ("Current session: 12% used - resets ...")
     parses through the same walk (heading and values share a line).
     Never-substituted noise, by construction: model-specific "Current
-    week (<Model>):" blocks are 'other' boundaries; promo lines
-    ("+50% weekly limits promo...") carry no "% used"; contribution
-    lines ("92% of your usage...") carry no "used" after the percent;
-    "Per-model breakdown unavailable (rate limited)" matches nothing
-    and never blocks. Bar glyphs and the non-ASCII separator collapse
-    to spaces before matching (never keyed on).
+    week (<Model>):" blocks are 'model' segments whose values ride the
+    additive week_model_* fields (v33.5 -- the FIRST such segment only,
+    never week_pct/week_resets, and model evidence ALONE is not a usage
+    block: a pane carrying no session/week anchor still returns None);
+    promo lines ("+50% weekly limits promo...") carry no "% used";
+    contribution lines ("92% of your usage...") carry no "used" after
+    the percent; "Per-model breakdown unavailable (rate limited)"
+    matches nothing and never blocks. Bar glyphs and the non-ASCII
+    separator collapse to spaces before matching (never keyed on).
     """
     lines = [re.sub(r"[^\x20-\x7e]", " ", ln)
              for ln in (text or "").split("\n")]
     found: dict = {}
+    model: dict = {}
     i = 0
     n = len(lines)
     while i < n:
         kind = _panel_heading(lines[i])
-        if kind not in ("session", "week"):
+        if kind not in ("session", "week", "model"):
             i += 1
             continue
         seg = [lines[i]]
@@ -1137,7 +1600,17 @@ def parse_usage_panel(text: str):
                 found["session_pct"], found["session_resets"] = pct, resets
             elif kind == "week" and "week_pct" not in found:
                 found["week_pct"], found["week_resets"] = pct, resets
+            elif kind == "model" and not model:
+                # v33.5: the FIRST model segment only, kept apart from
+                # found so a model-only pane is still "no usage block"
+                name = WEEK_MODEL_NAME_RE.match(lines[i].strip())
+                model = {"week_model_pct": pct,
+                         "week_model_name": (name.group(1).strip()
+                                             if name else None),
+                         "week_model_resets": resets}
         i = j
+    if found and model:
+        found.update(model)
     return found or None
 
 
@@ -1149,9 +1622,11 @@ def tmux_binary():
 
 def probe_usage_panel(pinned: str, is_wsl: bool, config_dir: str | None,
                       cwd: str | None = None, tmux: str | None = None):
-    """Layer-1 tmux interactive-panel usage probe (v32 TD.1). Returns a
-    complete usage dict on a PARSED panel, else None (every failure falls
-    through to the billed fallback -- this layer never errors the row).
+    """Layer-2 tmux interactive-panel usage probe (v32 TD.1; layer 2 since
+    v33.3 -- probe_usage() launches it only when the one stream-json call
+    produced no exact evidence). Returns a complete usage dict on a PARSED
+    panel, else None (on every failure the caller keeps the stream-json
+    outcome it already holds -- this layer never errors the row).
 
     Seated-store only: the pane env strips the canonical token alongside
     the pool/selector variables (claude_env seated_store_only=True). The
@@ -1170,7 +1645,9 @@ def probe_usage_panel(pinned: str, is_wsl: bool, config_dir: str | None,
     if tmux is None:
         return None
     env = claude_env(pinned, is_wsl, config_dir, seated_store_only=True)
-    label = "cbg-usage-%d-%d" % (os.getpid(), int(time.time() * 1000) % 1000000000)
+    # per-CALL unique (uuid4), never per-process: pooled panel probes that
+    # start in the same millisecond must not share a tmux server (D3)
+    label = "cbg-usage-" + uuid.uuid4().hex
     session = "usage-probe"
     target = session + ":"
     deadline = time.monotonic() + USAGE_PANEL_DEADLINE_S
@@ -1187,6 +1664,7 @@ def probe_usage_panel(pinned: str, is_wsl: bool, config_dir: str | None,
         if status != "ok":
             return None
         trust_answered = False
+        chrome_answered = False
         usage_sent = False
         week_retried = False
         retry_grace = 0
@@ -1208,8 +1686,24 @@ def probe_usage_panel(pinned: str, is_wsl: bool, config_dir: str | None,
             cap_fails = 0
             if not usage_sent:
                 if panel_has_trust_prompt(pane) and not trust_answered:
-                    tmux_call(["send-keys", "-t", target, "Enter"])
-                    trust_answered = True
+                    # D2: select the trust option EXPLICITLY; an
+                    # unestablished selection is re-captured on the next
+                    # poll (within the deadline) and never confirmed
+                    keys = trust_prompt_keys(pane)
+                    if keys is not None:
+                        for key in keys:
+                            tmux_call(["send-keys", "-t", target, key])
+                        trust_answered = True
+                    continue
+                if panel_has_chrome_prompt(pane) and not chrome_answered:
+                    # the Chrome-extension interstitial: decline with Enter
+                    # ONLY while the decline option is highlighted; checked
+                    # BEFORE readiness so "/usage" is never typed into it
+                    keys = chrome_prompt_keys(pane)
+                    if keys is not None:
+                        for key in keys:
+                            tmux_call(["send-keys", "-t", target, key])
+                        chrome_answered = True
                     continue
                 if panel_input_ready(pane):
                     tmux_call(["send-keys", "-t", target, "/usage"])
@@ -1218,6 +1712,11 @@ def probe_usage_panel(pinned: str, is_wsl: bool, config_dir: str | None,
                 continue
             parsed = parse_usage_panel(pane)
             if parsed is None:
+                if PANEL_USAGE_FAILED_MARKER in pane:
+                    # v33.7: the CLI's usage read failed and the panel
+                    # shows no bars -- nothing will parse before the
+                    # deadline, so the layer-1 outcome stands now
+                    return None
                 continue
             if parsed.get("week_pct") is None and not week_retried:
                 # a panel missing the week line gets ONE "r" retry, then a
@@ -1233,19 +1732,12 @@ def probe_usage_panel(pinned: str, is_wsl: bool, config_dir: str | None,
             result.update(status="ok", usage_quality="exact",
                           usage_source="panel")
             for key in ("session_pct", "session_resets",
-                        "week_pct", "week_resets"):
+                        "week_pct", "week_resets",
+                        "week_model_pct", "week_model_name",
+                        "week_model_resets"):
                 if parsed.get(key) is not None:
                     result[key] = parsed[key]
-            bits = []
-            if result["session_pct"] is not None:
-                bits.append(SESSION_LINE_PREFIX + " " + str(result["session_pct"])
-                            + "% used" + (" - resets " + result["session_resets"]
-                                          if result["session_resets"] else ""))
-            if result["week_pct"] is not None:
-                bits.append(WEEK_ALL_LINE_PREFIX + " " + str(result["week_pct"])
-                            + "% used" + (" - resets " + result["week_resets"]
-                                          if result["week_resets"] else ""))
-            result["headline"] = " | ".join(bits) or None
+            result["headline"] = anchored_headline(result)
             result["availability_band"] = usage_band(result)
             return result
         return None
@@ -1254,6 +1746,91 @@ def probe_usage_panel(pinned: str, is_wsl: bool, config_dir: str | None,
             run_cli([tmux, "-L", label, "kill-server"], 5.0, env=env)
         except Exception:
             pass
+
+
+def anchored_headline(result: dict):
+    """The headline rebuilt from the two anchored fields (the panel and
+    the v33.7 usage_report path, whose evidence carries no print lines)."""
+    bits = []
+    if result["session_pct"] is not None:
+        bits.append(SESSION_LINE_PREFIX + " " + str(result["session_pct"])
+                    + "% used" + (" - resets " + result["session_resets"]
+                                  if result["session_resets"] else ""))
+    if result["week_pct"] is not None:
+        bits.append(WEEK_ALL_LINE_PREFIX + " " + str(result["week_pct"])
+                    + "% used" + (" - resets " + result["week_resets"]
+                                  if result["week_resets"] else ""))
+    return " | ".join(bits) or None
+
+
+def parse_usage_report(out: str):
+    """The usage_report twin of print-mode /usage (v33.7; observed on CLI
+    2.1.286 on the local-command assistant event): the LAST assistant
+    event's usage_report.rate_limits.limits list, or None (no report, or
+    rate_limits null -- the failed-read shape)."""
+    limits = None
+    for obj in iter_json_objects(out or ""):
+        if not isinstance(obj, dict) or obj.get("type") != "assistant":
+            continue
+        report = obj.get("usage_report")
+        if not isinstance(report, dict):
+            continue
+        rate_limits = report.get("rate_limits")
+        found = (rate_limits.get("limits")
+                 if isinstance(rate_limits, dict) else None)
+        limits = found if isinstance(found, list) else None
+    return limits
+
+
+def _report_resets(value):
+    """A usage_report resets_at (ISO-8601 with an offset) -> the local ISO
+    minute string (the codex.usage *_resets form), or None. A naive or
+    unparseable stamp is never guessed into a zone."""
+    if not isinstance(value, str) or not value:
+        return None
+    text = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        stamp = datetime.fromisoformat(text)
+        if stamp.tzinfo is None:
+            return None
+        return stamp.astimezone().isoformat(timespec="minutes")
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def usage_from_report(limits) -> tuple:
+    """Map a usage_report limits list onto the anchored fields (v33.7) ->
+    (anchored, model) in _usage_from_stream's shapes. kind "session" ->
+    session_*, "weekly_all" -> week_* (the FIRST of each); the FIRST
+    "weekly_scoped" entry naming a model -> week_model_* (never
+    substituted into week_*). percent floors to an int like the CLI's own
+    print line; a non-numeric, negative or non-finite percent is skipped."""
+    anchored: dict = {}
+    model: dict = {}
+    for item in limits or []:
+        if not isinstance(item, dict):
+            continue
+        pct = item.get("percent")
+        if (isinstance(pct, bool) or not isinstance(pct, (int, float))
+                or not math.isfinite(pct) or pct < 0):
+            continue
+        pct = int(math.floor(pct))
+        resets = _report_resets(item.get("resets_at"))
+        kind = item.get("kind")
+        if kind == "session" and "session_pct" not in anchored:
+            anchored["session_pct"], anchored["session_resets"] = pct, resets
+        elif kind == "weekly_all" and "week_pct" not in anchored:
+            anchored["week_pct"], anchored["week_resets"] = pct, resets
+        elif kind == "weekly_scoped" and not model:
+            scope = item.get("scope")
+            scoped = scope.get("model") if isinstance(scope, dict) else None
+            name = (scoped.get("display_name")
+                    if isinstance(scoped, dict) else None)
+            if isinstance(name, str) and name.strip():
+                model = {"week_model_pct": pct,
+                         "week_model_name": name.strip(),
+                         "week_model_resets": resets}
+    return anchored, model
 
 
 def parse_rate_limit_stream(out: str):
@@ -1467,7 +2044,7 @@ def isolation_probe(candidate: str, is_wsl: bool, timeout: float) -> dict:
         return {"status": "timeout", "detail": "auth status timed out (never pins)"}
     if status == "absent":
         return {"status": "failed", "detail": err}
-    state, _identity, _plan = parse_auth_status(out, err)
+    state, _identity, _plan, _org = parse_auth_status(out, err)
     if state == "logged-out":
         return {"status": "ok", "detail": "logged out under bogus CLAUDE_CONFIG_DIR"}
     if state == "logged-in":
@@ -1498,9 +2075,11 @@ def option_block(help_text: str, flag: str) -> str | None:
 def probe_claude_help(pinned: str, timeout: float) -> dict:
     status, out, err, _rc = run_cli([pinned, "--help"], timeout, probe_env())
     if status != "ok":
+        # no help text acquired: the flag counts as not advertised (v33.6)
         return {"status": status if status in ("timeout",) else "failed",
                 "aliases": [], "efforts": [],
-                "error": (err or out or "").strip()[:300] or "help probe failed"}
+                "error": (err or out or "").strip()[:300] or "help probe failed",
+                "no_session_persistence": False}
     aliases: list[str] = []
     model_block = option_block(out, "--model")
     if model_block:
@@ -1518,8 +2097,12 @@ def probe_claude_help(pinned: str, timeout: float) -> dict:
         st = "partial"
     else:
         st = "failed"
+    # v33.6 D10: computed from the acquired text alone -- the alias / effort
+    # metadata status above never suppresses it
     return {"status": st, "aliases": aliases, "efforts": efforts,
-            "error": None if st == "ok" else "help parsed but alias/effort extraction incomplete"}
+            "error": None if st == "ok" else "help parsed but alias/effort extraction incomplete",
+            "no_session_persistence":
+                option_block(out, "--no-session-persistence") is not None}
 
 
 def probe_claude_version(pinned: str, is_wsl: bool, timeout: float) -> dict:
@@ -1538,7 +2121,8 @@ def probe_claude_version(pinned: str, is_wsl: bool, timeout: float) -> dict:
             "error": "unexpected version output shape: " + first[:120]}
 
 
-def probe_claude_advisor(pinned: str, is_wsl: bool, timeout: float, version_value):
+def probe_claude_advisor(pinned: str, is_wsl: bool, timeout: float, version_value,
+                         no_session_persistence: bool = False):
     """BILLED acceptance probe (only behind --probe-advisor): one cheap advisored run.
 
     The prompt INSTRUCTS the model to consult its advisor once -- advisor use
@@ -1547,14 +2131,17 @@ def probe_claude_advisor(pinned: str, is_wsl: bool, timeout: float, version_valu
     the probe deterministic. Engagement detector: the advisor model appears in
     the result modelUsage (end-of-run deterministic check; it also rejects the
     silent soft-strip, whose stderr warning is captured for the error detail).
+    v33.6: when the pinned CLI advertises it, the print-mode call carries the
+    session-persistence opt-out (no session log is written).
     """
-    status, out, err, rc = run_cli(
-        [pinned, "-p",
-         "Consult your advisor tool once on this question: is 2+2=4? "
-         "Then reply with exactly: ok",
-         "--model", ADVISOR_MAIN,
-         "--advisor", ADVISOR_MODEL, "--output-format", "json"],
-        max(timeout, 180.0), claude_env(pinned, is_wsl))
+    cmd = [pinned, "-p",
+           "Consult your advisor tool once on this question: is 2+2=4? "
+           "Then reply with exactly: ok",
+           "--model", ADVISOR_MAIN,
+           "--advisor", ADVISOR_MODEL, "--output-format", "json"]
+    if no_session_persistence:
+        cmd.append("--no-session-persistence")
+    status, out, err, rc = run_cli(cmd, max(timeout, 180.0), claude_env(pinned, is_wsl))
     if status == "timeout":
         return {"value": None, "status": "timeout", "error": err, "version": None}
     if status in ("failed", "absent"):
@@ -1593,53 +2180,158 @@ def probe_claude_advisor(pinned: str, is_wsl: bool, timeout: float, version_valu
 
 def probe_identity(pinned: str, is_wsl: bool, timeout: float,
                    config_dir: str | None) -> dict:
+    """Per-account auth identity. The v33.5 additive org_id/auth_state ride
+    after "plan": auth_state is the OBSERVED auth classification
+    (logged-in | logged-out | indeterminate), and a command that never
+    answered (timeout, absent binary) is "indeterminate" -- never a
+    logout. org_id is populated on a logged-in answer only."""
     env = claude_env(pinned, is_wsl, config_dir)
     status, out, err, _rc = run_cli([pinned, "auth", "status"], timeout, env)
     if status == "timeout":
-        return {"identity": None, "status": "timeout", "plan": None}
+        return {"identity": None, "status": "timeout", "plan": None,
+                "org_id": None, "auth_state": "indeterminate"}
     if status == "absent":
-        return {"identity": None, "status": "failed", "plan": None}
-    state, identity, plan = parse_auth_status(out, err)
+        return {"identity": None, "status": "failed", "plan": None,
+                "org_id": None, "auth_state": "indeterminate"}
+    state, identity, plan, org_id = parse_auth_status(out, err)
     if state == "logged-in":
-        return {"identity": identity, "status": "ok", "plan": plan}
+        return {"identity": identity, "status": "ok", "plan": plan,
+                "org_id": org_id, "auth_state": "logged-in"}
     if state == "logged-out":
         return {"identity": None, "status": "degraded",
-                "plan": None}  # enumerable but not logged in
-    return {"identity": None, "status": "degraded", "plan": None}
+                "plan": None, "org_id": None,
+                "auth_state": "logged-out"}  # enumerable but not logged in
+    return {"identity": None, "status": "degraded", "plan": None,
+            "org_id": None, "auth_state": "indeterminate"}
+
+
+def probe_accounts(pinned: str, is_wsl: bool, timeout: float,
+                   config_dirs: list, cwd: str | None, usage: bool,
+                   workers: int | None = None,
+                   print_only: bool = False,
+                   no_session_persistence: bool = False) -> list:
+    """Identity + usage for every account, IN INPUT ORDER (v33.3 D3).
+
+    config_dirs is the ordered account list (None = the default account,
+    then each eligible profile dir). One job per account runs through a
+    bounded thread pool -- run_cli / subprocess.run carry an explicit env
+    and cwd per call and share no mutable state, and the panel layer's
+    tmux label is per-call unique -- and the results come back in the
+    SAME order as config_dirs regardless of completion order, so the
+    emitted JSON document is byte-for-byte the serial shape. Workers =
+    min(workers or PROBE_WORKERS, accounts); 1 runs serially in-thread.
+    Wall clock scales with ceil(accounts / workers) batches. Each entry
+    is probe_identity()'s dict plus its "usage" key. v33.5: print_only
+    forwards --print-only (layer 2 never launches), and the identity's
+    observed auth_state is handed to probe_usage so only a LOGGED-IN
+    account can pay the degraded retry. v33.6: no_session_persistence
+    (the pinned CLI advertises the flag) rides through to probe_usage.
+    """
+    def one(config_dir):
+        entry = probe_identity(pinned, is_wsl, timeout, config_dir)
+        entry["usage"] = (probe_usage(pinned, is_wsl, timeout, config_dir,
+                                      cwd=cwd, print_only=print_only,
+                                      auth_state=entry["auth_state"],
+                                      no_session_persistence=no_session_persistence)
+                          if usage else usage_skipped())
+        return entry
+
+    return _pooled_in_order(one, config_dirs, workers)
+
+
+def _pooled_in_order(fn, items, workers: int | None) -> list:
+    """[fn(item) for item in items], IN INPUT ORDER, through a bounded
+    thread pool (v33.6 D3 -- the ONE pool site, shared by the claude
+    accounts and the codex homes). Workers = min(workers or PROBE_WORKERS,
+    len(items)); 1 runs serially in-thread; pool.map() yields in input
+    order regardless of completion order."""
+    items = list(items)
+    count = max(1, min(workers or PROBE_WORKERS, len(items)))
+    if count == 1:
+        return [fn(item) for item in items]
+    with ThreadPoolExecutor(max_workers=count) as pool:
+        return list(pool.map(fn, items))  # map() yields in input order
 
 
 def probe_usage(pinned: str, is_wsl: bool, timeout: float,
-                config_dir: str | None, cwd: str | None = None) -> dict:
+                config_dir: str | None, cwd: str | None = None,
+                print_only: bool = False,
+                auth_state: str | None = None,
+                no_session_persistence: bool = False) -> dict:
     """LAYERED per-account usage probe (v32 TD.1; the full evidence
     contract lives in the module docstring's claude-usage mapping block).
 
-    Layer 1 -- tmux interactive-panel probe: preferred, unbilled, exact;
-    seated-store only; tmux absent, deadline, or an unparseable panel
-    falls through silently (print-mode /usage on CLI 2.1.226+ never
-    returns quota lines, so the panel is the only unbilled exact source).
-    Layer 2 -- ONE billed '<pinned> -p "/usage" --output-format
-    stream-json --verbose' call: an older CLI's result text still carries
-    the exact % lines (usage_source "print" -- the old/new skew path);
-    on 2.1.226+ the stream's rate_limit_event yields THRESHOLD evidence
-    (allowed / allowed_warning / rejected). A timeout/failed first
-    attempt is retried ONCE before degrading (v30.1: a cold store's
-    first call can pay an OAuth token refresh that overruns the budget;
-    'absent' never retries).
+    Layer 1 -- ONE billed '<pinned> -p "/usage" --output-format
+    stream-json --verbose' call, FIRST (v33.3): print-mode /usage returns
+    exact quota lines on CLI 2.1.278 (verified live 2026-09-20) and
+    returned none at 2.1.226 on Cursor Cloud VMs. A result text carrying
+    an ANCHORED quota field (parse_usage_line on the exact "Current
+    session:" / "Current week (all models):" prefixes; a partial parse
+    stays exact) is EXACT print evidence (usage_source "print") and
+    returns at once -- the panel never launches. A bare "%" line
+    (contribution stats, promo lines) is NEVER exact. Otherwise the
+    stream's rate_limit_event yields THRESHOLD evidence (allowed /
+    allowed_warning / rejected), else the degraded outcome. A
+    timeout/failed first attempt is retried ONCE before degrading
+    (v30.1: a cold store's first call can pay an OAuth token refresh
+    that overruns the budget; 'absent' never retries). v33.5 degraded
+    retry: a DEGRADED classification on a store the identity probe
+    observed as auth_state "logged-in" runs the same call ONCE more and
+    re-classifies (max 2 attempts on that branch) -- a logged-out,
+    indeterminate, or unknown auth_state never pays it, since a
+    logged-out store has no quota lines to recover.
+    Layer 2 -- tmux interactive-panel probe, ONLY when layer 1 produced
+    no exact evidence (threshold, degraded, timeout, failed): unbilled,
+    exact, seated-store only. A PARSED panel outranks the layer-1
+    outcome; tmux absent, deadline, or an unparseable panel returns the
+    layer-1 outcome exactly as computed. An 'absent' pinned binary
+    skips the panel (nothing to launch), and under print_only
+    (--print-only) the panel never launches at all: every non-exact
+    layer-1 outcome is returned exactly as computed.
     Layer 3 -- degraded: the existing status/headline behaviour, with
-    usage_quality/usage_source "none".
+    usage_quality/usage_source "none" (v33.7: the CLI's failed-read
+    shape -- banner, no quota lines -- carries the fixed
+    USAGE_READ_FAILED_HEADLINE instead of the raw report text).
+    v33.7: with no anchored text line, layer 1 also reads the call's
+    structured usage_report twin as exact print evidence (text first).
 
     Threshold evidence NEVER lands in session_pct/week_pct and its
     headline is percentage-free; availability_band is computed on every
-    outcome (PR-MED-002/PR-MED-010).
+    outcome (PR-MED-002/PR-MED-010). v33.6: when the pinned CLI advertises
+    it, every layer-1 attempt carries the session-persistence opt-out (the
+    panel is interactive and never does).
     """
-    panel = probe_usage_panel(pinned, is_wsl, config_dir, cwd=cwd)
-    if panel is not None:
-        return panel
     env = claude_env(pinned, is_wsl, config_dir)
     cmd = [pinned, "-p", "/usage", "--output-format", "stream-json", "--verbose"]
+    if no_session_persistence:
+        cmd.append("--no-session-persistence")
     status, out, err, _rc = run_cli(cmd, max(timeout, 30.0), env, cwd=cwd)
     if status in ("timeout", "failed"):
         status, out, err, _rc = run_cli(cmd, max(timeout, 30.0), env, cwd=cwd)
+    result = _usage_from_stream(status, out, err)
+    if result["status"] == "degraded" and auth_state == "logged-in":
+        # v33.5: a logged-in store that answered without quota lines is a
+        # flaky print run, not a quota-less store -- one more call, then
+        # the re-classification stands: this branch never re-runs a
+        # second time (with the timeout/failed retry above, at most
+        # three stream calls per account)
+        status, out, err, _rc = run_cli(cmd, max(timeout, 30.0), env, cwd=cwd)
+        result = _usage_from_stream(status, out, err)
+    if result["usage_quality"] == "exact" or status == "absent":
+        return result
+    if print_only:
+        return result  # --print-only: layer 2 never launches
+    # no exact evidence in hand: the panel is the only other exact source
+    panel = probe_usage_panel(pinned, is_wsl, config_dir, cwd=cwd)
+    if panel is not None:
+        return panel
+    return result
+
+
+def _usage_from_stream(status: str, out: str, err: str) -> dict:
+    """Classify ONE finished stream-json /usage call (after the retry-once
+    rule) into a complete usage dict: exact print evidence, threshold
+    evidence, or the timeout / failed / degraded outcome."""
     result = usage_skipped()
     if status == "timeout":
         result.update(status="timeout", headline=None)
@@ -1649,23 +2341,52 @@ def probe_usage(pinned: str, is_wsl: bool, timeout: float,
                       headline=(err or out or "").strip()[:200] or None)
         return result
     info, result_text = parse_rate_limit_stream(out)
-    # exact print evidence first (an older CLI whose /usage still prints
-    # quota lines into the result text -- higher fidelity than threshold)
+    # exact print evidence first -- higher fidelity than threshold. EXACT
+    # means an anchored quota field parsed; percent-bearing noise alone
+    # (contribution / promo lines) continues to threshold / degraded.
     lines = [ln.strip() for ln in (result_text or "").split("\n")]
-    pct_lines = [ln for ln in lines if "%" in ln]
-    if pct_lines:
+    anchored: dict = {}
+    model: dict = {}   # v33.5: never exact evidence on its own
+    for ln in lines:
+        if "session_pct" not in anchored:
+            hit = parse_usage_line(ln, SESSION_LINE_PREFIX)
+            if hit is not None:
+                anchored["session_pct"], anchored["session_resets"] = hit
+                continue
+        if "week_pct" not in anchored:
+            hit = parse_usage_line(ln, WEEK_ALL_LINE_PREFIX)
+            if hit is not None:
+                anchored["week_pct"], anchored["week_resets"] = hit
+                continue
+        if not model:
+            m = WEEK_MODEL_LINE_RE.match(ln)
+            if m is not None:
+                hit = parse_usage_line(ln, m.group(0))
+                if hit is not None:
+                    model = {"week_model_pct": hit[0],
+                             "week_model_name": m.group(1).strip(),
+                             "week_model_resets": hit[1]}
+    if anchored:
+        # v33.7: quota-shaped lines only -- the 2.1.286 report appends
+        # contribution percentages ("86% of your usage ...") after them
+        pct_lines = [ln for ln in lines if "%" in ln
+                     and ln.startswith(("Current session", "Current week ("))]
         result.update(status="ok", headline=" | ".join(pct_lines[:4]),
                       usage_quality="exact", usage_source="print")
-        for ln in lines:
-            if result["session_pct"] is None:
-                hit = parse_usage_line(ln, SESSION_LINE_PREFIX)
-                if hit is not None:
-                    result["session_pct"], result["session_resets"] = hit
-                    continue
-            if result["week_pct"] is None:
-                hit = parse_usage_line(ln, WEEK_ALL_LINE_PREFIX)
-                if hit is not None:
-                    result["week_pct"], result["week_resets"] = hit
+        result.update(anchored)
+        result.update(model)
+        result["availability_band"] = usage_band(result)
+        return result
+    # v33.7: no anchored text line -- the structured usage_report twin is
+    # the same reading, so it is exact print evidence too (it shields the
+    # parse from a reworded print line; on the failed-read shape it is
+    # null as well and the chain continues unchanged)
+    anchored, model = usage_from_report(parse_usage_report(out))
+    if anchored:
+        result.update(status="ok", usage_quality="exact", usage_source="print")
+        result.update(anchored)
+        result.update(model)
+        result["headline"] = anchored_headline(result)
         result["availability_band"] = usage_band(result)
         return result
     if info is not None and info.get("status") in RATE_LIMIT_STATUSES:
@@ -1692,8 +2413,15 @@ def probe_usage(pinned: str, is_wsl: bool, timeout: float,
                       limit_resets=resets_iso, headline=headline)
         result["availability_band"] = usage_band(result)
         return result
-    # no panel, no % lines, no event: the logged-out local-stats block and
-    # every other unrecognized-but-clean exit land here
+    # no anchored quota line, no event: the logged-out local-stats block
+    # and every other unrecognized-but-clean exit land here
+    text = (result_text or "").strip()
+    if text.startswith(SUBSCRIPTION_BANNER_PREFIXES):
+        # v33.7: a logged-in subscription report without quota lines is
+        # the CLI's failed usage read -- name it, instead of carrying the
+        # contribution report's unrelated percentages as the headline
+        result.update(status="degraded", headline=USAGE_READ_FAILED_HEADLINE)
+        return result
     result.update(status="degraded",
                   headline=(result_text or out or "").strip()[:200] or None)
     return result
@@ -1746,145 +2474,195 @@ def probe_codex(timeout: float) -> dict:
             "models": listed}
 
 
-def probe_codex_usage(timeout: float) -> dict:
-    """The codex app-server account/rateLimits/read usage probe (--usage).
+def codex_app_server_exchange(requests: list, env: dict, timeout: float) -> dict:
+    """ONE codex app-server JSON-RPC exchange -- the transport shared by
+    every app-server caller (v33.6 D1; extracted from the v33.3
+    probe_codex_usage body with every D4 invariant below kept).
+
+    `requests` is a list of JSON-RPC request strings, the first of them
+    `initialize`; each request's wait id is read from its own JSON `id`.
+    Returns {"replies": {<id>: <obj>}, "verdict": "ok" | "write-failed" |
+    "eof" | "timeout" | "absent" | "spawn-failed", "detail": <str|None>,
+    "stderr_tail": <str>, "deadline": <float>} -- `replies` holds the
+    id-correlated reply objects present in the wait-end transcript (a
+    verdict never removes a captured reply; every caller decides reply-
+    first). `absent` = FileNotFoundError on spawn, `spawn-failed` = any
+    other OSError (detail = the exception text); `write-failed` = a broken
+    stdin write (detail = the error); otherwise, read from the wait-end
+    snapshot: `ok` = every request AFTER the first has a correlated reply
+    (the first, initialize, is awaited only up to the init window), else
+    `timeout` / `eof` = the deadline / stdout EOF ended the wait first.
 
     Popen-based BY DESIGN, never run_cli: the server exits on closed stdin,
-    so stdin must stay OPEN across the exchange -- write initialize (id:1),
-    sleep, write the rate-limit request (id:2), sleep out the response
-    window, then close stdin (communicate) and collect. The deadline is
-    max(timeout, 30) with the scripted sleeps INSIDE it; the finally block
-    terminates -> bounded-waits -> kills -> reaps the RECORDED child on
-    every success/failure/timeout path (recorded identity only -- never
-    broad process matching). The response is correlated on the rate-limit
-    request id ONLY; initialize responses, notifications, and banner lines
-    are tolerated and ignored. Windows classify by windowDurationMins
-    (300 session / 10080 week), never by primary/secondary position.
+    so stdin must stay OPEN across the exchange. READ-UNTIL-REPLY (v33.3
+    D4), no scripted sleeps: write the first request (initialize, id:1);
+    wait until a parsed stdout line carries its id OR the init window
+    elapses; write every remaining request; wait until each of their ids
+    has a parsed line, stdout EOF, or the deadline -- max(timeout, 30),
+    the ceiling of the whole exchange -- whichever first. The stdout
+    transcript is FINAL at that moment (snapshotted once, under the lock,
+    BEFORE the shutdown: a reply arriving during the shutdown is not
+    parsed).
+
+    ONE OWNER PER PIPE: two daemon reader threads own proc.stdout and
+    proc.stderr from spawn to EOF (stderr is drained concurrently so a
+    chatty server never blocks on a full pipe). There is NO communicate()
+    call anywhere -- it would compete with the readers for the same
+    pipes. Stream DISPOSAL is reader-owned: each reader closes its own
+    stream at EOF; the main thread closes ONLY stdin and NEVER touches
+    stdout/stderr (a CPython buffered close() takes the lock a blocked
+    readline() holds, so closing a stream under a live reader would hang).
+    Shutdown, on every success/failure/timeout path: close stdin ->
+    bounded wait for the server's clean exit -> terminate -> wait(5) ->
+    kill -> wait(5) on the RECORDED child only (recorded identity --
+    never broad process matching) -> a bounded join on each reader. A
+    reader still alive after its join bound (a descendant retaining the
+    pipe) is ABANDONED -- daemon thread, stream left open for interpreter
+    exit -- and the recorded child is still reaped within its own bound.
+
+    This is the TRANSPORT layer only: a matching response id establishes
+    CORRELATION, never success -- each caller's own semantic block over
+    `replies` is the sole source of its statuses. Replies correlate on the
+    requests' own ids ONLY (a bool id never correlates); notifications and
+    banner lines are tolerated and ignored.
     """
-    result = codex_usage_skipped()
-    result.update(status="failed")
-    deadline = max(timeout, 30.0)
+    deadline = max(timeout, CODEX_USAGE_DEADLINE_FLOOR_S)
+    wait_ids = [json.loads(req)["id"] for req in requests]
+    ex = {"replies": {}, "verdict": "ok", "detail": None, "stderr_tail": "",
+          "deadline": deadline}
     try:
         proc = subprocess.Popen(
             ["codex", "app-server"], stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding="utf-8", errors="replace",
-            cwd=neutral_probe_cwd(), env=probe_env())  # v32 PR-HIGH-021
+            cwd=neutral_probe_cwd(), env=env)
     except FileNotFoundError:
-        result.update(status="absent", error="executable not found: codex")
-        return result
+        ex.update(verdict="absent", detail="executable not found: codex")
+        return ex
     except OSError as exc:
-        result.update(status="failed", error=str(exc)[:200])
-        return result
+        ex.update(verdict="spawn-failed", detail=str(exc)[:200])
+        return ex
     t0 = time.monotonic()
-    stdout_data = ""
-    stderr_data = ""
     timed_out = False
     write_error = None
-    # newest TimeoutExpired partials (CPython reports the FULL accumulated
-    # buffer on each timeout, as bytes even in text mode; a later successful
-    # communicate() returns that same accumulation, so partials are consumed
-    # ONLY when no communicate() ever succeeds -- never double-appended)
-    partial = {"out": None, "err": None}
+    cond = threading.Condition()
+    out_lines: list = []
+    err_lines: list = []
+    seen = {"ids": set(), "eof": False}  # stdout-side state, under cond
 
-    def remaining() -> float:
-        return deadline - (time.monotonic() - t0)
+    def reply_id(line: str):
+        """The JSON-RPC id of one stdout line, or None (banner/notice
+        lines and id-less notifications tolerated; an id that is not a
+        plain int/str -- unhashable shapes included -- is an ignorable
+        line, never a reader crash)."""
+        line = line.strip()
+        if not line.startswith("{"):
+            return None
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            return None
+        rid = obj.get("id") if isinstance(obj, dict) else None
+        if isinstance(rid, bool) or not isinstance(rid, (int, str)):
+            return None  # True == 1 in a set: a bool id must never correlate
+        return rid
 
-    def _to_text(data) -> str:
-        if data is None:
-            return ""
-        if isinstance(data, bytes):
-            return data.decode("utf-8", "replace")
-        return data
+    def pump(stream, sink, is_stdout: bool) -> None:
+        """The ONE owner of its pipe, spawn to EOF: appends every line
+        under the lock and, at EOF, closes its OWN stream."""
+        try:
+            for line in iter(stream.readline, ""):
+                with cond:
+                    sink.append(line)
+                    if is_stdout:
+                        rid = reply_id(line)
+                        if rid is not None:
+                            seen["ids"].add(rid)
+                    cond.notify_all()
+        except (OSError, ValueError):
+            pass  # a torn-down pipe reads as EOF
+        finally:
+            try:
+                stream.close()
+            except (OSError, ValueError):
+                pass
+            if is_stdout:
+                with cond:
+                    seen["eof"] = True
+                    cond.notify_all()
 
-    def note_partial(exc) -> None:
-        if exc.stdout is not None:
-            partial["out"] = exc.stdout
-        if exc.stderr is not None:
-            partial["err"] = exc.stderr
+    def wait_for_replies(rids: list, until: float) -> bool:
+        """Block until a parsed stdout line carries each id in rids, stdout
+        EOF, or the monotonic instant `until` -- whichever first."""
+        with cond:
+            while (not all(rid in seen["ids"] for rid in rids)
+                   and not seen["eof"]):
+                left = until - time.monotonic()
+                if left <= 0:
+                    break
+                cond.wait(left)
+            return all(rid in seen["ids"] for rid in rids)
 
+    readers = [
+        threading.Thread(target=pump, args=(proc.stdout, out_lines, True),
+                         name="codex-usage-stdout", daemon=True),
+        threading.Thread(target=pump, args=(proc.stderr, err_lines, False),
+                         name="codex-usage-stderr", daemon=True)]
+    for reader in readers:
+        reader.start()
+
+    stdout_data = ""
     try:
         try:
-            proc.stdin.write(CODEX_USAGE_INIT_REQ + "\n")
+            proc.stdin.write(requests[0] + "\n")
             proc.stdin.flush()
-            time.sleep(max(0.0, min(CODEX_USAGE_INIT_WINDOW_S, remaining())))
-            proc.stdin.write(CODEX_USAGE_RATE_REQ + "\n")
-            proc.stdin.flush()
-            time.sleep(max(0.0, min(CODEX_USAGE_RESPONSE_WINDOW_S, remaining())))
-        except OSError as exc:
+            # the init window survives only as the id:1 wait CEILING
+            wait_for_replies(wait_ids[:1], min(t0 + CODEX_USAGE_INIT_WINDOW_S,
+                                               t0 + deadline))
+            for req in requests[1:]:
+                proc.stdin.write(req + "\n")
+                proc.stdin.flush()
+        except (OSError, ValueError) as exc:
             write_error = str(exc)[:200]
-        try:
-            # communicate() closes stdin (the response window is over), then
-            # collects output and waits for the server's clean exit.
-            out_rest, err_rest = proc.communicate(timeout=max(1.0, remaining()))
-            stdout_data += out_rest or ""
-            stderr_data += err_rest or ""
-            partial = {"out": None, "err": None}  # subsumed by the return
-        except subprocess.TimeoutExpired as exc:
-            timed_out = True
-            note_partial(exc)
+        if write_error is None:
+            if not wait_for_replies(wait_ids[1:], t0 + deadline):
+                with cond:
+                    timed_out = not seen["eof"]
+        # transport wait over (reply / EOF / deadline / write error): the
+        # stdout transcript is FINAL here -- one snapshot, under the lock
+        with cond:
+            stdout_data = "".join(out_lines)
     finally:
-        # recorded-identity cleanup, guaranteed on every path: drain the
-        # boundary output (preserving timeout partials so a captured id:2
-        # is never lost), terminate -> bounded wait -> kill, close OUR
-        # descriptors, then reap the recorded child independently of pipe
-        # EOF (a descendant holding the pipes must not block the reap).
-        # Only ever the Popen handle recorded above -- never any other
-        # process.
+        # recorded-identity shutdown, guaranteed on every path: close
+        # stdin (OURS -- the only stream the main thread ever closes),
+        # bounded clean-exit wait -> terminate -> wait -> kill -> wait on
+        # the Popen handle recorded above (never any other process),
+        # then bounded reader joins. A reader outliving its join bound is
+        # abandoned with its stream OPEN (reader-owned disposal).
         try:
-            if proc.poll() is None:
+            proc.stdin.close()
+        except (OSError, ValueError):
+            pass
+        try:
+            try:
+                proc.wait(timeout=CODEX_USAGE_EXIT_GRACE_S)
+            except subprocess.TimeoutExpired:
                 proc.terminate()
                 try:
-                    out_rest, err_rest = proc.communicate(timeout=5.0)
-                    stdout_data += out_rest or ""
-                    stderr_data += err_rest or ""
-                    partial = {"out": None, "err": None}
-                except subprocess.TimeoutExpired as exc:
-                    note_partial(exc)
+                    proc.wait(timeout=5.0)
+                except subprocess.TimeoutExpired:
                     proc.kill()
                     try:
-                        out_rest, err_rest = proc.communicate(timeout=5.0)
-                        stdout_data += out_rest or ""
-                        stderr_data += err_rest or ""
-                        partial = {"out": None, "err": None}
-                    except subprocess.TimeoutExpired as exc2:
-                        note_partial(exc2)
-                    except (ValueError, OSError):
+                        proc.wait(timeout=5.0)
+                    except subprocess.TimeoutExpired:
                         pass
-                except (ValueError, OSError):
-                    pass
-            else:
-                # exited between the timeout and this poll: drain so a
-                # response at the deadline edge is not lost
-                try:
-                    out_rest, err_rest = proc.communicate(timeout=5.0)
-                    stdout_data += out_rest or ""
-                    stderr_data += err_rest or ""
-                    partial = {"out": None, "err": None}
-                except subprocess.TimeoutExpired as exc:
-                    note_partial(exc)
-                except (ValueError, OSError):
-                    pass
         except OSError:
             pass  # terminate/kill raced an already-gone child
-        finally:
-            for stream in (proc.stdin, proc.stdout, proc.stderr):
-                try:
-                    if stream is not None and not stream.closed:
-                        stream.close()
-                except OSError:
-                    pass
-            try:
-                proc.wait(timeout=5.0)  # reap regardless of pipe state
-            except (subprocess.TimeoutExpired, OSError):
-                pass
+        for reader in readers:
+            reader.join(CODEX_USAGE_READER_JOIN_S)
+    with cond:
+        stderr_data = "".join(err_lines)  # diagnostic tail only
 
-    # no communicate() ever succeeded: consume the newest timeout partials
-    # (the full accumulated buffers) so a deadline-edge response still parses
-    stdout_data += _to_text(partial["out"])
-    stderr_data += _to_text(partial["err"])
-
-    resp = None
     for line in stdout_data.splitlines():
         line = line.strip()
         if not line.startswith("{"):
@@ -1893,39 +2671,35 @@ def probe_codex_usage(timeout: float) -> dict:
             obj = json.loads(line)
         except ValueError:
             continue
-        # exact-id correlation ONLY: the initialize response (id:1) and
-        # id-less notifications are tolerated and ignored
-        if isinstance(obj, dict) and obj.get("id") == CODEX_USAGE_RATE_ID:
-            resp = obj
-    if resp is None:
-        # precedence: a captured response would have won above; a concrete
-        # transport/write failure is never hidden by the later timeout state
-        if write_error:
-            result.update(status="failed",
-                          error="request write failed: " + write_error)
-        elif timed_out:
-            result.update(status="timeout",
-                          error="no rate-limit response within "
-                                + str(deadline) + "s")
-        else:
-            result.update(status="failed",
-                          error="no id:" + str(CODEX_USAGE_RATE_ID)
-                                + " response; stderr: "
-                                + (stderr_data or "").strip()[:200])
-        return result
-    if not isinstance(resp.get("result"), dict):
-        detail = resp.get("error")
-        result.update(status="failed",
-                      error="rate-limit response carries no result object"
-                            + (": " + json.dumps(detail)[:200] if detail else ""))
-        return result
-    limits = resp["result"].get("rateLimits")
-    if not isinstance(limits, dict):
-        result.update(status="degraded",
-                      error="response parsed but no rateLimits object (shape drift)")
-        return result
-    plan = limits.get("planType")
-    result["plan"] = plan if isinstance(plan, str) and plan else None
+        # exact-id correlation ONLY (the last matching line wins); id-less
+        # notifications are tolerated and ignored
+        rid = obj.get("id") if isinstance(obj, dict) else None
+        if isinstance(rid, bool):
+            continue
+        for want in wait_ids:
+            if rid == want:
+                ex["replies"][want] = obj
+    ex["stderr_tail"] = (stderr_data or "").strip()[:200]
+    # the verdict is read from the SNAPSHOT: a reply that landed after the
+    # wait's deadline exit but before the snapshot counts as replied
+    if write_error is not None:
+        ex.update(verdict="write-failed", detail=write_error)
+    elif all(rid in ex["replies"] for rid in wait_ids[1:]):
+        ex["verdict"] = "ok"
+    elif timed_out:
+        ex["verdict"] = "timeout"
+    else:
+        ex["verdict"] = "eof"
+    return ex
+
+
+def classify_codex_windows(limits: dict, result: dict, with_iso: bool) -> int:
+    """Fill result's session_* / week_* fields from a rateLimits object's
+    primary/secondary cells, classified by windowDurationMins (300 session
+    / 10080 week), NEVER by position; returns the number of windows whose
+    usedPercent classified. Shared by codex.usage (with_iso=True: the
+    derived local-ISO *_resets strings too) and codex.accounts[]
+    (with_iso=False: *_resets_at only)."""
     classified = 0
     for cell in (limits.get("primary"), limits.get("secondary")):
         if not isinstance(cell, dict):
@@ -1946,12 +2720,77 @@ def probe_codex_usage(timeout: float) -> dict:
         resets_at = cell.get("resetsAt")
         if isinstance(resets_at, (int, float)) and not isinstance(resets_at, bool):
             result[key + "_resets_at"] = resets_at
-            try:
-                result[key + "_resets"] = (
-                    datetime.fromtimestamp(resets_at).astimezone()
-                    .isoformat(timespec="minutes"))
-            except (OverflowError, OSError, ValueError):
-                result[key + "_resets"] = None
+            if with_iso:
+                try:
+                    result[key + "_resets"] = (
+                        datetime.fromtimestamp(resets_at).astimezone()
+                        .isoformat(timespec="minutes"))
+                except (OverflowError, OSError, ValueError):
+                    result[key + "_resets"] = None
+    return classified
+
+
+def probe_codex_usage(timeout: float) -> dict:
+    """The codex app-server account/rateLimits/read usage probe (--usage).
+
+    ONE codex_app_server_exchange() (above: spawn, read-until-reply wait,
+    recorded-identity shutdown) with [initialize (id:1),
+    account/rateLimits/read (id:2)] on probe_env() -- the ambient
+    CODEX_HOME inherited, exactly as v33.5. Outcomes are two-layered.
+    TRANSPORT, consulted ONLY when no id:2 reply was captured: a broken
+    stdin write -> failed; stdout EOF before the reply -> failed (stderr
+    tail); the deadline -> timeout. A matching response id establishes
+    CORRELATION, never success: the captured reply then passes through the
+    semantic block below, the sole source of ok / degraded / failed. The
+    response is correlated on the rate-limit request id ONLY; initialize
+    responses, notifications, and banner lines are tolerated and ignored.
+    Windows classify by windowDurationMins (300 session / 10080 week),
+    never by primary/secondary position.
+    """
+    result = codex_usage_skipped()
+    result.update(status="failed")
+    ex = codex_app_server_exchange(
+        [CODEX_USAGE_INIT_REQ, CODEX_USAGE_RATE_REQ], probe_env(),
+        timeout)  # v32 PR-HIGH-021
+    if ex["verdict"] == "absent":
+        result.update(status="absent", error=ex["detail"])
+        return result
+    if ex["verdict"] == "spawn-failed":
+        result.update(status="failed", error=ex["detail"])
+        return result
+    resp = ex["replies"].get(CODEX_USAGE_RATE_ID)
+    if resp is None:
+        # precedence: a captured response would have won above; a concrete
+        # transport/write failure is never hidden by the later timeout state
+        # (a write error with EMPTY text falls through, as v33.3's
+        # `if write_error:` did)
+        if ex["verdict"] == "write-failed" and ex["detail"]:
+            result.update(status="failed",
+                          error="request write failed: " + ex["detail"])
+        elif ex["verdict"] == "timeout":
+            result.update(status="timeout",
+                          error="no rate-limit response within "
+                                + str(ex["deadline"]) + "s")
+        else:
+            result.update(status="failed",
+                          error="no id:" + str(CODEX_USAGE_RATE_ID)
+                                + " response; stderr: "
+                                + ex["stderr_tail"])
+        return result
+    if not isinstance(resp.get("result"), dict):
+        detail = resp.get("error")
+        result.update(status="failed",
+                      error="rate-limit response carries no result object"
+                            + (": " + json.dumps(detail)[:200] if detail else ""))
+        return result
+    limits = resp["result"].get("rateLimits")
+    if not isinstance(limits, dict):
+        result.update(status="degraded",
+                      error="response parsed but no rateLimits object (shape drift)")
+        return result
+    plan = limits.get("planType")
+    result["plan"] = plan if isinstance(plan, str) and plan else None
+    classified = classify_codex_windows(limits, result, with_iso=True)
     if classified:
         result.update(status="ok", error=None)
     else:
@@ -1961,16 +2800,339 @@ def probe_codex_usage(timeout: float) -> dict:
     return result
 
 
+def codex_home_env(home: str) -> dict:
+    """The per-home app-server env (v33.6 D20): probe_env() (token-
+    stripped), the API-key auth variables popped BY NAME (never read,
+    compared, or echoed -- the binary honours them ahead of the home's
+    auth.json, so one exported would make every home answer as that key),
+    then CODEX_HOME SET explicitly (never inherited). The legacy
+    codex.usage exchange and 'codex debug models' keep probe_env()."""
+    env = probe_env()
+    for name in CODEX_API_KEY_VARS:
+        env.pop(name, None)
+    env["CODEX_HOME"] = home
+    return env
+
+
+def codex_account_entry(home: str, status: str = "skipped", error=None) -> dict:
+    """One codex.accounts[] entry: every contract key present, in contract
+    order, value fields null until a reply fills them. is_default =
+    realpath(home) == realpath($HOME/.codex)."""
+    return {"home": home,
+            "is_default": os.path.realpath(home) == codex_default_home_real(),
+            "status": status, "error": error, "email": None, "plan": None,
+            "account_id": None, "session_pct": None, "session_resets_at": None,
+            "week_pct": None, "week_resets_at": None, "reset_credits": None,
+            "daily_tokens": None, "additional_limits": None}
+
+
+def _codex_result(reply):
+    """A reply's result object, or None (no reply / rpc error / drift)."""
+    if isinstance(reply, dict) and isinstance(reply.get("result"), dict):
+        return reply["result"]
+    return None
+
+
+def _codex_rpc_detail(reply) -> str:
+    """The failure detail of a reply that carries no result object."""
+    err = reply.get("error") if isinstance(reply, dict) else None
+    if isinstance(err, dict) and isinstance(err.get("message"), str):
+        return err["message"][:200]
+    if err is not None:
+        return json.dumps(err)[:200]
+    return "reply carries no result object"
+
+
+def _nonempty_str(value):
+    return value if isinstance(value, str) and value else None
+
+
+def _fill_codex_account(entry: dict, acct, rate, usage) -> None:
+    """The D16 field mapping over the parsed read results (any may be
+    None): identity from account/read, plan / account id / reset credits
+    from account/rateLimits/read, daily tokens from account/usage/read.
+    The app-server's null-vs-empty semantics pass through untouched."""
+    account = acct.get("account") if acct else None
+    account = account if isinstance(account, dict) else {}
+    routing = acct.get("workspaceRouting") if acct else None
+    routing = routing if isinstance(routing, dict) else {}
+    limits = rate.get("rateLimits") if rate else None
+    limits = limits if isinstance(limits, dict) else {}
+    if account.get("type") == "chatgpt":
+        entry["email"] = _nonempty_str(account.get("email"))
+    entry["plan"] = (_nonempty_str(limits.get("planType"))
+                     or _nonempty_str(account.get("planType")))
+    entry["account_id"] = (_nonempty_str((rate or {}).get("accountId"))
+                           or _nonempty_str(routing.get("chatgptAccountId")))
+    credits = (rate or {}).get("rateLimitResetCredits")
+    if isinstance(credits, dict):
+        count = credits.get("availableCount")
+        items = credits.get("credits")
+        entry["reset_credits"] = {
+            "available_count": (count if isinstance(count, int)
+                                and not isinstance(count, bool) else None),
+            "items": ([{"id": c.get("id"), "status": c.get("status"),
+                        "granted_at": c.get("grantedAt"),
+                        "expires_at": c.get("expiresAt"),
+                        "title": c.get("title")}
+                       for c in items if isinstance(c, dict)]
+                      if isinstance(items, list) else None)}
+    buckets = (usage or {}).get("dailyUsageBuckets")
+    if isinstance(buckets, list):
+        entry["daily_tokens"] = [{"date": b["startDate"], "tokens": b["tokens"]}
+                                 for b in buckets if isinstance(b, dict)
+                                 and "startDate" in b and "tokens" in b]
+
+
+def _probe_codex_account(home: str, timeout: float) -> dict:
+    entry = codex_account_entry(home, "failed")
+    ex = codex_app_server_exchange(
+        [CODEX_USAGE_INIT_REQ, CODEX_ACCOUNT_READ_REQ, CODEX_ACCOUNT_RATE_REQ,
+         CODEX_ACCOUNT_USAGE_REQ], codex_home_env(home), timeout)
+    verdict = ex["verdict"]
+    stderr_note = "; stderr: " + ex["stderr_tail"] if ex["stderr_tail"] else ""
+    # (1) transport failure: nothing was fully exchanged, no reply consulted
+    if verdict in ("absent", "spawn-failed"):
+        entry["error"] = ex["detail"]
+        return entry
+    if verdict == "write-failed":
+        entry["error"] = ("request write failed: " + (ex["detail"] or "")
+                          + stderr_note)[:300]
+        return entry
+    replies = ex["replies"]
+    acct = _codex_result(replies.get(CODEX_ACCOUNT_READ_ID))
+    # (2) a null account is conclusive: the -32600 errors after it are expected
+    if acct is not None and "account" in acct and acct["account"] is None:
+        entry.update(status="logged-out", error=None)
+        return entry
+    rate_reply = replies.get(CODEX_ACCOUNT_RATE_ID)
+    rate = _codex_result(rate_reply)
+    usage = _codex_result(replies.get(CODEX_ACCOUNT_USAGE_ID))
+    _fill_codex_account(entry, acct, rate, usage)
+    # (3) no deciding reply: the verdict decides
+    if rate_reply is None:
+        if verdict == "timeout":
+            entry.update(status="timeout",
+                         error="no rate-limit response within "
+                               + str(ex["deadline"]) + "s")
+        else:
+            entry["error"] = ("stdout closed before account/rateLimits/read "
+                              "replied" + stderr_note)[:300]
+        return entry
+    # (4) the rate-limit reply decides, whatever the verdict
+    if rate is None:
+        entry["error"] = "account/rateLimits/read: " + _codex_rpc_detail(rate_reply)
+        return entry
+    limits = rate.get("rateLimits")
+    if not isinstance(limits, dict):
+        entry.update(status="degraded",
+                     error="account/rateLimits/read parsed but no rateLimits "
+                           "object (shape drift)")
+        return entry
+    if not classify_codex_windows(limits, entry, with_iso=False):
+        entry.update(status="degraded",
+                     error="rateLimits parsed but no recognizable "
+                           "windowDurationMins (300/10080)")
+        return entry
+    # (5) ok also needs both auxiliary reads as parsed result objects
+    problems = []
+    for rid, method, parsed in ((CODEX_ACCOUNT_READ_ID, "account/read", acct),
+                                (CODEX_ACCOUNT_USAGE_ID, "account/usage/read",
+                                 usage)):
+        if parsed is not None:
+            continue
+        reply = replies.get(rid)
+        problems.append(method + ": " + (_codex_rpc_detail(reply)
+                                         if reply is not None
+                                         else "no reply (" + verdict + ")"))
+    if problems:
+        entry.update(status="degraded", error="; ".join(problems)[:300])
+    else:
+        entry.update(status="ok", error=None)
+    return entry
+
+
+def probe_codex_account(home: str, timeout: float) -> dict:
+    """ONE codex account per eligible CODEX_HOME (v33.6; only behind
+    --usage). One codex_app_server_exchange() on codex_home_env(home) with
+    initialize (1), account/read (2), account/rateLimits/read (3), and
+    account/usage/read (4). Status, REPLY-FIRST in this fixed order (D9;
+    only replies in the wait-end transcript count): (1) a spawn / write
+    failure -> failed; (2) account/read with a null account -> logged-out
+    (every value field null); (3) no rate-limit reply -> timeout under the
+    deadline, else failed; (4) the rate-limit reply decides -- an rpc
+    error -> failed, no rateLimits object / no recognizable window ->
+    degraded, >= 1 window -> (5) ok only when account/read and
+    account/usage/read are parsed result objects too, else degraded with
+    the read and cause named. Value fields reflect whatever replies were
+    captured. Any internal error becomes this home's own failed entry
+    (D18) -- one home never blanks the others."""
+    try:
+        return _probe_codex_account(home, timeout)
+    except Exception as exc:
+        return codex_account_entry(home, "failed", "internal: " + str(exc)[:200])
+
+
+def probe_codex_accounts(homes: list, timeout: float,
+                         workers: int | None = None) -> list:
+    """probe_codex_account() for every home through the shared in-order
+    pool (D3): results in input order, --workers bounded."""
+    return _pooled_in_order(lambda home: probe_codex_account(home, timeout),
+                            homes, workers)
+
+
+def codex_consume_request(credit_id: str, key: str) -> str:
+    """The consume-mode JSON-RPC request (v33.6): the ONE place the probe's
+    single write-capable method is named (a selftest source pin)."""
+    return json.dumps({"jsonrpc": "2.0", "id": CODEX_CONSUME_ID,
+                       "method": "account/rateLimitResetCredit/consume",
+                       "params": {"creditId": credit_id,
+                                  "idempotencyKey": key}},
+                      separators=(",", ":"))
+
+
+def consume_document(home: str, status: str, outcome=None, error=None) -> dict:
+    """The consume document's inner object -- exactly these four keys."""
+    return {"home": home, "status": status, "outcome": outcome, "error": error}
+
+
+def classify_consume(home: str, ex: dict) -> dict:
+    """The consume document over one codex_app_server_exchange() result, by
+    a TOTAL, reply-first table (v33.6): (1) no process (absent /
+    spawn-failed) -> failed with the transport detail; (2) a correlated
+    consume reply decides whatever the verdict (a write error can follow
+    a request the server already answered) -- ok only with an outcome in
+    the four-value set, else failed (an rpc error's detail, or the
+    unexpected value; never an invented outcome); (3) no reply: write
+    failure -> failed "request write failed: ...", deadline -> timeout,
+    EOF -> failed "stdout closed before the consume reply". A timeout or
+    failure AFTER the request was written is INDETERMINATE (the credit may
+    have been consumed): the consumer re-reads account/rateLimits/read
+    before retrying with the SAME idempotency key; the probe never retries."""
+    verdict = ex["verdict"]
+    stderr_note = "; stderr: " + ex["stderr_tail"] if ex["stderr_tail"] else ""
+    if verdict in ("absent", "spawn-failed"):
+        return consume_document(home, "failed", error=ex["detail"])
+    reply = ex["replies"].get(CODEX_CONSUME_ID)
+    if reply is not None:
+        result = _codex_result(reply)
+        if result is None:
+            return consume_document(home, "failed",
+                                    error="consume: " + _codex_rpc_detail(reply))
+        outcome = result.get("outcome")
+        if isinstance(outcome, str) and outcome in CODEX_CONSUME_OUTCOMES:
+            return consume_document(home, "ok", outcome=outcome)
+        return consume_document(home, "failed",
+                                error=("unexpected outcome: "
+                                       + json.dumps(outcome))[:200])
+    if verdict == "write-failed":
+        return consume_document(home, "failed",
+                                error=("request write failed: "
+                                       + (ex["detail"] or "") + stderr_note)[:300])
+    if verdict == "timeout":
+        return consume_document(home, "timeout",
+                                error="no consume response within "
+                                      + str(ex["deadline"]) + "s")
+    return consume_document(home, "failed",
+                            error=("stdout closed before the consume reply"
+                                   + stderr_note)[:300])
+
+
+def consume_codex_reset(home: str, credit_id: str, key: str,
+                        timeout: float) -> dict:
+    """ONE consume exchange against one CODEX_HOME (v33.6; reached only
+    through run_consume(), behind the env gate): an ineligible home is the
+    failed "ineligible home" document WITHOUT a spawn (the server writes
+    state into whatever home it is pointed at); else initialize + the
+    consume request on codex_home_env(home) -- nothing else is sent."""
+    if not is_eligible_codex_home(home):
+        return consume_document(home, "failed", error="ineligible home")
+    ex = codex_app_server_exchange(
+        [CODEX_USAGE_INIT_REQ, codex_consume_request(credit_id, key)],
+        codex_home_env(home), timeout)
+    return classify_consume(home, ex)
+
+
+def select_codex_homes(requested) -> list:
+    """The ordered codex.accounts rows: [{"home", "eligible"}]. No request
+    = every enumerated eligible home. A request keeps argument order and
+    runs the predicate PER SPELLING first (PR-MED-009): eligible spellings
+    dedup by realpath (first wins), ineligible spellings by their
+    normalized supplied path -- the two sets never suppress each other."""
+    if not requested:
+        return [{"home": h["home"], "eligible": True}
+                for h in enumerate_codex_homes()]
+    rows: list = []
+    seen_real: set = set()
+    seen_bad: set = set()
+    for raw in requested:
+        p = os.path.abspath(os.path.expanduser(raw))
+        if is_eligible_codex_home(p):
+            real = os.path.realpath(p)
+            if real in seen_real:
+                continue
+            seen_real.add(real)
+            rows.append({"home": p, "eligible": True})
+        elif p not in seen_bad:
+            seen_bad.add(p)
+            rows.append({"home": p, "eligible": False})
+    return rows
+
+
+def build_codex_accounts(args) -> list:
+    """codex.accounts (v33.6; ALWAYS emitted): an ineligible requested
+    home is failed "ineligible home" and NEVER spawned (with or without
+    --usage); eligible entries are probed under --usage (never under
+    --profile-dir), else skipped."""
+    rows = select_codex_homes(getattr(args, "codex_home", None))
+    run = bool(args.usage) and not args.profile_dir
+    probed = iter(probe_codex_accounts(
+        [r["home"] for r in rows if r["eligible"]] if run else [],
+        args.timeout, workers=getattr(args, "workers", None)))
+    out: list = []
+    for r in rows:
+        if not r["eligible"]:
+            out.append(codex_account_entry(r["home"], "failed", "ineligible home"))
+        elif run:
+            out.append(next(probed))
+        else:
+            out.append(codex_account_entry(r["home"]))
+    return out
+
+
+def legacy_codex_usage_runs(args) -> bool:
+    """codex.usage is probed under --usage and no --profile-dir and (no
+    --codex-home, or $HOME/.codex's realpath among the requested homes --
+    v33.6 D2); otherwise it is the v33.5 skipped shape."""
+    if not args.usage or args.profile_dir:
+        return False
+    requested = getattr(args, "codex_home", None)
+    if not requested:
+        return True
+    default = codex_default_home_real()
+    return any(os.path.realpath(os.path.abspath(os.path.expanduser(h))) == default
+               for h in requested)
+
+
+def claude_skeleton(status: str) -> dict:
+    """The probe_claude() document before any probe ran (v33.6 D5): its
+    initial dict ("failed" until proven) and the --codex-home skipped leg."""
+    return {"status": status, "error": None, "candidates": [], "pinned": None,
+            "help": {"status": "skipped", "aliases": [], "efforts": [],
+                     "error": None, "no_session_persistence": False},
+            "version": {"value": None, "status": "skipped", "error": None},
+            "advisor": {"value": None, "status": "skipped", "error": None,
+                        "version": None},
+            "profile_dir_filter": None,
+            "default_account": {"identity": None, "status": "skipped",
+                                "plan": None, "org_id": None,
+                                "auth_state": None,
+                                "usage": usage_skipped()},
+            "profiles": []}
+
+
 def probe_claude(args, is_wsl: bool) -> dict:
-    out: dict = {"status": "failed", "error": None, "candidates": [], "pinned": None,
-                 "help": {"status": "skipped", "aliases": [], "efforts": [], "error": None},
-                 "version": {"value": None, "status": "skipped", "error": None},
-                 "advisor": {"value": None, "status": "skipped", "error": None,
-                             "version": None},
-                 "profile_dir_filter": None,
-                 "default_account": {"identity": None, "status": "skipped",
-                                     "plan": None, "usage": usage_skipped()},
-                 "profiles": []}
+    out = claude_skeleton("failed")
     cands = enumerate_claude_candidates(is_wsl)
     if not cands:
         out["status"] = "absent"
@@ -2041,30 +3203,37 @@ def probe_claude(args, is_wsl: bool) -> dict:
     # ---- binary-surface probes (no profile-store -p run): help, version,
     # advisor (the advisor probe is billed and gated behind its own flag)
     out["help"] = probe_claude_help(pinned, args.timeout)
+    # v33.6 D10: every print-mode call carries the session-persistence
+    # opt-out when the pinned CLI advertises it (.get: a help dict without
+    # the key means "not advertised")
+    nsp = out["help"].get("no_session_persistence", False)
     out["version"] = probe_claude_version(pinned, is_wsl, args.timeout)
     if args.probe_advisor:
         out["advisor"] = probe_claude_advisor(pinned, is_wsl, args.timeout,
-                                              out["version"]["value"])
+                                              out["version"]["value"],
+                                              no_session_persistence=nsp)
 
     # ---- pass 2 (store-touching CLI): identity + usage per account, from
     # the neutral cwd so probe-created entries land under excluded munges
+    # (v33.3 D3: one pooled job per account, assembled in input order; the
+    # snapshots above were taken BEFORE the pool starts)
     probe_cwd = neutral_probe_cwd()
-    ident = probe_identity(pinned, is_wsl, args.timeout, None)
-    ident["usage"] = (probe_usage(pinned, is_wsl, args.timeout, None,
-                                  cwd=probe_cwd)
-                      if args.usage else usage_skipped())
+    probed = probe_accounts(pinned, is_wsl, args.timeout,
+                            [None] + [p["dir"] for p in prof_entries],
+                            probe_cwd, bool(args.usage),
+                            workers=getattr(args, "workers", None),
+                            print_only=getattr(args, "print_only", False),
+                            no_session_persistence=nsp)
+    ident = probed[0]
     ident["config_dir"] = default_dir
     ident["config_source"] = default_source
     ident["aliases_profile"] = alias_hit
     ident["marker_email"] = read_profile_email_marker(default_dir)
     ident["recent_repos"] = default_projects
     out["default_account"] = ident
-    for p in prof_entries:
+    for p, entry in zip(prof_entries, probed[1:]):
         prof = {"dir": p["dir"]}
-        prof.update(probe_identity(pinned, is_wsl, args.timeout, p["dir"]))
-        prof["usage"] = (probe_usage(pinned, is_wsl, args.timeout, p["dir"],
-                                     cwd=probe_cwd)
-                         if args.usage else usage_skipped())
+        prof.update(entry)
         prof["marker_email"] = read_profile_email_marker(p["dir"])
         prof["recent_repos"] = snapshots[p["real"]]
         out["profiles"].append(prof)
@@ -2100,7 +3269,7 @@ def scan_plan_file(path: Path):
     never count for headings or bullets, so quoted examples cannot
     false-positive. paused is None unless the lifecycle section leads with
     'Paused' (v32); then it is {"since": ..., "reason": ...} from the section's
-    'Paused since:' / 'Paused reason:' bullets ("" when a field is absent —
+    'Paused since:' / 'Paused reason:' bullets ("" when a field is absent --
     surfaced, never guessed).
     """
     text = path.read_text(encoding="utf-8", errors="replace")
@@ -2162,10 +3331,10 @@ def probe_plans(plans_dir: str) -> dict:
         except OSError:
             live_errors += 1
             continue
-        # v32 (TE.4): Paused plans are surfaced regardless of a Loop config —
+        # v32 (TE.4): Paused plans are surfaced regardless of a Loop config --
         # discoverable + recoverable, never an Active candidate. Additive
         # field inside probe_schema 1; a paused plan WITH a config also still
-        # counts in non_active_with_config (paused IS non-active — the
+        # counts in non_active_with_config (paused IS non-active -- the
         # pre-v32 count's semantics are unchanged).
         if paused is not None:
             out["paused_plans"].append({"file": f.name,
@@ -2256,6 +3425,8 @@ def build_report_line(codex: dict, claude: dict, plans: dict) -> str:
         claude_seg = "claude NO-CANDIDATE-PASSED (environment-readiness pause)"
     elif claude["status"] == "absent":
         claude_seg = "claude ABSENT"
+    elif claude["status"] == "skipped":
+        claude_seg = "claude SKIPPED (--codex-home)"
     else:
         claude_seg = "claude FAILED"
     offer = plans["q1_offer"]
@@ -2285,9 +3456,55 @@ def build_report_line(codex: dict, claude: dict, plans: dict) -> str:
             + CURSOR_PLACEHOLDER + " | " + plans_seg)
 
 
-def main() -> int:
+def _workers_arg(value: str) -> int:
+    """argparse type for --workers: an integer >= 1."""
+    try:
+        n = int(value)
+    except ValueError:
+        n = 0
+    if n < 1:
+        raise argparse.ArgumentTypeError("--workers must be an integer >= 1")
+    return n
+
+
+TIMEOUT_BOUND_MSG = ("--timeout must be a finite number of seconds, at most "
+                     + str(int(PROBE_TIMEOUT_MAX_S)))
+
+
+def _timeout_in_bounds(value) -> bool:
+    """The --timeout rule, shared by the parse-time type and run_consume()'s
+    direct-seam re-check: a real number, finite, at most one day. An int
+    is compared exactly -- never converted to a float, which overflows
+    for a huge int (v33.6 PR-LOW-013); zero and negative values pass (the
+    per-probe floor applies), as in v33.5."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    if isinstance(value, int):
+        return value <= PROBE_TIMEOUT_MAX_S
+    return math.isfinite(value) and value <= PROBE_TIMEOUT_MAX_S
+
+
+def _timeout_arg(value: str) -> float:
+    """argparse type for --timeout (v33.6 PR-MED-011 / PR-MED-012): a
+    finite number of seconds, at most PROBE_TIMEOUT_MAX_S -- a NaN would
+    make every exchange deadline NaN (an unbounded wait) and a huge value
+    overflows the timed waits. Zero and negative values keep their v33.5
+    behaviour (each probe's own floor applies)."""
+    try:
+        v = float(value)
+    except ValueError:
+        v = float("nan")
+    if not _timeout_in_bounds(v):
+        raise argparse.ArgumentTypeError(TIMEOUT_BOUND_MSG)
+    return v
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """The command-line parser (v33.6 D7; allow_abbrev=False -- an
+    abbreviated flag is refused, never silently expanded)."""
     ap = argparse.ArgumentParser(
-        description="Run the execute-loop wizard Step 0 probes; emit one JSON document.")
+        description="Run the execute-loop wizard Step 0 probes; emit one JSON document.",
+        allow_abbrev=False)
     ap.add_argument("--usage", action="store_true",
                     help="run the per-account usage probes for both families: "
                          "claude per-profile /usage (structured fields + "
@@ -2301,13 +3518,113 @@ def main() -> int:
                          "the default account; the literal value 'default' "
                          "selects the default account alone; skips the codex "
                          "usage leg")
+    ap.add_argument("--print-only", dest="print_only", action="store_true",
+                    help="claude usage layer 1 ONLY: the tmux interactive "
+                         "panel (layer 2) never launches, so every non-exact "
+                         "print outcome (threshold, degraded, timeout, "
+                         "failed) is reported as computed")
     ap.add_argument("--probe-advisor", dest="probe_advisor", action="store_true",
                     help="run the BILLED advisor acceptance probe (one advisored spawn)")
-    ap.add_argument("--timeout", type=float, default=15.0,
+    ap.add_argument("--timeout", type=_timeout_arg, default=15.0,
                     help="per-subprocess timeout in seconds (default 15)")
     ap.add_argument("--plans-dir", default=".cursor/plans",
                     help="plans directory for the Q1 scan (default .cursor/plans)")
-    args = ap.parse_args()
+    ap.add_argument("--workers", type=_workers_arg, default=None, metavar="N",
+                    help="parallel per-account probe workers, N >= 1 "
+                         "(default " + str(PROBE_WORKERS) + ", capped at the "
+                         "account count; 1 = serial)")
+    ap.add_argument("--codex-home", dest="codex_home", action="append",
+                    metavar="DIR",
+                    help="repeatable: limit the codex accounts leg to the "
+                         "named CODEX_HOME dir(s) and SKIP the claude leg; "
+                         "an ineligible DIR is reported failed, never "
+                         "probed; not with --profile-dir")
+    ap.add_argument("--consume-codex-reset", dest="consume_codex_reset",
+                    action="store_true",
+                    help="WRITE-capable, env-gated: consume ONE codex rate-"
+                         "limit reset credit for the single --codex-home "
+                         "DIR; needs --credit-id and --idempotency-key once "
+                         "each; refused (exit 2, nothing run) unless the "
+                         "environment enables it; no other mode flag")
+    ap.add_argument("--credit-id", dest="credit_id", action="append",
+                    metavar="ID",
+                    help="consume mode only: the reset credit id "
+                         "([A-Za-z0-9_-]{1,128})")
+    ap.add_argument("--idempotency-key", dest="idempotency_key",
+                    action="append", metavar="KEY",
+                    help="consume mode only: the caller's idempotency key "
+                         "([A-Za-z0-9_-]{1,128}; reuse it when retrying)")
+    return ap
+
+
+def resolve_mode(parser: argparse.ArgumentParser, args, environ) -> str:
+    """Every cross-argument check (v33.6 D7), refused via parser.error()
+    (exit 2, usage + one error line on stderr, nothing on stdout).
+    Returns the run mode: "probe" or "consume".
+
+    Consume mode (D6 / D8), checked IN THIS ORDER: the env gate FIRST (its
+    message wins over every other semantic error), then --credit-id and
+    --idempotency-key exactly once each, both values in the grammar, none
+    of the four mode flags, --codex-home exactly once. --workers,
+    --plans-dir, and --timeout are accepted and inert (only --timeout is
+    read: the exchange ceiling)."""
+    if args.consume_codex_reset:
+        if environ.get(CONSUME_GATE_VAR) != "1":
+            parser.error("--consume-codex-reset is not enabled")
+        for flag, values in (("--credit-id", args.credit_id),
+                             ("--idempotency-key", args.idempotency_key)):
+            if not values or len(values) != 1:
+                parser.error("--consume-codex-reset needs " + flag
+                             + " exactly once")
+        for flag, values in (("--credit-id", args.credit_id),
+                             ("--idempotency-key", args.idempotency_key)):
+            if not CONSUME_ARG_RE.fullmatch(values[0]):
+                parser.error(flag + " must match [A-Za-z0-9_-]{1,128}")
+        for flag, present in (("--usage", args.usage),
+                              ("--profile-dir", args.profile_dir),
+                              ("--print-only", args.print_only),
+                              ("--probe-advisor", args.probe_advisor)):
+            if present:
+                parser.error("--consume-codex-reset cannot be combined with "
+                             + flag)
+        if not args.codex_home or len(args.codex_home) != 1:
+            parser.error("--consume-codex-reset needs --codex-home exactly once")
+        return "consume"
+    if args.credit_id or args.idempotency_key:
+        parser.error("--credit-id / --idempotency-key need --consume-codex-reset")
+    if args.codex_home and args.profile_dir:
+        parser.error("--codex-home cannot be combined with --profile-dir")
+    return "probe"
+
+
+def run_consume(parser: argparse.ArgumentParser, home: str, credit_id: str,
+                key: str, timeout: float, environ) -> int:
+    """Consume mode (v33.6): print {"probe_schema": 1, "consume": {...}} and
+    return 0. The env gate is RE-CHECKED here (D21: no direct call can
+    bypass resolve_mode()), then the --timeout bound (the direct seam
+    cannot bypass the parse-time guard) -- both refusals exit 2 before any
+    spawn. Everything after them is wrapped: an internal error prints the
+    failed "internal: ..." document at exit 0 (D23), never a traceback."""
+    if environ.get(CONSUME_GATE_VAR) != "1":
+        parser.error("--consume-codex-reset is not enabled")
+    if not _timeout_in_bounds(timeout):
+        parser.error(TIMEOUT_BOUND_MSG)
+    path = home
+    try:
+        path = os.path.abspath(os.path.expanduser(home))
+        doc = consume_codex_reset(path, credit_id, key, timeout)
+    except Exception as exc:
+        doc = consume_document(path, "failed", error="internal: " + str(exc)[:200])
+    print(json.dumps({"probe_schema": 1, "consume": doc}, indent=2))
+    return 0
+
+
+def main(argv: list | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if resolve_mode(parser, args, os.environ) == "consume":
+        return run_consume(parser, args.codex_home[0], args.credit_id[0],
+                           args.idempotency_key[0], args.timeout, os.environ)
 
     is_wsl = host_is_wsl()
     doc: dict = {
@@ -2315,7 +3632,8 @@ def main() -> int:
         "generated": datetime.now().astimezone().isoformat(timespec="seconds"),
         "host": {"platform": sys.platform, "is_wsl": is_wsl,
                  "python": platform.python_version()},
-        "capabilities": ["profile-dir-filter"],
+        "capabilities": ["profile-dir-filter", "week-model", "org-id",
+                         "print-only", "codex-homes"],
     }
     try:
         doc["codex"] = probe_codex(args.timeout)
@@ -2323,28 +3641,40 @@ def main() -> int:
         doc["codex"] = {"status": "failed", "error": "internal: " + str(exc)[:200],
                         "listed_count": 0, "total_count": 0, "models": []}
     try:
-        doc["claude"] = probe_claude(args, is_wsl)
+        # --codex-home limits the run to the codex accounts leg (D5): the
+        # claude leg never runs -- no candidate, subprocess, or snapshot
+        doc["claude"] = (claude_skeleton("skipped") if args.codex_home
+                         else probe_claude(args, is_wsl))
     except Exception as exc:
         doc["claude"] = {"status": "failed", "error": "internal: " + str(exc)[:200],
                          "candidates": [], "pinned": None,
                          "help": {"status": "failed", "aliases": [], "efforts": [],
-                                  "error": None},
+                                  "error": None, "no_session_persistence": False},
                          "version": {"value": None, "status": "failed", "error": None},
                          "advisor": {"value": None, "status": "skipped", "error": None,
                                      "version": None},
                          "default_account": {"identity": None, "status": "failed",
-                                             "plan": None,
+                                             "plan": None, "org_id": None,
+                                             "auth_state": None,
                                              "usage": {"status": "skipped",
                                                        "headline": None,
                                                        "session_pct": None,
                                                        "session_resets": None,
                                                        "week_pct": None,
-                                                       "week_resets": None}},
+                                                       "week_resets": None,
+                                                       "week_model_pct": None,
+                                                       "week_model_name": None,
+                                                       "week_model_resets": None}},
                          "profiles": []}
+    # a SUPPORT token (v33.6 D10): the pinned CLI advertises the flag, so
+    # every print-mode call this run makes carries it
+    if doc["claude"]["help"].get("no_session_persistence") is True:
+        doc["capabilities"].append("no-session-persistence")
     # The codex usage leg runs AFTER probe_claude so every projects/
     # snapshot precedes every usage subprocess (snapshot-before-usage, both
-    # families); it is skipped under --profile-dir (a claude-only re-check).
-    if args.usage and not args.profile_dir:
+    # families); it is skipped under --profile-dir (a claude-only re-check)
+    # and under a --codex-home list without $HOME/.codex (v33.6 D2).
+    if legacy_codex_usage_runs(args):
         try:
             doc["codex"]["usage"] = probe_codex_usage(args.timeout)
         except Exception as exc:
@@ -2353,6 +3683,12 @@ def main() -> int:
             doc["codex"]["usage"] = fallback
     else:
         doc["codex"]["usage"] = codex_usage_skipped()
+    # the per-home accounts pool runs after the legacy exchange, never
+    # concurrently with it; an enumeration failure yields [] (D18)
+    try:
+        doc["codex"]["accounts"] = build_codex_accounts(args)
+    except Exception:
+        doc["codex"]["accounts"] = []
     doc["cursor"] = {"status": "in-context",
                      "note": "no shell surface exists; the composer enumerates "
                              "in-context subagent slugs"}

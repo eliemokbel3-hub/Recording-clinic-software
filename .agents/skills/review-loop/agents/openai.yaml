@@ -1,8 +1,12 @@
 # Codex Skill metadata for $review-loop.
 #
 # review-loop is side-effecting: it orchestrates $review -> $fix cycles
-# that edit source files and update the Findings Log in place. Require
-# explicit $review-loop invocation so Codex does not start an automated
-# review/fix loop without a clear intent.
+# that edit source files and update the Findings Log in place. As of
+# v34.0, implicit ($review-loop) invocation is permitted so an agent can
+# drive review to convergence; safety comes from the in-skill gates (the
+# max-round cap, default 3, and the pauses at the Deferral Confirmation
+# Gate, $fix stop-on-failure, and CRIT/HIGH scope-expansion hard-stops),
+# not from invocation-locking. It has no start confirm. It can still be
+# invoked explicitly.
 policy:
-  allow_implicit_invocation: false
+  allow_implicit_invocation: true

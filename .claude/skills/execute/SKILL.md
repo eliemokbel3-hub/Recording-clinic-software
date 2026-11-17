@@ -35,7 +35,7 @@ Before starting:
   - current state / handoff note
   - current progress
 - consult `docs/lessons.md`, if it exists, for recurring project gotchas relevant to the plan's area
-- identify the current 🟨 task if one exists, otherwise the first task still marked 🟥 — skipping any task that carries the `[pending-hardening]` marker (see the pre-🟨 checks below: a marked task is never selectable work)
+- identify the current 🟨 task if one exists, otherwise the first task still marked 🟥 — skipping any task that carries the `[pending-hardening]` marker (see the pre-🟨 checks below: a marked task is never selectable work) — or the `[operator]` label (the template's Tasks legend — a task whose act the executor never takes): under a headless / loop invocation the executor skips it, records the commands it prepared under the handoff note's Open blockers, and continues to the next eligible task; interactively it prints the prepared commands — or, for an act an away grant's release work already took, the record that shows it — the operator runs or confirms them, and the task is marked 🟩 on their word
 - if another top-level task is already marked 🟨, do not start a second one unless the plan explicitly marks those tasks as parallel-safe
 - if the plan does not explicitly allow parallel work, finish, pause, or re-mark the existing 🟨 task before proceeding
 

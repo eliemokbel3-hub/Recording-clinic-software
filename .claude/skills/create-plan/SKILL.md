@@ -234,7 +234,7 @@ Check:
   are clearer) rather than a baked-in assumption — and conversely, is any
   `[decision]` task actually resolvable now and should simply be decided?
 - Would a fresh session need to rediscover anything material to implement this safely?
-- If `Executor tier: fast/medium involved` is recorded (from Step 0), are tasks that need premium (concurrency, auth, schema migrations, hook ordering, final UX polish) explicitly labelled `[executor: premium-only]`?
+- If `Executor tier: fast/medium involved` is recorded (from Step 0), are tasks that need premium (concurrency, auth, schema migrations, hook ordering, final UX polish) explicitly labelled `[executor: premium-only]`? Whatever the tier: are the release acts the executor must never take labelled `[operator]` (the template's Tasks legend), with no task depending on a release act its own group's close must precede (the merge, a dispatch) and no release group made only of `[operator]` tasks?
 
 **Named critique lenses (Coverage / Practicality / Simplicity).** Run
 the three named lenses exactly as `/review-plan` Step 1.5 ("Named
@@ -253,8 +253,8 @@ authorization predicate, the sequential and mid-pass fallbacks, and
 lens-not-model diversity; that section is the canonical definition;
 do not restate it here), collecting, deduping, and reconciling in
 this session — the gap-raising and clarification below run once here,
-with the user — and using the follow-on review recommended at Step 4
-for a true cross-model-family check.
+with the user — and using the Step 4 hardening menu's `/peer-loop`
+plan review for a true cross-model-family check.
 
 If you find a real gap or risk:
 - raise it now before finalising the plan
@@ -344,6 +344,7 @@ Requirements:
 - keep the `Current State / Handoff Note` short and operational — it is a status checkpoint, not a narrative summary
 - modular steps
 - clear task order
+- if the plan ships as more than one pull request, tag EACH phase heading with its release group `(PR-<x>)`, in the heading's last parenthesised group — leading untagged phases form a group of their own — see `/execute-loop` → Run isolation → **Release groups** (the canonical rule; do not restate it)
 - include progress tracking using:
   - 🟥 To Do
   - 🟨 In Progress
@@ -422,17 +423,87 @@ This keeps the template structure complete and correct from the first write and 
    - If context gets full mid-build: run /document, close the session,
      open a fresh Agent, run /start-session, then run /load-plan to resume
    - Commit this file to GitHub so it transfers between computers
-6. For non-trivial plans, recommend a follow-on review before
-   `/execute`: a `/review-plan` hardening pass over the saved plan
-   (it reconciles against the real code and runs the full critique
-   and deferral gates), and/or an independent plan-aware
-   `/peer-review` (`$peer-review` in Codex) — ideally run in a
-   different model family for the cross-family catch-rate.
-   Non-trivial = the plan involves schema or migrations, concurrency,
-   auth / permissions, multi-screen UI, or records `Executor tier:
-   fast/medium involved` — the same definition `/review-plan` Step 7
-   uses. For a small, low-risk plan, say a follow-on review is
-   optional.
+6. Recommend hardening for every plan before `/execute`, through the
+   hardening menu below — every recorded plan peer pass has found
+   something to fix. A `/review-plan` pass reconciles the saved plan
+   against the real code and runs the full critique and deferral
+   gates; a `/peer-loop` plan review then has a different model family
+   critique it to convergence.
+
+   Under a headless / loop invocation (for example when driven by `/execute-loop`), print one line recommending `/review-plan` then a `/peer-loop plan review`, and no menu.
+
+   Otherwise, show the menu only after item 4's scratch-deletion offer
+   has been answered, so a reply to one is never read as a selection
+   of the other. First read the remembered pick and apply its check
+   exactly as `/peer-loop` → Preflight → "Remembered pick
+   (`plan-peer-last`)" defines (the canonical definition — the file in
+   the main checkout, the check, the harness-readout rule; do not
+   restate it here). With a valid pick, `<peer>` reads
+   `<backend> · <model> · effort <effort> — for a <family>-family session, default login`
+   (`<family>` is the pick's `executor_family`, printed `Claude` or
+   `GPT`; selecting the option is the user's statement that this
+   session is that family) and the menu is:
+
+   ```text
+   Harden this plan before building? (recommended for every plan)
+
+   1. Harden now — /review-plan, then /peer-loop plan review with <peer>
+   2. Harden now with a different peer — /review-plan, then /peer-loop plan review (asks for the peer now)
+   3. /review-plan only
+   4. Not now
+
+   Reply with 1, 2, 3, or 4.
+   ```
+
+   With no valid pick, the "different peer" option is left out and the
+   menu is:
+
+   ```text
+   Harden this plan before building? (recommended for every plan)
+
+   1. Harden now — /review-plan, then /peer-loop plan review with a peer you pick now (remembered for next time)
+   2. /review-plan only
+   3. Not now
+
+   Reply with 1, 2, or 3.
+   ```
+
+   In Codex the commands print with the `$` sigil (`$review-plan`,
+   `$peer-loop plan review`). Route a reply by the text of the option
+   printed beside that number in the menu just shown, never by a fixed
+   number; a reply that names no shown option is not a selection — ask
+   again. Everything is settled here, before `/review-plan` starts:
+   - **"Harden now … with `<peer>`"** (the remembered peer): run
+     `/peer-loop` Preflight step 4 for that peer now — installed,
+     logged in, and the billing note when the peer is `claude -p`.
+   - **"Harden now with a different peer"**, or **"Harden now … with
+     a peer you pick now"**: first ask for the peer — `/peer-loop`
+     Preflight steps 2–3, by pointer — as one short free-text answer
+     such as `codex gpt-6-astra medium` (offer the model probe; never
+     require it), then run Preflight step 4 for that peer.
+   - When step 4 passes, run `/review-plan` on the plan just saved,
+     entered as a `/create-plan` hardening selection (`/review-plan` →
+     "Entry from a `/create-plan` hardening selection"), carrying the
+     peer settled here as the `/peer-loop` menu pick; the
+     `/peer-loop` plan review runs from its Step 7, and its Step 8
+     handoff is the last thing shown.
+   - When step 4 fails, say which CLI or login is missing and never
+     substitute another peer; then offer only:
+
+     ```text
+     1. /review-plan only
+     2. Not now
+
+     Reply with 1 or 2.
+     ```
+
+   - **"`/review-plan` only"**: run `/review-plan` the same way with
+     no peer; its Step 7 prints one line naming the `/peer-loop plan
+     review` as available later.
+   - **"Not now"**: print the literal commands for later —
+     `/review-plan`, then `/peer-loop plan review` — and start nothing.
+
+Menu-selection consent: Selecting an option starts every workflow that option prints: read that skill's file from disk and follow it.
 
 This is still planning only.
 Do not implement anything yet.

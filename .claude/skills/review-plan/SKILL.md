@@ -129,8 +129,23 @@ interrupts a fan-out mid-pass, fall back to the same sequential path
 for the remaining lenses.
 
 Subagents add lens diversity, not model diversity (they inherit this
-session's model). For a true cross-model-family check on a non-trivial
-plan, use the plan-aware `/peer-review` recommended at Step 7.
+session's model). For a true cross-model-family check, use the
+`/peer-loop` plan review offered by the Step 7 peer-check menu.
+
+## Entry from a `/create-plan` hardening selection
+
+When this pass is started by a selection from `/create-plan` Step 4's
+hardening menu, it targets the plan file just saved, skips Step 4 (the
+feature-name question), takes Step 5's Update-in-place without asking,
+and shows no menu of its own: the selection already decided Step 7's
+item 7 — either the `/peer-loop` plan review with the peer settled at
+that menu (the menu pick), or, for "`/review-plan` only", one line
+naming the `/peer-loop plan review` as available later. The peer leg
+runs only after a real Step 7 save, in the same conversation: if this
+pass is cancelled, aborted, or refused (a Paused plan), or the
+conversation has changed, the peer leg does not run — print the
+literal `/peer-loop plan review` command instead. Consent never
+carries into a new session. Every other step runs as usual.
 
 ## Scoped mode — harden only newly-added task(s)
 
@@ -296,7 +311,7 @@ Check:
 - would a fresh session need to rediscover anything material to execute this safely?
 - does the plan conflict with the original planning discussion?
 - does the plan conflict with the codebase or subsystem docs?
-- if `Executor tier: fast/medium involved` is recorded (from Step 0), are tasks that need premium (concurrency, auth, schema migrations, hook ordering, final UX polish) explicitly labelled `[executor: premium-only]`?
+- if `Executor tier: fast/medium involved` is recorded (from Step 0), are tasks that need premium (concurrency, auth, schema migrations, hook ordering, final UX polish) explicitly labelled `[executor: premium-only]`? Whatever the tier: are the release acts the executor must never take labelled `[operator]` (the template's Tasks legend), with no task depending on a release act its own group's close must precede (the merge, a dispatch) and no release group made only of `[operator]` tasks?
 
 **Named critique lenses (Coverage / Practicality / Simplicity).** Run
 these three lenses explicitly so the scattered checks above are
@@ -440,6 +455,8 @@ plan` task recorded here is hardened within this same scoped run, not
 via a further nested scoped invocation.
 
 ## Step 4 — Suggest a feature name
+On entry from a `/create-plan` hardening selection, skip this step (see that section).
+
 Suggest 3 short lowercase kebab-case names derived from the feature goal.
 
 Examples:
@@ -451,6 +468,8 @@ Ask me to choose one or provide my own.
 Sanitise the chosen name automatically: lowercase, hyphens only, no spaces or special characters.
 
 ## Step 5 — Check for an existing saved plan file
+On entry from a `/create-plan` hardening selection, take **Update** without asking (see that section).
+
 Check whether `.cursor/plans/plan-[chosen-name].md` already exists.
 
 If it DOES exist:
@@ -486,6 +505,7 @@ Requirements:
 - follow the plan template's footer **State-once convention** when placing contracts across plan sections — that footer line is the canonical definition (predicate, scope guard, exceptions, new-plans-only rule); do not restate it here
 - keep the `Current State / Handoff Note` short and operational
 - modular steps with clear task order
+- if the plan ships as more than one pull request, tag EACH phase heading with its release group `(PR-<x>)`, in the heading's last parenthesised group — leading untagged phases form a group of their own — see `/execute-loop` → Run isolation → **Release groups** (the canonical rule; do not restate it)
 - include progress tracking using:
   - 🟥 To Do
   - 🟨 In Progress
@@ -534,13 +554,74 @@ Either way, populate / reconcile `Planning Extraction Summary` first, then the r
 4. If a `.cursor/plans/explore-*.md` scratch was consumed as a planning source in Step 0.5, offer to delete that one file now — an explicit prompt the user must accept; never delete automatically, and never touch any other scratch. If the user declines, leave it in place.
 5. Summarise the most important adjustments that were added during review
 6. Tell the user whether the plan now looks ready for `/execute`
-7. For non-trivial plans, recommend an independent plan-aware
-   `/peer-review` (`$peer-review` in Codex) before `/execute` — ideally
-   run in a different model family for the cross-family catch-rate.
-   Non-trivial = the plan involves schema or migrations, concurrency,
-   auth / permissions, multi-screen UI, or records `Executor tier:
-   fast/medium involved`. For a small, low-risk plan, say an
-   independent peer review is optional.
+7. Recommend a cross-family peer check for every plan before
+   `/execute`, through the peer-check menu below — every recorded plan
+   peer pass has found something to fix; a `/peer-loop` plan review has
+   a different model family critique the plan to convergence.
+
+   Under a headless / loop invocation (for example when driven by `/execute-loop`), and in Scoped mode, print no menu.
+   On entry from a `/create-plan` hardening selection the selection
+   already decided this item (see that section): run the `/peer-loop`
+   plan review with the menu pick it carried, or print its one
+   "available later" line.
+
+   Otherwise, show the menu only after item 4's scratch-deletion offer
+   has been answered, and have it answered before Step 8 prints. First
+   read the remembered pick and apply its check exactly as
+   `/peer-loop` → Preflight → "Remembered pick (`plan-peer-last`)"
+   defines (the canonical definition; do not restate it here). With a
+   valid pick, `<peer>` reads
+   `<backend> · <model> · effort <effort> — for a <family>-family session, default login`
+   (`<family>` is the pick's `executor_family`, printed `Claude` or
+   `GPT`; selecting the option is the user's statement that this
+   session is that family) and the menu is:
+
+   ```text
+   Peer-check this plan before building? (recommended for every plan)
+
+   1. /peer-loop plan review with <peer>
+   2. /peer-loop plan review with a different peer (asks for the peer now)
+   3. Not now
+
+   Reply with 1, 2, or 3.
+   ```
+
+   With no valid pick, the "different peer" option is left out and the
+   menu is:
+
+   ```text
+   Peer-check this plan before building? (recommended for every plan)
+
+   1. /peer-loop plan review with a peer you pick now (remembered for next time)
+   2. Not now
+
+   Reply with 1 or 2.
+   ```
+
+   In Codex the commands print with the `$` sigil. Route a reply by the
+   text of the option printed beside that number in the menu just
+   shown, never by a fixed number; a reply that names no shown option
+   is not a selection — ask again. Everything is settled here, before
+   the peer starts:
+   - **"… with `<peer>`"** (the remembered peer): run `/peer-loop`
+     Preflight step 4 for that peer now — installed, logged in, and the
+     billing note when the peer is `claude -p`.
+   - **"… with a different peer"**, or **"… with a peer you pick
+     now"**: first ask for the peer — `/peer-loop` Preflight steps 2–3,
+     by pointer — as one short free-text answer such as
+     `codex gpt-6-astra medium` (offer the model probe; never require
+     it), then run Preflight step 4 for that peer.
+   - When step 4 passes, run the `/peer-loop` plan review on this plan
+     with that peer as its menu pick.
+   - When step 4 fails, never substitute another peer: print one line —
+     the literal `/peer-loop plan review` command for later, plus which
+     CLI or login is missing — then go on to Step 8.
+   - **"Not now"**: print one line with the literal
+     `/peer-loop plan review` command for later, then go on to Step 8.
+
+   Neither a failed check nor "Not now" starts a peer or runs
+   `/review-plan` again. The peer leg runs only after this Step 7 save,
+   in the same conversation.
 
 ## Step 8 — Canonical plan handoff
 The hardened saved plan in `.cursor/plans/plan-[feature-name].md` is now the single source of truth for execution.
@@ -552,9 +633,11 @@ Tell the user:
 
 Do not leave the user with two active execution plans pointing at the same feature without explicitly explaining which one is canonical.
 
+When a Step 7 peer leg ran (from the peer-check menu or a `/create-plan` hardening selection), state its outcome — converged, cap reached, stalemate, or inconclusive — and, unless it converged, the literal retry command (`/peer-loop plan review`). The execution-pathway offer below is always the last thing shown.
+
 Execution-pathway handoff (the mirror of `/load-plan`'s Continue split): for a **loop-suitable** saved plan — an executable feature/stage plan with buildable tasks — name both pathways by their literal commands: `/execute` (single-session build) or `/execute-loop` (multi-phase autonomous run; its setup wizard runs first). A **coordination MASTER** whose buildable tasks live in stage child plans is never offered `/execute` or `/execute-loop` — point at selecting (or creating) the stage child plan instead. A saved plan that is neither loop-suitable nor a master (rare) is handed off with the single `/execute` pathway only.
 
-Menu-selection consent (locked skills): a user's explicit selection from this offered handoff COUNTS as explicit invocation of the selected workflow — including the locked, explicit-invocation-only `/execute-loop`: on selection, read that skill's file from disk and follow it verbatim. The lock still bars model-INITIATED invocation — no selection, no invocation; every offered option prints its literal slash command; frontmatter and `agents/openai.yaml` policies are unchanged by this rule.
+Menu-selection consent: Selecting an option starts every workflow that option prints: read that skill's file from disk and follow it.
 
 This is still planning only.
 Do not implement anything yet — presenting the pathways authorizes nothing until the user explicitly selects one.

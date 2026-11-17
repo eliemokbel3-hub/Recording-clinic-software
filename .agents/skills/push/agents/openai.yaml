@@ -1,7 +1,11 @@
 # Codex Skill metadata for $push.
 #
 # Push is side-effecting: it stages, commits, and pushes git changes
-# (potentially triggering deployment). Require explicit $push invocation
-# so Codex does not run git push as an implicit action.
+# (potentially triggering deployment). As of v34.0, implicit ($push)
+# invocation is permitted so an agent can start the careful path instead
+# of running git by hand; safety comes from the in-skill gates (the
+# secret and risk check, and nothing staged, committed, or pushed until
+# the user confirms the files and the message), not from
+# invocation-locking. It can still be invoked explicitly.
 policy:
-  allow_implicit_invocation: false
+  allow_implicit_invocation: true

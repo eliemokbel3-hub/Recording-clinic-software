@@ -122,9 +122,9 @@ def parse_manifest(text: str) -> dict[str, tuple[int, str]]:
 
 
 def safe_relpath(path: str) -> Path:
-    """Reject absolute or parent-escaping payload paths."""
+    """Reject absolute, rooted, drive-relative or parent-escaping payload paths."""
     p = Path(path)
-    if p.is_absolute() or ".." in p.parts:
+    if p.is_absolute() or p.anchor or ".." in p.parts:
         raise SystemExit("ERROR: unsafe payload path " + path)
     return p
 
