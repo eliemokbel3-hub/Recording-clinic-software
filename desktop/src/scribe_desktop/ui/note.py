@@ -228,6 +228,7 @@ from PySide6.QtGui import QAction, QContextMenuEvent, QKeyEvent, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -840,6 +841,17 @@ class NoteScreen(QWidget):
 
         # --- the "Edit the note" control group (Tasks 5.1 / 5.1b) ----------
         self.utterance_combo = NoCopyComboBox()
+        # ui-refresh plan Phase M, M.3 (a): an entry can carry three front
+        # marks before its words since 0.3.6, and Qt's default sizes the combo
+        # to its longest entry, which made the Review screen's right column
+        # wider than its pane at 150 %. Sized by a minimum contents length
+        # instead (a size policy, never a style — D13); it still stretches
+        # across its row, and the closed combo cuts a long entry's END, so
+        # the number and the front marks stay readable.
+        self.utterance_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.utterance_combo.setMinimumContentsLength(40)
         self.utterance_combo.currentIndexChanged.connect(lambda *_: self._refresh_section_combo())
         self.section_combo = NoCopyComboBox()
         self.add_line_button = QPushButton("Add line to section")

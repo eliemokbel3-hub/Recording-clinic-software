@@ -441,6 +441,67 @@ class TestRightColumnWidth:
             note.clear()
             _close(window)
 
+    def test_the_longest_chooser_entry_and_count_line_fit_at_150_percent(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Phase M, M.3 (a) (R11): 0.3.4–0.3.7 made the Line chooser's entries
+        and the count line longer — `[flagged]`, `[next patient?]` and
+        `[suggested: <title>]` before the speaker, and the count line's
+        flagged, suggested and not-assessed clauses. The worst case of each,
+        in the chooser and the count line when the column is first laid out
+        at 150 %, still leaves the column nothing to scroll sideways, and the
+        count line shows whole. The app never puts `[next patient?]` and
+        `[suggested: …]` on one entry (a suggestion is accepted only before
+        the boundary); the entry carries both as the widest possible label.
+        With M.3's one production change reverted (the combo sized by a
+        minimum contents length), the column's content is wider than its
+        viewport and this fails."""
+        from scribe_desktop.note import SECTION_TITLES
+
+        window = _window(tmp_path, _queued_controller())
+        screen, note = window.review_screen, window.note_screen
+        try:
+            window.session_screen.transcript_ready.emit(_note_document(_WIDE_BOUNDARY_TURNS))
+            qapp.processEvents()
+            window._on_draft_ready(_edit_result(_WIDE_BOUNDARY_TURNS))
+            longest = max(SECTION_TITLES.values(), key=len)
+            words = _WIDE_TURNS[0][0]
+            entry = (
+                f"99. {models.FLAGGED_LINE_MARK}{models.NEXT_PATIENT_LINE_MARK}"
+                f"{models.SUGGESTED_LINE_MARK.format(title=longest)}{SPEAKER_1}: "
+                f"{words[:60].rstrip()}..."
+            )
+            # The first offered line's entry carries the widest label (its
+            # segment stays the line's own, so choosing it works as usual).
+            combo = note.utterance_combo
+            assert combo.count() > 0
+            combo.setItemText(0, entry)
+            combo.setCurrentIndex(0)
+            count_line = models.flagged_count_line(
+                {10, 11, 12}, {10}, suggested={20, 21}, not_assessed=7
+            )
+            note.flagged_count_label.setText(count_line)
+            note.flagged_count_label.show()
+            window.show_page(screen)
+            _laid_out(qapp, window, *_at_150(window))
+            for _ in range(3):
+                qapp.processEvents()
+            assert combo.currentText() == entry
+            assert _shown(combo, window)
+            # The long entry no longer sets the combo's width (with Qt's
+            # default policy it did, at the combo's first show: the column's
+            # content was 2909 px in a 2078 px viewport here).
+            assert combo.sizeHint().width() < combo.fontMetrics().horizontalAdvance(entry)
+            scroll = screen.right_scroll
+            assert screen.right_pane.width() <= scroll.viewport().width()
+            assert scroll.horizontalScrollBar().maximum() == 0
+            label = note.flagged_count_label
+            assert _shown(label, window)
+            assert label.height() >= label.heightForWidth(label.width())
+        finally:
+            note.clear()
+            _close(window)
+
     def test_the_lines_that_now_wrap_still_ask_for_one_line(
         self, qapp: Any, tmp_path: Path
     ) -> None:
@@ -520,7 +581,13 @@ class TestWarningRowsWhole:
             current = note.current_note()
             assert current is not None
             codes = {warning.note_warning_code for warning in current.note_warnings}
-            wanted = {"possible_next_patient", "number_source", "hedged_source"}
+            # Phase M, M.3 (b): 0.3.4's left-out clinician line row too.
+            wanted = {
+                "possible_next_patient",
+                "number_source",
+                "hedged_source",
+                "clinician_line_omitted",
+            }
             assert wanted <= codes, sorted(codes)
             assert screen.generate_folded is not unfolded
             # The review side's height follows its width, up to the column.

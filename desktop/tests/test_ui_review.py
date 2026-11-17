@@ -47,6 +47,7 @@ from test_ui_screens import (  # noqa: E402
     _process_until,
     _routed_line,
 )
+from test_ui_suggestions import held  # noqa: E402, F401 - the held-jobs fixture
 
 
 @pytest.fixture(scope="module")
@@ -126,7 +127,9 @@ def _ratify_and_save(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     note_screen._acknowledge_all()
     note = note_screen.current_note()
     assert note is not None
-    for code in LINE_MARK_CODES:
+    # Since 0.3.4 a left-out clinician line (`clinician_line_omitted`) needs
+    # its own Acknowledge too (Phase M, R12's one named test change).
+    for code in (*LINE_MARK_CODES, "clinician_line_omitted"):
         if code in {warning.note_warning_code for warning in note.note_warnings}:
             note_screen._acknowledge(code)
     note_screen.save()
@@ -333,6 +336,39 @@ class TestPanes:
         assert window.note_screen.transcript_view.textInteractionFlags() == none
         assert window.transcript_screen.transcript_view.textInteractionFlags() == none
         _close(window)
+
+    def test_the_suggestion_line_shows_through_the_review_screen(
+        self,
+        qapp: Any,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        request: pytest.FixtureRequest,
+    ) -> None:
+        """Phase M, M.3 (R11): 0.3.6's suggestion status line
+        (`NoteScreen.suggestion_label`) sits in the note engine's own column,
+        which the Review screen shows whole — so it is on the Review screen
+        with no adoption of its own. Reached through the window's own route
+        with the suggestion suite's held fake stage: while the job runs the
+        line says so and would show with the Review screen; once the job's
+        marks land the line is empty and hidden (the count line carries
+        them). Re-parented out of the screen, the first two checks fail."""
+        from test_ui_suggestions import _landed, _Suggestions, _window_review
+
+        # The suggestion suite's teardown: held jobs released and drained
+        # before any screen goes.
+        registry = request.getfixturevalue("held")
+        stage = _Suggestions(registry, hold=True)
+        window = _window_review(qapp, tmp_path, monkeypatch, registry, stage)
+        review, note = window.review_screen, window.note_screen
+        label = note.suggestion_label
+        assert review.isAncestorOf(label)
+        assert label.text().startswith("Suggesting sections for ")
+        assert label.isVisibleTo(review)
+        stage.release.set()
+        _landed(qapp, note)
+        assert note._suggest_marked  # a mark landed, so the count line has it
+        assert label.text() == ""
+        assert not label.isVisibleTo(review)
 
 
 class TestStateMatrix:
