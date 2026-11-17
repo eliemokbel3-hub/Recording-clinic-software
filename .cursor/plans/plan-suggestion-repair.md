@@ -654,6 +654,7 @@ Markers: 🟥 To Do, 🟨 In Progress, 🟩 Done. A `[decision]` task is a plann
   - Recommended next action: its own plan, in Plan Mode with Fable (Follow-Up Continuation Note 1).
   - Risk if deferred: correctness: patients' uncued replies stay silently left out (run 9's class, 23 of 24 silent omissions on `heldout-6`).
   - Revisit by: the next plan.
+  - `[2026-11-17 reconciliation]` Done as `.cursor/plans/plan-answers-follow-question.md` (Completed — Follow-ups Retained): built as 0.3.7, an improvement that is not gate-capable (silent facts 25 → 4 on `heldout-2` and 24 → 8 on `heldout-6` in the gate configuration), installed 2026-11-17 with shadow mode on.
 - **The measurement script, kept as developer tooling** (`scripts/measure-suggestions.py`, `desktop/tests/test_measure_suggestions.py`; D15). It passes against `suggest-v1`; the test file's `:362` comment names both one-line budgets (24 under `suggest-v1`, 26 under the repair's `suggest-v2`), and its `:377` assertion reads the budget from the stage, so it stays version-agnostic.
   - Recommended next action: reuse it if a later plan changes `note_suggest.py`; extend it rather than add a second tool.
   - Risk if deferred: minor.
@@ -665,7 +666,7 @@ Markers: 🟥 To Do, 🟨 In Progress, 🟩 Done. A `[decision]` task is a plann
 - **`heldout-2` is spent as a check** (D6). No held-back seen set is left; `heldout-6` was tuned on in S.2. A later plan that needs a check before a blind run must author or name a fresh one.
   - Risk if deferred: correctness: a later go / no-go read on a tuned set would be optimistic.
   - Revisit by: the next plan's planning.
-- **The Deferred "Window-edge carry" and "add all suggested lines" items** stay deferred. `[2026-11-15 reconciliation] Needs re-evaluation — their revisit triggers name 0.3.7, which will not exist; read them against 0.3.6 (the shipped `suggest-v1` stage) if the suggestion stage is revisited.`
+- **The Deferred "Window-edge carry" and "add all suggested lines" items** stay deferred. `[2026-11-15 reconciliation] Needs re-evaluation — their revisit triggers name 0.3.7, which will not exist; read them against 0.3.6 (the shipped `suggest-v1` stage) if the suggestion stage is revisited.` `[2026-11-17 reconciliation] 0.3.7 now exists as the answers-follow-question build, not this plan's; its suggestion stage is unchanged (`suggest-v1`), so read the triggers against 0.3.7's shipped stage.`
 - **The next patient (D12)**: every attempt that read more answers also suggested next patients' lines (T 3–7). It stays the validation-run8 plan's retained item (the Excluded list above).
 
 ## Follow-Up Continuation Notes
