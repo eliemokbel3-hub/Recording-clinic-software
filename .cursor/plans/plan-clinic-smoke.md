@@ -167,7 +167,7 @@ As in the Planning Extraction Summary.
 | Draft written to Cliniko and seen there (9.2) | ≥1 | 0 | |
 | Consultations measured (one per log Row; a retry supersedes, D17) | ~10 | 0 | |
 | Three-voice recordings measured | ≥1 (or "not measured") | 0 | |
-| Drift replays (one per build) | 1 per build | 1 (0.3.0) | 2026-10 |
+| Drift replays (one per build) | 1 per build | 3 (0.3.0, 0.3.2, 0.4.0) | 2026-11 |
 
 ## Review History
 - 2026-10-09 — `/review-plan` (Fable 5.1; three subagent lenses: locators, coverage, risk) — 6 HIGH / 6 MED / 4 LOW raised by the risk lens, all disposed in the hardened plan (two forced reversals, four practitioner answers, the rest folded as D11–D16 and locator fixes); skew=none; action=none.
