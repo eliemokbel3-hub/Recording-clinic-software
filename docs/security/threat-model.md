@@ -5063,6 +5063,36 @@ plan's SYNTHETIC saved documents (`C:\afq-sets\docs`) for the composer's
 check, reading no kept recording. RESIDUE: as above, a scratch checked by
 reading it (the plan's `/review-loop` and one codex slice) and by the
 synthetic dry run, not by a pin.
+The follow-on-lines plan's Task 4.1 measurement (2026-11-19) —
+`.cursor/loops/ffl-measure-kept.py`, with the shared synthetic library
+`.cursor/loops/ffl_lib.py`, both frozen by SHA-256 before the
+practitioner's run (its Task 4.2) — is the same class under the same rules
+and the same refusal order, with three more refusals before any recording
+is decrypted: an archive entry whose status cannot be read, a kept list
+that differs from the shipped `kept_session_ids()`, and a kept recording
+whose time on disk cannot be read (so the ordinals could not be assigned).
+Each kept recording is
+re-transcribed in memory the same way; per document the scratch's base note
+is checked equal to the shipped provider's under the same config (else that
+recording fails) before any candidate is counted. It prints one fixed line
+naming which of the four note-config files the config folder holds (each of
+the four fixed file names followed by `yes` or `no`), session ORDINALS, integers and exception type names (a
+recording that fails shows as its ordinal with its error's type) — never a
+session id, a word or a name — then one aggregate block of
+TOTALS over the enrolled recordings. Nothing per recording reaches the plan:
+it records the aggregate totals and the run's fixed lines (the `--list`
+count, the config line, the status and the exit code). On a
+recording whose clinician was not enrolled nothing is composed, so the
+carry, which needs no confirmed clinician, is not measured there. Its
+`--dry-run-docs` mode unpickles the plan's SYNTHETIC saved documents. It
+refuses unless each of the seven seen sets' subfolders holds `.pickle`
+files named exactly by that set's frozen ids (a check by file name; other
+entries in the folder are not checked), so it is a developer check pointed
+only at the folder the composer's own chain wrote (`C:\ffl-sets\docs`); the
+practitioner's
+commands never use it. RESIDUE: as above, a scratch checked by reading it
+(the plan's `/review-loop` and a codex pass of five rounds), by the
+synthetic dry runs and by a synthetic listing check, not by a pin.
 
 OLDER BUILDS (D14). 0.2.0 opens a kept entry's transcript and notes and
 ignores the audio (listing and reading test only `key.dpapi` and `pending`);

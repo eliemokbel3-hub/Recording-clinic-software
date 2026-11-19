@@ -1560,7 +1560,22 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       recording re-transcribed in memory, ordinals and integers only on the
       console, and one aggregate block — the only part written into that
       plan; its `--list` mode prints only how many recordings are kept and
-      decrypts nothing.
+      decrypts nothing. The follow-on-lines plan's Task 4.1 measurement
+      (`.cursor/loops/ffl-measure-kept.py`, 2026-11-19, git-ignored; it and
+      its library `ffl_lib.py` frozen by SHA-256 before the practitioner's
+      run) is a scratch of the same kind under the same rules, with three
+      more refusals before any decryption (an archive entry whose status
+      cannot be read; a kept list that differs from the shipped listing; a
+      kept recording whose time on disk cannot be read) and one
+      line naming which of the four note-config files the config folder
+      holds (each of the four fixed file names followed by `yes` or `no`);
+      it prints ordinals, integers, fixed text and
+      exception type names only on the console (a recording that fails
+      shows as its ordinal with its error's type), never a session id, a
+      word or a name, and one aggregate block of totals. Nothing per recording is
+      written into that plan: it records the aggregate totals and the run's
+      fixed lines (the `--list` count, the config line, the status and the
+      exit code).
 
 28. **The transcription-guard measurement (invented-text guard plan Task 1.5,
     D7, C12; BUILT 2026-10-12; developer build only, practitioner-run, zero

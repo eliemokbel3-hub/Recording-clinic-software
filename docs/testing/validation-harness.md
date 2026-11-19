@@ -473,6 +473,80 @@ Before 0.3.7 was built, the answer hop (a patient's uncued reply joins the secti
 - **Real speech (Task 0.4b), 2 recordings, both enrolled, both passes COMPLETE:** no form joined or carried any line; extra flagged lines per recording, median (the two middle values) and maximum, Q1 2-3 / 3, QT 11-15 / 15, A1 12-26 / 26, AT 115-127 / 127 (115-126 / 126 under the installed config). With fewer than three enrolled recordings the plan's real-speech line is UNMEASURED.
 - **The decision (Task 0.6, 2026-11-17).** IMPROVEMENT, "build as an improvement": V4gs under QT, the practitioner's words "yes, record QT", overriding the unmeasured real-speech line by name; AT's real-speech load declined; the `h5-17` quote, the stay-out lines newly flagged, QT's real-speech load and a first-reply "don't write this down" accepted as named residues ("Accept all three (Recommended)"). So 0.3.7 ships with shadow mode on, and there is no rule v7, no `heldout-7` and no run 10; `docs/pilot/exit-gate.md` is unchanged.
 - **The built product (Phase M, M.1, 2026-11-17, agent-run).** The seven sets re-composed by the shipped harness at the hardened commit `4a0081d` from the same saved documents in the gate configuration, against Task 0.3's V4gs QT lines: `M1 DIFFERENCES TOTAL: 0` (14533 s, about 4.0 h). Every pinned item read as expected: silent / failing `heldout-2` 4 / 2, `heldout-6` 8 / 7, 0 / 0 elsewhere; the one stay-out quote `h5-17` line 15; 0 new unsupported lines, error-grade warnings and checker failures; no set pushed over its R3 ceiling; the 50 PASS. So the improvement is re-confirmed on 0.3.7 itself.
+- **Correction (2026-11-19, follow-on-lines plan Task 5.1).** The harm lines above counted lines that must stay out (quoted or newly flagged) and new unsupported lines, error-grade warnings and checker failures, but no change in a material fact's verdict from `omitted` to `wrong`, so one harm went unrecorded: `h6-09/f1`, a material fact the simulation's no-hop run left out (`omitted`), reads `wrong` under 0.3.7 because the answer hop joined a misheard piece of the reply into the note (class W4 of the gate-failure map below; findings register F-172). Rule v6 counts it on `heldout-6`.
+
+## Gate-failure map (2026-11)
+
+After 0.3.7, the follow-on-lines plan (`.cursor/plans/plan-follow-on-lines.md`) diagnosed every remaining gate failure on the seven seen sets (`scripts`, `heldout`, `heldout-2` … `heldout-6`) and printed report-only numbers for three candidate rules, in git-ignored scratch: `.cursor/loops/ffl_lib.py` and `ffl-measure.py` (synthetic), `ffl-measure-kept.py` (real speech); the outputs named below are under `.cursor/loops/`. The plan holds every figure as ids and counts. These are measurements, never a run of record: the sets are seen, rule v6's verdict of record stays run 9's, `docs/pilot/exit-gate.md` is unchanged, no product code changed, and shadow mode stays on.
+
+- **Method.**
+  - A scratch router re-implements the shipped loop (hop, carry, switch S) with one reason code per line. Premise 1: with every candidate off it equals the shipped provider at text level on all 183 encounters, 0 mismatches (`ffl-selftest-1.txt`).
+  - The seven sets were rebuilt and transcribed with whisper `medium` at `60cd138`: take 1 of all seven and take 2 of `heldout-2` and `heldout-6`, 1 h 41 min, 0 problems (`ffl-chain.out`). Premise 2: the scratch replayed over every saved transcript (227 encounters) equals the shipped provider, 0 problems (`ffl-premise2.txt`).
+  - The baseline is the shipped product in the gate configuration (`--suggestions confirm-all --prose`, rule v6, the validation config) over both takes, with every judged end state captured (`ffl-baseline-1.txt`). Reducing the captured end states reproduces every saved fact: 0 differences over 3,036 checks (`ffl-baseline-report-7.txt`).
+  - One trace per encounter (`ffl-out/trace/`). Every failure of take 1 gets exactly one cause from a closed, ordered list fixed before any number was read (the plan's D5; `unknown` when none holds, counted and never forced).
+  - The candidates were read at text level (each script's own words; `ffl-text-11.txt`, `ffl-out/text-summary.md`) and at audio level with suggestions off and no prose (`ffl-out/docs-summary-4.md`).
+- **Baseline reproduction and noise floor** (`ffl-baseline-report-7.txt`, `ffl-out/baseline-summary-7.md`). Take 1 is the baseline of record, fixed before the run. Against 0.3.7's saved outputs every fact is equal on all seven sets, with and without the reply credit (162 / 76 / 233 / 116 / 108 / 112 / 239 facts), so no retry take was needed. Take 1, gate configuration:
+
+  | Set | Silent raw / adjusted (reply credit) | Silent raw / adjusted (no reply credit) | Material `wrong` | R1 rule total / ceiling (silent / marked) | Unsupported lines |
+  |---|---|---|---|---|---|
+  | scripts | 1 / 0 | 1 / 0 | 1 | 2 / 2 (1 / 1) | 0 |
+  | heldout | 0 / 0 | 0 / 0 | 3 | 1 / 1 (0 / 1) | 0 |
+  | heldout-2 | 4 / 4 | 19 / 19 | 1 | 0 / 1 (0 / 0) | 0 |
+  | heldout-3 | 0 / 0 | 0 / 0 | 2 | 2 / 1 (0 / 2) | 2 |
+  | heldout-4 | 0 / 0 | 0 / 0 | 2 | 2 / 1 (0 / 2) | 0 |
+  | heldout-5 | 0 / 0 | 0 / 0 | 2 | 1 / 1 (0 / 1) | 0 |
+  | heldout-6 | 8 / 8 | 19 / 19 | 5 | 0 / 1 (0 / 2) | 1 |
+
+  The noise floor, between takes 1 and 2 of `heldout-2` and of `heldout-6`, is 0 for every measure (the fact floor with and without the reply credit, the R1 rule total with and without it, R1 silent, R1 marked and unsupported lines), so the five other sets take 0 too. A candidate's difference in a level column is "within noise" only when it is no larger than that floor.
+- **The map** (`ffl-out/map-7.md`): 67 failure rows on take 1 (silent 13, wrong 16, wrongly present 13, encounter codes 18, set-level 7); rule v6 counts 33 of them, and R1, R2, R3 or the R1 line exemption excuses the rest. By class:
+
+  | Class | What holds | Rows | Counted |
+  |---|---|---|---|
+  | D-R2 | an uncertainty not surfaced, every such fact excused by R2 (one row per encounter) | 12 | 0 |
+  | N3 | wrongly present on a line the suggestion pass added | 6 | 2 |
+  | N4 | wrongly present on a segment mislabelled or crossing the clinician line | 5 | 1 |
+  | W4 | wrong on a line the hop joined or the carry placed | 5 | 2 |
+  | W3 | wrong, only part of its script line quoted (a split) | 4 | 1 |
+  | D | an uncertainty not surfaced (one row per encounter) | 3 | 3 |
+  | R3 (set) | next-patient residue over its ceiling | 3 | 3 |
+  | S4 | silent: the replier's own cue-routed line closed the open window | 3 | 3 |
+  | S8 | silent: warned at text level, the warning lost at audio | 3 | 3 |
+  | U | an unsupported clinical line | 3 | 1 |
+  | W6 | wrong on a line the suggestion pass added | 3 | 2 |
+  | N1 | wrongly present in the reference tail, no boundary found | 2 | 0 |
+  | R1 (set) | recogniser residue over its ceiling | 2 | 2 |
+  | R2 (set) | uncertainty residue over its ceiling | 2 | 2 |
+  | S9 | silent at text level too, no other cause | 2 | 2 |
+  | W1 | wrong on a cue-routed line with no review mark | 2 | 2 |
+  | W2 | wrong under a review mark | 2 | 0 |
+  | S1 | silent: a later piece of a split line whose first piece is in the note | 1 | 1 |
+  | S2 | silent: the segment mislabelled or crossing the clinician line | 1 | 1 |
+  | S3 | silent: a window opened before it at text level, and at audio the question segment is not interrogative or fails guard G | 1 | 1 |
+  | S6 | silent: the fact's script line aligned to no words, or only to suspect ones | 1 | 1 |
+  | unknown | none of the classes | 1 | 0 |
+
+  - The set-level rows over their ceilings: `heldout` R2 4 / 1, `heldout-2` R2 9 / 1, `heldout-3` R1 2 / 1 and R3 2 / 1, `heldout-4` R1 2 / 1, `heldout-5` R3 2 / 1, `heldout-6` R3 2 / 1.
+  - The 12 silent facts 0.3.7 left (13 seeds with `h6-09/f1`) are all still failing on take 1, unchanged: S4 `h2-07/f4`, `h2-07/f5`, `h6-16/f5`; S8 `h6-08/f0`, `h6-08/f1`, `h6-22/f0`; S9 `h6-05/f2`, `h6-06/f5`; S1 `h2-07/f3`; S2 `h2-04/f6`; S3 `h6-21/f4`; S6 `h6-15/f5` (the overlapped line returned with no words). Six are silent on the script's own words too, and six are lost only on the audio. `h6-09/f1` is W4 (the correction above).
+  - Two findings, recorded as the classifier gave them. `h2-04/f6` was expected S9 and is S2: at audio the patient shares one label with the partner, whose seconds are the majority, and the fact is silent at text level too. One `unknown`, `syn-22/f2`: every word of the fact was deleted inside a line that was otherwise transcribed, which no class names; R1 excuses it, so rule v6 does not count it.
+- **The candidates** (report-only; none is a proposal to ship as written). A1, the follow-on line: an uncued, clean line follows the section of the same non-clinician speaker's cue-routed line just before it, one line only and never into a clinician-owned section. A1s, its safe form: A1 only where the line would draw no `high_risk_omission` if left out. G0: 0.3.7 plus a diagnostic off-record guard whose phrase list never ships; A1 + guard and A1s + guard beside it. F, the later-reply flag: a mark on the reply turn after an in-note clinician question, marks only (F-marks) and with the harness credit (F-credit, a reversal of the answer-hop plan's D4). Totals over the seven sets:
+
+  | Variant | Silent raw, text (reply credit / none) | Reached, text | Lines added, text | Silent raw, audio take 1 (reply credit / none) | Reached, audio | Lines added, audio | Warnings removed, audio (`high_risk_omission` / reply flags) | Extra flagged lines, audio |
+  |---|---|---|---|---|---|---|---|---|
+  | none (0.3.7) | 6 / 37 | — | — | 13 / 39 | — | — | — | — |
+  | A1 | 3 / 34 | 3 | 21 | 12 / 38 | 1 | 42 | 10 / 5 | 0 |
+  | A1s | 4 / 35 | 2 | 7 | 12 / 38 | 1 | 32 | 0 / 2 | 0 |
+  | G0 | 6 / 37 | 0 | 0 | 13 / 39 | 0 | 0 | 0 / 0 | 0 |
+  | A1 + guard | 3 / 34 | 3 | 20 | 12 / 38 | 1 | 42 | 10 / 5 | 0 |
+  | A1s + guard | 4 / 35 | 2 | 7 | 12 / 38 | 1 | 32 | 0 / 2 | 0 |
+  | F-marks | 6 / 37 | 0 | 0 | 13 / 39 | 0 | 0 | 0 / 0 | 57 |
+  | F-credit | 3 / 37 | 3 | 0 | 9 / 39 | 4 | 0 | 0 / 0 | 57 |
+
+  - Reach at audio, by seed: the A1 forms reach only `h2-04/f6`, and only because the partner and the patient share one label (at text level the patient's line cannot follow the partner's cue-routed line before it, because the speaker changes; at audio the shared label removes that change); F-credit reaches `h2-07/f3`, `h2-07/f4`, `h2-07/f5` and `h6-16/f5`; seven seeds (`h6-05/f2`, `h6-06/f5`, `h6-08/f0`, `h6-08/f1`, `h6-15/f5`, `h6-21/f4`, `h6-22/f0`) are reached by no candidate on either take. At text level A1 and F-credit reach `h2-07/f4`, `h2-07/f5` and `h6-16/f5`, A1s the first two; at audio `h2-07`'s line 3 splits into three pieces (cue-routed, carried, dropped), so the lines after it have no cue-routed line to follow.
+  - Every level difference from 0.3.7 is within the floor of 0 except raw silent: the A1 forms −1 on `heldout-2` (with and without the reply credit), F-credit −3 on `heldout-2` and −1 on `heldout-6` (with the credit only). Take 2 gives the same difference columns on both key sets as take 1.
+  - Harm, audio take 1, against 0.3.7: no candidate makes a fact newly silent, newly quotes a material `absent` fact or a next-patient line, or adds an error-grade warning or a checker failure, and the count of unsupported lines is unchanged; every A1 form quotes one non-material `absent` fact (`hld-18`'s line 5). At text level A1 also quotes `hld-17`'s line 2 (a material `absent` fact on a patient line holding an off-record phrase), which the guard removes. F flags one line that must stay out (`hld-18`'s line 5; two at text level, both non-material), and F's 57 extra flagged lines are at most 5 in one encounter. The rejected turn-level form reaches one fact beyond A1 at audio (`h6-16/f5`), none at text level. C0, silent facts on a non-clinician line already carrying `high_risk_omission`: 2 at text level (`h6-05/f2`, `h6-16/f5`) and 2 at audio (`h6-16/f5`, `h6-22/f0`).
+  - The guard: G0 changes no note at text or audio level. It refuses one line at text level under A1 (`hld-17`'s line 2, which Check 4 still flags) and none at audio. Of the 12 clinician instruction lines in the scripts the contiguous phrase list matches one (`h4-17` line 5).
+- **Real speech** (the plan's Task 4.2; `ffl-measure-kept.py` and `ffl_lib.py` frozen by SHA-256 on Task 4.1, run by the practitioner from a normal terminal with both builds closed; totals only). Two passes, the repository's `validation\config` and then the installed app's own config, both `COMPLETE` with identical totals: 2 kept recordings, both with the clinician enrolled; 97 clinician lines, 8 of them questions, 0 cue-routed; 0 answer windows opened and 0 lines joined by the hop; 33 replies flagged; A1 and A1s would each follow 1 line; the guard refuses 0 lines under G0 and 0 under A1 + guard; F adds 0 marks. Described, not judged: the plan's D9 reads no threshold, and whether a later build needs three enrolled kept recordings first is left to that plan's Task 5.3.
+- **The decision (2026-11-19, the follow-on-lines plan's Task 5.3):** the practitioner chose "(b) Hand on to plan 2" — no candidate is built and nothing in the app changes; the map goes to the next plan, on the low-confidence mark's reach, because no routing rule tried here makes the gate reachable and the largest family of counted failures (misheard facts and their residue, 9 of 33) is outside routing. Shadow mode stays on. The other options were to build a named form by an amendment to that plan, or to close with no change.
 
 ## Custody and privacy
 
