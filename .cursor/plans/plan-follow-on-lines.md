@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** follow-on-lines (a diagnosis of every remaining gate failure after 0.3.7 — the patient lines still left out silently first — with report-only numbers for three candidate rules, ending in the practitioner's decision on what, if anything, to build)
-**Overall Progress:** `100%` (13 of 13 tasks; Task 5.4's `[operator]` deletion of `C:\ffl-sets\` still open)
+**Overall Progress:** `100%` (13 of 13 tasks; Task 5.4's `[operator]` deletion of `C:\ffl-sets\` done by the practitioner 2026-11-20)
 
 ## Lifecycle State
 - Completed — Follow-ups Retained
@@ -8,7 +8,7 @@
 ## Completion Status
 - Completion timestamp: 2026-11-19 (Task 5.3's exit (b), "(b) Hand on to plan 2")
 - Main implementation complete: Yes
-- Ready for archive: No (the `[operator]` deletion of `C:\ffl-sets\`, the composer's `/document` and the commit on the practitioner's word are open)
+- Ready for archive: No (every close step is done — the `[operator]` deletion of `C:\ffl-sets\` on 2026-11-20, `/document`, the commits pushed and the run closed 2026-11-20 — but the plan holds Retained Follow-Up Items for plan 2)
 
 ## Plan Lineage
 - Parent plan: None
@@ -2350,7 +2350,7 @@ Filled 2026-11-19 (leg ex8) at the exit (b), from the Planning Extraction Summar
   - Revisit by: a later map in which the window classes (S4, S1) lead, or real speech with at least three enrolled kept recordings showing cue-routed clinician questions; any build is a new dated decision with this plan's measurement repeated on fresh transcripts.
 - **The shipped off-record phrase list.** Re-deferred (unchanged from the Deferred item): only with a build that uses the guard, by the isolated-session method. Risk if deferred: minor. Revisit by: a build decision that includes the guard.
 - **The other counted families the map names** (not plan 2's): uncertainty not surfaced (D `h2-01`, `h2-17`, `h2-18`; R2 over its ceiling on `heldout` and `heldout-2`) and next patient or wrongly present (R3 over its ceiling on `heldout-3`, `heldout-5`, `heldout-6`; N3 `h3-18/f4`, `h5-17/f5`; N4 `h6-01/f15`), and one unsupported clinical line (U `h6-09`). Carried Forward as the map's record; their register rows stand (`docs/pilot/findings-register.md`). Risk if deferred: correctness (uncertainty) and cross-patient (next patient), each controlled by shadow mode and the clinician's review. Revisit by: a cause-driven plan after plan 2, the practitioner's choice.
-- **`[operator]` Delete `C:\ffl-sets\`** (the built sets and transcripts, synthetic only), from a normal PowerShell: `Remove-Item -Recurse -Force 'C:\ffl-sets'`. The agent shell cannot (Task 5.4). Risk if deferred: minor (synthetic files only). Revisit by: this plan's close.
+- **`[operator]` Delete `C:\ffl-sets\`** (the built sets and transcripts, synthetic only), from a normal PowerShell: `Remove-Item -Recurse -Force 'C:\ffl-sets'`. The agent shell cannot (Task 5.4). Risk if deferred: minor (synthetic files only). Revisit by: this plan's close. [2026-11-20] DONE — the practitioner ran it from a normal PowerShell; the folder is gone.
 - **The scratch under `.cursor/loops/` stays as this plan's method record** (`ffl_lib.py`, `ffl-measure.py`, `ffl-measure-kept.py` frozen by SHA-256 on Task 4.1, and the outputs of record named in the harness section); git-ignored, never edited after the freeze. Risk if deferred: minor. Revisit by: the practitioner's choice to delete it.
 - **Excluded items** stay excluded as the Planning Extraction Summary words them, each with its own "When to revisit" (auto-placing replies to uncued questions; whole-turn, "after any placed line" and guard-G-only flag forms; cue-file and frozen-vocabulary changes, the transcription guard and the recogniser — the last two plan 2's; rule v7, `heldout-7`, run 10, a version change or a build of record).
 - **Accepted Assumptions, classified:** the agent shell built and transcribed the sets (Resolved, Task 2.1); the planning-time estimates (Resolved, all reproduced at Task 1.2); real speech thin (Carried Forward: two enrolled recordings; whether three are a precondition applies only to a build, see the candidates item above).
