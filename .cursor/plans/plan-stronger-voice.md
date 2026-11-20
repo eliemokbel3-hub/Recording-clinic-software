@@ -274,7 +274,7 @@ None. The profile stays schema v1 with one vector. The transcript gains no field
   - Seen-set cohort: the encounters whose clinician the harness confirms at baseline. Truth on a label track has two classes, the clinician and everyone else (the patient, a next patient and any other role together). Rates are pooled over that cohort: the label track's clinician seconds labelled other, and its other-speaker seconds labelled clinician, each as a share of that speaker's seconds. A candidate under which any cohort encounter stops confirming fails.
   - Mixed seconds: inside one segment or piece, the seconds of the speaker who has fewer of them by truth. Eligible mixed seconds are those in a dialogue or encounter where D5's centres could be formed.
   - Each true transition is matched to at most one cut, the nearest within 0.5 s, and each cut to at most one transition (nearest first; the earlier on a tie). A matched cut is correct only when the labels of the pieces on its two sides equal the true speakers on those sides. Wrong splits are the unmatched cuts and the matched cuts with a wrong label on either side. Single-speaker exposure is truth time with no transition within 1 s. Excluded overlap regions (D2) are left out of transitions, cuts and exposure alike. A measure with no support reads `unmeasured`.
-- **The bars (proposals until Task 0.2 freezes them):**
+- **The bars (frozen at Task 0.2, 2026-11-20, as written):**
   - A1 (reported; it gates nothing): at `R0`, P1 reaches at least 90 % recall on the overall pool and at least 80 % on the quiet pool, with at most 2 % false match on the overall pool; P0 is shown beside it.
   - A2 (reported for the follow-up plan): P2 beats P1 by at least 5 points of recall on the quiet pool with no more false match on the overall pool.
   - B (gates every row): with P1, the row reaches 90 % recall on the overall pool and 80 % on the quiet pool with at most 2 % false match on the overall pool; on the seen sets no cohort encounter stops confirming, the clinician-labelled-other rate does not rise, and the other-labelled-clinician rate rises by at most 0.5 percentage point; on kept consultations its direction and sanity words for P1 with that row are both `met`. A line that reads `unmeasured`, the quiet pool's included, is not met.
@@ -294,10 +294,12 @@ See the Planning Extraction Summary: building Lever C and several stored vectors
 ## Current State / Handoff Note
 - Last completed step: Planning complete (Plan Mode with Fable, then `/review-plan`, 2026-11-20); codex plan peer-review rounds 1 to 5 applied (2026-11-20). Round 2 reduced the scope by two practitioner decisions: Lever C and several voice vectors are measured here and built by a follow-up plan.
 - Current in-progress step: the cross-family plan review (`/peer-loop plan review`, codex `gpt-6.2-astra` high, cap 5) reached its cap without converging: findings per round 25, 32, 22, 23 and 17, none critical, every one applied or closed by a recorded scope decision. Whether to run more rounds or to build is the practitioner's decision.
-- Immediate next action: the practitioner's decision on the review's cap, then `/execute-loop` (its wizard takes the two-Active-plans path, Custom; the UI refresh plan is still Active). Task 0.1 first.
+- Immediate next action: the practitioner chose to build ("Start the build", 2026-11-20); `/execute-loop` is running (Run state below). Task 0.1, the practitioner's approval of the reading script, first.
 - Open blockers / open questions: Tasks 0.1, 0.2 and 0.7 are the practitioner's decisions; Tasks 0.3, 0.5b, 0.6, 4.2 and 4.3 are the practitioner's runs.
 - Context a fresh session needs: the first Task 9.1 score of 2026-11-20 is set aside and is recorded nowhere in the repository; the ten restart after this plan's install.
 - Last plan sync: 2026-11-20
+- Loop config: executor=claude-p model="claude-opus-5-5" effort=high profile=default; peer=codex model="gpt-6-astra" effort=medium; architect=off; cadence=every-phase; caps=review:3,peer:5; gates=executor; cap-raise=executor; high-auto=on; peer-max=12; notify=action-only; scope=all; autocommit=on; isolation=none; merge=off; perms=scoped; liveness=10; monitor-delivery=auto; verify=composer
+- Run state: `/execute-loop` run `stronger-voice-20261120-200910-dc24` (isolation none, builds on `main`), started 2026-11-20; preflight done; no away grant (no away scope available: isolation none admits no merge, and the agent never drives the desktop app, so there is no live smoke tool).
 
 ## Review History
 - 2026-11-20 round 1: 0 CRIT / 9 HIGH / 14 MED / 2 LOW; skew=none; action=none (codex `gpt-6.2-astra` high plan peer-review; Materiality 23 build-affecting / 2 record-only / 0 invalid, verified as labelled; all twenty-five applied as plan amendments; round 2 owed — plan mode never converges on round 1)
@@ -865,7 +867,8 @@ Materiality: 16 build-affecting / 1 record-only / 0 invalid
 ## Tasks
 
 ### Phase 0 — Measure (scratch only)
-- [ ] 🟥 Task 0.1: Approve the reading script   [decision]
+- [x] 🟩 Task 0.1: Approve the reading script   [decision]
+  - Chosen: approve the six parts below as written (2026-11-20); rationale: the practitioner's answer, "Approve as written".
   - Options: approve the six parts below as written / edit any part's words or cue.
   - The script (synthetic, no patient content; each part ends when enough speech is heard, so exact words do not matter):
     1. NORMAL VOICE. Sit where you consult. "Thanks for coming in today. Before we start, tell me what has been going on and when it began. I would like to look at how you are moving, then check your strength and your range. After that I will explain what I think is happening, and we will agree on a plan together. Most people notice a change within the first two or three visits. If anything I do is uncomfortable, tell me straight away and we will ease off."
@@ -875,7 +878,8 @@ Materiality: 16 build-affecting / 1 record-only / 0 invalid
     5. MOVE AWAY. Stand where you treat and keep talking as you move. "I am just going to move around to the other side. Keep your arm resting there. Now push up against my hand, and hold. And relax. Turn onto your side for me, facing the wall."
     6. YOUR OWN WORDS. Do not read. "Describe, as if to a new patient, what happens in a first visit."
   - Blocks: Task 0.3 and Phase 1.
-- [ ] 🟥 Task 0.2: Freeze the bars, definitions, orders, ids and measures   [decision]
+- [x] 🟩 Task 0.2: Freeze the bars, definitions, orders, ids and measures   [decision]
+  - Chosen: confirm as written (2026-11-20); rationale: the practitioner's answer, "Freeze as written". Frozen by this commit, before any new number.
   - Options: confirm Validation / Verification (the definitions, the bars, the calibration's derivation) and the tables, ids and orders of D2, D4, D5, D7 and D9 as written / change a figure now.
   - Output: one commit of this plan holding the frozen figures, before any new number (C3).
   - Blocks: Tasks 0.4 to 0.7.
