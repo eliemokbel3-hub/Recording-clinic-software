@@ -5109,9 +5109,11 @@ nor the saved note, captures no decode number and writes no file. It
 prints session ORDINALS, integers, thresholds, fixed text and exception
 type names only — never a session id, a word or a name — on every path,
 including a custody stop, an interrupt and anything escaping at start-up
-(one fixed line, nothing on standard error). Its console report stays on
-the practitioner's screen. The only part pasted and recorded is a separate
-PASTE BLOCK from one builder that refuses anything outside its allowlist:
+(one fixed line, nothing on standard error). By procedure its console
+report stays on the practitioner's screen; at Task 2.2 the console part of
+the run also reached the chat, and only the block is recorded (the plan's
+Task 2.2 line). The only part to be pasted, and the only part recorded,
+is a separate PASTE BLOCK from one builder that refuses anything outside its allowlist:
 a status line, four recording counts and, only on a `COMPLETE` run with at
 least 2 recordings with a confirmed clinician, one `met` / `not met` per
 threshold — no total, share, median or maximum, because pooled totals

@@ -15,6 +15,8 @@ holds the documents the pilot is run and judged with.
 | [Findings register](findings-register.md) | Every finding of the pilot, with its severity, status and control | In the repository, here |
 | [Exit gate](exit-gate.md) | The per-clinic checklist and signature line that opens routine use | In the repository, here |
 
+For reading only, `docs/testing/exit-gate-options.md` (2026-11) sets out the options after the failed validation runs; it decides nothing and changes no gate line.
+
 ## The run order
 
 Every step is the practitioner's, from a normal terminal or Explorer (never an

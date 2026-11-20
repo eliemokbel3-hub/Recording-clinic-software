@@ -1585,9 +1585,10 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       re-transcribed in memory and, with a confirmed clinician, composed once
       with suggestions off and no prose; ordinals, integers, thresholds, fixed
       text and exception type names only on the console, never a session id,
-      a word or a name. Its console report is never pasted. Only a separate
-      paste block reaches the plan: a status line, four recording counts and,
-      on a `COMPLETE` run with at least 2 recordings whose clinician is
+      a word or a name. By procedure its console report is never pasted (at
+      Task 2.2 it also reached the chat; only the block is recorded, the
+      plan's Task 2.2 line). Only a separate paste block reaches the plan:
+      a status line, four recording counts and, on a `COMPLETE` run with at least 2 recordings whose clinician is
       confirmed, one `met` or
       `not met` per threshold, refused by its builder if it holds anything
       else (no total, share, median or maximum).
