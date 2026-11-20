@@ -1575,7 +1575,22 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       word or a name, and one aggregate block of totals. Nothing per recording is
       written into that plan: it records the aggregate totals and the run's
       fixed lines (the `--list` count, the config line, the status and the
-      exit code).
+      exit code). The show-the-doubt plan's Task 2.2 measurement
+      (`.cursor/loops/lcm-measure-kept.py`, 2026-11-20, git-ignored; it, its
+      library `lcm_lib.py` and the synthetic `lcm-measure.py` frozen by
+      SHA-256 before the practitioner's run) is a scratch of the same kind
+      under the same rules, built on `ffl-measure-kept.py`'s frame (it runs
+      that file's bytes only after checking their SHA-256, so the refusals,
+      listing, numbering and config line are the same): each kept recording
+      re-transcribed in memory and, with a confirmed clinician, composed once
+      with suggestions off and no prose; ordinals, integers, thresholds, fixed
+      text and exception type names only on the console, never a session id,
+      a word or a name. Its console report is never pasted. Only a separate
+      paste block reaches the plan: a status line, four recording counts and,
+      on a `COMPLETE` run with at least 2 recordings whose clinician is
+      confirmed, one `met` or
+      `not met` per threshold, refused by its builder if it holds anything
+      else (no total, share, median or maximum).
 
 28. **The transcription-guard measurement (invented-text guard plan Task 1.5,
     D7, C12; BUILT 2026-10-12; developer build only, practitioner-run, zero

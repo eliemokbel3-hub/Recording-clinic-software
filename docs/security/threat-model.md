@@ -5093,6 +5093,39 @@ practitioner's
 commands never use it. RESIDUE: as above, a scratch checked by reading it
 (the plan's `/review-loop` and a codex pass of five rounds), by the
 synthetic dry runs and by a synthetic listing check, not by a pin.
+The show-the-doubt plan's Task 2.2 measurement (2026-11-20) —
+`.cursor/loops/lcm-measure-kept.py`, with its library
+`.cursor/loops/lcm_lib.py` and the synthetic entry point
+`.cursor/loops/lcm-measure.py`, all frozen by SHA-256 on the plan's Task
+2.1 (the practitioner checks the first two before the run) — is the same
+class under the same rules. It runs `ffl-measure-kept.py`'s own bytes as
+its frame only after checking their SHA-256 (a mismatch refuses before any
+of that code runs), so its refusal order, its three extra refusals, its
+listing, its numbering and its config line are that file's. Each kept
+recording is re-transcribed in memory over a memory-keyed temporary store
+(`persist_key=False`) and, when its clinician is confirmed, composed once
+with suggestions off and no prose; it reads neither the kept transcript
+nor the saved note, captures no decode number and writes no file. It
+prints session ORDINALS, integers, thresholds, fixed text and exception
+type names only — never a session id, a word or a name — on every path,
+including a custody stop, an interrupt and anything escaping at start-up
+(one fixed line, nothing on standard error). Its console report stays on
+the practitioner's screen. The only part pasted and recorded is a separate
+PASTE BLOCK from one builder that refuses anything outside its allowlist:
+a status line, four recording counts and, only on a `COMPLETE` run with at
+least 2 recordings with a confirmed clinician, one `met` / `not met` per
+threshold — no total, share, median or maximum, because pooled totals
+beside a verdict can fix one recording's figure; the plan records at most
+one verdict-bearing block. Its `--dry-run-docs` mode reads the plan's
+SYNTHETIC trace files, refusing unless the seven seen sets' subfolders hold
+JSON files named exactly by their frozen ids (a check by file name; a file
+whose name starts with `_` and any entry that is not a JSON file are not
+checked), a developer check the practitioner's commands never use. RESIDUE: as above, a scratch
+checked by reading it (the plan's `/review-loop`, a codex pass of two
+rounds and a `/security-review`), by a 57-case self-test with injected
+fakes and by the synthetic dry run, not by a pin; the verdict words of two
+blocks over different recordings can say something about one recording,
+which is why only one verdict-bearing block is relayed.
 
 OLDER BUILDS (D14). 0.2.0 opens a kept entry's transcript and notes and
 ignores the audio (listing and reading test only `key.dpapi` and `pending`);

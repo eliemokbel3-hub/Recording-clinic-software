@@ -548,6 +548,83 @@ After 0.3.7, the follow-on-lines plan (`.cursor/plans/plan-follow-on-lines.md`) 
 - **Real speech** (the plan's Task 4.2; `ffl-measure-kept.py` and `ffl_lib.py` frozen by SHA-256 on Task 4.1, run by the practitioner from a normal terminal with both builds closed; totals only). Two passes, the repository's `validation\config` and then the installed app's own config, both `COMPLETE` with identical totals: 2 kept recordings, both with the clinician enrolled; 97 clinician lines, 8 of them questions, 0 cue-routed; 0 answer windows opened and 0 lines joined by the hop; 33 replies flagged; A1 and A1s would each follow 1 line; the guard refuses 0 lines under G0 and 0 under A1 + guard; F adds 0 marks. Described, not judged: the plan's D9 reads no threshold, and whether a later build needs three enrolled kept recordings first is left to that plan's Task 5.3.
 - **The decision (2026-11-19, the follow-on-lines plan's Task 5.3):** the practitioner chose "(b) Hand on to plan 2" — no candidate is built and nothing in the app changes; the map goes to the next plan, on the low-confidence mark's reach, because no routing rule tried here makes the gate reachable and the largest family of counted failures (misheard facts and their residue, 9 of 33) is outside routing. Shadow mode stays on. The other options were to build a named form by an amendment to that plan, or to close with no change.
 
+## Low-confidence mark measurement (show-the-doubt plan, 2026-11)
+
+The show-the-doubt plan (`.cursor/plans/plan-show-the-doubt.md`, plan 2, seeded by the gate-failure map above) asked two things, in git-ignored scratch: whether a quoted note line holding a word the recogniser was unsure of (below 0.60) should show a visible mark, as today only one grouped `low_confidence_source` warning row and the transcript's `[word?]` show it; and whether a dropped word can be flagged. The scratch is `.cursor/loops/lcm_lib.py` and `lcm-measure.py` (synthetic) and `lcm-measure-kept.py` (real speech, separate from the synthetic entry point), all three frozen by SHA-256 on the plan's Task 2.1 before the practitioner's run; the outputs named below are under `.cursor/loops/lcm-out/`, and the saved traces under `.cursor/loops/ffl-out/`. The bars, the threshold grid, the tie rule and the definitions were frozen in a commit (`b664f07`, the plan's Task 0.2) before any new number was read. These are measurements, never a run of record: the seven sets are seen, rule v6's verdict of record stays run 9's, `docs/pilot/exit-gate.md` is unchanged, no product code changed, and shadow mode stays on. Every number is labelled by its provenance (the plan's C5): **confirmatory** (it rests on what planning had already read), **already read** (planning's own reading, reproduced), or **measured on seen sets** (new, but on sets that are seen, so never a prediction test or a gate reading).
+
+- **Method.**
+  - Premise: a transcript rebuilt from each saved trace (`ffl-out/trace/`), with its saved gate note, reproduces the stored Check 1 warnings and the whole stored metrics object on all 227 encounters (take 1's 183 and take 2's 44), 0 differences; the gate-failure map's 67 rows and 33 counted reproduced (`premise-1.log`).
+  - The sweep (`sweep-6.log`, outputs of record): the checker's threshold patched in the scratch process only, Check 1 and Check 2 re-run and swapped into each saved gate note, and the real `encounter_metrics` called; the mark's reach (word, ±1, ±3, line) simulated for the review-mark reading only. A trace stores each probability to 4 decimal places, so a word whose rounded value equals a threshold is decided from the stored warnings and flags first; no quoted word was left undecided at any threshold (parity 0 on every check). A line "earns the kind" when it holds a non-suspect word below the threshold; it is "newly marked" when it also shows none of today's three marks (`number`, `possibly not speech`, `unsure`).
+  - The deletion runs (`runs-6.log`): a reference word the recogniser dropped is found from the alignment alone (a mandatory deletion; a dropped copy of a repeated word, a joined pair such as "5km" for "5 km" and an ambiguous place are set apart and never scored); a run of them inside a quoted line and holding a content word is "scored". The trace-level signals (a zero-word segment, a sparse segment, a low-confidence word) are scored against them, one variant per family chosen on the development half (`scripts`, `heldout`, `heldout-2`, `heldout-3`) and read unchanged on the confirmation half (`heldout-4`, `heldout-5`, `heldout-6`).
+  - Timing and decode signals (a gap, a stretched word; the per-window decode numbers) need a fresh transcription with word times. It was conditional on at least 20 scored runs; with 5 it was skipped, so no timing or decode table exists. The real-speech script counts the gap and stretched-word families too, checked by known-answer fixtures only.
+- **The mark's load and bar B (i)** (take 1's 183 gate notes, 1,153 quoted lines, 229 showing a mark today; pooled; measured on seen sets except the 0.60 row's load, which is already read: planning's 229, 99 and 54 reproduced):
+
+  | T | Earning the kind | Newly marked | Newly / quoted | Any mark / quoted | Newly per note, median / max | Notes with a newly marked line | `[word?]` marks in the transcripts |
+  |---|---|---|---|---|---|---|---|
+  | 0.30 | 17 | 10 | 0.9% | 20.7% | 0 / 1 | 10 of 183 | 2,545 |
+  | 0.40 | 31 | 14 | 1.2% | 21.1% | 0 / 2 | 13 of 183 | 2,572 |
+  | 0.50 | 63 | 32 | 2.8% | 22.6% | 0 / 3 | 30 of 183 | 2,618 |
+  | 0.60 | 99 | 54 | 4.7% | 24.5% | 0 / 3 | 47 of 183 | 2,686 |
+  | 0.65 | 120 | 66 | 5.7% | 25.6% | 0 / 3 | 58 of 183 | 2,731 |
+  | 0.70 | 164 | 85 | 7.4% | 27.2% | 0 / 3 | 69 of 183 | 2,786 |
+  | 0.75 | 211 | 112 | 9.7% | 29.6% | 0 / 3 | 85 of 183 | 2,873 |
+  | 0.80 | 266 | 151 | 13.1% | 33.0% | 1 / 3 | 107 of 183 | 2,966 |
+  | 0.85 | 337 | 197 | 17.1% | 36.9% | 1 / 4 | 123 of 183 | 3,092 |
+  | 0.90 | 451 | 285 | 24.7% | 44.6% | 1 / 5 | 143 of 183 | 3,311 |
+
+  At 0.60, by set:
+
+  | Set | Quoted lines | Showing a mark today | Earning the kind | Newly marked | Notes with a newly marked line | Kind lines with a word error | Other lines with a word error |
+  |---|---|---|---|---|---|---|---|
+  | scripts | 218 | 65 | 26 | 14 | 11 of 50 | 4 of 26 | 7 of 192 |
+  | heldout | 151 | 17 | 4 | 2 | 2 of 22 | 1 of 4 | 3 of 147 |
+  | heldout-2 | 176 | 27 | 11 | 8 | 8 of 22 | 0 of 11 | 5 of 165 |
+  | heldout-3 | 185 | 32 | 19 | 11 | 10 of 23 | 6 of 19 | 3 of 166 |
+  | heldout-4 | 132 | 24 | 10 | 5 | 5 of 22 | 3 of 10 | 1 of 122 |
+  | heldout-5 | 165 | 33 | 13 | 5 | 5 of 22 | 0 of 13 | 1 of 152 |
+  | heldout-6 | 126 | 31 | 16 | 9 | 6 of 22 | 4 of 16 | 7 of 110 |
+
+  - Bar B (i), the mark's information (measured on seen sets; unread before the freeze): of the 99 lines earning the kind at 0.60, 18 hold a word error (18.2%), against 27 of the other 1,054 quoted lines (2.6%); at least twice the share, so **met**. A word error is a hypothesis word substituted or inserted on some optimal alignment; a dropped word is not one (it has nothing to mark).
+  - No line earning the kind is a suspect line at any threshold. The harm of moving the shared threshold instead: 0 Check 2 grade changes and 0 checker-failure changes at every threshold; the transcript's `[word?]` count (numbers and name-like tokens included) is in the table's last column.
+  - Take 2 (`heldout-2` and `heldout-6`, printed apart, counting toward nothing): at 0.60, 302 quoted lines, 58 showing a mark today, 27 earning the kind, 17 newly marked; `heldout-2` and `heldout-6` equal to take 1 on every load column.
+- **Bar A, a threshold change** (reach word; confirmatory, predicted not met): no threshold above 0.60 newly marks more than 1 counted wrong fact that the reference reading holds. That one is `hld-21/f3`, from 0.80, where the any-mark share is 33.0% against 24.5% at 0.60 (8.41 points above, the limit 5): **not met**, as predicted. For the brief only, never bar A: at reach ±1 and wider, 0.50 and 0.60 newly mark `h5-17/f0` (the dropped body-part word's neighbour); `h2-15/f9` is newly marked from 0.65 on a suggested line the reference does not hold; at 0.30 `h6-15/f8` loses its mark.
+- **Dropped words** (take 1's 183 encounters; measured on seen sets): 29 mandatory deletion tokens in 15 runs (5 inside a quoted line, 3 at a line's edge, 7 unquoted; none ambiguous, unscorable or without a content word), 6 joined pairs (12 tokens) and 25 floating deletions set apart; **5 scored runs** (development half 1, confirmation half 4).
+
+  | Half | Variant | Alarm units | Inside quoted lines | Scored runs hit | False alarms per encounter |
+  |---|---|---|---|---|---|
+  | development | sparse ≤ 1.0 words/s (selected) | 2 | 0 | 0 of 1 | 0 |
+  | development | sparse ≤ 1.5 words/s | 4 | 0 | 0 of 1 | 0 |
+  | development | low-confidence word (< 0.60) | 179 | 62 | 1 of 1 | 0.513 |
+  | confirmation | sparse ≤ 1.0 words/s | 1 | 0 | 0 of 4 | 0 |
+  | confirmation | low-confidence word (< 0.60) | 156 | 42 | 3 of 4 | 0.576 |
+
+  - The zero-word family, described only (it alarms a segment boundary, which lies inside no quoted line): at 0.3 s and 0.5 s, 7 units, hitting 3 of the 10 located content runs at a line's edge or unquoted (all 3 on the confirmation half); at 1.0 s none.
+  - The reporting threshold for "worth an amendment" (at least half of at least 5 scored runs on the confirmation half hit, at no more than 1 false alarm per 2 encounters): **unmeasured** for both scored families (4 scored runs there).
+  - **Bar C, a low-confidence word beside a dropped word** (reported only): **not met** — 5 scored runs, fewer than the 20 required (4 of them, 80.0%, hit by the low-confidence family).
+  - The condition for the fresh transcription (at least 20 scored runs): **not met** (5), so the timing and decode signals were not measured.
+- **Real speech** (the plan's Task 2.2: `lcm-measure-kept.py`, frozen by SHA-256 on Task 2.1, run by the practitioner from a normal terminal with both builds closed, under the installed app's own config, with the enrolment; both hash checks read `True`). Recorded only as received, the paste block's status, recording counts and verdict words:
+
+  ```text
+  status: COMPLETE
+  recordings expected: 2
+  recordings measured: 2
+  recordings failed: 0
+  recordings with a confirmed clinician: 2
+  load at 0.30: not met
+  load at 0.40: not met
+  load at 0.50: not met
+  load at 0.60: not met
+  ```
+
+  Each verdict is bar B (ii) at that threshold, evaluated inside the script: newly marked lines at most 1 in 5 of the quoted lines pooled, a median of at most 3 and a maximum of 8 per note. No quantity behind the verdicts (no total, share, median, maximum or per-recording figure) is recorded in this repository or the plan: those numbers are the practitioner's console's. This is the plan's one verdict-bearing block; a later run is for the practitioner's own reading.
+- **The bars read** (frozen at `b664f07`):
+  - Bar A (a threshold change): not met (confirmatory).
+  - Bar B (the mark at 0.60): (i) met (measured on seen sets); (ii) **not met** (real speech, from a `COMPLETE` block); (iii) met (2 recordings with a confirmed clinician). Bar B needs all three, so bar B is **not met**.
+  - Bar C: not met (5 scored runs, fewer than 20).
+  - The reporting threshold for a dropped-word signal: unmeasured for both families.
+  - The load fallback (a lower threshold met where 0.60 is not): it does not arise; the load is `not met` at 0.30, 0.40 and 0.50 too.
+- **The decision (2026-11-20, the plan's Task 2.4):** the practitioner chose (b), close with no change ("Yes, (b) and row 1"): the visible mark is not built and nothing in the app changes, because bar B is not met (its real-speech load), so building the mark (exit (a)) was closed. No candidate amendment applies (bars A and C not met, no dropped-word signal measurable, no lower threshold met). The visible-mark gap is recorded as findings register F-173 (controlled); F-149 is unchanged. Shadow mode stays on.
+
 ## Custody and privacy
 
 Each encounter is transcribed in a temporary encrypted session store under a fresh DPAPI-wrapped key — the same helpers `measure-speakers.py` uses (`speaker_eval.transcribe_in_temporary_store` and `destroy_temporary_store`). The store is torn down key-first and probed; one that cannot be shown gone stops the whole run and names its path. The harness writes no audit row and no Past-sessions entry and reads none. The offline environment is applied and asserted before any model loads. The report holds ids, numbers, flags and closed vocabularies only — never a transcript, note or script line; an unexpected failure is reported by its exception type name.
