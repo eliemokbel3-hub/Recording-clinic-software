@@ -18,12 +18,15 @@ Layers:
   (``feed`` never raises), pause gating, stop semantics (bounded join, late
   posts dropped, buffers confirmed cleared), a cheap ``seal`` under a blocked
   tail, the last flushed chunk in the drained tail, VAD reset and D3 release
+- the recovery mark (stronger-voice plan Task 2.1, B1-35) on both drivers,
+  the live one through its receiver, with a slice too short to embed
 
 No clinical audio anywhere: fixtures are tones and silence.
 """
 
 from __future__ import annotations
 
+import math
 import random
 import struct
 import threading
@@ -70,9 +73,11 @@ from scribe_desktop.transcription import (
     extract_segment_pcm,
     pack_transcription_windows,
     read_transcript,
+    segment_has_text,
     transcribe_session,
     write_transcript,
 )
+from scribe_desktop.ui import models
 
 CHUNK = 32_000  # the store fixture's chunk size (1 s of PCM16 at 16 kHz)
 
@@ -1139,3 +1144,98 @@ class TestLiveTranscriber:
         live.drain()
         assert seen == list(iter_frames([pcm]))
         assert all(len(frame) == FRAME_BYTES for frame in seen)
+
+
+# ---------------------------------------------------------------------------
+# Stronger-voice plan Task 2.1 (D4, row B1-35): the recovery mark on both
+# drivers, which share it through ``assemble_transcript``
+# ---------------------------------------------------------------------------
+
+
+class TestRecoveryMarkOnBothDrivers:
+    @pytest.fixture(autouse=True)
+    def _numpy(self) -> None:
+        pytest.importorskip("numpy")
+
+    def test_both_drivers_relabel_the_same_line_and_skip_the_short_slice(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Four lines: a direct match, a slice too short to embed, a line of
+        the practitioner's scoring 0.40, and the other voice. The batch
+        driver, and the live worker drained by its receiver
+        (``models._live_transcript``), each embed exactly the three long
+        slices, in order (no call for the short one, and no score moved onto
+        the wrong line); the 0.40 line, which holds text, becomes
+        ``speaker_1`` on both paths; labels, clinician and number agree, and
+        the number is the direct match's alone.
+
+        Every real VAD segment is far longer than the 25 ms minimum
+        (``test_attribution``), so the fixture raises the module's minimum
+        just past its short slice: the property under test is that a slice
+        under the minimum is skipped on both paths, wherever it sits."""
+        pcm = (
+            silence_pcm(1.0)
+            + tone_pcm(1.5, frequency=220.0)
+            + silence_pcm(1.0)
+            + tone_pcm(0.6, frequency=700.0)
+            + silence_pcm(1.0)
+            + tone_pcm(1.5, frequency=330.0)
+            + silence_pcm(1.0)
+            + tone_pcm(1.5, frequency=2600.0)
+            + silence_pcm(1.0)
+        )
+        session_dir = tmp_path / ("c3" * 16)
+        crypto = _make_store(session_dir, pcm)
+        plain = transcribe_session(session_dir, crypto, MockSpeechProvider(), amplitude_vad)
+        segments = [
+            SpeechSegment(start_seconds=s.start_seconds, end_seconds=s.end_seconds)
+            for s in plain.transcript_segments
+        ]
+        assert len(segments) == 4
+        slices = list(extract_segment_pcm([pcm], segments))
+        short = len(slices[1])
+        assert short < min(len(slices[0]), len(slices[2]), len(slices[3]))
+        monkeypatch.setattr(transcription, "MIN_ATTRIBUTION_PCM_BYTES", short + BYTES_PER_SAMPLE)
+        near = (0.40, math.sqrt(1.0 - 0.40**2), 0.0, 0.0)  # cosine 0.40 against E1
+        vectors = dict(zip(slices, [E1, E1, near, E2], strict=True))
+        long_slices = [len(slices[0]), len(slices[2]), len(slices[3])]
+
+        batch_embedder = MockSpeakerEmbedder(vectors)
+        batch = transcribe_session(
+            session_dir,
+            crypto,
+            MockSpeechProvider(),
+            amplitude_vad,
+            speaker_embedder=batch_embedder,
+            enrolled_profile=_profile(),
+        )
+        assert batch_embedder.embedded_lengths == long_slices
+        assert segment_has_text(batch.transcript_segments[2])
+        assert [s.speaker for s in batch.transcript_segments] == [
+            SPEAKER_1,
+            SPEAKER_2,
+            SPEAKER_1,
+            SPEAKER_2,
+        ]
+        assert batch.enrolled_speaker == SPEAKER_1
+        assert batch.enrolment_similarity == pytest.approx(1.0)
+
+        live_embedder = MockSpeakerEmbedder(vectors)
+        worker = _live(attribution=lambda: (live_embedder, _profile()))
+        worker.start()
+        for chunk in _chunks(pcm):
+            worker.feed(chunk)
+        worker.seal()
+        live = models._live_transcript(worker, session_dir, crypto, None)
+        assert live is not None
+        assert worker.buffers_cleared
+        assert live_embedder.embedded_lengths == long_slices
+        assert [s.speaker for s in live.transcript_segments] == [
+            s.speaker for s in batch.transcript_segments
+        ]
+        assert (live.enrolled_speaker, live.enrolment_similarity) == (
+            batch.enrolled_speaker,
+            batch.enrolment_similarity,
+        )
+        assert _strip_created(live) == _strip_created(batch)
+        assert read_transcript(session_dir, crypto) == live  # the receiver wrote it

@@ -12,6 +12,10 @@ Layers:
   ``MockSpeakerEmbedder`` injected (no ML stack): the document fields, the
   D13 label scheme, the degenerate policy, the per-segment embed inside the
   window, both entry points, and the byte-for-byte path without inputs
+- the recovery mark (stronger-voice plan D4, row B1-35): the pure rule at its
+  edges and its acceptance invariant over generated scores, then inside
+  ``assemble_transcript`` (today's clinician and number, the shortcut and the
+  no-match branch untouched, the trim)
 
 No clinical audio anywhere: fixtures are tones and silence.
 """
@@ -20,6 +24,7 @@ from __future__ import annotations
 
 import json
 import math
+import random
 import struct
 import sys
 from collections.abc import Sequence
@@ -30,11 +35,17 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from scribe_desktop import transcription
 from scribe_desktop.benchmark import apply_offline_env
 from scribe_desktop.practitioner_profile import ConsentRecord, PractitionerProfile
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session_store import KEY_FILENAME, SessionChunkStore, wrap_key_to_file
-from scribe_desktop.speaker_embedding import MOCK_MODEL_ID, MockSpeakerEmbedder
+from scribe_desktop.speaker_embedding import (
+    ATTRIBUTION_THRESHOLD,
+    MOCK_MODEL_ID,
+    RECOVERY_MARK,
+    MockSpeakerEmbedder,
+)
 from scribe_desktop.speech import (
     BYTES_PER_SAMPLE,
     SAMPLE_RATE,
@@ -50,13 +61,16 @@ from scribe_desktop.transcription import (
     TranscriptDocument,
     TranscriptSegment,
     TranscriptWord,
+    assemble_transcript,
     attribute_speakers,
     enrolled_cluster,
     extract_segment_pcm,
     read_transcript,
+    recover_practitioner_labels,
     recover_session_transcription,
     segment_has_text,
     transcribe_session,
+    transcript_before,
     words_have_text,
     write_transcript,
 )
@@ -300,6 +314,103 @@ class TestEnrolledCluster:
     def test_length_mismatch_is_refused(self) -> None:
         with pytest.raises(ValueError):
             enrolled_cluster([SPEAKER_1], [0.1, 0.2], [True])
+
+
+# ---------------------------------------------------------------------------
+# the recovery mark (stronger-voice plan D4, row B1-35; Task 2.1), pure
+# ---------------------------------------------------------------------------
+
+
+def _match_labels(similarities: Sequence[float | None]) -> list[str]:
+    """``attribute_speakers``' labels in its match branch: the matches are
+    ``speaker_1``, the whole remainder ``speaker_2``."""
+    return [
+        SPEAKER_1 if s is not None and s >= ATTRIBUTION_THRESHOLD else SPEAKER_2
+        for s in similarities
+    ]
+
+
+class TestRecoveryMark:
+    def test_the_constants_are_the_decided_row_and_the_pass_mark_is_unchanged(self) -> None:
+        assert RECOVERY_MARK == 0.35
+        assert ATTRIBUTION_THRESHOLD == 0.50
+
+    def test_just_at_the_mark_just_under_it_and_at_the_pass_mark(self) -> None:
+        under_mark = math.nextafter(RECOVERY_MARK, 0.0)
+        under_pass = math.nextafter(ATTRIBUTION_THRESHOLD, 0.0)
+        scores = [0.9, RECOVERY_MARK, under_mark, ATTRIBUTION_THRESHOLD, under_pass, 0.1]
+        labels = recover_practitioner_labels(_match_labels(scores), scores, [True] * 6)
+        assert labels == [SPEAKER_1, SPEAKER_1, SPEAKER_2, SPEAKER_1, SPEAKER_1, SPEAKER_2]
+
+    def test_a_missing_or_directionless_score_is_never_relabelled(self) -> None:
+        scores = [0.9, None, -1.0, 0.4]
+        labels = recover_practitioner_labels(_match_labels(scores), scores, [True] * 4)
+        assert labels == [SPEAKER_1, SPEAKER_2, SPEAKER_2, SPEAKER_1]
+
+    def test_nothing_runs_without_a_match(self) -> None:
+        """The no-match branch: every score is under the pass mark, so the
+        two ``speaker_2`` segments between the marks stay where the 2-means
+        put them, although ``speaker_1`` is confirmed."""
+        scores = [0.40, 0.45, 0.38]
+        labels = [SPEAKER_2, SPEAKER_1, SPEAKER_2]
+        assert enrolled_cluster(labels, scores, [True] * 3) == (SPEAKER_1, 0.45)
+        assert recover_practitioner_labels(labels, scores, [True] * 3) == labels
+
+    def test_nothing_runs_when_todays_rule_does_not_confirm_speaker_1(self) -> None:
+        """The only match transcribed to nothing, so today's rule confirms
+        ``speaker_2``: the 0.40 segment is not relabelled."""
+        scores = [0.9, 0.40, 0.1]
+        has_text = [False, True, True]
+        labels = _match_labels(scores)
+        confirmed = enrolled_cluster(labels, scores, has_text)
+        assert confirmed is not None and confirmed[0] == SPEAKER_2
+        assert recover_practitioner_labels(labels, scores, has_text) == labels
+
+    def test_length_mismatch_is_refused(self) -> None:
+        with pytest.raises(ValueError):
+            recover_practitioner_labels([SPEAKER_1], [0.9, 0.4], [True])
+
+    def test_the_acceptance_check_never_fails_over_generated_score_lists(self) -> None:
+        """D4's acceptance invariant for a recovery-mark row: wherever the
+        rule runs, the new labels still confirm ``speaker_1``, so the result
+        is exactly today's labels plus every segment from the mark to the
+        pass mark (never discarded); no ``speaker_1`` is taken away; and
+        where it does not run, today's labels come back unchanged."""
+        rng = random.Random(20261121)
+        pool: tuple[float | None, ...] = (
+            None, -1.0, -0.2, 0.0, 0.2, 0.3, 0.34999, 0.35, 0.4, 0.49999, 0.5, 0.55, 0.9, 1.0,
+        )
+        ran = 0
+        for _ in range(3000):
+            count = rng.randint(1, 8)
+            scores = [
+                rng.choice(pool) if rng.random() < 0.7 else rng.uniform(-1.0, 1.0)
+                for _ in range(count)
+            ]
+            has_text = [rng.random() < 0.8 for _ in range(count)]
+            today = _match_labels(scores)
+            labels = recover_practitioner_labels(today, scores, has_text)
+            confirmed = enrolled_cluster(today, scores, has_text)
+            matched = any(s is not None and s >= ATTRIBUTION_THRESHOLD for s in scores)
+            if not matched or confirmed is None or confirmed[0] != SPEAKER_1:
+                assert labels == today
+                continue
+            ran += 1
+            expected = [
+                SPEAKER_1
+                if s is not None and RECOVERY_MARK <= s < ATTRIBUTION_THRESHOLD
+                else label
+                for label, s in zip(today, scores, strict=True)
+            ]
+            assert labels == expected
+            accepted = enrolled_cluster(labels, scores, has_text)
+            assert accepted is not None and accepted[0] == SPEAKER_1
+            assert all(
+                after == SPEAKER_1
+                for before, after in zip(today, labels, strict=True)
+                if before == SPEAKER_1
+            )
+        assert ran > 500
 
 
 # ---------------------------------------------------------------------------
@@ -708,3 +819,141 @@ class TestAttributedPipeline:
         assert outcome.document.speaker_model_id == MOCK_MODEL_ID
         assert read_transcript(session_dir, outcome.crypto) == outcome.document
         outcome.crypto.destroy()
+
+
+# ---------------------------------------------------------------------------
+# the recovery mark inside the shared assembly (stronger-voice plan D4, B1-35)
+# ---------------------------------------------------------------------------
+
+
+class TestRecoveryInAssembly:
+    @pytest.fixture(autouse=True)
+    def _np(self) -> None:
+        self.np = pytest.importorskip("numpy")
+
+    def _marked(self, count: int) -> list[Any]:
+        return [
+            (
+                SpeechSegment(start_seconds=float(i), end_seconds=i + 0.5),
+                (
+                    TranscriptWord(
+                        word_text=f"w{i}",
+                        start_seconds=float(i),
+                        end_seconds=i + 0.1,
+                        probability=0.9,
+                        uncertain=False,
+                    ),
+                ),
+            )
+            for i in range(count)
+        ]
+
+    def _assemble(
+        self,
+        similarities: Sequence[float | None],
+        *,
+        embeddings: Sequence[Any] | None = None,
+        saw_empty_segment: bool = False,
+        attributing: bool = True,
+    ) -> TranscriptDocument:
+        rows = (
+            embeddings
+            if embeddings is not None
+            else [self.np.zeros(2, dtype=self.np.float32) for _ in similarities]
+        )
+        return assemble_transcript(
+            session_id="c" * 32,
+            model_name="mock",
+            marked_segments=self._marked(len(similarities)),
+            embeddings=rows,
+            similarities=similarities,
+            saw_empty_segment=saw_empty_segment,
+            attributing=attributing,
+            speaker_model_id=MOCK_MODEL_ID,
+            np=self.np,
+        )
+
+    def _rows(self, *rows: Sequence[float]) -> list[Any]:
+        return [self.np.asarray(row, dtype=self.np.float32) for row in rows]
+
+    def _not_called(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def refuse(*args: object, **kwargs: object) -> list[str]:
+            raise AssertionError("the recovery mark must not run here")
+
+        monkeypatch.setattr(transcription, "recover_practitioner_labels", refuse)
+
+    def test_a_relabelled_consult_stores_todays_clinician_and_number(self) -> None:
+        """The 0.40 line becomes the practitioner's, and the number stays the
+        mean of the direct matches (0.9), not of every line labelled theirs."""
+        scores = [0.9, 0.40, 0.1]
+        document = self._assemble(scores)
+        assert [s.speaker for s in document.transcript_segments] == [
+            SPEAKER_1,
+            SPEAKER_1,
+            SPEAKER_2,
+        ]
+        assert enrolled_cluster(_match_labels(scores), scores, [True] * 3) == (SPEAKER_1, 0.9)
+        assert document.enrolled_speaker == SPEAKER_1
+        assert document.enrolment_similarity == 0.9
+        assert document.speaker_model_id == MOCK_MODEL_ID
+
+    def test_the_single_speaker_shortcut_runs_nothing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """After an empty slice (and with a lone embedding) assembly labels
+        every segment ``speaker_1`` without calling ``attribute_speakers``:
+        the recovery mark is not called, and the number is today's, the mean
+        over every scored segment, although one scores at the pass mark."""
+        self._not_called(monkeypatch)
+        empty = self._assemble(
+            [0.9, None, 0.40],
+            embeddings=self._rows((0, 0), (5, 5)),
+            saw_empty_segment=True,
+        )
+        lone = self._assemble([0.9, 0.40], embeddings=self._rows((0, 0)))
+        for document in (empty, lone):
+            assert {s.speaker for s in document.transcript_segments} == {SPEAKER_1}
+            assert document.enrolled_speaker == SPEAKER_1
+            assert document.enrolment_similarity == pytest.approx(math.fsum([0.9, 0.40]) / 2)
+
+    def test_the_no_match_branch_keeps_todays_labels(self) -> None:
+        """No score reaches the pass mark: the 2-means (rows 0 and 2 against
+        row 1) and the higher-mean swap decide, and the two 0.40 segments
+        stay ``speaker_2``."""
+        document = self._assemble(
+            [0.40, 0.45, 0.40], embeddings=self._rows((0, 0), (5, 5), (0, 0))
+        )
+        assert [s.speaker for s in document.transcript_segments] == [
+            SPEAKER_2,
+            SPEAKER_1,
+            SPEAKER_2,
+        ]
+        assert document.enrolled_speaker == SPEAKER_1
+        assert document.enrolment_similarity == pytest.approx(0.45)
+
+    def test_without_a_profile_the_recovery_mark_is_never_called(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._not_called(monkeypatch)
+        document = self._assemble(
+            [None, None], embeddings=self._rows((0, 0), (5, 5)), attributing=False
+        )
+        assert [s.speaker for s in document.transcript_segments] == [SPEAKER_1, SPEAKER_2]
+        assert document.enrolled_speaker is None
+
+    def test_a_trim_past_the_last_direct_match_keeps_the_clinician_and_number(self) -> None:
+        """D4 and ``transcript_before`` unchanged: when the trim removes the
+        only direct match and a relabelled line of the practitioner's
+        remains, the clinician and the number (the trimmed match's 0.9) are
+        kept, not recomputed."""
+        document = self._assemble([0.40, 0.1, 0.9])
+        assert [s.speaker for s in document.transcript_segments] == [
+            SPEAKER_1,
+            SPEAKER_2,
+            SPEAKER_1,
+        ]
+        trimmed = transcript_before(document, 2)
+        assert [s.speaker for s in trimmed.transcript_segments] == [SPEAKER_1, SPEAKER_2]
+        assert trimmed.enrolled_speaker == SPEAKER_1
+        assert trimmed.enrolment_similarity == 0.9
+        assert trimmed.speaker_model_id == MOCK_MODEL_ID

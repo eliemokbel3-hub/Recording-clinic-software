@@ -8206,6 +8206,122 @@ class TestNoteScreenTypedEdits:
         assert models.save_button_label(0) == models.SAVE_BUTTON_LABEL == "Save note"
         assert models.save_button_label(1) == "Save - confirms the 1 pre-filled line shown"
 
+    # --- Stronger-voice plan Task 2.1: the learning residue, pinned as it is -------
+    #
+    # The recovery mark (B1-35) can label a patient's line as the clinician's.
+    # Learning tests the label, not who spoke, so such a line is a learning
+    # input outside shadow mode (the plan's Accepted Assumptions; the threat
+    # model states it). These record the facts; no behaviour changes.
+
+    # Both lines open with a common starter ("The"): a capitalised opener the
+    # filter does not admit (a patient's "My ...", say) is refused as
+    # name-like at the real first word, as for any clinician line.
+    _RELABELLED_TURNS: tuple[tuple[str, str], ...] = (
+        *_NOTE_TURNS,
+        ("The knee felt wobbly on the stairs", SPEAKER_2),  # 4: a patient's words
+        ("The knee locked 3 times", SPEAKER_2),  # 5: a patient's words, a number
+    )
+    _RELABELLED_INDEX = 4
+    _RELABELLED_PHRASE = "the knee felt wobbly"
+    _RELABELLED_TYPED = "Knee unstable on stairs"
+
+    @staticmethod
+    def _acknowledge_left_out_number(screen: Any) -> None:
+        """Line 5 left out: its "3" draws Check 4's ``high_risk_omission``,
+        which "Acknowledge all" never clears (note-routing D4: its own row)."""
+        assert "high_risk_omission" in _warning_codes(screen)
+        screen._acknowledge("high_risk_omission")
+
+    def _relabelled_screen(
+        self,
+        config_root: Path,
+        *,
+        learning_status_provider: Callable[[], models.LearningStatus],
+        mode: SessionMode = SessionMode.NORMAL,
+    ) -> tuple[Any, dict[str, list[Any]], str]:
+        screen, record = self._screen(
+            config_root=config_root,
+            result=_edit_result(self._RELABELLED_TURNS),
+            learning_status_provider=learning_status_provider,
+            mode=mode,
+        )
+        assert self._RELABELLED_INDEX in _eligible(screen), "the fixture line must stay unrouted"
+        key = _eligible(screen)[self._RELABELLED_INDEX].allowed_sections[0]
+        return screen, record, key
+
+    def test_a_relabelled_patient_line_teaches_a_phrase_through_the_filter(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        config_root = tmp_path / "config"
+        screen, record, key = self._relabelled_screen(
+            config_root, learning_status_provider=_learning_on
+        )
+        assert screen.add_line(self._RELABELLED_INDEX, key) is True
+        assert screen.learning_queue() == ((key, self._RELABELLED_PHRASE),)
+        # The refusal filter still applies to such a line: a number is refused.
+        number_key = _eligible(screen)[5].allowed_sections[0]
+        assert screen.add_line(5, number_key) is True
+        status = screen.edit_status_label.text()
+        assert "Not learned" in status and "number" in status
+        assert screen.learning_queue() == ((key, self._RELABELLED_PHRASE),)
+        self._ratify(screen)
+        screen.save()
+        assert len(record["saved"]) == 1
+        cues = load_note_config(config_root).normalised_cues()
+        assert tuple(self._RELABELLED_PHRASE.split()) in cues[key]
+        screen.deleteLater()
+
+    def test_a_typed_edit_over_a_relabelled_patient_line_writes_a_shorthand_rule(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        config_root = tmp_path / "config"
+        screen, record, key = self._relabelled_screen(
+            config_root, learning_status_provider=_learning_on
+        )
+        assert screen.add_line(self._RELABELLED_INDEX, key) is True
+        manual_id = manual_assertion_id(self._RELABELLED_INDEX)
+        assert screen.edit_line(manual_id, self._RELABELLED_TYPED) is True
+        assert len(screen.rule_queue()) == 1
+        self._ratify(screen)
+        self._acknowledge_left_out_number(screen)
+        screen.save()
+        assert len(record["saved"]) == 1
+        assert "Learned 1 shorthand" in screen.edit_status_label.text()
+        written = [
+            rule
+            for rule in load_note_config(config_root).autofill_rules
+            if rule.expansion_texts() == (self._RELABELLED_TYPED,)
+        ]
+        assert len(written) == 1
+        screen.deleteLater()
+
+    @pytest.mark.parametrize("gate", ["opted-out", "shadow"])
+    def test_with_the_opt_in_off_or_on_a_shadow_recording_nothing_is_written(
+        self, qapp: Any, tmp_path: Path, gate: str
+    ) -> None:
+        config_root = tmp_path / "config"
+        if gate == "opted-out":
+            screen, record, key = self._relabelled_screen(
+                config_root,
+                learning_status_provider=lambda: models.LearningStatus(
+                    False, models.LEARNING_OPTED_OUT_HINT
+                ),
+            )
+        else:
+            screen, record, key = self._relabelled_screen(
+                config_root, learning_status_provider=_learning_on, mode=SessionMode.SHADOW
+            )
+        assert screen.add_line(self._RELABELLED_INDEX, key) is True
+        assert screen.learning_queue() == ()
+        assert screen.edit_line(manual_assertion_id(self._RELABELLED_INDEX), self._RELABELLED_TYPED)
+        assert screen.rule_queue() == ()
+        self._ratify(screen)
+        self._acknowledge_left_out_number(screen)
+        screen.save()
+        assert len(record["saved"]) == 1
+        assert not config_root.exists()
+        screen.deleteLater()
+
 
 # ---------------------------------------------------------------------------
 # Transcript screen generation controls (Task 7.2 + 7.5).
@@ -10510,6 +10626,76 @@ class TestTranscriptAutoConfirm:
         screen, _controller, _kwargs = self._screen(_attributed_document(SPEAKER_1, -0.25))
         assert "(similarity -0.25)" in screen.attribution_label.text()
         assert screen._selected_role() == SPEAKER_1
+        screen.deleteLater()
+
+    @pytest.mark.parametrize(
+        ("scores", "rows", "labels", "shown"),
+        [
+            pytest.param(
+                (0.9, 0.1, 0.1),
+                ((0, 0), (0, 0), (0, 0)),
+                (SPEAKER_1, SPEAKER_2, SPEAKER_2),
+                "0.90",
+                id="direct-match",
+            ),
+            pytest.param(
+                (0.9, 0.40, 0.1),
+                ((0, 0), (0, 0), (0, 0)),
+                (SPEAKER_1, SPEAKER_1, SPEAKER_2),
+                "0.90",
+                id="relabelled",
+            ),
+            pytest.param(
+                (0.40, 0.45, 0.40),
+                ((0, 0), (5, 5), (0, 0)),
+                (SPEAKER_2, SPEAKER_1, SPEAKER_2),
+                "0.45",
+                id="no-match",
+            ),
+        ],
+    )
+    def test_the_radio_follows_the_assembled_labels(
+        self,
+        qapp: Any,
+        scores: tuple[float, ...],
+        rows: tuple[tuple[float, float], ...],
+        labels: tuple[str, ...],
+        shown: str,
+    ) -> None:
+        """Stronger-voice plan Task 2.1 (B1-35): the radio the screen checks
+        for a document the shared assembly built. With a direct match, and
+        when the recovery mark relabelled the 0.40 line, ``speaker_1`` is
+        checked at the direct match's number; in the no-match branch the
+        recovery mark does not run and the 2-means cluster is checked at its
+        own mean."""
+        np = pytest.importorskip("numpy")
+        from scribe_desktop.speech import SpeechSegment
+        from scribe_desktop.transcription import assemble_transcript
+
+        document = assemble_transcript(
+            session_id=_NOTE_SESSION_ID,
+            model_name="mock",
+            marked_segments=[
+                (
+                    SpeechSegment(start_seconds=float(index * 10), end_seconds=index * 10 + 5.0),
+                    _note_words(text),
+                )
+                for index, (text, _speaker) in enumerate(_NOTE_TURNS[: len(scores)])
+            ],
+            embeddings=[np.asarray(row, dtype=np.float32) for row in rows],
+            similarities=list(scores),
+            saw_empty_segment=False,
+            attributing=True,
+            speaker_model_id="mock-speaker-embedder-v1",
+            np=np,
+        )
+        assert tuple(s.speaker for s in document.transcript_segments) == labels
+        screen, _controller, _kwargs = self._screen(document)
+        assert screen.role_auto_confirmed
+        assert screen._selected_role() == SPEAKER_1
+        assert screen._role_buttons[SPEAKER_1].isChecked()
+        assert not screen._role_buttons[SPEAKER_2].isChecked()
+        assert f"(similarity {shown})" in screen.attribution_label.text()
         screen.deleteLater()
 
     def test_change_reverts_to_the_manual_radios_with_the_suggestion(self, qapp: Any) -> None:

@@ -110,7 +110,12 @@ from scribe_desktop.session_store import (
     store_has_footer,
     unwrap_key_from_file,
 )
-from scribe_desktop.speaker_embedding import ATTRIBUTION_THRESHOLD, FRAME_LENGTH, SpeakerEmbedder
+from scribe_desktop.speaker_embedding import (
+    ATTRIBUTION_THRESHOLD,
+    FRAME_LENGTH,
+    RECOVERY_MARK,
+    SpeakerEmbedder,
+)
 from scribe_desktop.speech import (
     BYTES_PER_SAMPLE,
     END_THRESHOLD,
@@ -431,8 +436,11 @@ class TranscriptDocument(BaseModel):
     textless cluster has no radio and cannot be confirmed, and a document
     naming a label its segments do not carry is refused at construction, so
     the UI never sees one (the lying-field defence). ``enrolment_similarity``
-    is the RAW mean cosine of that cluster's segments against the enrolled
-    vector — finite, in [-1, 1], never a 0–1 clamp; ``speaker_model_id``
+    is the RAW mean cosine against the enrolled vector of the segments that
+    cluster held BEFORE the recovery mark ran (stronger-voice plan D4): where
+    the mark relabelled lines, the mean of the direct matches, not of every
+    line labelled the practitioner's — finite, in [-1, 1], never a 0–1
+    clamp; ``speaker_model_id``
     names the embedder that produced it. Cluster labels stay opaque (D1):
     ``enrolled_speaker`` is a pre-check for a UI selection, not a value the
     note pipeline accepts as the confirmed role.
@@ -978,6 +986,49 @@ def attribute_speakers(
         swapped = {SPEAKER_1: SPEAKER_2, SPEAKER_2: SPEAKER_1}
         labels = [swapped[label] for label in labels]
     return labels
+
+
+def recover_practitioner_labels(
+    labels: Sequence[str],
+    similarities: Sequence[float | None],
+    has_text: Sequence[bool],
+) -> list[str]:
+    """The recovery mark (stronger-voice plan D4, row B1-35; Task 0.7,
+    2026-11-21): ``labels`` are ``attribute_speakers``' labels, and the
+    returned list only ever ADDS ``speaker_1``.
+
+    It runs only when at least one segment scores at or above the pass mark
+    (``ATTRIBUTION_THRESHOLD``) and ``enrolled_cluster`` over ``labels``
+    confirms ``speaker_1``; otherwise ``labels`` come back unchanged. Then
+    every segment scoring at or above ``RECOVERY_MARK`` and under the pass
+    mark becomes ``speaker_1``. A segment without a similarity, or with a
+    directionless vector (``_cosine``'s -1), is never relabelled, and no
+    segment loses ``speaker_1``. D4's acceptance check follows:
+    ``enrolled_cluster`` over the new labels must still confirm
+    ``speaker_1``, or the change is discarded whole. A recovery-mark row
+    cannot fail it (every segment it leaves to another label scores under
+    every segment it labels ``speaker_1``), and a test pins that.
+
+    One number per segment is all it reads: no vector is kept. The caller,
+    ``assemble_transcript``, calls it only in its attribution branch (never
+    after the single-speaker shortcut) and stores today's clinician and
+    number, never ones recomputed from these labels."""
+    if not (len(labels) == len(similarities) == len(has_text)):
+        raise ValueError("one label, similarity and text flag per segment")
+    today = list(labels)
+    if not any(s is not None and s >= ATTRIBUTION_THRESHOLD for s in similarities):
+        return today
+    confirmed = enrolled_cluster(today, similarities, has_text)
+    if confirmed is None or confirmed[0] != SPEAKER_1:
+        return today
+    recovered = [
+        SPEAKER_1 if s is not None and RECOVERY_MARK <= s < ATTRIBUTION_THRESHOLD else label
+        for label, s in zip(today, similarities, strict=True)
+    ]
+    accepted = enrolled_cluster(recovered, similarities, has_text)
+    if accepted is None or accepted[0] != SPEAKER_1:
+        return today
+    return recovered
 
 
 # ---------------------------------------------------------------------------
@@ -1677,15 +1728,23 @@ def assemble_transcript(
     still yield a single ``speaker_1`` cluster; only the non-degenerate
     clustering is replaced by D13's attribution. ``created_at`` is the wall
     clock, so two documents assembled from equal inputs are equal up to it.
+
+    The recovery mark (stronger-voice plan D4, B1-35) runs in the attribution
+    branch only, after ``attribute_speakers``. The clinician and number
+    stored are ``enrolled_cluster`` over the labels BEFORE it ran, so the
+    number stays the mean of the direct matches.
     """
     has_text = [words_have_text(words) for _, words in marked_segments]
     if np is None or saw_empty_segment or len(embeddings) < 2:
         speakers = [SPEAKER_1] * len(marked_segments)
+        enrolled = enrolled_cluster(speakers, similarities, has_text) if attributing else None
     elif attributing:
-        speakers = attribute_speakers(similarities, embeddings, has_text, np)
+        today = attribute_speakers(similarities, embeddings, has_text, np)
+        enrolled = enrolled_cluster(today, similarities, has_text)
+        speakers = recover_practitioner_labels(today, similarities, has_text)
     else:
         speakers = _cluster_embeddings(list(embeddings), np)
-    enrolled = enrolled_cluster(speakers, similarities, has_text) if attributing else None
+        enrolled = None
     return TranscriptDocument(
         session_id=session_id,
         created_at=datetime.now(UTC),
@@ -2900,6 +2959,7 @@ __all__ = [
     "pack_transcription_windows",
     "preload_cuda_libraries",
     "read_transcript",
+    "recover_practitioner_labels",
     "recover_session_transcription",
     "resolve_whisper_model",
     "segment_has_text",

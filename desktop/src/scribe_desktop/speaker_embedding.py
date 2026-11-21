@@ -22,8 +22,9 @@ Two embedders behind one protocol (plan Design Decision D16):
   (``transcription._segment_embedding``) wrapped; no file, always available.
 
 ``SHIPPED_SPEAKER_EMBEDDER`` records the D-P1 choice (2026-09-15: the onnx
-embedder) and ``ATTRIBUTION_THRESHOLD`` the practitioner's cosine threshold
-(0.50); ``build_speaker_embedder`` / ``speaker_embedder_available`` key on the
+embedder), ``ATTRIBUTION_THRESHOLD`` the practitioner's cosine threshold
+(0.50) and ``RECOVERY_MARK`` the stronger-voice plan's recovery mark (0.35);
+``build_speaker_embedder`` / ``speaker_embedder_available`` key on the
 selected kind. ``MockSpeakerEmbedder`` is the deterministic test double.
 
 Front-end (plan D12, pinned at D-P1): 80-bin Kaldi fbank over 16 kHz mono
@@ -80,6 +81,15 @@ SHIPPED_SPEAKER_EMBEDDER: Final[EmbedderKind] = "onnx"
 # 0-1 clamp — plan D3). Stricter than the 0.44 midpoint by the practitioner's
 # choice (fewer false matches over recall); re-checked in Phase 6.
 ATTRIBUTION_THRESHOLD: Final = 0.50
+# Stronger-voice plan Task 0.7 (practitioner, 2026-11-21, "Confirm B1-35";
+# amends practitioner-profile plan D3 and D13, the pass mark above unchanged):
+# once a consultation has matched the profile at the pass mark and today's
+# rule confirms the practitioner, a segment scoring at or above this recovery
+# mark and under the pass mark is labelled theirs too
+# (``transcription.recover_practitioner_labels``). Row B1-35 of that plan's
+# Phase 0 measurement, selected by its fixed order; a change is a new dated
+# decision with that measurement repeated.
+RECOVERY_MARK: Final = 0.35
 
 # --- Kaldi fbank geometry at 16 kHz (WeSpeaker inference: 25 ms / 10 ms, 80 bins)
 
@@ -625,6 +635,7 @@ __all__ = [
     "MOCK_MODEL_ID",
     "ONNX_MODEL_ID",
     "PREEMPHASIS",
+    "RECOVERY_MARK",
     "SAMPLE_RATE",
     "SHIPPED_SPEAKER_EMBEDDER",
     "SPEAKER_MODEL_NAME",
