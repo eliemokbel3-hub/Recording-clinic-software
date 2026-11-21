@@ -157,6 +157,17 @@ view patterns · tokens · microcopy.
   progress (transcription, benchmark runs) or, for the voice enrolment capture, numbers
   marshalled back over a Qt signal (a level and a speech-seconds counter —
   `ui/practitioner.py`).
+- **A guided capture is one card, never a dialog or a sub-page** (stronger-voice plan
+  D3, Phase 1). The voice enrolment's six parts run inside the Practitioner tab's
+  "Record your voice" group: a heading ("Part 2 of 6: Speak quietly", "(again)" on
+  the one redo), a cue in capitals, the passage as a plain label that cannot be
+  selected, the fixed "keep reading" line and the part's own counter (its
+  denominator from the part), with a 3-second get-ready line between parts; the card
+  is hidden at rest and Stop stays live throughout. The script and every string are
+  data in `ui/models.py` (`ENROLMENT_SCRIPT` and the `ENROLMENT_*` lines); the card is
+  pinned at 150 % (`tests/test_ui_phase_s.py` `TestGuidedCardWidth`). Results read as
+  plain words with at most one number (the strength line, the weak-part and left-out
+  lines).
 
 ## Interaction posture
 - **State drives enablement.** Controls are enabled/disabled from the session state
@@ -164,7 +175,9 @@ view patterns · tokens · microcopy.
   `ui/session_screen.py`. A control that would be invalid in the current state is
   disabled, not merely error-handling a bad click.
 - **Refuse destructive actions during live work, with a reason.** Closing the window is
-  refused while recording or paused, while a voice enrolment is in flight, and while any
+  refused while recording or paused, while a voice enrolment is in flight (the
+  Practitioner tab is busy, every control but Stop disabled, from the moment its
+  enrolment lease is taken until it is released), and while any
   worker runs — transcription, note generation, prose rendering, a benchmark, a clinic key
   check, a Cliniko note check or a draft write to Cliniko, which has its own line
   ("A draft is being written to Cliniko. Wait for it to finish.") ahead of the generic

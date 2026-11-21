@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** stronger-voice (guided enrolment and matching within a consult; line splitting and several voice vectors measured for a follow-up plan)
-**Overall Progress:** `32%`
+**Overall Progress:** `45%`
 
 ## Lifecycle State
 - Active
@@ -294,9 +294,9 @@ None. The profile stays schema v1 with one vector. The transcript gains no field
 See the Planning Extraction Summary: building Lever C and several stored vectors (deferred to a follow-up plan); two-tier clinician labels (deferred); routing of uncued lines, a third voice, the frozen constants and texts, and a comparison with another scribe (excluded).
 
 ## Current State / Handoff Note
-- Last completed step: Phase 0 (2026-11-21): every Phase 0 task is done. Task 0.7's decision was "Confirm B1-35": Lever A is built with Lever B row B1-35, Lever C is not built, and the version is 0.4.2. Earlier: planning complete (Plan Mode with Fable, then `/review-plan`, 2026-11-20); codex plan peer-review rounds 1 to 5 applied (2026-11-20). Round 2 reduced the scope by two practitioner decisions: Lever C and several voice vectors are measured here and built by a follow-up plan.
-- Current in-progress step: the Phase 0 close: review, the peer pass, `/document` and the commit (the composer's).
-- Immediate next action: after the Phase 0 close, Phase 1 (Task 1.1). The earlier entry, kept for the record: the practitioner chose to build ("Start the build", 2026-11-20) after the plan review reached its cap (findings per round 25, 32, 22, 23 and 17, none critical).
+- Last completed step: Phase 1 (2026-11-21): Tasks 1.1, 1.2 and 1.4 are 🟩. The review converged at round 13 and the codex pass `stage-1.p1` at round 15. The suite passed: 11156 passed, 9 skipped. Its live smoke was HELD on the practitioner's word, not performed, and is owed before Task P.1. Before that, Phase 0 (2026-11-21): every Phase 0 task is done. Task 0.7's decision was "Confirm B1-35": Lever A is built with Lever B row B1-35, Lever C is not built, and the version is 0.4.2. Earlier: planning complete (Plan Mode with Fable, then `/review-plan`, 2026-11-20); codex plan peer-review rounds 1 to 5 applied (2026-11-20). Round 2 reduced the scope by two practitioner decisions: Lever C and several voice vectors are measured here and built by a follow-up plan.
+- Current in-progress step: the composer's Phase 1 close (history check, flush, `/document`, the local commit). The Phase 0 close is done (`8bedfc4`).
+- Immediate next action: the composer closes Phase 1 (history check, flush, `/document`, the local commit), then Phase 2, Task 2.1 (the built row B1-35). Phase 1's live smoke is HELD and OWED: it must pass before Task P.1 (see the Phase 1 close lines and Task P.1). The earlier entry, kept for the record: the practitioner chose to build ("Start the build", 2026-11-20) after the plan review reached its cap (findings per round 25, 32, 22, 23 and 17, none critical).
 - Open blockers / open questions: Tasks 4.2 and 4.3 are the practitioner's runs. Tasks 0.1, 0.2 and 0.7 (decisions) and 0.3, 0.5b and 0.6 (runs) are done.
 - Context a fresh session needs: the first Task 9.1 score of 2026-11-20 is set aside and is recorded nowhere in the repository; the ten restart after this plan's install.
 - Executor handoff (leg svx1, 2026-11-20T22:47+11:00): Task 0.4's code is written, not run (verify=composer; this leg runs no Python). Task 0.4 stays 🟨 until the long runs and the premise at 0 differences.
@@ -442,6 +442,108 @@ See the Planning Extraction Summary: building Lever C and several stored vectors
 - Executor handoff (leg svx16, 2026-11-21T19:12+11:00): the plan only; nothing was run by this leg except the history check.
   - Phase 0's close review is done. Round 10 (`/review-loop`) applied 5 LOW. Round 11 (codex `gpt-6-astra` medium, pass `stage-0.p2`, peer round 1 of 5) found nothing, so the pass converged. Round 11's block is transcribed verbatim, and its Review History line is added.
   - Next: the composer runs `/document`, commits Phase 0 locally, then Phase 1 (Task 1.1).
+- Executor handoff (leg sx1, 2026-11-21T19:34+11:00): Phase 1's Tasks 1.1, 1.2 and 1.4 are written; ruff and mypy are clean (72 files). This leg ran no pytest and no Python (verify=composer), so all three stay 🟨 until the composer's green suite. No version change. `test_shadow_exits.py` is not touched. No new `wave` or `write_wav` reference, no selectable-text flag, no clipboard or drag call, no new list or combo box. No consent text changed (C6), and no audio is written anywhere (C2). Line endings are kept: the five sources and `test_enrolment.py` are LF, and `test_ui_screens.py` is CRLF throughout, as before.
+  - `enrolment.py` (Task 1.1). `enrol` and `record_enrolment` are byte-unchanged.
+    - New `PART_CONSISTENCY_FIGURE = 0.651`, with its dated calibration line.
+    - New `PartEmbedding` (vector, speech seconds, segment vectors).
+    - New `enrol_part`: `enrol` itself, run through a wrapper embedder that keeps each segment vector it returns.
+    - New pure functions: `combine_parts` (the normalised equal-weight mean; `EnrolmentError` for none, a zero mean or a non-finite one), `part_consistency` (each part against the unit mean of the others; -1 where the others have no direction), `weakest_part` (the lowest strictly under the figure, the earlier on a tie) and `strength_share` (leave one part out, at or above `ATTRIBUTION_THRESHOLD`).
+    - The arithmetic is plain Python (`math.fsum`), not numpy. So the screen tests need neither numpy nor the offline switches, and the cosine follows `transcription._cosine`'s rule.
+  - `ui/models.py` (Tasks 1.1 and 1.4).
+    - New `EnrolmentPart` and `ENROLMENT_SCRIPT`: the six parts with Task 0.1's words. Targets 30 / 15 / 12 / 15 / 12 / 15 s; caps 90 / 45 / 45 / 45 / 45 / 45 s; parts 2 and 5 not required.
+    - New `ENROLMENT_PART_NAMES` ("quiet part", "moving-away part", …), `ENROLMENT_BEAT_SECONDS = 3.0` and the strings: the Record and Re-record labels, the fixed "keep reading" line, the preparing and listening lines, the saved line, the per-part counter (its denominator from the part), the heading, the get-ready line, the redo line, the weak-part line, the left-out line (D3's wording, with its seconds) and the strength line. All are added to `__all__`.
+    - `LEARNING_NOT_ATTRIBUTED_NOTE` now reads Task 1.4's wording.
+  - `note.py` (`spoken_by_confirmed_clinician`'s docstring) and `ui/note.py` (the module docstring's two learning paragraphs): restated in terms of the label (Task 1.4). Docstrings only; nothing executable changes on the note path (D8).
+  - `ui/practitioner.py` (Task 1.2).
+    - The seams. `CaptureFn` is now a Protocol that takes the part's two limits by keyword; `EmbedFn` returns `PartEmbedding` (default `enrol_part`); a new `beat_seconds` keyword (default 3.0) sets the beat.
+    - The card. Four plain-text labels sit inside "Record your voice" (heading, cue, passage, the fixed line). Qt's default interaction flags are kept, so the passage cannot be selected. The labels are hidden at rest.
+    - The worker. One `TaskThread` runs under one lease. The embedder is built first. Each part is one capture call, then `enrol_part`, and its PCM is deleted before the next part. A cancellable beat (`Event.wait`) comes before each later part and before the redo.
+      - An optional part short at its cap on its first attempt is left out, with the seconds from its last progress event. A required part's shortfall, an embedding failure, a device failure and a Stop each end the enrolment with nothing saved.
+      - At most one redo, of the weakest part; it replaces that part whole, and a redo short at its cap keeps the first attempt. The figures are then recomputed for the weakness line.
+      - Then the combine, the seconds sum and the share, the final stop check, and the save. The result is `GuidedEnrolmentResult`.
+    - The events: `PartStarted`, `BeatStarted` and `PartProgress`. `BeatStarted` also carries `redo`, beyond D3's two fields, so the redo line shows during the redo's beat. The slot drops progress for any part or attempt but the current one, and zeroes the meter and the counter at each part start and each beat start.
+    - The busy test. `is_busy` is now the held lease. `_release_lease` re-applies the enablement after `end_enrolment`, and the failed handoff shows its error before the release. The success handler shows the saved line, the strength line, each left-out line and the weak-part line, then hides the card.
+  - Named test changes:
+    - `test_ui_screens.py` `_FakeCapture`: takes the two limits by keyword and records `(device, target, cap)` per call. It also gains `steps` (a scripted call: progress, error, a hold before or after the tick) and `progress_callbacks` (for the late-event case). Reason: the seam's new signature, and one call per attempt.
+    - New helpers `_Step`, `_ScriptedEmbed`, `_plain_part` and `_SIX_PART_CALLS`. The helper `_practitioner_screen` defaults `embed` to a `PartEmbedding` and `beat_seconds` to 0.0. Reason: the seam's typed result; the beat is instant in tests (D3).
+    - `test_enrolment_saves_profile_under_the_lease`:
+      - the progress text at the release is the idle counter "Speech heard: 0 s of 30 s" (the card resets on every exit);
+      - the status at the release is the saved line and the strength line;
+      - `capture.calls` lists the six parts' limits;
+      - the stored embedding is compared approximately (it is now the normalised mean);
+      - the stored seconds are 6 × 31.0;
+      - the busy list adds `is_busy`, Refresh devices and Confirm consent, and the card is hidden at rest.
+    - `test_stop_after_the_capture_returned_still_saves_nothing`: its slow embed returns a `PartEmbedding`. Reason: the seam's type.
+    - `test_delete_is_key_deletion_and_resets_consent`: the Record button's text is now "Record my voice (about three minutes)". Reason: six parts, 99 s of speech, plus beats.
+    - `test_capture_start_hook_runs_before_the_capture_on_the_gui_thread`: the wrapper passes the limits on, and the expected order is the handoff then six captures, all on the one worker thread.
+    - `test_a_failing_handoff_releases_the_lease_and_starts_nothing`: gains a release hook (the error is shown before the release) and checks that Record is enabled after it.
+    - `TestMainWindow.test_close_refused_while_the_practitioner_tab_is_busy` sets `_lease` instead of `_task = _Running()`. Reason: the busy test is the lease now.
+  - New cases:
+    - in `test_ui_screens.py` `TestPractitionerScreen`, 17 items:
+      - a part start shows its card at zero and drops a late event (with the passage not selectable);
+      - Stop during a beat ends it at once;
+      - a screen lock during a beat ends it at once, through the main window's `_on_session_locked` with a stand-in `_system_events`;
+      - Stop during a re-record leaves `voice.enc` and `key.dpapi` unchanged;
+      - a weak part is redone once and replaced whole (profile, seconds, strength line, and the redo's heading and line);
+      - a redo that misses again is saved with the part named;
+      - a redo short at its cap keeps the first attempt;
+      - with two parts under the figure, only the lowest is redone;
+      - an optional part is left out at its cap;
+      - both optional parts are left out, each line with its own seconds;
+      - one parametrised failure case ×3: a required part short, an embedding with no usable speech, a device failure;
+      - the availability poll while a finished result is queued (controls disabled; Confirm consent and Delete write nothing over the new profile);
+      - the final save under the one lease;
+      - a re-record under a current consent record.
+    - In `test_enrolment.py`, 16 items: `TestEnrolPart` (2, numpy `importorskip`), `TestGuidedParts` (10) and `TestEnrolmentScript` (4, the script's data and strings, and Task 1.4's line).
+    - Stop during a part is the existing `test_stop_cancels_and_saves_nothing`.
+  - For the composer, in order (every call ends `< /dev/null`):
+    1. `cd desktop && ../.venv/Scripts/python.exe -m pytest -q tests/test_enrolment.py < /dev/null`: all pass, 0 failed (16 more items than before; the two `TestEnrolPart` cases skip only without numpy).
+    2. `cd desktop && ../.venv/Scripts/python.exe -m pytest -q tests/test_ui_screens.py < /dev/null`: all pass, 0 failed (17 more items; the Windows-only ones run on this host).
+    3. `cd desktop && ../.venv/Scripts/python.exe -m pytest -q < /dev/null`: the previous total plus 33, 0 failed, the skip count unchanged.
+    4. `git diff --stat -- desktop/tests/test_shadow_exits.py`: empty.
+  - Open points. None is a must-pause; each is for the review or the live smoke.
+    - (1) The script's words ship as approved, with the plan's quotation marks left off; part 3 is one phrase per line.
+    - (2) Part 6's cue "Do not read." sits above D3's fixed "Keep reading until the counter fills…" line, as both are written. The practitioner may want that line changed for part 6 at the smoke.
+    - (3) Strings the plan left open, written in plain English, are for the practitioner's eye at the smoke: the heading "Part N of 6: <title>" (the redo adds "(again)"), "Get ready - part N of 6 starts in 3 s.", the redo line's second sentence "Record it once more.", the weak-part line, and "Profile strength: N% of your speech matched your voice in the other parts."
+    - (4) A required part's shortfall shows `record_enrolment`'s own text, which names no part (kept so the existing pins hold); the card hides on failure.
+    - (5) Task 4.3's parity: the product's mean is plain-Python float64 and scratch's is numpy float64, so a vector comparison there needs a tolerance (labels and figures are unaffected in practice).
+    - (6) For Task 5.2's wording search, outside Task 1.4's named places: `ui/note_review.py` near :243 and `note_config.py` near :1919 ("the practitioner's OWN utterance"), and `LEARNING_ON_LINE` ("shorthand you type over your own lines").
+- Executor handoff (leg sx2, 2026-11-21T20:00+11:00): Tasks 1.1, 1.2 and 1.4 are 🟩, on the composer's evidence (38 / 522 / 11153 passed, 9 skipped; the `test_shadow_exits.py` diff empty; ruff and mypy clean). Progress is 45 % (10 of the 22 numbered tasks).
+  - Phase 1's close review, `/review-loop` round 12 (1 of 3): 0 CRIT / 0 HIGH / 0 MED / 3 LOW, all applied. Details are in the Review Findings Log.
+    - LOW-001: a Stop during the microphone handoff now stands. `ui/practitioner.py` clears the cancel event before the lease, not after the handoff.
+    - LOW-002: a new 150 % pin for the card, `test_ui_phase_s.py` `TestGuidedCardWidth`.
+    - LOW-003: the script's words are pinned whole in `test_enrolment.py`.
+  - New test items: 1 in `test_ui_screens.py` (`test_a_stop_during_the_handoff_stands`) and 1 in `test_ui_phase_s.py`. `test_enrolment.py`'s count is unchanged (one case made stricter).
+  - ruff and mypy are clean (72 files); line endings are unchanged. Not run by this leg (verify=composer).
+  - For the composer, in order (every call ends `< /dev/null`):
+    1. `cd desktop && ../.venv/Scripts/python.exe -m pytest -q tests/test_enrolment.py tests/test_ui_screens.py tests/test_ui_phase_s.py < /dev/null`: all pass, 0 failed (38 + 523 items, and `test_ui_phase_s.py`'s previous count plus 1).
+    2. `cd desktop && ../.venv/Scripts/python.exe -m pytest -q < /dev/null`: 11155 passed, 9 skipped, 0 failed.
+    3. `git diff --stat -- desktop/tests/test_shadow_exits.py`: empty.
+  - Next: resume this leg with the output for round 13. It re-reviews the whole Phase 1 diff and should converge, since round 12 found no CRIT, HIGH or MED.
+  - The wording choices for the practitioner's live smoke are listed in round 12, items (a) to (c).
+- Executor handoff (leg sx3, 2026-11-21T20:15+11:00): Phase 1's `/review-loop` has CONVERGED in two of its three rounds.
+  - Round 12: 0 CRIT / 0 HIGH / 0 MED / 3 LOW, all applied.
+  - Round 13: 0 findings. It confirmed round 12's three fixes on the composer's green suite (600 passed over the three touched files; 11155 passed, 9 skipped in the full suite; the `test_shadow_exits.py` diff empty).
+  - This leg changed no code and no test, so no suite run is owed.
+  - Next (the composer): the codex peer pass over Phase 1's diff. Then the practitioner's live smoke of the guided card on the developer build, where round 12's wording points (a) to (c) are put to the practitioner. Then `/document` and the Phase 1 commit.
+  - Reconciliation (leg sx5, 2026-11-21): the smoke was HELD on the practitioner's word, not performed, and is owed before Task P.1. `/document` and the Phase 1 commit go ahead without it.
+- Executor handoff (leg sx4, 2026-11-21T20:20+11:00): codex peer round 14 (pass `stage-1.p1`, round 1 of 5) is transcribed and verified.
+  - PR-MED-4201 holds as labelled (MED): through the microphone handoff the tab kept its idle controls, and the worker never re-reads the consent box.
+  - The fix, applied in `ui/practitioner.py`: `_update_controls()` right after the lease is taken, before the handoff. Every control the busy state governs is then disabled for the whole lease, and Stop is the escape.
+  - New case: `test_the_tab_is_busy_through_the_handoff` (`test_ui_screens.py`, Windows-only). It fails on the old code.
+  - ruff and mypy are clean (72 files); line endings are unchanged. Not run by this leg (verify=composer).
+  - For the composer, in order (every call ends `< /dev/null`):
+    1. `cd desktop && ../.venv/Scripts/python.exe -m pytest -q tests/test_ui_screens.py < /dev/null`: 524 passed, 0 failed (523 plus the new case).
+    2. `cd desktop && ../.venv/Scripts/python.exe -m pytest -q < /dev/null`: 11156 passed, 9 skipped, 0 failed.
+    3. `git diff --stat -- desktop/tests/test_shadow_exits.py`: empty.
+  - Next: peer round 15 confirms PR-MED-4201's fix.
+- Executor handoff (leg sx5, 2026-11-21T22:00+11:00): Phase 1 is DONE (Tasks 1.1, 1.2 and 1.4 🟩). This leg wrote the plan only: no code, no test, no Python.
+  - The composer's run after leg sx4: `test_ui_screens.py` all passed; the full suite 11156 passed, 9 skipped, 0 failed; the `test_shadow_exits.py` diff empty.
+  - Codex peer round 15 (pass `stage-1.p1`, round 2 of 5) is transcribed verbatim. It found 0 findings and confirmed PR-MED-4201's fix as a class, so the pass converged. Its Review History line is added, and `loop-history-check.py` reads 15 entries and 15 headings, OK.
+  - The live smoke is recorded as HELD, not performed and not a pass, with the practitioner's words verbatim, on Phase 1's heading lines. It is owed: a dated line on Task P.1 says it must pass first, with round 12's wording points (a) to (c). No task's status changed for it.
+  - Siblings reconciled: the handoff note's top lines, leg sx3's "Next" line and round 13's closing line.
+  - The progress figure stays 45 %: 10 of the 22 numbered tasks, which already counted Phase 1.
+  - Next (the composer): the Phase 1 close — history check, flush, `/document`, the local commit. Then Phase 2, Task 2.1 (the built row B1-35).
 - Last plan sync: 2026-11-21
 - Loop config: executor=claude-p model="claude-opus-5-5" effort=high profile=default; peer=codex model="gpt-6-astra" effort=medium; architect=off; cadence=every-phase; caps=review:3,peer:5; gates=executor; cap-raise=executor; high-auto=on; peer-max=12; notify=action-only; scope=all; autocommit=on; isolation=none; merge=off; perms=scoped; liveness=10; monitor-delivery=auto; verify=composer
 - Run state: `/execute-loop` run `stronger-voice-20261120-200910-dc24` (isolation none, builds on `main`), started 2026-11-20; preflight done; no away grant (no away scope available: isolation none admits no merge, and the agent never drives the desktop app, so there is no live smoke tool).
@@ -458,6 +560,10 @@ See the Planning Extraction Summary: building Lever C and several stored vectors
 - 2026-11-21 round 9: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none (codex `gpt-6-astra` medium, Task 0.6 code peer review, pass `stage-0.p1` peer round 2 of 5; confirms round 8's PR-LOW-3801 fix; the pass converged)
 - 2026-11-21 round 10: 0 CRIT / 0 HIGH / 0 MED / 5 LOW; skew=none; action=none (`/review-loop` round 1 of 3 over Phase 0's tracked diff since `42032e1`, both plans, executor leg svx15; every recorded number matched its evidence; the five are wording, all applied)
 - 2026-11-21 round 11: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none (codex gpt-6-astra medium, Phase 0 close documents peer review, pass stage-0.p2 peer round 1 of 5; the pass converged)
+- 2026-11-21 round 12: 0 CRIT / 0 HIGH / 0 MED / 3 LOW; skew=none; action=none (`/review-loop` round 1 of 3 over Phase 1's diff, executor leg sx2; the three are a Stop during the microphone handoff, a 150 % pin for the card and the script's wording pinned whole; all applied, suite owed to the composer)
+- 2026-11-21 round 13: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none (`/review-loop` round 2 of 3 over Phase 1's diff, executor leg sx3; round 12's three fixes confirmed on the composer's green suite, 11155 passed; the review converged)
+- 2026-11-21 round 14: 0 CRIT / 0 HIGH / 1 MED / 0 LOW; skew=pre-existing; action=none (codex gpt-6-astra medium, Phase 1 code peer review, pass stage-1.p1 peer round 1 of 5; PR-MED-4201, the controls enabled through the microphone handoff, verified as labelled and applied by leg sx4; suite owed to the composer, peer round 15 to confirm)
+- 2026-11-21 round 15: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none (codex gpt-6-astra medium, Phase 1 code peer review, pass stage-1.p1 peer round 2 of 5; PR-MED-4201's fix confirmed; the pass converged)
 
 Format /review will append:
 - YYYY-MM-DD round N: X CRIT / X HIGH / X MED / X LOW; skew=<class>; action=<rec>
@@ -1136,6 +1242,132 @@ Verification: 7 scoped files read; 5 jobs evidenced. Round 10’s applied wordin
 
 PEER-ROUND-11 RESULT: 0 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 0).
 
+### Round 12 — 2026-11-21
+Round status: Closed
+Source: Claude Code
+Scope: Phase 1's diff, `git diff HEAD -- desktop/ .cursor/plans/plan-stronger-voice.md` (uncommitted, on top of `8bedfc4`): `enrolment.py`, `ui/models.py`, `ui/practitioner.py`, `note.py` and `ui/note.py` (docstrings), `test_enrolment.py`, `test_ui_screens.py` and the plan. `/review-loop` round 1 of 3, executor leg sx2 (no Python run: verify=composer). The primary baseline is `8bedfc4` (the first code round of Phase 1). `ui/practitioner.py` was read whole; `main_window.py`'s close guard (:1588), lock handler (:980–989) and suspend handler (:1023), and `microphone.py`'s `stop_monitor` (:306) were read for the custody paths. Read against D3, D8, C2, C6, C7, C8 and Tasks 0.1, 1.1, 1.2 and 1.4.
+Checked and clean:
+- D3, as built:
+  - Every passage, cue and title equals Task 0.1's approved words, with the quotation marks left off (compared word for word; now pinned whole, LOW-003).
+  - Targets 30 / 15 / 12 / 15 / 12 / 15 s; caps `max(3 × target, 45)`; parts 2 and 5 not required.
+  - The fixed "keep reading" line; the beat is `cancel.wait(beat_seconds)` with no stream open, 3 s in the app and 0 in tests.
+  - Consistency is each part against the unit mean of the others, with `PART_CONSISTENCY_FIGURE = 0.651` (Task 0.5b's 0.701 less 0.05).
+  - There is exactly one redo: of the lowest part, the earlier on a tie. It replaces the part whole; a redo short at its cap keeps the first attempt; the figures are computed once more for the weakness line.
+  - An optional part is left out only on `EnrolmentTooShortError`, with the seconds from its last progress number. A required part's shortfall, an embedding with no speech, a device failure and a Stop each fail with nothing saved.
+  - The strength share is leave-one-part-out at or above `ATTRIBUTION_THRESHOLD`. It is computed in the worker and carried only in `GuidedEnrolmentResult`, never stored.
+  - The stored vector is `combine_parts` over the final attempts, and the seconds are their `fsum`. `PractitionerProfile` is unchanged (no schema change).
+- C2 and C8 (custody):
+  - One `begin_enrolment` lease covers every part, beat, embedding, the redo, the save and the result handler. It is released in both handlers' `finally`, after the re-render, and on the failed handoff after its error is shown.
+  - Each part's PCM is `del`'d in `record_part`'s `finally` before the next part. `_SegmentVectorRecorder` keeps vectors only.
+  - Stop, the screen lock and sleep (both press `on_stop`) end a part inside the capture, a beat at once, and the sequence at the check before each embedding and before the save.
+  - Nothing new logs, writes a file or touches `wave`.
+- The busy state: `is_busy` is the held lease. Every control that records, writes or deletes a profile is disabled while it is held, and every such handler returns: `on_record`, `on_confirm_consent`, `on_delete`, the phrase, rule and style handlers (:1704, :1715, :1726, :1870, :1940 after this round's fix), `on_choose_files` and `on_learn_from_notes`. `_release_lease` re-applies the enablement, so no path leaves the tab busy after the release. `_on_progress` drops every event once the lease is gone. The close guard (`main_window.py:1588`) reads `is_busy`, so a queued result still holds the close.
+- The UI:
+  - The four card labels are plain text with Qt's default interaction flags (not selectable; the part-start test pins the passage's flags).
+  - Every card label word-wraps; at the 150 % stand-in the card now has a pin (LOW-002).
+- Task 1.4: `LEARNING_NOT_ATTRIBUTED_NOTE` and the two docstrings match the code. Both learners in `ui/note_review.py` (:301 and :393) test `spoken_by_confirmed_clinician`, which compares labels only (`note.py:1688`).
+- The tests:
+  - Each named change in leg sx1's bullet has its reason.
+  - Each new case fails on the defect it names. For example, the queued-result case fails with the old thread-running test, because Confirm consent would write the cached stale vector over `voice.enc`; the late-event case fails without the drop check ("25 s of 15 s").
+  - Only the existing fakes are used (`_FakeCapture`, `FakeController`, `FakeBackend`, `_StubEmbedder`), plus two thin scripted seams, `_Step` and `_ScriptedEmbed`.
+  - `test_shadow_exits.py` is untouched.
+Finding verification: 5 candidates; 2 dropped (the stored vector moving from numpy float32 to plain-Python float64: the profile stores floats and every reader re-normalises, already open point (5) for Task 4.3; a "late" progress event cannot in practice follow the next part's start, because one worker emits in order: the drop check is D3's defence and is kept); 0 downgraded.
+Missed-issue pass: re-read `ui/practitioner.py` 1151–1446 (the record path, the worker, the slots and both handlers) and `enrolment.py`'s part functions; result: LOW-001 (the handoff's re-entrancy, by the SEC-021 precedent).
+Wording for the practitioner's live smoke, choices the plan leaves open, not findings: (a) part 6's "Do not read." cue sits above the fixed "Keep reading until the counter fills…" line, which D3 shows under every passage; (b) the self-written heading ("Part N of 6: <title>", "(again)" on the redo), the get-ready line, the redo line's "Record it once more.", the weak-part line and the strength line; (c) a required part's shortfall shows `record_enrolment`'s own text, which names no part (kept so the existing pins hold).
+
+- **[LOW]** LOW-001: `desktop/src/scribe_desktop/ui/practitioner.py:1174-1187` — `on_record` made the tab busy (`self._lease = lease`) before the microphone handoff, but cleared the cancel event only AFTER it. A Stop arriving during `stop_monitor` (a screen lock or sleep, delivered while the stream's stop pumps messages: the re-entrancy round 57 SEC-021 found for a device open) would be acted on, then wiped, and the enrolment would run despite the lock. 🆕 Pre-existing in shape: before Task 1.2 `on_stop` did nothing then, which ended the same way. Triage: Fix-now; Fix route: fix-on-fast; Desired: the event cleared before the lease, and the preparing line not written over "Stopping..."; /fix decision: Applied; /fix notes: `self._cancel_requested.clear()` moved to just before `self._lease = lease`, with a comment naming the re-entrancy; the preparing line is written only while the event is clear. New case `test_a_stop_during_the_handoff_stands` (`test_ui_screens.py`): a handoff that presses Stop leaves "Stopping...", then "Enrolment stopped - nothing was saved.", one capture call and no file. It fails with the old order (the six parts run and save). Siblings: no other path clears the event (searched `_cancel_requested.clear`, `cancel.clear`); not run (verify=composer); /fix date: 2026-11-21; /fix applied by: Claude Code
+- **[LOW]** LOW-002: `desktop/tests/` — nothing pinned that the guided card fits the Practitioner tab at the narrowest width the existing pins use (the 150 % stand-in, `test_ui_phase_s.py` `_at_150`). The tab's scroll area has no sideways bar, so content wider than the viewport would be cut off. Triage: Fix-now; Fix route: fix-on-fast; Desired: a laid-out pin over every part and the redo's heading; /fix decision: Applied; /fix notes: `TestGuidedCardWidth.test_every_part_fits_across_at_150_percent` in `test_ui_phase_s.py` (beside the 150 % pins, which hold `_at_150` and `_laid_out`). The main window is shown on the Practitioner tab at `_at_150`, and each part is shown through `_show_part`, with `redo` False and True. For each it asserts that the content is no wider than the viewport, and that each card label is visible, no wider than the viewport and no shorter than its `heightForWidth`. A passage that stopped word-wrapping fails it. Siblings: none (no other new widget); not run (verify=composer); /fix date: 2026-11-21; /fix applied by: Claude Code
+- **[LOW]** LOW-003: `desktop/tests/test_enrolment.py` `TestEnrolmentScript.test_the_approved_wording_ships_verbatim` — the test is named for verbatim wording, but pinned the normal, numbers and away passages by their first or last words only, and the quiet passage not at all, so a changed word in the middle would pass. Triage: Fix-now; Fix route: fix-on-fast; Desired: every passage, cue and title pinned whole; /fix decision: Applied; /fix notes: the four passages are pinned whole as Task 0.1 approved them, with the six titles and the short and numbers cues; the short and own parts were already whole; siblings: the card-string test pins each line whole already; /fix date: 2026-11-21; /fix applied by: Claude Code
+Fix-delta self-check: PASS — I re-read the 3 applied hunks in `ui/practitioner.py` (the clear before the lease, the old clear removed, the guarded preparing line), the new case in `test_ui_screens.py`, the new class in `test_ui_phase_s.py` and the two `test_enrolment.py` hunks. The failed-handoff path still releases the lease after its error. `ruff check .` passed and `mypy` found no issues (72 files). `git ls-files --eol` is unchanged for all four files (`practitioner.py`, `test_ui_screens.py` and `test_ui_phase_s.py` w/crlf; `test_enrolment.py` w/lf).
+
+### Round 13 — 2026-11-21
+Round status: Closed
+Source: Claude Code
+Scope: the same diff as round 12 (`git diff HEAD -- desktop/ .cursor/plans/plan-stronger-voice.md`, on top of `8bedfc4`), with round 12's fixes in. `/review-loop` round 2 of 3, executor leg sx3 (no Python run: verify=composer). The composer's run after round 12: the three touched test files 600 passed; the full suite 11155 passed, 9 skipped, 0 failed; the `test_shadow_exits.py` diff empty.
+Round 12's fixes, confirmed:
+- LOW-001: `ui/practitioner.py:1177` clears the cancel event before `self._lease = lease` (:1178), and no later clear remains. The preparing line is written only while the event is clear (:1331). The failed-handoff branch still shows its error and then releases the lease (:1188–1190). `test_a_stop_during_the_handoff_stands` passed in the composer's run.
+- LOW-002: `test_ui_phase_s.py` `TestGuidedCardWidth` passed at the 150 % stand-in for all six parts, each with and without the redo heading.
+- LOW-003: `test_enrolment.py` pins all six passages, cues and titles whole. I re-compared each pinned string against Task 0.1's text and against `ENROLMENT_SCRIPT`.
+Re-reviewed whole, with the same focus as round 12:
+- D3: the script, targets, caps, beat, figure, the one redo, the left-out rule, the in-memory strength share, one stored vector and no schema change.
+- C2 and C8: the single lease, each part's PCM dropped before the next, and Stop, lock and sleep.
+- The busy state: every handler that writes or deletes still checks `is_busy` (:1110, :1152, :1454, :1492, :1515, :1529, :1704, :1715, :1726, :1870, :1940).
+- The UI and the Task 1.4 wording.
+- The tests.
+- A search for stale strings: "about a minute" and "attributed to you" no longer appear in the package or the tests (only `ml_warmup.py` keeps an unrelated "about a minute"), and no caller of the removed `_progress_text` remains.
+Finding verification: 0 candidates; 0 dropped; 0 downgraded.
+Round classification: 0 🆕 / 0 ⚡ / 0 🔁.
+Missed-issue pass: re-read `ui/practitioner.py` 1151–1450 (the record path after the fix, the worker, the slots and both handlers), `test_ui_screens.py`'s new handoff case and `test_ui_phase_s.py`'s new class; result: none.
+Findings: none. The review has converged (no CRIT, HIGH or MED, and nothing left to apply). Round 12's three wording points, (a) to (c), are still for the practitioner's live smoke. (Leg sx5, 2026-11-21: that smoke was held at the Phase 1 close and is owed before Task P.1.)
+
+### Round 14 — 2026-11-21
+(Transcribed verbatim by executor leg sx4 from `.cursor/loops/stage-1-peer-r14.log`, the last `### Round 14` header; codex rc=0, escape-check post clean, refs unchanged.)
+Source: Codex — codex gpt-6-astra medium — Phase 1 code peer review (stage-1.p1, peer round 1)
+Status: Closed (leg sx4: 1 applied)
+
+Scope:
+
+- job 1: checked custody against C2 and threat-model surfaces 1–10: one lease covers the parts, beats, redo, embedding, save and result handlers; handlers release it in `finally`. Each successful capture’s PCM is dropped before the next part. No added audio persistence or logging; only the combined profile vector is saved. Failure, Stop, lock and close paths were assessed through the permitted code and scoped tests; no additional custody defect established.
+- job 2: checked lease-based busy guards, cancellation ordering, queued progress and result handling. Confirm consent, Delete and repeated Record handlers refuse while busy; result handling retains the lease after the worker finishes. Round 12’s cancellation fix stands. Found one remaining handoff interval where controls remain enabled, detailed below.
+- job 3: checked all six passages against Task 0.1, targets/caps, three-second beat, calibration 0.651, optional shortfalls and single weakest-part redo. Equal-weight normalisation, final-attempt seconds and leave-one-part-out strength arithmetic match D3, including absent parts, a lone part and directionless references. Profile schema remains unchanged.
+- job 4: checked `LEARNING_NOT_ATTRIBUTED_NOTE` and both files’ changed docstrings against `spoken_by_confirmed_clinician`; wording correctly describes the speaker-label test. Executable note behaviour is unchanged.
+- job 5: checked changed tests’ assertions, fake capture/embed seams, layout pin and forbidden additions against `test_shadow_exits.py`. The tests distinguish the intended outcomes; no prohibited package addition found. Busy-control assertions run after `on_record` returns and therefore miss the handoff interval below.
+
+Findings:
+
+- **PR-MED-4201** (MED, consent/concurrency, `desktop/src/scribe_desktop/ui/practitioner.py:1178`): Controls remain enabled during the re-entrant microphone handoff despite the held lease. On first enrolment or stale consent, a consent-checkbox click processed during that handoff can untick consent; its toggle handler updates enablement but does not cancel enrolment. The worker then proceeds and can save a current consent record without rechecking the box. This also violates Task 1.2’s requirement to disable controls throughout the lease. Evidence: `:1178` sets `"self._lease = lease"`; `:1186` calls `"self._on_capture_start()"`; the consent check occurs earlier at `:1158`, while the normal busy-control update occurs only at `:1343`, `"self._update_controls()"`. The checkbox’s toggle connection at `:522` only invokes `"_update_controls()"`. Recommendation: Fix-now - Apply busy enablement immediately after assigning the lease, before the handoff; add a handoff-hook test asserting controls are already disabled and a checkbox click cannot change consent.
+
+Verification:
+
+- 15 scoped files read, wholly or in relevant sections; 5 jobs evidenced.
+- Round 12’s three fixes rechecked; round 13’s conclusions independently assessed.
+- Static review only; no files written, tests executed or network accessed. The reported 11155 passed / 9 skipped remains executor evidence.
+
+PEER-ROUND-14 RESULT: 1 findings (CRIT 0 / HIGH 0 / MED 1 / LOW 0).
+
+#### LEG sx4 verified tuples
+(Executor leg sx4, 2026-11-21, Claude Code; verify-then-fix. The finding was re-read against the code before any edit. No Python was run: verify=composer.)
+- PR-MED-4201 — verified severity: MED; class: real, 🆕 pre-existing. Before Task 1.2 the same interval was open under the thread-running busy test. Round 12 LOW-001 closed it for Stop only.
+  - Recommendation: Fix-now.
+  - Why it holds:
+    - `on_record` checks the consent box at :1158. It then takes the lease (:1178) and calls `_on_capture_start` (:1186).
+    - `_update_controls` ran only at the method's end (:1343). Through the handoff, every control kept its idle enablement: Record, the consent and learning boxes, the microphone, Refresh devices, Confirm consent, Delete, the learn controls and the style radios.
+    - The consent box's toggle (:522) only re-renders enablement. The worker builds its consent record with no re-check, as a current one (:1315–1319).
+    - So a click delivered while the handoff pumps messages could untick consent and still end in a saved current record. The handoff can pump messages: round 57 SEC-021's re-entrancy precedent, and round 12 LOW-001.
+    - The learning box is read at :1192, after the handoff, so a click there would be honoured silently.
+  - Handlers that act are already refused: each checks `is_busy`, which is the lease. So the gap is the widgets' own state, not a handler that writes.
+  - Start on the Record page is refused by the controller's activity from `begin_enrolment` (:1164) onward.
+  - The redo has no handoff: `_on_capture_start` runs once, in `on_record`, and the microphone screen's poll guard keeps the monitor closed while `controller.enrolling`.
+  - Decision: Applied.
+  - Fix: `self._update_controls()` right after `self._lease = lease` and before the handoff, with a comment naming the finding. That one call closes the interval for every control `_update_controls` governs, as a class: each is disabled, and Stop is shown and enabled as the escape. Every exit's `_release_lease` re-enables them. The call at the method's end stays; it is harmless and keeps Stop's state after the worker starts.
+  - New case `test_the_tab_is_busy_through_the_handoff` (`test_ui_screens.py`, `@windows_only`, a first enrolment so the consent box is editable when idle). From inside the handoff hook it records every control's enablement: Record, consent, learning, microphone, Refresh devices, Confirm consent, Delete, Choose notes, Learn and each style radio. It records Stop's state, then clicks the consent and learning boxes. It asserts that all of them were disabled, that Stop was shown and enabled, and that neither box changed. The saved profile carries the current consent version and the learning choice as it stood at Record. On today's code it fails: Record and both boxes are enabled during the hook, and the click unticks consent.
+  - Siblings: no other point in `on_record` runs foreign code between the lease and the first `_update_controls` (searched for calls between :1178 and the old :1343). `on_style_selected` writes only the practitioner settings, and its radios are now disabled from the lease.
+Verified summary: 1 finding, 1 verified as labelled (MED, Fix-now), 0 dropped, 0 downgraded, 0 upgraded; 1 applied.
+Fix-delta self-check: PASS — I re-read the applied hunk in `ui/practitioner.py` and the new case. The failed-handoff branch still releases the lease through `_release_lease`, which re-enables the controls (round 12's `test_a_failing_handoff_releases_the_lease_and_starts_nothing` still asserts Record is enabled after it). `ruff check .` passed and `mypy` found no issues (72 files). Both files' `git ls-files --eol` is unchanged (w/crlf).
+
+### Round 15 — 2026-11-21
+(Transcribed verbatim by executor leg sx5 from `.cursor/loops/stage-1-peer-r15.log`, the last `### Round 15` header; codex rc=0, escape-check clean, refs unchanged.)
+Source: Codex — codex gpt-6-astra medium — Phase 1 code peer review (stage-1.p1, peer round 2)
+Status: Closed (0 pending)
+
+Scope:
+
+- job 1: checked custody against C2 and threat-model surfaces 1–10. One lease covers capture, beats, embedding, redo, save and result handling; both result handlers release in `finally`. Each captured part’s PCM is dropped before the next part. No added audio persistence, logging or stored strength/consistency figures. Stop, lock, sleep and close were assessed through the permitted code, contract and scoped tests; no additional custody defect established.
+- job 2: checked every busy-governed control and lease entry/exit path. `ui/practitioner.py:1184` now refreshes the complete control set before the handoff; handlers refuse concurrent profile actions, and queued results retain the busy state. Failed handoff and result-handler exits restore enablement. Cancellation clears before the handoff and cannot overwrite a subsequent Stop; worker events cross through Qt signals. PR-MED-4201 is closed as a class.
+- job 3: checked the six passages verbatim against Task 0.1, targets/caps, three-second beat, 0.651 calibration, optional-part shortfalls and single weakest-part redo. Equal-weight normalisation, final-attempt seconds and leave-one-part-out strength arithmetic match D3, including omitted/redone parts, a lone part and degenerate references. One vector is stored under the unchanged profile schema.
+- job 4: checked `LEARNING_NOT_ATTRIBUTED_NOTE` and the changed `note.py` / `ui/note.py` docstrings against `spoken_by_confirmed_clinician`. They correctly describe the speaker-label predicate; executable note behaviour is unchanged.
+- job 5: checked new and changed tests against their guarded defects. The handoff regression test would fail before the fix: its hook observes enabled controls, checkbox clicks change consent/learning state, and subsequent assertions detect those changes. Other cases distinguish cancellation, queued-result protection, redo replacement, shortfall handling and layout outcomes. Existing fake capture/backend/embed seams are used. No forbidden package additions found; `test_shadow_exits.py` has an empty diff.
+
+Findings: none.
+
+Verification:
+
+- 15 scoped files read, wholly or in relevant sections; 5 jobs evidenced.
+- Rounds 12–14 and sx1–sx4 handoffs assessed against the current diff.
+- Static review only: no writes, test execution or network access. The reported 11156 passed / 9 skipped remains executor evidence.
+
+PEER-ROUND-15 RESULT: 0 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 0).
+
 ## Tasks
 
 ### Phase 0 — Measure (scratch only) — done 2026-11-21 (Tasks 0.1 to 0.7)
@@ -1259,19 +1491,29 @@ PEER-ROUND-11 RESULT: 0 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 0).
     - The version is 0.4.2 (Task 5.1).
   - Recorded on `plan-practitioner-profile.md`: a dated decision line at D3, D8 and D13, and a note at D-P1 that it is unchanged (B1-35 is a recovery mark; the pass mark 0.50 does not move).
 
-### Phase 1 — Guided enrolment (Lever A)
-- [ ] 🟥 Task 1.1: The script, strings and part logic (Qt-free)
+### Phase 1 — Guided enrolment (Lever A) — done 2026-11-21 (Tasks 1.1, 1.2, 1.4); its live smoke HELD and owed
+- Phase 1 close (2026-11-21):
+  - The code, review and peer work is done. `/review-loop` rounds 12–13 converged (3 LOW applied). Codex pass `stage-1.p1`, rounds 14–15, converged (PR-MED-4201 applied).
+  - The composer's last suite run: 11156 passed, 9 skipped, 0 failed; the `test_shadow_exits.py` diff empty.
+- The live smoke of the guided card on the developer build was NOT performed. The practitioner's words, 2026-11-21, verbatim: "can't smoke now, put it on hold and assume it's passed for now and let's move on".
+  - The composer recorded the gate's disposition as `held-assumed-pass`. The smoke-pass record is marked HELD, not performed.
+  - This is NOT a pass of the card. The smoke stays OWED and blocks the build of record (Task P.1, the run's Phase 6 stage).
+  - Round 12's wording points (a) to (c) are put to the practitioner at that smoke.
+- [x] 🟩 Task 1.1: The script, strings and part logic (Qt-free)
+  - Done 2026-11-21 (leg sx1; run by the composer, verify=composer): `tests/test_enrolment.py` 38 passed; full suite 11153 passed, 9 skipped (0 failed, skip count unchanged); ruff and mypy clean (72 files).
   - Files: `desktop/src/scribe_desktop/ui/models.py` (`ENROLMENT_SCRIPT`, the per-part progress text with its denominator from the part, the fixed "keep reading" line, the "get ready" line, the weak-part line, the left-out line with its seconds, the strength line); `desktop/src/scribe_desktop/enrolment.py` (a part's typed result, the equal-weight combination, the part-consistency figures and the choice of the part to redo, the strength share; `enrol` and `record_enrolment` unchanged).
   - Expected: pure functions tested as a class: a zero or non-finite mean refused; a left-out part leaves the others' weights equal; the lowest part chosen for the redo, and again for the weakness line after it, the earlier on a tie; a replaced part's old seconds and segments gone from the sum and the strength share; the strength share is leave-one-part-out. D3.
   - Verification: new cases in `test_enrolment.py`; `ruff`, `mypy`.
-- [ ] 🟥 Task 1.2: The guided card and its worker
+- [x] 🟩 Task 1.2: The guided card and its worker
+  - Done 2026-11-21 (leg sx1; run by the composer): `tests/test_ui_screens.py` 522 passed; full suite 11153 passed, 9 skipped; `git diff --stat -- desktop/tests/test_shadow_exits.py` empty; ruff and mypy clean.
   - Files: `desktop/src/scribe_desktop/ui/practitioner.py` (the card inside the existing "Record your voice" group, the per-part loop under one lease, the injected wait, D3's events and their slot, the one redo, the left-out rule, the save, the success result and its strength line); the `CaptureFn` seam gains the part's two limits by keyword, and the embed seam returns the typed per-part result. The seconds a left-out part reached are taken from the worker's last progress number for that part, never parsed from an exception's text.
   - Busy state. The held enrolment lease is the one busy test. From the press of Record until the lease is released, the tab's controls (Record, the consent box, the learning box, Confirm consent, Delete) are disabled and every handler that writes or deletes a profile returns without acting; none of this reads the worker thread's running state: today a finished worker whose result is still queued looks idle to the availability poll, and Delete could then remove a profile the handler is about to report as saved, and Confirm consent could write the cached old vector over the new one. A failed microphone handoff shows its error before the lease is released, like every other exit.
   - Expected: Flow 2 as written; every exit releases the lease after the tab re-renders; a part's audio is dropped before the next part (D3, C2, C8).
   - Named test changes in `test_ui_screens.py` `TestPractitionerScreen`: the progress text, the Record button's text, `capture.calls` (one call per attempt), the stored speech seconds, the busy-state list. New cases: Stop during a part and during a beat, lock during a beat; Stop during a re-record leaves the stored profile's encrypted bytes unchanged; at a part start and at a beat start the meter and counter read zero before any audio block arrives, and a late progress event from the previous part is dropped; a weak part redone with deterministic inputs, asserting the final profile, the stored seconds and the strength line; a redo that misses again (saved, the lowest remaining part named); a redo short at its cap (the first attempt kept); two parts under the figure (only the lowest redone); an optional part left out at its cap; both optional parts left out, each line showing its own seconds; a required part short at its cap; an embedding with no usable speech; a device failure; a failed microphone handoff (the error shown, then the lease released); the availability poll firing while a finished worker's result is still queued (the controls stay disabled, and Confirm consent with an out-of-date consent and a cached old profile writes nothing); the final save under the one lease; a re-record under a current consent record (the box already ticked).
   - Verification: the suite; `git diff` of `test_shadow_exits.py` empty.
 - Task 1.3 (several vectors) is not part of this plan since review round 2: see Deferred.
-- [ ] 🟥 Task 1.4: The learning line says what the code tests
+- [x] 🟩 Task 1.4: The learning line says what the code tests
+  - Done 2026-11-21 (leg sx1; run by the composer): `tests/test_enrolment.py` 38 passed (the line's pin in `TestEnrolmentScript`); full suite 11153 passed, 9 skipped.
   - Files: `desktop/src/scribe_desktop/ui/models.py` (`LEARNING_NOT_ATTRIBUTED_NOTE`: "Not learned: this line is not labelled as yours - only lines labelled as yours are learned."); the docstrings and comments in `note.py` (near :1688) and `ui/note.py` (near :89 and :111) that say a learner reads the practitioner's own lines, or that another speaker's line teaches nothing, restated in terms of the label. The consent text is not touched (C6).
   - Expected: no behaviour change. Any test that pins the old string moves with it, as a named change. Built on every exit: the label test applies with today's rule and a guided profile too.
   - Verification: the suite.
@@ -1329,6 +1571,10 @@ PEER-ROUND-11 RESULT: 0 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 0).
 
 ### Phase P — Release and restart (practitioner-run; runs on every exit, Lever A alone included)
 - [ ] 🟥 Task P.1: Build of record   [operator]
+  - OWED before this task (2026-11-21, leg sx5): Phase 1's live smoke of the guided card on the developer build must PASS before the build of record.
+    - It was held at the Phase 1 close on the practitioner's word: "can't smoke now, put it on hold and assume it's passed for now and let's move on". It was not performed, and is not a pass.
+    - At that smoke the practitioner also decides review round 12's wording points: (a) part 6's "Do not read." cue above the fixed "keep reading" line; (b) the self-written heading, get-ready, redo, weak-part and strength lines; (c) a required part's shortfall not naming the part.
+    - A failure or a wording change goes back through the review and the suite before this task.
   - First, the release tree is the verified tree. The whole of `git diff <verified commit> <release commit>` is read, not two folders of it. Documents, tests and the version-only hunks of Task 5.1's places need no repeat. Any other difference (source, a dependency or packaging line, the extension's lockfile beyond its version lines, the model manifest, a hardening fix, a fall-back revert) means the measurements it can affect are repeated at the release commit before anything is pushed: Tasks 2.2 and 4.1 for a change to transcription, matching or the note path, Task 4.3 by the practitioner, the suite always. Documents and tests alone need no repeat.
   - Then, on the practitioner's word: push, the `Release` workflow, the attestation check, the row in `docs/release/pilot-builds.md`.
 - [ ] 🟥 Task P.2: Install   [operator]

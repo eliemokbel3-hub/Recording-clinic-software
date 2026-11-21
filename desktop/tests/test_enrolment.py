@@ -10,6 +10,11 @@ under it is nothing at all. The controller's ``begin_enrolment`` /
 ``end_enrolment`` are tested in BOTH start orders and against every refusal
 D15 names; the microphone screen's poll tick during enrolment is in
 ``test_ui_screens.py``.
+
+Stronger-voice plan Task 1.1: the guided enrolment's part logic (``enrol_part``
+and the pure functions over the parts) and the reading script's data and
+strings in ``ui/models.py``; the guided card itself is in
+``test_ui_screens.py`` ``TestPractitionerScreen``.
 """
 
 from __future__ import annotations
@@ -31,13 +36,20 @@ from scribe_desktop.audio_capture import (
 )
 from scribe_desktop.benchmark import apply_offline_env
 from scribe_desktop.enrolment import (
+    PART_CONSISTENCY_FIGURE,
     EnrolmentCancelledError,
     EnrolmentCaptureError,
     EnrolmentError,
     EnrolmentProgress,
     EnrolmentTooShortError,
+    PartEmbedding,
+    combine_parts,
     enrol,
+    enrol_part,
+    part_consistency,
     record_enrolment,
+    strength_share,
+    weakest_part,
 )
 from scribe_desktop.session import (
     EnrolmentLease,
@@ -441,6 +453,248 @@ class TestEnrol:
         with pytest.raises(EnrolmentError, match="cancel"):
             enrol(pcm, embedder, frame_probability=vad.frame_probability)
         assert len(embedder.embedded_lengths) == 2
+
+
+# --- the guided enrolment's parts (stronger-voice plan D3, Task 1.1) ----------------
+
+E1 = (1.0, 0.0, 0.0, 0.0)
+E2 = (0.0, 1.0, 0.0, 0.0)
+E3 = (0.0, 0.0, 1.0, 0.0)
+
+
+def _part(vector: tuple[float, ...], seconds: float = 10.0, segments: Any = None) -> PartEmbedding:
+    return PartEmbedding(
+        vector=vector,
+        speech_seconds=seconds,
+        segment_vectors=tuple(segments) if segments is not None else (vector,),
+    )
+
+
+class TestEnrolPart:
+    def test_is_enrol_with_its_segment_vectors_kept(self) -> None:
+        np = pytest.importorskip("numpy")
+        vad = _LevelVad()
+        pcm = _silent(0.6) + _loud(1.0) + _silent(0.8) + _loud(1.0) + _silent(0.6)
+        segments = segment_pcm([pcm], vad.frame_probability)
+        pieces = [
+            pcm[int(s.start_seconds * 16_000) * 2 : int(s.end_seconds * 16_000) * 2]
+            for s in segments
+        ]
+        table = {pieces[0]: (1.0, 0.0, 0.0, 0.0), pieces[1]: (0.0, 1.0, 0.0, 0.0)}
+        expected_vector, expected_seconds = enrol(
+            pcm, MockSpeakerEmbedder(table), frame_probability=vad.frame_probability
+        )
+        embedder = MockSpeakerEmbedder(table)
+        part = enrol_part(pcm, embedder, frame_probability=vad.frame_probability)
+        assert np.array_equal(part.vector, expected_vector)  # enrol's own mean, unchanged
+        assert part.speech_seconds == expected_seconds
+        assert len(part.segment_vectors) == 2
+        assert np.allclose(part.segment_vectors[0], [1.0, 0.0, 0.0, 0.0])
+        assert np.allclose(part.segment_vectors[1], [0.0, 1.0, 0.0, 0.0])
+        assert embedder.embedded_lengths == [len(pieces[0]), len(pieces[1])]
+
+    def test_refuses_as_enrol_does(self) -> None:
+        pytest.importorskip("numpy")
+        vad = _LevelVad()
+        with pytest.raises(EnrolmentTooShortError, match="no speech"):
+            enrol_part(_silent(2.0), MockSpeakerEmbedder(), frame_probability=vad.frame_probability)
+
+
+class TestGuidedParts:
+    """The pure part logic as a class (D3): plain arithmetic, no numpy."""
+
+    def test_the_calibrated_consistency_figure(self) -> None:
+        # Task 0.5b (2026-11-21): the lowest part figure 0.701 less 0.05.
+        assert PART_CONSISTENCY_FIGURE == 0.651
+
+    def test_combine_is_the_normalised_equal_weight_mean(self) -> None:
+        assert combine_parts([E1, E2]) == pytest.approx((2**-0.5, 2**-0.5, 0.0, 0.0))
+        # Each part counts once (speech seconds never weight it).
+        assert combine_parts([E1, E1, E2]) == pytest.approx(
+            (2 / 5**0.5, 1 / 5**0.5, 0.0, 0.0)
+        )
+        vector = combine_parts([(0.6, 0.8, 0.0, 0.0)] * 6)
+        assert vector == pytest.approx((0.6, 0.8, 0.0, 0.0))
+        assert sum(value * value for value in vector) == pytest.approx(1.0)
+
+    def test_a_left_out_part_leaves_the_others_weights_equal(self) -> None:
+        captured = [E1, E2, E3, E1]
+        with_all = combine_parts(captured)
+        without_third = combine_parts([E1, E2, E1])  # the third part left out
+        assert with_all == pytest.approx((2 / 6**0.5, 1 / 6**0.5, 1 / 6**0.5, 0.0))
+        assert without_third == pytest.approx((2 / 5**0.5, 1 / 5**0.5, 0.0, 0.0))
+
+    def test_a_zero_or_non_finite_mean_is_refused(self) -> None:
+        with pytest.raises(EnrolmentError):
+            combine_parts([E1, (-1.0, 0.0, 0.0, 0.0)])  # cancels to zero
+        with pytest.raises(EnrolmentError):
+            combine_parts([E1, (float("nan"), 0.0, 0.0, 0.0)])
+        with pytest.raises(EnrolmentError):
+            combine_parts([E1, (float("inf"), 0.0, 0.0, 0.0)])
+        with pytest.raises(EnrolmentError):
+            combine_parts([])
+        with pytest.raises(ValueError, match="differ in length"):
+            combine_parts([E1, (1.0, 0.0)])
+
+    def test_each_part_is_scored_against_the_others(self) -> None:
+        figures = part_consistency([E1, E1, E2])
+        assert figures == pytest.approx((2**-0.5, 2**-0.5, 0.0))
+        assert part_consistency([E1]) == (-1.0,)  # a lone part has no others
+        # The others cancel to no direction: -1, the pipeline's rule.
+        assert part_consistency([E2, E1, (-1.0, 0.0, 0.0, 0.0)])[0] == -1.0
+
+    def test_the_weakest_part_is_the_lowest_under_the_figure(self) -> None:
+        assert weakest_part((0.9, 0.2, 0.5)) == 1
+        assert weakest_part((0.3, 0.9, 0.3)) == 0  # the earlier on a tie
+        assert weakest_part((0.9, PART_CONSISTENCY_FIGURE)) is None  # equal is not under
+        assert weakest_part((0.9, 0.8)) is None
+        assert weakest_part(()) is None
+        assert weakest_part((0.6, 0.7), figure=0.65) == 0
+
+    def test_the_redo_then_the_weakness_line_after_it(self) -> None:
+        """Two parts under the figure: the lowest is redone; after the redo the
+        lowest of what is still under is the one the weakness line names."""
+        away = (0.3, 0.0, (1 - 0.09) ** 0.5, 0.0)
+        vectors = [E1, E2, E1, E1, away, E1]
+        figures = part_consistency(vectors)
+        assert figures[1] < figures[4] < PART_CONSISTENCY_FIGURE
+        assert weakest_part(figures) == 1
+        vectors[1] = E1  # the redo replaces the quiet part whole
+        assert weakest_part(part_consistency(vectors)) == 4
+        vectors[4] = E1
+        assert weakest_part(part_consistency(vectors)) is None
+
+    def test_the_strength_share_is_leave_one_part_out(self) -> None:
+        # Against a profile that kept each segment's own part, both segments
+        # would match (cosine 0.71); left out, neither does.
+        assert strength_share([_part(E1), _part(E2)]) == 0.0
+        assert strength_share([_part(E1), _part(E1), _part(E1)]) == 1.0
+        mixed = [_part(E1, segments=(E1, E2)) for _ in range(3)]
+        assert strength_share(mixed) == 0.5
+        assert strength_share([]) == 0.0
+
+    def test_the_strength_share_counts_the_pass_mark_itself(self) -> None:
+        at_the_mark = (1.0, 1.0, 1.0, 1.0)  # cosine exactly 0.5 against E1
+        under = (1.0, 1.0, 1.0, 1.0000001)
+        parts = [_part(E1, segments=(at_the_mark, under)), _part(E1), _part(E1)]
+        assert strength_share(parts) == 3 / 4
+
+    def test_a_replaced_part_leaves_neither_seconds_nor_segments_behind(self) -> None:
+        first = _part(E2, seconds=4.0, segments=(E2, E2, E2))
+        redone = _part(E1, seconds=9.0, segments=(E1,))
+        others = [_part(E1, seconds=10.0) for _ in range(3)]
+        before = [*others, first]
+        after = [*others, redone]
+        assert strength_share(before) == 3 / 6
+        assert strength_share(after) == 1.0
+        assert sum(part.speech_seconds for part in after) == 39.0
+        assert combine_parts([part.vector for part in after]) == pytest.approx(E1)
+
+
+class TestEnrolmentScript:
+    """The reading script's data and the card's strings (``ui/models.py``)."""
+
+    def test_six_parts_with_their_targets_caps_and_requirement(self) -> None:
+        from scribe_desktop.ui import models
+
+        script = models.ENROLMENT_SCRIPT
+        assert [part.key for part in script] == [
+            "normal", "quiet", "short", "numbers", "away", "own"
+        ]
+        assert [part.target_speech_seconds for part in script] == [30, 15, 12, 15, 12, 15]
+        assert sum(part.target_speech_seconds for part in script) == 99
+        for part in script:
+            assert part.max_seconds == max(3 * part.target_speech_seconds, 45.0)
+        assert [part.required for part in script] == [True, False, True, True, False, True]
+        assert set(models.ENROLMENT_PART_NAMES) == {part.key for part in script}
+        assert models.ENROLMENT_BEAT_SECONDS == 3.0
+
+    def test_the_approved_wording_ships_verbatim(self) -> None:
+        from scribe_desktop.ui import models
+
+        # Review round 12 LOW-003: every passage whole, as Task 0.1 approved it
+        # (the plan's quotation marks left off), so a changed word fails.
+        by_key = {part.key: part for part in models.ENROLMENT_SCRIPT}
+        assert [part.title for part in models.ENROLMENT_SCRIPT] == [
+            "Normal voice", "Speak quietly", "Short phrases", "Numbers and sides",
+            "Move away", "Your own words",
+        ]
+        assert by_key["normal"].cue == "Sit where you consult."
+        assert by_key["normal"].text == (
+            "Thanks for coming in today. Before we start, tell me what has been going on and "
+            "when it began. I would like to look at how you are moving, then check your "
+            "strength and your range. After that I will explain what I think is happening, and "
+            "we will agree on a plan together. Most people notice a change within the first "
+            "two or three visits. If anything I do is uncomfortable, tell me straight away and "
+            "we will ease off."
+        )
+        assert by_key["quiet"].cue == "As you would beside the treatment table."
+        assert by_key["quiet"].text == (
+            "Just relax your shoulders for me. Breathe in slowly, and let it go. Good. I am "
+            "going to press gently here, and you tell me if it is tender. Stay nice and loose. "
+            "That is it, well done. One more time, slow and easy."
+        )
+        assert by_key["short"].cue == "Normal voice, pause after each line."
+        assert by_key["short"].text.splitlines() == [
+            "Okay.", "Right.", "Good.", "No worries.", "And how did you sleep?",
+            "Any pins and needles?", "Left side or right side?", "Is it worse in the morning?",
+            "Does that ease it?", "Let us try that again.",
+        ]
+        assert by_key["numbers"].cue == "Normal voice."
+        assert by_key["numbers"].text == (
+            "Three sets of ten, twice a day. Hold each stretch for thirty seconds. Fifteen "
+            "minutes of walking, five days a week. Left shoulder, right knee, lower back, both "
+            "ankles. Come back in two weeks."
+        )
+        assert by_key["away"].cue == "Stand where you treat and keep talking as you move."
+        assert by_key["away"].text == (
+            "I am just going to move around to the other side. Keep your arm resting there. "
+            "Now push up against my hand, and hold. And relax. Turn onto your side for me, "
+            "facing the wall."
+        )
+        assert by_key["own"].cue == "Do not read."
+        assert by_key["own"].text == (
+            "Describe, as if to a new patient, what happens in a first visit."
+        )
+        assert models.ENROLMENT_KEEP_READING_LINE == (
+            "Keep reading until the counter fills. If you reach the end, start the passage "
+            "again."
+        )
+
+    def test_the_card_strings(self) -> None:
+        from scribe_desktop.ui import models
+
+        assert models.enrolment_progress_text(12.0, 30.0) == "Speech heard: 12 s of 30 s"
+        assert models.enrolment_progress_text(0.0, 15.0) == "Speech heard: 0 s of 15 s"
+        assert models.enrolment_idle_progress_text() == "Speech heard: 0 s of 30 s"
+        assert models.enrolment_part_heading(0) == "Part 1 of 6: Normal voice"
+        assert models.enrolment_part_heading(1, redo=True) == "Part 2 of 6 (again): Speak quietly"
+        assert models.enrolment_get_ready_line(2, 3.0) == (
+            "Get ready - part 3 of 6 starts in 3 s."
+        )
+        assert models.enrolment_redo_line("quiet") == (
+            "The quiet part did not match the rest. Record it once more."
+        )
+        assert models.enrolment_left_out_line("quiet", 6.2) == (
+            "Only 6 s of speech was heard in the quiet part, so it was left out. Speech that "
+            "quiet or that far from the microphone may not be heard in a consultation either."
+        )
+        assert "moving-away part did not match" in models.enrolment_weak_part_line("away")
+        assert models.enrolment_strength_line(0.924) == (
+            "Profile strength: 92% of your speech matched your voice in the other parts."
+        )
+        assert models.enrolment_strength_line(1.0).startswith("Profile strength: 100%")
+        assert models.ENROLMENT_RECORD_LABEL == "Record my voice (about three minutes)"
+        assert models.enrolment_part_by_key("away").title == "Move away"
+
+    def test_the_learning_line_names_the_label(self) -> None:
+        """Task 1.4: the learners test the speaker label, so the line says so."""
+        from scribe_desktop.ui import models
+
+        assert models.LEARNING_NOT_ATTRIBUTED_NOTE == (
+            "Not learned: this line is not labelled as yours - only lines labelled as yours "
+            "are learned."
+        )
 
 
 # --- the D15 controller activity ------------------------------------------------------

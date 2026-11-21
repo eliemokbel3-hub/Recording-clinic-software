@@ -679,6 +679,42 @@ class TestLineRowsWhole:
             _close(window)
 
 
+# --- stronger-voice plan Task 1.2: the guided card at 150 % -----------------------------
+
+
+class TestGuidedCardWidth:
+    """The guided enrolment's card (review round 12 LOW-002), laid out for
+    real at the 150 % stand-in (``_at_150``): for every part, and the redo's
+    heading, the Practitioner tab's content fits across its scroll area (it
+    has no sideways bar, so anything wider would be cut off) and each card
+    label shows its whole text. A passage label that stopped word-wrapping
+    would hold the content at the passage's full width and fail."""
+
+    def test_every_part_fits_across_at_150_percent(self, qapp: Any, tmp_path: Path) -> None:
+        window = _main_window(tmp_path)
+        screen = window.practitioner_screen
+        window.show_page(screen)
+        _laid_out(qapp, window, *_at_150(window))
+        try:
+            assert window.tabs.currentWidget() is screen
+            viewport = screen.scroll_area.viewport()
+            for index, part in enumerate(models.ENROLMENT_SCRIPT):
+                for redo in (False, True):
+                    screen._show_part(index, part.target_speech_seconds, redo=redo)  # noqa: SLF001
+                    qapp.processEvents()
+                    qapp.processEvents()
+                    assert screen.passage_label.text() == part.text
+                    assert screen.scroll_content.width() <= viewport.width(), (index, redo)
+                    for label in screen._card_labels:  # noqa: SLF001
+                        assert label.isVisibleTo(screen)
+                        assert label.width() <= viewport.width(), (index, label.text()[:24])
+                        needed = label.heightForWidth(label.width())
+                        assert label.height() >= needed, (index, label.text()[:24])
+        finally:
+            screen._reset_card()  # noqa: SLF001
+            _close(window)
+
+
 # --- S.3: Past sessions' transcript pane ------------------------------------------------
 
 

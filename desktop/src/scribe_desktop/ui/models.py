@@ -3556,8 +3556,11 @@ LEARNING_ON_LINE: Final = (
 # 2026-09-17: the practitioner read the queue as done and left the review
 # without pressing Save note on this tab — nothing is written on any other
 # exit, by design, so the line must name the button and the tab).
+# Stronger-voice plan Task 1.4: the learners test the SPEAKER LABEL (the
+# confirmed clinician's), not who actually spoke, so the line says so.
 LEARNING_NOT_ATTRIBUTED_NOTE: Final = (
-    "Not learned: this line is not attributed to you - only your own lines are learned."
+    "Not learned: this line is not labelled as yours - only lines labelled as yours are "
+    "learned."
 )
 
 
@@ -3949,6 +3952,195 @@ def consent_is_current(record: PractitionerProfile | StyleProfile | ConsentRecor
     carrying an older version is readable but not current on either side."""
     consent = record if isinstance(record, ConsentRecord) else record.consent
     return consent.consent_text_version == CONSENT_TEXT_VERSION
+
+
+# --- the guided voice enrolment (stronger-voice plan D3, Task 1.1) ----------
+# The reading script is the practitioner's approved text (Task 0.1,
+# 2026-11-20), its words shipped verbatim (the plan's quotation marks, which
+# only mark what is read, are left off). Each part ends when enough speech is
+# heard, so the exact words read do not matter. Targets 30 / 15 / 12 / 15 /
+# 12 / 15 s of speech (99 s); each cap three times its target and at least
+# 45 s; the quiet and moving-away parts are not required.
+
+
+@dataclass(frozen=True)
+class EnrolmentPart:
+    """One part of the reading script: its key, the cue that says how to
+    speak, its title, the passage, its speech target and capture cap (both
+    seconds) and whether the enrolment needs it."""
+
+    key: str
+    cue: str
+    title: str
+    text: str
+    target_speech_seconds: float
+    max_seconds: float
+    required: bool
+
+
+ENROLMENT_SCRIPT: Final[tuple[EnrolmentPart, ...]] = (
+    EnrolmentPart(
+        key="normal",
+        cue="Sit where you consult.",
+        title="Normal voice",
+        text=(
+            "Thanks for coming in today. Before we start, tell me what has been going on "
+            "and when it began. I would like to look at how you are moving, then check your "
+            "strength and your range. After that I will explain what I think is happening, "
+            "and we will agree on a plan together. Most people notice a change within the "
+            "first two or three visits. If anything I do is uncomfortable, tell me straight "
+            "away and we will ease off."
+        ),
+        target_speech_seconds=30.0,
+        max_seconds=90.0,
+        required=True,
+    ),
+    EnrolmentPart(
+        key="quiet",
+        cue="As you would beside the treatment table.",
+        title="Speak quietly",
+        text=(
+            "Just relax your shoulders for me. Breathe in slowly, and let it go. Good. I am "
+            "going to press gently here, and you tell me if it is tender. Stay nice and "
+            "loose. That is it, well done. One more time, slow and easy."
+        ),
+        target_speech_seconds=15.0,
+        max_seconds=45.0,
+        required=False,
+    ),
+    EnrolmentPart(
+        key="short",
+        cue="Normal voice, pause after each line.",
+        title="Short phrases",
+        text=(
+            "Okay.\nRight.\nGood.\nNo worries.\nAnd how did you sleep?\nAny pins and "
+            "needles?\nLeft side or right side?\nIs it worse in the morning?\nDoes that ease "
+            "it?\nLet us try that again."
+        ),
+        target_speech_seconds=12.0,
+        max_seconds=45.0,
+        required=True,
+    ),
+    EnrolmentPart(
+        key="numbers",
+        cue="Normal voice.",
+        title="Numbers and sides",
+        text=(
+            "Three sets of ten, twice a day. Hold each stretch for thirty seconds. Fifteen "
+            "minutes of walking, five days a week. Left shoulder, right knee, lower back, "
+            "both ankles. Come back in two weeks."
+        ),
+        target_speech_seconds=15.0,
+        max_seconds=45.0,
+        required=True,
+    ),
+    EnrolmentPart(
+        key="away",
+        cue="Stand where you treat and keep talking as you move.",
+        title="Move away",
+        text=(
+            "I am just going to move around to the other side. Keep your arm resting there. "
+            "Now push up against my hand, and hold. And relax. Turn onto your side for me, "
+            "facing the wall."
+        ),
+        target_speech_seconds=12.0,
+        max_seconds=45.0,
+        required=False,
+    ),
+    EnrolmentPart(
+        key="own",
+        cue="Do not read.",
+        title="Your own words",
+        text="Describe, as if to a new patient, what happens in a first visit.",
+        target_speech_seconds=15.0,
+        max_seconds=45.0,
+        required=True,
+    ),
+)
+# How each part is named in a sentence ("the quiet part did not match").
+ENROLMENT_PART_NAMES: Final[Mapping[str, str]] = {
+    "normal": "normal-voice part",
+    "quiet": "quiet part",
+    "short": "short-phrases part",
+    "numbers": "numbers part",
+    "away": "moving-away part",
+    "own": "own-words part",
+}
+# The "get ready" beat between parts (D3: 3 s in the app; a test passes 0).
+ENROLMENT_BEAT_SECONDS: Final = 3.0
+ENROLMENT_RECORD_LABEL: Final = "Record my voice (about three minutes)"
+ENROLMENT_RERECORD_LABEL: Final = "Re-record my voice"
+ENROLMENT_KEEP_READING_LINE: Final = (
+    "Keep reading until the counter fills. If you reach the end, start the passage again."
+)
+ENROLMENT_PREPARING_LINE: Final = "Getting ready - the first part appears in a moment."
+ENROLMENT_LISTENING_LINE: Final = "Listening."
+ENROLMENT_SAVED_LINE: Final = "Voice profile saved."
+
+
+def enrolment_part_by_key(key: str) -> EnrolmentPart:
+    """The script part with ``key`` (``KeyError`` for an unknown key)."""
+    for part in ENROLMENT_SCRIPT:
+        if part.key == key:
+            return part
+    raise KeyError(key)
+
+
+def _part_name(key: str) -> str:
+    return ENROLMENT_PART_NAMES[key]
+
+
+def enrolment_progress_text(speech_seconds: float, target_seconds: float) -> str:
+    """The counter under a part; its denominator is that part's target."""
+    return f"Speech heard: {speech_seconds:.0f} s of {target_seconds:.0f} s"
+
+
+def enrolment_idle_progress_text() -> str:
+    """The counter before an enrolment starts: the first part's."""
+    return enrolment_progress_text(0.0, ENROLMENT_SCRIPT[0].target_speech_seconds)
+
+
+def enrolment_part_heading(index: int, *, redo: bool = False) -> str:
+    """``"Part 2 of 6: Speak quietly"``; the one redo says ``"(again)"``."""
+    again = " (again)" if redo else ""
+    count = len(ENROLMENT_SCRIPT)
+    return f"Part {index + 1} of {count}{again}: {ENROLMENT_SCRIPT[index].title}"
+
+
+def enrolment_get_ready_line(next_index: int, seconds: float) -> str:
+    """The "get ready" beat's line, naming the part that comes next."""
+    count = len(ENROLMENT_SCRIPT)
+    return f"Get ready - part {next_index + 1} of {count} starts in {seconds:.0f} s."
+
+
+def enrolment_redo_line(key: str) -> str:
+    """Shown when the one redo starts: the part that did not match (D3)."""
+    return f"The {_part_name(key)} did not match the rest. Record it once more."
+
+
+def enrolment_weak_part_line(key: str) -> str:
+    """After saving, the part still under the consistency figure (D3)."""
+    return (
+        f"The {_part_name(key)} did not match the rest closely, so speech like it may be "
+        "labelled less reliably."
+    )
+
+
+def enrolment_left_out_line(key: str, speech_seconds: float) -> str:
+    """A part that is not required and ended at its cap short of its target
+    (D3), with the seconds of speech last heard in it."""
+    return (
+        f"Only {speech_seconds:.0f} s of speech was heard in the {_part_name(key)}, so it "
+        "was left out. Speech that quiet or that far from the microphone may not be heard "
+        "in a consultation either."
+    )
+
+
+def enrolment_strength_line(share: float) -> str:
+    """After saving (D3): the share of the speech that matched the profile
+    built from the other parts, as one whole percentage."""
+    percent = round(min(1.0, max(0.0, share)) * 100)
+    return f"Profile strength: {percent}% of your speech matched your voice in the other parts."
 
 
 # Privacy-professional-controls D14 (Task 3.3): the in-app intended-use line,
@@ -5145,6 +5337,25 @@ __all__ = [
     "CONSENT_TEXT_V3",
     "CONSENT_TEXT_VERSION",
     "COPY_TO_CLINIKO_ENABLED",
+    "ENROLMENT_BEAT_SECONDS",
+    "ENROLMENT_KEEP_READING_LINE",
+    "ENROLMENT_LISTENING_LINE",
+    "ENROLMENT_PART_NAMES",
+    "ENROLMENT_PREPARING_LINE",
+    "ENROLMENT_RECORD_LABEL",
+    "ENROLMENT_RERECORD_LABEL",
+    "ENROLMENT_SAVED_LINE",
+    "ENROLMENT_SCRIPT",
+    "EnrolmentPart",
+    "enrolment_get_ready_line",
+    "enrolment_idle_progress_text",
+    "enrolment_left_out_line",
+    "enrolment_part_by_key",
+    "enrolment_part_heading",
+    "enrolment_progress_text",
+    "enrolment_redo_line",
+    "enrolment_strength_line",
+    "enrolment_weak_part_line",
     "FIRST_RUN_BANNER",
     "FIRST_RUN_STYLE_LINE",
     "INTENDED_USE_LINE",

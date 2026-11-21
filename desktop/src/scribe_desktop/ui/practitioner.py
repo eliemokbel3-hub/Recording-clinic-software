@@ -3,25 +3,39 @@
 
 The tab shows the CURRENT consent text VERBATIM (``models.CONSENT_TEXT_V3``,
 version ``models.CONSENT_TEXT_VERSION``) with the consent checkbox and the
-separate phrase-learning opt-in, a microphone pick, and a read-aloud of about
-a minute. That read-aloud is captured IN MEMORY by
-``enrolment.record_enrolment`` on a ``TaskThread`` (D8): no session is
-created, no store is touched, no file is ever written, and the PCM is dropped
-as soon as ``enrolment.enrol`` has turned it into one vector — the only thing
-saved is the encrypted profile ``save_profile`` writes.
+separate phrase-learning opt-in, a microphone pick, and the guided read-aloud
+(stronger-voice plan D3, Task 1.2): the six parts of ``models.ENROLMENT_SCRIPT``
+— normal voice, quiet, short phrases, numbers and sides, moving away, own
+words — on a card inside the "Record your voice" group, each with its cue,
+its passage (a plain label, never selectable) and its own counter, a
+cancellable "get ready" beat between parts, and at most ONE redo of the part
+that matched the rest least. Each part is captured IN MEMORY by
+``enrolment.record_enrolment`` (one call per attempt, with the part's target
+and cap) on ONE ``TaskThread`` (D8): no session is created, no store is
+touched, no file is ever written, and each part's PCM is dropped as soon as
+``enrolment.enrol_part`` has turned it into numbers, before the next part
+starts — the only thing saved is the encrypted profile ``save_profile``
+writes: one vector, the normalised equal-weight mean of the parts
+(``enrolment.combine_parts``). A part that is not required and ends at its
+cap short of its target is left out, named on the result with the seconds
+last heard in it; every other failure saves nothing.
 
-The whole capture -> embed -> save -> result-handler sequence runs under
-``SessionController.begin_enrolment()`` (D15), so Start/Resume, the
-microphone screen's monitor poll and the benchmark all refuse while it runs,
-and Re-record/Delete are disabled meanwhile; the idle monitor itself is
-handed over synchronously through ``on_capture_start`` (the main window
-passes the microphone screen's ``stop_monitor``) before the worker starts.
-The lease is released in the result handler — on EVERY path, success or
-failure — never before it, so the status line a handler writes is already
-visible when the activity ends.
-``record_enrolment``'s ``on_progress`` callback fires on the worker thread,
-so it is marshalled to the GUI thread through a Qt signal rather than
-touching a widget directly.
+The whole sequence — every part, each beat, the embedding, the redo, the save
+and the result handler — runs under ONE ``SessionController.begin_enrolment()``
+lease (D15, plan C8), so Start/Resume, the microphone screen's monitor poll
+and the benchmark all refuse while it runs; the idle monitor itself is handed
+over synchronously through ``on_capture_start`` (the main window passes the
+microphone screen's ``stop_monitor``) before the worker starts. The HELD LEASE
+is the tab's one busy test (``is_busy``): from the press of Record until the
+lease is released every control that records, writes or deletes a profile is
+disabled and every such handler returns without acting — never the worker
+thread's running state, which reads idle while a finished worker's result is
+still queued. The lease is released in the result handler — on EVERY path,
+success or failure, the failed microphone handoff included — after the tab
+has re-rendered, so the status line a handler writes is already visible when
+the activity ends. The worker's events (a part start, a beat start, progress;
+numbers only) fire on the worker thread, so they are marshalled to the GUI
+thread through a Qt signal rather than touching a widget directly.
 
 Consent versions (Task 5.0). The consent box is pre-ticked ONLY from a
 READABLE profile whose consent record carries the CURRENT text version. A
@@ -116,11 +130,13 @@ its creation date and the embedder's ``model_id``.
 
 from __future__ import annotations
 
+import math
 import threading
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Final
+from typing import Final, Protocol
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
@@ -145,11 +161,16 @@ from PySide6.QtWidgets import (
 from scribe_desktop import install_layout, note_config
 from scribe_desktop.audio_capture import CaptureBackend
 from scribe_desktop.enrolment import (
-    DEFAULT_TARGET_SPEECH_SECONDS,
     EnrolmentCancelledError,
     EnrolmentProgress,
-    enrol,
+    EnrolmentTooShortError,
+    PartEmbedding,
+    combine_parts,
+    enrol_part,
+    part_consistency,
     record_enrolment,
+    strength_share,
+    weakest_part,
 )
 from scribe_desktop.note import NoteStyle
 from scribe_desktop.note_config import (
@@ -223,10 +244,26 @@ LEARN_CANCELLED_TEXT: Final = "Nothing was saved - the review was cancelled."
 NO_LEARNED_STYLE_TEXT: Final = "No learned style yet."
 SAMPLE_NOTE_FILTER: Final = "Notes (*.txt *.docx *.pdf)"
 
-CaptureFn = Callable[
-    [CaptureBackend, int, Callable[[EnrolmentProgress], None], Callable[[], bool]], bytes
-]
-EmbedFn = Callable[[bytes, SpeakerEmbedder], tuple[Any, float]]
+
+class CaptureFn(Protocol):
+    """The capture seam: one part's ``record_enrolment`` call, with the part's
+    two limits by keyword (stronger-voice plan D3)."""
+
+    def __call__(
+        self,
+        backend: CaptureBackend,
+        device_id: int,
+        on_progress: Callable[[EnrolmentProgress], None],
+        should_stop: Callable[[], bool],
+        /,
+        *,
+        target_speech_seconds: float,
+        max_seconds: float,
+    ) -> bytes: ...
+
+
+# The embed seam: one part's PCM -> its typed result (``enrolment.enrol_part``).
+EmbedFn = Callable[[bytes, SpeakerEmbedder], PartEmbedding]
 LearnerFn = Callable[[Sequence[SampleNote]], StyleProfileDraft]
 ReviewRunner = Callable[[StyleProfileDraft, QWidget], StyleReviewChoice | None]
 DeleteOriginalsRunner = Callable[[Sequence[Path], QWidget], bool]
@@ -237,12 +274,70 @@ def _default_capture(
     device_id: int,
     on_progress: Callable[[EnrolmentProgress], None],
     should_stop: Callable[[], bool],
+    /,
+    *,
+    target_speech_seconds: float,
+    max_seconds: float,
 ) -> bytes:
-    return record_enrolment(backend, device_id, on_progress=on_progress, should_stop=should_stop)
+    return record_enrolment(
+        backend,
+        device_id,
+        target_speech_seconds=target_speech_seconds,
+        max_seconds=max_seconds,
+        on_progress=on_progress,
+        should_stop=should_stop,
+    )
 
 
-def _default_embed(pcm: bytes, embedder: SpeakerEmbedder) -> tuple[Any, float]:
-    return enrol(pcm, embedder)
+def _default_embed(pcm: bytes, embedder: SpeakerEmbedder) -> PartEmbedding:
+    return enrol_part(pcm, embedder)
+
+
+# --- the guided enrolment's worker events (stronger-voice plan D3) -------------
+# Numbers only, in order, over the tab's one progress signal.
+
+
+@dataclass(frozen=True)
+class PartStarted:
+    """A part's capture is about to start (``redo``: the one redo)."""
+
+    part_index: int
+    part_count: int
+    target_seconds: float
+    redo: bool
+
+
+@dataclass(frozen=True)
+class BeatStarted:
+    """The "get ready" beat before part ``next_index`` (``redo``: before the
+    one redo)."""
+
+    next_index: int
+    seconds: float
+    redo: bool
+
+
+@dataclass(frozen=True)
+class PartProgress:
+    """One captured block of part ``part_index``, attempt ``attempt`` (1, or
+    2 for the redo): speech seconds so far and the block's level."""
+
+    part_index: int
+    attempt: int
+    speech_seconds: float
+    level: float
+
+
+@dataclass(frozen=True)
+class GuidedEnrolmentResult:
+    """What the card shows after saving, and nothing more: the stored speech
+    seconds, the strength share, each left-out part's key with the seconds of
+    speech last heard in it, and the key of a part still weak after the redo."""
+
+    total_speech_seconds: float
+    strength_share: float
+    left_out: tuple[tuple[str, float], ...]
+    weak_part_key: str | None
 
 
 def _utc_now() -> datetime:
@@ -296,6 +391,7 @@ class PractitionerScreen(QWidget):
         vad_available: Callable[[], bool] = vad_model_available,
         capture: CaptureFn = _default_capture,
         embed: EmbedFn = _default_embed,
+        beat_seconds: float = models.ENROLMENT_BEAT_SECONDS,
         readiness_provider: Callable[[], models.AttributionReadiness] | None = None,
         confirm_delete: Callable[[], bool] | None = None,
         clock: Callable[[], datetime] = _utc_now,
@@ -347,6 +443,12 @@ class PractitionerScreen(QWidget):
         self._vad_available = vad_available
         self._capture = capture
         self._embed = embed
+        # D3: the "get ready" beat's length; a test passes 0 (instant).
+        self._beat_seconds = beat_seconds
+        # The part and attempt the card shows (None during a beat and when
+        # idle): a progress event for any other is dropped.
+        self._current_part: tuple[int, int] | None = None
+        self._current_target = models.ENROLMENT_SCRIPT[0].target_speech_seconds
         self._readiness_provider: Callable[[], models.AttributionReadiness] = (
             readiness_provider
             if readiness_provider is not None
@@ -459,7 +561,7 @@ class PractitionerScreen(QWidget):
         set_role(self.availability_label, "error")
         self.availability_label.hide()
 
-        self.record_button = QPushButton("Record my voice (about a minute)")
+        self.record_button = QPushButton(models.ENROLMENT_RECORD_LABEL)
         self.record_button.clicked.connect(self.on_record)
         self.stop_button = QPushButton("Stop")
         self.stop_button.clicked.connect(self.on_stop)
@@ -468,11 +570,37 @@ class PractitionerScreen(QWidget):
         button_row.addWidget(self.record_button)
         button_row.addWidget(self.stop_button)
 
+        # --- the guided card (stronger-voice plan D3) -------------------------
+        # Shown while an enrolment runs: the part's heading, its cue, its
+        # passage and the fixed "keep reading" line. All PLAIN TEXT labels with
+        # Qt's default interaction flags, so the passage is never selectable.
+        self.part_heading_label = QLabel()
+        self.part_heading_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.part_heading_label.setWordWrap(True)
+        set_role(self.part_heading_label, "strong")
+        self.part_cue_label = QLabel()
+        self.part_cue_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.part_cue_label.setWordWrap(True)
+        self.passage_label = QLabel()
+        self.passage_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.passage_label.setWordWrap(True)
+        self.keep_reading_label = QLabel(models.ENROLMENT_KEEP_READING_LINE)
+        self.keep_reading_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.keep_reading_label.setWordWrap(True)
+        self._card_labels = (
+            self.part_heading_label,
+            self.part_cue_label,
+            self.passage_label,
+            self.keep_reading_label,
+        )
+        for label in self._card_labels:
+            label.hide()
+
         self.level_bar = QProgressBar()
         self.level_bar.setRange(0, 100)
         self.level_bar.setValue(0)
         self.level_bar.setTextVisible(False)
-        self.progress_label = QLabel(self._progress_text(0.0))
+        self.progress_label = QLabel(models.enrolment_idle_progress_text())
         self.enrolment_status_label = QLabel()
         self.enrolment_status_label.setTextFormat(Qt.TextFormat.PlainText)
         self.enrolment_status_label.setWordWrap(True)
@@ -483,6 +611,8 @@ class PractitionerScreen(QWidget):
         record_layout.addLayout(device_row)
         record_layout.addWidget(self.availability_label)
         record_layout.addLayout(button_row)
+        for label in self._card_labels:
+            record_layout.addWidget(label)
         record_layout.addWidget(QLabel("Input level:"))
         record_layout.addWidget(self.level_bar)
         record_layout.addWidget(self.progress_label)
@@ -713,12 +843,6 @@ class PractitionerScreen(QWidget):
 
     # --- text helpers --------------------------------------------------------
 
-    def _progress_text(self, speech_seconds: float) -> str:
-        return (
-            f"Speech heard: {speech_seconds:.0f} s of "
-            f"{DEFAULT_TARGET_SPEECH_SECONDS:.0f} s"
-        )
-
     def _ask_delete(self) -> bool:
         return (
             QMessageBox.question(
@@ -857,13 +981,13 @@ class PractitionerScreen(QWidget):
                     # made over an already-unreadable blob is kept.
                     self.consent_checkbox.setChecked(False)
                 self.learning_note_label.hide()
-            self.record_button.setText("Re-record my voice")
+            self.record_button.setText(models.ENROLMENT_RERECORD_LABEL)
             self.banner_label.hide()
         else:
             # The checkboxes are left AS THEY ARE: a failed enrolment must not
             # make the practitioner tick consent again.
             self.learning_note_label.hide()
-            self.record_button.setText("Record my voice (about a minute)")
+            self.record_button.setText(models.ENROLMENT_RECORD_LABEL)
         self._update_controls()
         self.profile_changed.emit()
 
@@ -879,8 +1003,12 @@ class PractitionerScreen(QWidget):
 
     @property
     def is_busy(self) -> bool:
-        """True while the enrolment worker runs (close must wait — D15)."""
-        return self._task is not None and self._task.isRunning()
+        """True while the enrolment lease is held — from the press of Record
+        until the result handler releases it (close must wait — D15). The ONE
+        busy test (stronger-voice plan Task 1.2): never the worker thread's
+        running state, which reads idle while a finished worker's result is
+        still queued for the handler."""
+        return self._lease is not None
 
     def show_first_run_banner(self) -> None:
         """The first-run banner (D10): the voice-profile line, plus the
@@ -1043,53 +1171,151 @@ class PractitionerScreen(QWidget):
         except SessionActivityError as exc:
             self._set_enrolment_status(f"Cannot record now - {exc}")
             return
+        # Cleared BEFORE the lease makes the tab busy (review round 12 LOW-001):
+        # a Stop from here on — a screen lock or sleep delivered while the
+        # handoff below pumps messages — stands, and the worker honours it.
+        self._cancel_requested.clear()
         self._lease = lease
+        # Peer round 14 PR-MED-4201: the tab goes busy WITH the lease, before
+        # the handoff, so no control can change while it pumps messages: the
+        # consent and learning boxes the worker's record is built from, the
+        # microphone, Confirm consent, Delete and the rest (Stop shows, and is
+        # the escape). Every exit's release re-enables them.
+        self._update_controls()
         if self._on_capture_start is not None:
             # PR-MED-022: hand the microphone over on THIS (GUI) thread before
             # the worker starts; the microphone screen's poll guard keeps the
-            # monitor closed afterwards. A failing handoff releases the lease
-            # and starts nothing.
+            # monitor closed afterwards. A failing handoff starts nothing: its
+            # error is shown FIRST and the lease released after it, like
+            # every other exit (stronger-voice plan Task 1.2).
             try:
                 self._on_capture_start()
             except Exception as exc:  # noqa: BLE001 - surfaced, the lease released
-                self._release_lease()
                 self._set_enrolment_status(f"Cannot record now - {type(exc).__name__}: {exc}")
+                self._release_lease()
                 return
-        self._cancel_requested.clear()
         device_id, device_name = device
         learning_opt_in = self.learning_checkbox.isChecked()
         kind = self._embedder_kind
         backend, capture, embed = self._backend, self._capture, self._embed
         embedder_factory, clock, root = self._embedder_factory, self._clock, self._profile_root
         saved_device_name = profile_device_name(device_name)
-        emit_progress = self._progress_reported.emit
-        should_stop = self._cancel_requested.is_set
+        emit_event = self._progress_reported.emit
+        cancel = self._cancel_requested
+        should_stop = cancel.is_set
+        beat_seconds = self._beat_seconds
+        script = models.ENROLMENT_SCRIPT
 
         def raise_if_stopped() -> None:
             # Round 25 MED-001: the capture honours Stop only while it runs;
             # a Stop pressed after it returned must not end in a saved
-            # profile. Checked again before the embedding and after it —
-            # once that final check has passed, the profile is built and
-            # ``save_profile`` runs regardless (round 28 PR-LOW-032: the
-            # residue starts at the final check, not at the save); it is
-            # then shown, and Delete removes it.
+            # profile. Checked before every part's embedding, after every
+            # beat and once more just before the save — once that final
+            # check has passed, the profile is built and ``save_profile``
+            # runs regardless (round 28 PR-LOW-032: the residue starts at the
+            # final check, not at the save); it is then shown, and Delete
+            # removes it.
             if should_stop():
                 raise EnrolmentCancelledError("enrolment cancelled")
 
-        def work() -> None:  # WORKER THREAD (TaskThread) — no widget access here
-            embedder = embedder_factory(kind)  # BEFORE the read-aloud: load failures fail fast
-            pcm = capture(backend, device_id, emit_progress, should_stop)
+        def beat(next_index: int, *, redo: bool) -> None:
+            # D3: the "get ready" beat, with no stream open. Stop — and the
+            # screen lock and sleep, which press it (SEC-019) — sets the
+            # event, so the wait ends at once and the check ends the sequence.
+            emit_event(BeatStarted(next_index=next_index, seconds=beat_seconds, redo=redo))
+            cancel.wait(beat_seconds)
+            raise_if_stopped()
+
+        def record_part(
+            index: int, attempt: int, embedder: SpeakerEmbedder, heard: dict[int, float]
+        ) -> PartEmbedding | None:
+            """One attempt at part ``index``: its numbers, or None when the
+            capture ended at its cap short of its target and that is not a
+            failure (an optional part's first attempt: left out; the redo:
+            the first attempt is kept). The same shortfall on a required
+            part's first attempt ends the enrolment."""
+            part = script[index]
+            heard[index] = 0.0
+            emit_event(
+                PartStarted(
+                    part_index=index,
+                    part_count=len(script),
+                    target_seconds=part.target_speech_seconds,
+                    redo=attempt > 1,
+                )
+            )
+
+            def on_progress(progress: EnrolmentProgress) -> None:
+                # The left-out line's seconds are this last progress number,
+                # never parsed from the shortfall's text.
+                heard[index] = progress.speech_seconds
+                emit_event(
+                    PartProgress(
+                        part_index=index,
+                        attempt=attempt,
+                        speech_seconds=progress.speech_seconds,
+                        level=progress.level,
+                    )
+                )
+
+            try:
+                pcm = capture(
+                    backend,
+                    device_id,
+                    on_progress,
+                    should_stop,
+                    target_speech_seconds=part.target_speech_seconds,
+                    max_seconds=part.max_seconds,
+                )
+            except EnrolmentTooShortError:
+                raise_if_stopped()
+                if attempt == 1 and part.required:
+                    raise
+                return None
             try:
                 raise_if_stopped()
-                vector, speech_seconds = embed(pcm, embedder)
+                return embed(pcm, embedder)
             finally:
-                del pcm  # D8: the only reference this thread holds is dropped here
-            raise_if_stopped()
+                del pcm  # D8: dropped before the next part starts
+
+        def work() -> GuidedEnrolmentResult:  # WORKER THREAD (TaskThread) — no widget access
+            embedder = embedder_factory(kind)  # BEFORE the first part: load failures fail fast
+            heard: dict[int, float] = {}
+            parts: dict[int, PartEmbedding] = {}
+            left_out: list[tuple[str, float]] = []
+            for index, part in enumerate(script):
+                if index > 0:
+                    beat(index, redo=False)
+                result = record_part(index, 1, embedder, heard)
+                if result is None:
+                    left_out.append((part.key, heard[index]))
+                else:
+                    parts[index] = result
+            order = sorted(parts)
+            weak_key: str | None = None
+            weak = weakest_part(part_consistency([parts[i].vector for i in order]))
+            if weak is not None:
+                # D3: the ONE redo, of the lowest part (the earlier on a tie);
+                # it replaces that part's numbers whole, and a redo short at
+                # its cap keeps the first attempt. There is no second redo.
+                redo_index = order[weak]
+                beat(redo_index, redo=True)
+                redone = record_part(redo_index, 2, embedder, heard)
+                if redone is not None:
+                    parts[redo_index] = redone
+                still = weakest_part(part_consistency([parts[i].vector for i in order]))
+                if still is not None:
+                    weak_key = script[order[still]].key
+            final = [parts[i] for i in order]  # the final attempts only
+            vector = combine_parts([kept.vector for kept in final])
+            speech_seconds = math.fsum(kept.speech_seconds for kept in final)
+            share = strength_share(final)
+            raise_if_stopped()  # the final check, just before the save (C8)
             now = clock()
             profile = PractitionerProfile(
                 model_id=embedder.model_id,
                 model_sha256=embedder.model_sha256,
-                embedding=tuple(float(v) for v in vector),
+                embedding=vector,
                 embedding_dim=len(vector),
                 created_at=now,
                 enrolment_speech_seconds=speech_seconds,
@@ -1101,26 +1327,78 @@ class PractitionerScreen(QWidget):
                 ),
             )
             save_profile(profile, root=root)
+            return GuidedEnrolmentResult(
+                total_speech_seconds=speech_seconds,
+                strength_share=share,
+                left_out=tuple(left_out),
+                weak_part_key=weak_key,
+            )
 
-        self._set_enrolment_status("Listening - read aloud in your normal voice.")
+        if not cancel.is_set():  # a Stop during the handoff keeps "Stopping..." shown
+            self._set_enrolment_status(models.ENROLMENT_PREPARING_LINE)
+        self._current_part = None
         self.level_bar.setValue(0)
-        self.progress_label.setText(self._progress_text(0.0))
+        self.progress_label.setText(models.enrolment_idle_progress_text())
         task = TaskThread(work, self)
         task.succeeded.connect(self._on_enrolment_done)
         task.failed.connect(self._on_enrolment_failed)
         self._task = task
-        # `is_busy` reads `QThread.isRunning()`, which is only true once
-        # `start()` has been called — so the busy enablement is applied AFTER
-        # the start, never before it (the result handler cannot have run yet:
-        # its delivery is queued to this, the GUI, thread).
+        # The result handler cannot have run yet: its delivery is queued to
+        # this, the GUI, thread. The lease already makes the tab busy.
         task.start()
         self._update_controls()
 
-    def _on_progress(self, progress: object) -> None:
-        # GUI thread (queued delivery of `_progress_reported`).
-        assert isinstance(progress, EnrolmentProgress)
-        self.level_bar.setValue(round(progress.level * 100))
-        self.progress_label.setText(self._progress_text(progress.speech_seconds))
+    def _show_part(self, index: int, target_seconds: float, *, redo: bool) -> None:
+        """The card for part ``index``: its heading, cue and passage, the meter
+        at zero and its counter restarted against its own target."""
+        part = models.ENROLMENT_SCRIPT[index]
+        self._current_target = target_seconds
+        self.part_heading_label.setText(models.enrolment_part_heading(index, redo=redo))
+        self.part_cue_label.setText(part.cue)
+        self.passage_label.setText(part.text)
+        for label in self._card_labels:
+            label.show()
+        self.level_bar.setValue(0)
+        self.progress_label.setText(models.enrolment_progress_text(0.0, target_seconds))
+
+    def _reset_card(self) -> None:
+        """The idle card: hidden, the meter at zero, the first part's counter."""
+        self._current_part = None
+        self._current_target = models.ENROLMENT_SCRIPT[0].target_speech_seconds
+        for label in self._card_labels:
+            label.hide()
+        self.level_bar.setValue(0)
+        self.progress_label.setText(models.enrolment_idle_progress_text())
+
+    def _on_progress(self, event: object) -> None:
+        # GUI thread (queued delivery of `_progress_reported`), in the order
+        # the worker emitted. Numbers only; every text is derived here.
+        if self._lease is None:
+            return
+        stopping = self._cancel_requested.is_set()  # "Stopping..." stays shown
+        if isinstance(event, PartStarted):
+            self._current_part = (event.part_index, 2 if event.redo else 1)
+            self._show_part(event.part_index, event.target_seconds, redo=event.redo)
+            if not stopping:
+                key = models.ENROLMENT_SCRIPT[event.part_index].key
+                line = models.enrolment_redo_line(key) if event.redo else None
+                self._set_enrolment_status(line or models.ENROLMENT_LISTENING_LINE)
+        elif isinstance(event, BeatStarted):
+            self._current_part = None
+            part = models.ENROLMENT_SCRIPT[event.next_index]
+            self._show_part(event.next_index, part.target_speech_seconds, redo=event.redo)
+            if not stopping:
+                lines = [models.enrolment_get_ready_line(event.next_index, event.seconds)]
+                if event.redo:
+                    lines.insert(0, models.enrolment_redo_line(part.key))
+                self._set_enrolment_status("\n".join(lines))
+        elif isinstance(event, PartProgress):
+            if self._current_part != (event.part_index, event.attempt):
+                return  # a late event from another part or attempt is dropped
+            self.level_bar.setValue(round(event.level * 100))
+            self.progress_label.setText(
+                models.enrolment_progress_text(event.speech_seconds, self._current_target)
+            )
 
     def on_stop(self) -> None:
         if not self.is_busy:
@@ -1135,18 +1413,31 @@ class PractitionerScreen(QWidget):
             self._task = None
 
     def _release_lease(self) -> None:
+        """End the enrolment activity, then re-enable the tab: the held lease
+        is its busy test, so the controls follow the release."""
         lease = self._lease
         self._lease = None
-        if lease is not None:
-            self._controller.end_enrolment(lease)
+        try:
+            if lease is not None:
+                self._controller.end_enrolment(lease)
+        finally:
+            self._update_controls()
 
-    def _on_enrolment_done(self, _result: object) -> None:
+    def _on_enrolment_done(self, result: object) -> None:
         try:
             self._join_task()
-            self._set_enrolment_status("Voice profile saved.")
+            lines = [models.ENROLMENT_SAVED_LINE]
+            if isinstance(result, GuidedEnrolmentResult):
+                lines.append(models.enrolment_strength_line(result.strength_share))
+                lines.extend(
+                    models.enrolment_left_out_line(key, seconds)
+                    for key, seconds in result.left_out
+                )
+                if result.weak_part_key is not None:
+                    lines.append(models.enrolment_weak_part_line(result.weak_part_key))
+            self._set_enrolment_status("\n".join(lines))
             self.refresh_profile_state()  # re-read from disk: the status line proves the save
-            self.level_bar.setValue(0)
-            self._update_controls()
+            self._reset_card()
         finally:
             self._release_lease()  # D15: released only after this handler, on every path
 
@@ -1159,9 +1450,7 @@ class PractitionerScreen(QWidget):
                 text = f"Enrolment did not complete - {message}"
             self._set_enrolment_status(text)
             self.refresh_profile_state()  # a failed re-enrolment leaves the previous one usable
-            self.level_bar.setValue(0)
-            self.progress_label.setText(self._progress_text(0.0))
-            self._update_controls()
+            self._reset_card()
         finally:
             self._release_lease()
 

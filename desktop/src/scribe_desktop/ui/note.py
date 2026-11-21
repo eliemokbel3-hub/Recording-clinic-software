@@ -87,8 +87,10 @@ the front of its label, after any ``[flagged]``. The "Acknowledge all" tooltip
 names every code of the set (``models.ACKNOWLEDGE_ALL_TOOLTIP``).
 
 Phrase learning (D9 as amended 2026-09-16, Task 5.2). After an add or a move
-of one of the practitioner's OWN lines — ``note.spoken_by_confirmed_clinician``,
-so another speaker's line never reaches the learner — and only while the
+of a line LABELLED as the practitioner's — ``note.spoken_by_confirmed_clinician``,
+so a line under another speaker label never reaches the learner (the test
+reads the label, not who actually spoke: a line labelled the practitioner's
+in error does reach it; stronger-voice plan Task 1.4) — and only while the
 learning status, re-read at that add or move, says learning is on (a readable
 profile, the CURRENT consent version, the opt-in ticked), the line's leading
 content tokens become a
@@ -108,8 +110,9 @@ or a proposal opens an inline single-line editor; committing it produces a
 the line, ``replaces`` recording the line or proposal it stands in for — and
 subtracts what it replaced (a provider line goes to ``_removed``, a manual
 line is set aside, a proposal is declined at finalisation); Undo restores it.
-When the replaced line is one of the practitioner's OWN utterances
-(``spoken_by_confirmed_clinician``) the edit is a shorthand candidate: the
+When the replaced line is an utterance LABELLED as the practitioner's
+(``spoken_by_confirmed_clinician``, the same label test) the edit is a
+shorthand candidate: the
 utterance's tail becomes the trigger through THE refusal filter
 (``propose_rule_trigger`` + ``refuse_learning_candidate``), the typed text the
 wording through ``refuse_typed_wording`` (numbers, dates, medications; no

@@ -35,8 +35,10 @@ from scribe_desktop.encounter import (  # noqa: E402
 )
 from scribe_desktop.enrolment import (  # noqa: E402
     EnrolmentCancelledError,
+    EnrolmentCaptureError,
     EnrolmentProgress,
     EnrolmentTooShortError,
+    PartEmbedding,
 )
 from scribe_desktop.note import (  # noqa: E402
     CANONICAL_SECTION_KEYS,
@@ -897,10 +899,26 @@ class _StubEmbedder:
         raise AssertionError("embed is not called by the screen")
 
 
+@dataclasses.dataclass(frozen=True)
+class _Step:
+    """One scripted call of `_FakeCapture` (stronger-voice plan Task 1.2):
+    the progress it reports, then an error, or a hold (before or after the
+    progress tick) until the test releases it or a Stop is requested."""
+
+    speech_seconds: float = 12.0
+    level: float = 0.4
+    error: Exception | None = None
+    hold: bool = False
+    hold_before_progress: bool = False
+
+
 class _FakeCapture:
-    """The `capture` seam: reports one progress tick (on the worker thread,
-    exactly as `record_enrolment` does), then returns PCM, raises, or holds
-    until the test releases it / a Stop is requested."""
+    """The `capture` seam, one call per part attempt (the guided enrolment
+    calls it once per part, with the part's two limits): reports one progress
+    tick (on the worker thread, exactly as `record_enrolment` does), then
+    returns PCM, raises, or holds until the test releases it / a Stop is
+    requested. `steps` scripts calls by their 0-based number; every other
+    call uses `error` and `hold`."""
 
     def __init__(
         self,
@@ -908,12 +926,20 @@ class _FakeCapture:
         pcm: bytes = b"\x00\x40" * 16_000,
         error: Exception | None = None,
         hold: bool = False,
+        steps: dict[int, _Step] | None = None,
     ) -> None:
         self.pcm = pcm
         self.error = error
         self.hold = hold
-        self.calls: list[tuple[int]] = []
+        self.steps = dict(steps or {})
+        self.calls: list[tuple[int, float, float]] = []
+        self.progress_callbacks: list[Callable[[EnrolmentProgress], None]] = []
         self.hold_event = threading.Event()
+
+    def _hold(self, should_stop: Callable[[], bool]) -> None:
+        while not self.hold_event.wait(0.01):
+            if should_stop():
+                raise EnrolmentCancelledError("enrolment cancelled")
 
     def __call__(
         self,
@@ -921,16 +947,68 @@ class _FakeCapture:
         device_id: int,
         on_progress: Callable[[EnrolmentProgress], None],
         should_stop: Callable[[], bool],
+        /,
+        *,
+        target_speech_seconds: float,
+        max_seconds: float,
     ) -> bytes:
-        self.calls.append((device_id,))
-        on_progress(EnrolmentProgress(speech_seconds=12.0, captured_seconds=20.0, level=0.4))
-        if self.hold:
-            while not self.hold_event.wait(0.01):
-                if should_stop():
-                    raise EnrolmentCancelledError("enrolment cancelled")
-        if self.error is not None:
-            raise self.error
+        step = self.steps.get(
+            len(self.calls), _Step(error=self.error, hold=self.hold)
+        )
+        self.calls.append((device_id, target_speech_seconds, max_seconds))
+        self.progress_callbacks.append(on_progress)
+        if step.hold_before_progress:
+            self._hold(should_stop)
+        on_progress(
+            EnrolmentProgress(
+                speech_seconds=step.speech_seconds, captured_seconds=20.0, level=step.level
+            )
+        )
+        if step.hold:
+            self._hold(should_stop)
+        if step.error is not None:
+            raise step.error
         return self.pcm
+
+
+# The six parts' limits, in order, as the guided enrolment passes them.
+_SIX_PART_CALLS = [
+    (7, 30.0, 90.0),
+    (7, 15.0, 45.0),
+    (7, 12.0, 45.0),
+    (7, 15.0, 45.0),
+    (7, 12.0, 45.0),
+    (7, 15.0, 45.0),
+]
+_VEC = (0.6, 0.8, 0.0, 0.0)
+_E1 = (1.0, 0.0, 0.0, 0.0)
+_E2 = (0.0, 1.0, 0.0, 0.0)
+# Against five parts of _E1 and one of _E2 its consistency is about 0.29:
+# under the calibrated figure, but above _E2's 0.0.
+_AWAY = (0.3, 0.0, (1 - 0.09) ** 0.5, 0.0)
+
+
+def _plain_part(
+    vector: tuple[float, ...] = _VEC, seconds: float = 31.0
+) -> PartEmbedding:
+    return PartEmbedding(vector=vector, speech_seconds=seconds, segment_vectors=(vector,))
+
+
+class _ScriptedEmbed:
+    """The `embed` seam: its results in call order (one call per captured
+    part attempt, the redo last); any further call returns the plain part."""
+
+    def __init__(self, results: list[PartEmbedding | Exception]) -> None:
+        self.results = list(results)
+        self.calls = 0
+
+    def __call__(self, pcm: bytes, embedder: Any) -> PartEmbedding:
+        index = self.calls
+        self.calls += 1
+        result = self.results[index] if index < len(self.results) else _plain_part()
+        if isinstance(result, Exception):
+            raise result
+        return result
 
 
 def _local_readiness(root: Path) -> Callable[[], Any]:
@@ -984,7 +1062,10 @@ def _practitioner_screen(
         "embedder_factory": lambda kind: _StubEmbedder(),
         "embedder_available": lambda kind: True,
         "vad_available": lambda: True,
-        "embed": lambda pcm, embedder: ((0.6, 0.8, 0.0, 0.0), 31.0),
+        # Stronger-voice plan Task 1.2: the embed seam returns the typed
+        # per-part result, and the "get ready" beat is instant in tests.
+        "embed": lambda pcm, embedder: _plain_part(),
+        "beat_seconds": 0.0,
         "confirm_delete": lambda: True,
         "readiness_provider": _local_readiness(tmp_path),
     }
@@ -1238,14 +1319,17 @@ class TestPractitionerScreen:
         screen.learning_checkbox.setChecked(True)
         seen: list[str] = []
         progress_seen: list[str] = []
+        status_seen: list[str] = []
 
         def on_release() -> None:
             seen.append(screen.profile_status_label.text())
             progress_seen.append(screen.progress_label.text())
+            status_seen.append(screen.enrolment_status_label.text())
 
         controller.end_enrolment_hook = on_release
         screen.on_record()
         # Busy UI, observed before the worker's result can be delivered.
+        assert screen.is_busy
         assert ("begin_enrolment",) in controller.calls
         assert controller.enrolling
         assert not screen.record_button.isEnabled()
@@ -1255,18 +1339,25 @@ class TestPractitionerScreen:
         assert not screen.consent_checkbox.isEnabled()
         assert not screen.learning_checkbox.isEnabled()
         assert not screen.device_combo.isEnabled()
+        assert not screen.refresh_devices_button.isEnabled()
+        assert not screen.confirm_consent_button.isEnabled()
         assert _process_until(qapp, lambda: not screen.is_busy and screen._lease is None)
         assert controller.calls.count(("end_enrolment",)) == 1
         assert not controller.enrolling
         assert len(seen) == 1 and seen[0].startswith("Voice profile saved 20")
-        assert progress_seen == ["Speech heard: 12 s of 30 s"]
-        assert capture.calls == [(7,)]
+        # The card is back at rest when the lease goes; the status line holds
+        # the saved line and the strength line (six identical parts: 100%).
+        assert progress_seen == ["Speech heard: 0 s of 30 s"]
+        assert status_seen == [
+            "Voice profile saved.\n" + models.enrolment_strength_line(1.0)
+        ]
+        assert capture.calls == _SIX_PART_CALLS  # one call per part, its own limits
         profile = load_profile(root=tmp_path)
         assert profile is not None
         assert profile.model_id == "stub-embedder-v1"
-        assert profile.embedding == (0.6, 0.8, 0.0, 0.0)
+        assert profile.embedding == pytest.approx((0.6, 0.8, 0.0, 0.0))  # the normalised mean
         assert profile.embedding_dim == 4
-        assert profile.enrolment_speech_seconds == 31.0
+        assert profile.enrolment_speech_seconds == 6 * 31.0  # the parts' seconds, summed
         assert profile.device_name == "Mic B"
         assert profile.consent.consent_text_version == models.CONSENT_TEXT_VERSION
         assert profile.consent.learning_opt_in is True
@@ -1282,6 +1373,7 @@ class TestPractitionerScreen:
         assert screen.delete_button.isEnabled()
         assert not screen.banner_label.isVisibleTo(screen)  # hidden by the save
         assert screen.level_bar.value() == 0
+        assert not screen.passage_label.isVisibleTo(screen)  # the card is hidden at rest
         screen.deleteLater()
 
     def test_refusal_by_the_controller_is_shown_and_holds_nothing(
@@ -1383,10 +1475,10 @@ class TestPractitionerScreen:
         embedding_started = threading.Event()
         release = threading.Event()
 
-        def slow_embed(pcm: bytes, embedder: Any) -> tuple[Any, float]:
+        def slow_embed(pcm: bytes, embedder: Any) -> PartEmbedding:
             embedding_started.set()
             assert release.wait(10.0), "the test never released the embedding"
-            return (0.6, 0.8, 0.0, 0.0), 31.0
+            return _plain_part()
 
         screen = _practitioner_screen(
             controller, FakeBackend(), tmp_path, capture=capture, embed=slow_embed
@@ -1446,7 +1538,7 @@ class TestPractitionerScreen:
         assert screen.consent_checkbox.isEnabled()
         assert screen.learning_checkbox.isEnabled()
         assert not screen.delete_button.isEnabled()
-        assert screen.record_button.text() == "Record my voice (about a minute)"
+        assert screen.record_button.text() == "Record my voice (about three minutes)"
         screen.deleteLater()
 
         # A declined confirmation deletes nothing.
@@ -1594,9 +1686,11 @@ class TestPractitionerScreen:
         order: list[tuple[str, int | None]] = []
         inner = _FakeCapture()
 
-        def capture(backend: Any, device_id: int, on_progress: Any, should_stop: Any) -> bytes:
+        def capture(
+            backend: Any, device_id: int, on_progress: Any, should_stop: Any, /, **limits: float
+        ) -> bytes:
             order.append(("capture", threading.get_ident()))
-            return inner(backend, device_id, on_progress, should_stop)
+            return inner(backend, device_id, on_progress, should_stop, **limits)
 
         controller = FakeController()
         screen = _practitioner_screen(
@@ -1611,8 +1705,10 @@ class TestPractitionerScreen:
         assert order[0] == ("handoff", threading.main_thread().ident)
         assert ("begin_enrolment",) in controller.calls
         assert _process_until(qapp, lambda: not screen.is_busy and screen._lease is None)
-        assert [name for name, _ in order] == ["handoff", "capture"]
+        # One capture per part, all on the one worker thread.
+        assert [name for name, _ in order] == ["handoff"] + ["capture"] * 6
         assert order[1][1] != threading.main_thread().ident
+        assert len({ident for _, ident in order[1:]}) == 1
         screen.deleteLater()
 
     def test_a_failing_handoff_releases_the_lease_and_starts_nothing(
@@ -1626,9 +1722,17 @@ class TestPractitionerScreen:
         screen = _practitioner_screen(
             controller, FakeBackend(), tmp_path, capture=capture, on_capture_start=boom
         )
+        # Stronger-voice plan Task 1.2: the error is shown BEFORE the lease
+        # is released, like every other exit.
+        at_release: list[str] = []
+        controller.end_enrolment_hook = lambda: at_release.append(
+            screen.enrolment_status_label.text()
+        )
         screen.consent_checkbox.setChecked(True)
         screen.on_record()
+        assert at_release == ["Cannot record now - RuntimeError: device busy"]
         assert not screen.is_busy
+        assert screen.record_button.isEnabled()  # the tab is idle again after the release
         assert screen.enrolment_status_label.text() == (
             "Cannot record now - RuntimeError: device busy"
         )
@@ -1637,6 +1741,83 @@ class TestPractitionerScreen:
         assert not controller.enrolling
         assert capture.calls == []
         assert list(tmp_path.iterdir()) == []
+        screen.deleteLater()
+
+    def test_a_stop_during_the_handoff_stands(self, qapp: Any, tmp_path: Path) -> None:
+        """Review round 12 LOW-001: a Stop pressed while the microphone handoff
+        runs — a screen lock or sleep delivered while closing the monitor's
+        stream pumps messages (round 57 SEC-021's re-entrancy) — is not wiped
+        by the start of the enrolment: nothing is saved."""
+        controller = FakeController()
+        capture = _FakeCapture()
+        screen = _practitioner_screen(
+            controller,
+            FakeBackend(),
+            tmp_path,
+            capture=capture,
+            on_capture_start=lambda: screen.on_stop(),
+        )
+        screen.consent_checkbox.setChecked(True)
+        screen.on_record()
+        assert screen.is_busy
+        assert screen.enrolment_status_label.text() == "Stopping..."
+        assert _process_until(qapp, lambda: screen._lease is None)
+        assert screen.enrolment_status_label.text() == "Enrolment stopped - nothing was saved."
+        assert capture.calls == _SIX_PART_CALLS[:1]  # the first part's check ends it
+        assert controller.calls.count(("end_enrolment",)) == 1
+        assert list(tmp_path.iterdir()) == []
+        screen.deleteLater()
+
+    @windows_only
+    def test_the_tab_is_busy_through_the_handoff(self, qapp: Any, tmp_path: Path) -> None:
+        """Peer round 14 PR-MED-4201: the controls follow the lease from the
+        moment it is taken, so during the microphone handoff (which may pump
+        messages) every control is already disabled and a click on the consent
+        or learning box changes nothing the worker's saved record is built
+        from. A first enrolment, so the consent box is editable when idle."""
+        from scribe_desktop.practitioner_profile import load_profile
+
+        capture = _FakeCapture()
+        enabled: dict[str, bool] = {}
+        seen: dict[str, bool] = {}
+        screen: Any = None
+
+        def handoff() -> None:
+            controls = {
+                "record": screen.record_button,
+                "consent": screen.consent_checkbox,
+                "learning": screen.learning_checkbox,
+                "device": screen.device_combo,
+                "refresh devices": screen.refresh_devices_button,
+                "confirm consent": screen.confirm_consent_button,
+                "delete": screen.delete_button,
+                "choose notes": screen.choose_files_button,
+                "learn": screen.learn_button,
+                **{f"style {style}": radio for style, radio in screen.style_radios.items()},
+            }
+            enabled.update({name: control.isEnabled() for name, control in controls.items()})
+            seen["stop shown"] = screen.stop_button.isVisibleTo(screen)
+            seen["stop enabled"] = screen.stop_button.isEnabled()
+            screen.consent_checkbox.click()  # a click delivered while the handoff runs
+            screen.learning_checkbox.click()
+            seen["consent still ticked"] = screen.consent_checkbox.isChecked()
+            seen["learning still unticked"] = not screen.learning_checkbox.isChecked()
+
+        screen = _practitioner_screen(
+            FakeController(), FakeBackend(), tmp_path, capture=capture, on_capture_start=handoff
+        )
+        screen.consent_checkbox.setChecked(True)
+        assert screen.consent_checkbox.isEnabled() and screen.learning_checkbox.isEnabled()
+        screen.on_record()
+        assert _process_until(qapp, lambda: screen._lease is None)
+        assert enabled  # the handoff ran and looked
+        assert [name for name, on in enabled.items() if on] == []  # all disabled during it
+        assert seen["stop shown"] and seen["stop enabled"]  # Stop is the escape
+        assert seen["consent still ticked"] and seen["learning still unticked"]
+        profile = load_profile(root=tmp_path)
+        assert profile is not None
+        assert profile.consent.consent_text_version == models.CONSENT_TEXT_VERSION
+        assert profile.consent.learning_opt_in is False  # the box as it stood at Record
         screen.deleteLater()
 
     def test_stop_and_delete_are_inert_when_idle(self, qapp: Any, tmp_path: Path) -> None:
@@ -1648,6 +1829,474 @@ class TestPractitionerScreen:
         assert screen.enrolment_status_label.text() == ""
         assert controller.calls == []
         assert screen.profile_status_label.text() == "No voice profile yet."
+        screen.deleteLater()
+
+    # --- the guided enrolment (stronger-voice plan Task 1.2) ---------------
+
+    def test_a_part_start_shows_its_card_at_zero_and_drops_a_late_event(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from PySide6.QtCore import Qt
+
+        capture = _FakeCapture(steps={1: _Step(hold_before_progress=True)})
+        screen = _practitioner_screen(FakeController(), FakeBackend(), tmp_path, capture=capture)
+        screen.consent_checkbox.setChecked(True)
+        screen.on_record()
+        assert _process_until(
+            qapp, lambda: len(capture.calls) == 2 and screen._current_part == (1, 1)
+        )
+        # Part 1 reported 12 s at level 0.4; part 2 has heard nothing yet.
+        quiet = models.ENROLMENT_SCRIPT[1]
+        assert screen.part_heading_label.text() == "Part 2 of 6: Speak quietly"
+        assert screen.part_cue_label.text() == quiet.cue
+        assert screen.passage_label.text() == quiet.text
+        assert screen.keep_reading_label.text() == models.ENROLMENT_KEEP_READING_LINE
+        for label in (
+            screen.part_heading_label,
+            screen.part_cue_label,
+            screen.passage_label,
+            screen.keep_reading_label,
+        ):
+            assert label.isVisibleTo(screen)
+        assert screen.level_bar.value() == 0
+        assert screen.progress_label.text() == "Speech heard: 0 s of 15 s"
+        assert screen.enrolment_status_label.text() == models.ENROLMENT_LISTENING_LINE
+        flags = screen.passage_label.textInteractionFlags()
+        assert not (flags & Qt.TextInteractionFlag.TextSelectableByMouse)
+        assert not (flags & Qt.TextInteractionFlag.TextSelectableByKeyboard)
+        # A late event from part 1 (its own callback) is dropped ...
+        capture.progress_callbacks[0](
+            EnrolmentProgress(speech_seconds=25.0, captured_seconds=30.0, level=0.9)
+        )
+        qapp.processEvents()
+        assert screen.progress_label.text() == "Speech heard: 0 s of 15 s"
+        assert screen.level_bar.value() == 0
+        # ... and part 2's own is shown against part 2's target.
+        capture.progress_callbacks[1](
+            EnrolmentProgress(speech_seconds=7.0, captured_seconds=9.0, level=0.5)
+        )
+        qapp.processEvents()
+        assert screen.progress_label.text() == "Speech heard: 7 s of 15 s"
+        assert screen.level_bar.value() == 50
+        screen.on_stop()
+        assert _process_until(qapp, lambda: screen._lease is None)
+        assert screen.enrolment_status_label.text() == "Enrolment stopped - nothing was saved."
+        assert not screen.passage_label.isVisibleTo(screen)
+        assert list(tmp_path.iterdir()) == []
+        screen.deleteLater()
+
+    def test_stop_during_a_beat_ends_it_at_once(self, qapp: Any, tmp_path: Path) -> None:
+        """D3: the beat is a cancellable wait with no stream open; at its
+        start the card shows the next part at zero. A beat that would
+        otherwise last a minute ends at the Stop."""
+        controller = FakeController()
+        capture = _FakeCapture()
+        screen = _practitioner_screen(
+            controller, FakeBackend(), tmp_path, capture=capture, beat_seconds=60.0
+        )
+        screen.consent_checkbox.setChecked(True)
+        screen.on_record()
+        get_ready = models.enrolment_get_ready_line(1, 60.0)
+        assert _process_until(qapp, lambda: screen.enrolment_status_label.text() == get_ready)
+        assert capture.calls == _SIX_PART_CALLS[:1]  # no capture runs during the beat
+        assert screen._current_part is None
+        assert screen.part_heading_label.text() == "Part 2 of 6: Speak quietly"
+        assert screen.level_bar.value() == 0
+        assert screen.progress_label.text() == "Speech heard: 0 s of 15 s"
+        started = time.monotonic()
+        screen.on_stop()
+        assert _process_until(qapp, lambda: screen._lease is None)
+        assert time.monotonic() - started < 10.0
+        assert screen.enrolment_status_label.text() == "Enrolment stopped - nothing was saved."
+        assert capture.calls == _SIX_PART_CALLS[:1]
+        assert controller.calls.count(("end_enrolment",)) == 1
+        assert list(tmp_path.iterdir()) == []
+        screen.deleteLater()
+
+    def test_a_screen_lock_during_a_beat_ends_it_at_once(self, qapp: Any, tmp_path: Path) -> None:
+        """The lock reaches the tab through the main window (round 57 SEC-019:
+        its handler presses the tab's own Stop), and ends a long beat at once."""
+        import types
+
+        window = _main_window(tmp_path)
+        screen = window.practitioner_screen
+        capture = _FakeCapture()
+        # The window builds the tab with the shipped seams; these are the
+        # helper's fakes, so no microphone, model or file is touched.
+        screen._capture = capture
+        screen._embed = lambda pcm, embedder: _plain_part()
+        screen._embedder_factory = lambda kind: _StubEmbedder()
+        screen._embedder_available = lambda kind: True
+        screen._vad_available = lambda: True
+        screen._beat_seconds = 60.0
+        screen.refresh_availability()
+        screen.consent_checkbox.setChecked(True)
+        screen.on_record()
+        get_ready = models.enrolment_get_ready_line(1, 60.0)
+        assert _process_until(qapp, lambda: screen.enrolment_status_label.text() == get_ready)
+        window._system_events = types.SimpleNamespace(status=types.SimpleNamespace(lock="on"))
+        started = time.monotonic()
+        try:
+            window._on_session_locked()
+        finally:
+            window._system_events = None
+        assert _process_until(qapp, lambda: screen._lease is None)
+        assert time.monotonic() - started < 10.0
+        assert screen.enrolment_status_label.text() == "Enrolment stopped - nothing was saved."
+        assert len(capture.calls) == 1
+        window.close()
+
+    @windows_only
+    def test_stop_during_a_re_record_leaves_the_stored_profile_unchanged(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        first = _FakeCapture()
+        screen = _practitioner_screen(FakeController(), FakeBackend(), tmp_path, capture=first)
+        _enrol(qapp, screen, first)
+        blob = (tmp_path / "voice.enc").read_bytes()
+        key = (tmp_path / "key.dpapi").read_bytes()
+        second = _FakeCapture(steps={3: _Step(hold=True)})
+        screen._capture = second
+        screen._embed = lambda pcm, embedder: _plain_part((0.0, 1.0, 0.0, 0.0))
+        screen.on_record()  # a current consent record: the box is already ticked
+        assert _process_until(qapp, lambda: len(second.calls) == 4)
+        screen.on_stop()
+        assert _process_until(qapp, lambda: screen._lease is None)
+        assert screen.enrolment_status_label.text() == "Enrolment stopped - nothing was saved."
+        assert (tmp_path / "voice.enc").read_bytes() == blob
+        assert (tmp_path / "key.dpapi").read_bytes() == key
+        screen.deleteLater()
+
+    @windows_only
+    def test_a_weak_part_is_recorded_again_once_and_replaced_whole(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.practitioner_profile import load_profile
+
+        capture = _FakeCapture(steps={6: _Step(hold_before_progress=True)})
+        embed = _ScriptedEmbed(
+            [
+                _plain_part(_E1),
+                _plain_part(_E2, seconds=5.0),  # the quiet part does not match
+                _plain_part(_E1),
+                _plain_part(_E1),
+                _plain_part(_E1),
+                _plain_part(_E1),
+                _plain_part(_E1, seconds=8.0),  # its redo does
+            ]
+        )
+        screen = _practitioner_screen(
+            FakeController(), FakeBackend(), tmp_path, capture=capture, embed=embed
+        )
+        screen.consent_checkbox.setChecked(True)
+        screen.on_record()
+        assert _process_until(qapp, lambda: screen._current_part == (1, 2))
+        assert screen.part_heading_label.text() == "Part 2 of 6 (again): Speak quietly"
+        assert screen.enrolment_status_label.text() == models.enrolment_redo_line("quiet")
+        assert screen.progress_label.text() == "Speech heard: 0 s of 15 s"
+        capture.hold_event.set()
+        assert _process_until(qapp, lambda: screen._lease is None)
+        assert capture.calls == [*_SIX_PART_CALLS, (7, 15.0, 45.0)]  # the quiet part, again
+        assert embed.calls == 7
+        profile = load_profile(root=tmp_path)
+        assert profile is not None
+        assert profile.embedding == pytest.approx(_E1)  # the first attempt's vector is gone
+        assert profile.enrolment_speech_seconds == 5 * 31.0 + 8.0  # and its seconds
+        assert screen.enrolment_status_label.text() == (
+            "Voice profile saved.\n" + models.enrolment_strength_line(1.0)
+        )
+        screen.deleteLater()
+
+    @windows_only
+    def test_a_redo_that_misses_again_is_saved_with_the_part_named(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.practitioner_profile import load_profile
+
+        capture = _FakeCapture()
+        embed = _ScriptedEmbed(
+            [_plain_part(_E1), _plain_part(_E2)] + [_plain_part(_E1)] * 4 + [_plain_part(_E2)]
+        )
+        screen = _practitioner_screen(
+            FakeController(), FakeBackend(), tmp_path, capture=capture, embed=embed
+        )
+        _enrol(qapp, screen, capture)
+        assert len(capture.calls) == 7  # one redo, never a second
+        profile = load_profile(root=tmp_path)
+        assert profile is not None
+        assert profile.embedding == pytest.approx(
+            (5 / 26**0.5, 1 / 26**0.5, 0.0, 0.0)
+        )
+        assert profile.enrolment_speech_seconds == 6 * 31.0
+        assert screen.enrolment_status_label.text() == "\n".join(
+            [
+                "Voice profile saved.",
+                models.enrolment_strength_line(5 / 6),
+                models.enrolment_weak_part_line("quiet"),
+            ]
+        )
+        screen.deleteLater()
+
+    @windows_only
+    def test_a_redo_short_at_its_cap_keeps_the_first_attempt(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.practitioner_profile import load_profile
+
+        capture = _FakeCapture(
+            steps={6: _Step(speech_seconds=3.0, error=EnrolmentTooShortError("only 3.0 s"))}
+        )
+        embed = _ScriptedEmbed(
+            [_plain_part(_E1), _plain_part(_E2, seconds=5.0)] + [_plain_part(_E1)] * 4
+        )
+        screen = _practitioner_screen(
+            FakeController(), FakeBackend(), tmp_path, capture=capture, embed=embed
+        )
+        _enrol(qapp, screen, capture)
+        assert len(capture.calls) == 7
+        assert embed.calls == 6  # the short redo was never embedded
+        profile = load_profile(root=tmp_path)
+        assert profile is not None
+        assert profile.enrolment_speech_seconds == 5 * 31.0 + 5.0  # the first attempt kept
+        status = screen.enrolment_status_label.text()
+        assert status.startswith("Voice profile saved.\n")
+        assert status.endswith(models.enrolment_weak_part_line("quiet"))
+        screen.deleteLater()
+
+    @windows_only
+    def test_two_parts_under_the_figure_only_the_lowest_is_redone(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        capture = _FakeCapture()
+        embed = _ScriptedEmbed(
+            [
+                _plain_part(_E1),
+                _plain_part(_E2),  # the lowest (0.0)
+                _plain_part(_E1),
+                _plain_part(_E1),
+                _plain_part(_AWAY),  # under the figure too (about 0.29)
+                _plain_part(_E1),
+                _plain_part(_E1),  # the quiet part's redo
+            ]
+        )
+        screen = _practitioner_screen(
+            FakeController(), FakeBackend(), tmp_path, capture=capture, embed=embed
+        )
+        _enrol(qapp, screen, capture)
+        assert capture.calls == [*_SIX_PART_CALLS, (7, 15.0, 45.0)]  # the quiet part only
+        status = screen.enrolment_status_label.text()
+        assert status.endswith(models.enrolment_weak_part_line("away"))
+        screen.deleteLater()
+
+    @windows_only
+    def test_an_optional_part_short_at_its_cap_is_left_out(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.practitioner_profile import load_profile
+
+        capture = _FakeCapture(
+            steps={1: _Step(speech_seconds=6.2, error=EnrolmentTooShortError("only 6.2 s"))}
+        )
+        screen = _practitioner_screen(FakeController(), FakeBackend(), tmp_path, capture=capture)
+        _enrol(qapp, screen, capture)
+        assert capture.calls == _SIX_PART_CALLS
+        profile = load_profile(root=tmp_path)
+        assert profile is not None
+        assert profile.enrolment_speech_seconds == 5 * 31.0
+        assert screen.enrolment_status_label.text() == "\n".join(
+            [
+                "Voice profile saved.",
+                models.enrolment_strength_line(1.0),
+                models.enrolment_left_out_line("quiet", 6.2),
+            ]
+        )
+        assert "Only 6 s of speech was heard in the quiet part" in (
+            screen.enrolment_status_label.text()
+        )
+        screen.deleteLater()
+
+    @windows_only
+    def test_both_optional_parts_left_out_each_with_its_own_seconds(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.practitioner_profile import load_profile
+
+        capture = _FakeCapture(
+            steps={
+                1: _Step(speech_seconds=6.2, error=EnrolmentTooShortError("only 6.2 s")),
+                4: _Step(speech_seconds=4.4, error=EnrolmentTooShortError("only 4.4 s")),
+            }
+        )
+        screen = _practitioner_screen(FakeController(), FakeBackend(), tmp_path, capture=capture)
+        _enrol(qapp, screen, capture)
+        profile = load_profile(root=tmp_path)
+        assert profile is not None
+        assert profile.enrolment_speech_seconds == 4 * 31.0
+        lines = screen.enrolment_status_label.text().split("\n")
+        assert lines[2:] == [
+            models.enrolment_left_out_line("quiet", 6.2),
+            models.enrolment_left_out_line("away", 4.4),
+        ]
+        assert "Only 6 s" in lines[2] and "Only 4 s" in lines[3]
+        screen.deleteLater()
+
+    @pytest.mark.parametrize(
+        ("steps", "embed_results", "calls", "message"),
+        [
+            # A required part short at its cap (the short-phrases part).
+            (
+                {2: _Step(speech_seconds=5.0, error=EnrolmentTooShortError("only 5.0 s"))},
+                [],
+                3,
+                "EnrolmentTooShortError: only 5.0 s",
+            ),
+            # The quiet part's embedding finds no usable speech: a failure,
+            # never a part left out.
+            (
+                {},
+                [_plain_part(), EnrolmentTooShortError("no speech detected")],
+                2,
+                "EnrolmentTooShortError: no speech detected",
+            ),
+            # The microphone fails in part 4.
+            (
+                {3: _Step(error=EnrolmentCaptureError("microphone failed: device lost"))},
+                [],
+                4,
+                "EnrolmentCaptureError: microphone failed: device lost",
+            ),
+        ],
+        ids=["required-part-short", "no-usable-speech", "device-failure"],
+    )
+    def test_a_failing_part_ends_the_enrolment_with_nothing_saved(
+        self,
+        qapp: Any,
+        tmp_path: Path,
+        steps: dict[int, _Step],
+        embed_results: list[Any],
+        calls: int,
+        message: str,
+    ) -> None:
+        controller = FakeController()
+        capture = _FakeCapture(steps=steps)
+        screen = _practitioner_screen(
+            controller,
+            FakeBackend(),
+            tmp_path,
+            capture=capture,
+            embed=_ScriptedEmbed(embed_results),
+        )
+        _enrol(qapp, screen, capture)
+        assert len(capture.calls) == calls
+        assert screen.enrolment_status_label.text() == f"Enrolment did not complete - {message}"
+        assert controller.calls.count(("end_enrolment",)) == 1
+        assert list(tmp_path.iterdir()) == []
+        assert screen.profile_present is False
+        assert not screen.passage_label.isVisibleTo(screen)
+        screen.deleteLater()
+
+    @windows_only
+    def test_the_poll_while_a_finished_result_is_queued_keeps_the_tab_busy(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """The held lease, not the worker thread's running state: a finished
+        worker whose result is still queued keeps every control disabled, and
+        Confirm consent (an out-of-date record, a cached OLD vector) writes
+        nothing over the profile the worker has just saved."""
+        from scribe_desktop.practitioner_profile import load_profile
+
+        first = _FakeCapture()
+        old = _practitioner_screen(
+            FakeController(), FakeBackend(), tmp_path, capture=first, config_root=tmp_path / "c"
+        )
+        _enrol(qapp, old, first)
+        old.deleteLater()
+        _make_consent_stale(tmp_path)
+
+        controller = FakeController()
+        second = _FakeCapture()
+        screen = _practitioner_screen(
+            controller,
+            FakeBackend(),
+            tmp_path,
+            capture=second,
+            embed=lambda pcm, embedder: _plain_part(_E2),
+            config_root=tmp_path / "c",
+        )
+        screen.consent_checkbox.setChecked(True)  # a fresh tick over the stale record
+        assert screen.confirm_consent_button.isEnabled()
+        screen.on_record()
+        task = screen._task
+        assert task is not None and task.wait(10_000)  # finished; its result still queued
+        assert not task.isRunning() and screen._lease is not None
+        saved = (tmp_path / "voice.enc").read_bytes()
+        stored = load_profile(root=tmp_path)
+        assert stored is not None and stored.embedding == pytest.approx(_E2)
+        screen.refresh_availability()  # the 5 s poll
+        assert screen.is_busy
+        for control in (
+            screen.record_button,
+            screen.consent_checkbox,
+            screen.learning_checkbox,
+            screen.confirm_consent_button,
+            screen.delete_button,
+        ):
+            assert not control.isEnabled()
+        screen.on_confirm_consent()
+        screen.on_delete()
+        assert (tmp_path / "voice.enc").read_bytes() == saved  # nothing written or deleted
+        assert _process_until(qapp, lambda: screen._lease is None)
+        stored = load_profile(root=tmp_path)
+        assert stored is not None and stored.embedding == pytest.approx(_E2)
+        assert stored.consent.consent_text_version == models.CONSENT_TEXT_VERSION
+        assert screen.enrolment_status_label.text().startswith("Voice profile saved.")
+        screen.deleteLater()
+
+    @windows_only
+    def test_the_final_save_runs_under_the_one_lease(
+        self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop.ui import practitioner
+
+        controller = FakeController()
+        held: list[tuple[bool, int]] = []
+        real_save = practitioner.save_profile
+
+        def save_and_observe(profile: Any, *, root: Path | None = None) -> Any:
+            held.append((controller.enrolling, controller.calls.count(("begin_enrolment",))))
+            return real_save(profile, root=root)
+
+        monkeypatch.setattr(practitioner, "save_profile", save_and_observe)
+        capture = _FakeCapture()
+        screen = _practitioner_screen(controller, FakeBackend(), tmp_path, capture=capture)
+        _enrol(qapp, screen, capture)
+        assert held == [(True, 1)]  # one save, inside the one lease taken at Record
+        assert controller.calls.count(("begin_enrolment",)) == 1
+        assert controller.calls.count(("end_enrolment",)) == 1
+        assert len(capture.calls) == 6
+        screen.deleteLater()
+
+    @windows_only
+    def test_a_re_record_under_a_current_consent_record(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.practitioner_profile import load_profile
+
+        first = _FakeCapture()
+        screen = _practitioner_screen(FakeController(), FakeBackend(), tmp_path, capture=first)
+        _enrol(qapp, screen, first)
+        assert screen.consent_checkbox.isChecked() and not screen.consent_checkbox.isEnabled()
+        assert screen.record_button.text() == "Re-record my voice"
+        assert screen.record_button.isEnabled()
+        second = _FakeCapture()
+        screen._capture = second
+        screen._embed = lambda pcm, embedder: _plain_part(_E2)
+        screen.on_record()  # no tick needed: the box is already ticked
+        assert _process_until(qapp, lambda: screen._lease is None)
+        assert second.calls == _SIX_PART_CALLS
+        stored = load_profile(root=tmp_path)
+        assert stored is not None and stored.embedding == pytest.approx(_E2)
+        assert screen.enrolment_status_label.text().startswith("Voice profile saved.")
         screen.deleteLater()
 
     # --- consent versions (Task 5.0) -------------------------------------
@@ -4211,16 +4860,18 @@ class TestMainWindow:
         self, qapp: Any, tmp_path: Path
     ) -> None:
         """The activity spans the result handler, so a finished-but-unhandled
-        enrolment still refuses the close (the PR6 thread guard)."""
+        enrolment still refuses the close (the PR6 thread guard). Since the
+        stronger-voice plan's Task 1.2 the tab's busy test is its HELD LEASE,
+        not the worker thread's running state."""
         from PySide6.QtGui import QCloseEvent
 
         window = _main_window(tmp_path)
-        window.practitioner_screen._task = _Running()
+        window.practitioner_screen._lease = EnrolmentLease()
         event = QCloseEvent()
         window.closeEvent(event)
         assert not event.isAccepted()
         assert "Voice enrolment in progress" in window.statusBar().currentMessage()
-        window.practitioner_screen._task = None
+        window.practitioner_screen._lease = None
         window.close()
 
     def test_practitioner_tab_hands_the_monitor_over_synchronously(

@@ -1689,8 +1689,11 @@ def spoken_by_confirmed_clinician(speaker: str, clinician_speaker: str | None) -
     """True when ``speaker`` IS the confirmed clinician cluster. With no
     confirmed role (``None``) nothing is the clinician's — the Critical
     Constraint that leaves clinician-owned sections blank. The phrase learner
-    (practitioner-profile plan D9 as amended) uses this same test, so a line
-    another speaker said can never reach it."""
+    (practitioner-profile plan D9 as amended) and the shorthand learner use
+    this same test, so only a line carrying the confirmed clinician's speaker
+    LABEL can reach them; the test reads the label, not who actually spoke, so
+    a line labelled the clinician's in error can (stronger-voice plan Task
+    1.4)."""
     return clinician_speaker is not None and speaker == clinician_speaker
 
 
