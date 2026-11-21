@@ -296,7 +296,7 @@ See the Planning Extraction Summary: building Lever C and several stored vectors
 ## Current State / Handoff Note
 - Last completed step: Phase 2, closed (2026-11-22, legs sb1 to sb5; committed `4c29283`, not pushed). Task 2.2 PASSED: `sv-measure.py --sets --against-product` from the clean tree at `4c29283` found 0 differences on 7 of 7 sets (183 encounters, 31 relabelled, 0 errors). Its records are under `sv-out/after/4c29283…/`. Before that, Phase 2's build and review (2026-11-21, legs sb1 to sb4): Task 2.1 (row B1-35) is 🟩 on the composer's green suite (11176 passed, 9 skipped). The `/review-loop` converged at round 17 (round 16: 1 MED and 1 LOW, both plan text, applied). The codex pass `stage-2.p1` converged at round 18 with 0 findings. Task 2.2's scratch mode is written and its self-test passes (56 passed), but its long run is owed, so Task 2.2 stays 🟨. Phase 2 has no live smoke of its own: no screen changed, and the labels' live check is Task P.3's mock smoke. Before that, Phase 1 (2026-11-21): Tasks 1.1, 1.2 and 1.4 are 🟩. The review converged at round 13 and the codex pass `stage-1.p1` at round 15. The suite passed: 11156 passed, 9 skipped. Its live smoke was HELD on the practitioner's word, not performed, and is owed before Task P.1. Before that, Phase 0 (2026-11-21): every Phase 0 task is done. Task 0.7's decision was "Confirm B1-35": Lever A is built with Lever B row B1-35, Lever C is not built, and the version is 0.4.2. Earlier: planning complete (Plan Mode with Fable, then `/review-plan`, 2026-11-20); codex plan peer-review rounds 1 to 5 applied (2026-11-20). Round 2 reduced the scope by two practitioner decisions: Lever C and several voice vectors are measured here and built by a follow-up plan.
 - Current in-progress step: Phase 4 (2026-11-22, leg sg1). Tasks 4.1 and 4.3 are 🟨: their scratch tooling is written (`sv_trace.py`, `sv_stitch_product.py`, the new modes in `sv-measure.py`) and not yet run; see the "Executor handoff (leg sg1)" bullet. Task 4.2 is the practitioner's and needs nothing built. Phase 2 is done (`4c29283`), Phase 1 (`9fb3777`), the Phase 0 close `8bedfc4`. The product learns from a relabelled line (leg sb2), a residue for Task 5.2.
-- Immediate next action (2026-11-22, leg sg4): the hardening review is at its cap (rounds 19–21). The composer runs the self-test, commits the plan, reruns the decode check (the note path's reach is now seeded from the scratch replay too), then runs the codex peer pass (the confirm of round 21's MED-001) and `/security-review`, then the SHA-256 freeze; see the leg sg4 bullet. Earlier (leg sg3): the composer runs the self-test (70 checks) after round 20's two scratch fixes, then resumes the executor for round 21 (the last under the cap); see the leg sg3 bullet. Earlier (leg sg2): the composer runs the self-test (70 checks), commits the plan, runs the decode check again and one refusal smoke (the leg sg2 bullet), then resumes the executor for review round 20 (round 2 of 3) of the hardening. Earlier (leg sg1): the composer runs the new self-test (70 checks), commits the plan so the checkout is clean, then runs the decode check; the long runs wait on the practitioner's "start now" (the leg sg1 bullet lists each with its command and expected time). Task 4.3's script is hardened and frozen before the practitioner's run.
+- Immediate next action (2026-11-22, leg sg5): the composer runs the self-test, the frozen hashes, commits the plan and reruns the decode check after peer round 22's two fixes, then runs peer round 23 as the confirm; see the leg sg5 bullet. Earlier (leg sg4): the hardening review is at its cap (rounds 19–21). The composer runs the self-test, commits the plan, reruns the decode check (the note path's reach is now seeded from the scratch replay too), then runs the codex peer pass (the confirm of round 21's MED-001) and `/security-review`, then the SHA-256 freeze; see the leg sg4 bullet. Earlier (leg sg3): the composer runs the self-test (70 checks) after round 20's two scratch fixes, then resumes the executor for round 21 (the last under the cap); see the leg sg3 bullet. Earlier (leg sg2): the composer runs the self-test (70 checks), commits the plan, runs the decode check again and one refusal smoke (the leg sg2 bullet), then resumes the executor for review round 20 (round 2 of 3) of the hardening. Earlier (leg sg1): the composer runs the new self-test (70 checks), commits the plan so the checkout is clean, then runs the decode check; the long runs wait on the practitioner's "start now" (the leg sg1 bullet lists each with its command and expected time). Task 4.3's script is hardened and frozen before the practitioner's run.
 - Earlier entry (kept for the record): Phase 4.
   - Task 4.1 first. Its leg writes `sv-measure.py --trace` (scratch). Its decode check reads Task 2.2's clean-HEAD records at `4c29283` against Phase 0's, so the seven sets need no new decode while `desktop/` is unchanged since `4c29283`.
   - The long parts still run on the practitioner's word: the paired trace's gate configuration over the 31 relabelled encounters (overnight), and D8's "after" harness reports. See Task 4.1's dated line.
@@ -746,6 +746,17 @@ See the Planning Extraction Summary: building Lever C and several stored vectors
        - Expected: a new `[provenance] ffl_lib.py sha256 f7d2d75c… (frozen: equal)` line; `[note-path] executable changes on the note path: 0`; the wording line naming `LEARNING_NOT_ATTRIBUTED_NOTE`; the same changed-file lines; seven `[decode]` lines with differences 0; and `DECODE DIFFERENCES TOTAL: 0 (sets passed 7 of 7, row B1-35)`, exit 0.
        - If the executable count is not 0, the line names the definitions. Hand them to me before anything else: either a definition the replay now reaches really changed since Phase 0 (D8's must-pause, the trace stays refused), or the reach over-includes (a scratch fix).
   - Then the composer's codex peer pass and `/security-review` over the three scratch files and the plan's Phase 4 lines, then the SHA-256 freeze of `sv-measure.py` and `sv_stitch_product.py` before the practitioner's Task 4.3 run. The long runs in the leg sg1 bullet are unchanged and still wait on the practitioner's "start now".
+- Executor handoff (leg sg5, 2026-11-22T02:19+11:00): codex peer round 22 (pass `stage-4.p1`, peer round 1 of 5) is transcribed verbatim. Its two findings (0 CRIT / 0 HIGH / 2 MED / 0 LOW) are verified as labelled and applied in scratch.
+  - PR-MED-4501 (`sv_trace.py`): the note-path gate now compares a module's own import bindings. Changing only which helper a caller's import binds to is now an executable change, and a whole note module's imports are seeded. The trace's check 4 gains "import-rebinding".
+  - PR-MED-4502 (`sv-measure.py`): a set whose attempt failed in this run (an enrolment WAV that could not be enrolled) can no longer be counted complete from an older record. `against_product_summary(root, sets, failed)` is the summary. The totals line adds `attempts failed N`, and the exit is 0 only with none failed. Check 2b gains two assertions.
+  - Files changed: `sv_trace.py` (`_references`, `reach`, check 4); `sv-measure.py` (`against_product_mode`, the new `against_product_summary`, check 2b); the plan (round 22 and its verification, this bullet). `sv_stitch_product.py` is unchanged. `SELF_TEST_CHECKS` stays 70.
+  - For the composer now (every call ends `< /dev/null`):
+    1. `.venv/Scripts/python.exe .cursor/loops/sv-measure.py --self-test --config validation/config < /dev/null`: 70 `[ok]` lines, then `SELF-TEST: 70 passed, 0 failed`, exit 0.
+    2. `sha256sum .cursor/loops/sv_lib.py .cursor/loops/ffl_lib.py .cursor/loops/ffl-measure-kept.py .cursor/loops/sv_stitch.py .cursor/loops/sv-measure-kept.py`: unchanged from Task 0.6's pins.
+    3. Commit the plan, so the tree is clean. Then run `.venv/Scripts/python.exe .cursor/loops/sv-measure.py --decode-check --verified 4c29283 < /dev/null`, because the note-path code changed.
+       - Expected: the same lines as at `8b424b6`, namely `ffl_lib.py … (frozen: equal)`, `[note-path] executable changes on the note path: 0`, the one wording line (`LEARNING_NOT_ATTRIBUTED_NOTE`), the same changed-file lines, seven `[decode]` lines with differences 0, and `DECODE DIFFERENCES TOTAL: 0 (sets passed 7 of 7, row B1-35)`, exit 0.
+       - The note path now also compares import bindings. Of the files changed since Phase 0, none rebinds an import a reached definition uses, as far as the diff shows, so 0 is expected. Any `module:name` it lists is read before anything else.
+  - Then the composer's peer round 23 as the confirm, then `/security-review` and the SHA-256 freeze. The long runs are unchanged.
 - Last plan sync: 2026-11-22
 - Loop config: executor=claude-p model="claude-opus-5-5" effort=high profile=default; peer=codex model="gpt-6-astra" effort=medium; architect=off; cadence=every-phase; caps=review:3,peer:5; gates=executor; cap-raise=executor; high-auto=on; peer-max=12; notify=action-only; scope=all; autocommit=on; isolation=none; merge=off; perms=scoped; liveness=10; monitor-delivery=auto; verify=composer
 - Run state: `/execute-loop` run `stronger-voice-20261120-200910-dc24` (isolation none, builds on `main`), started 2026-11-20; preflight done; no away grant (no away scope available: isolation none admits no merge, and the agent never drives the desktop app, so there is no live smoke tool).
@@ -772,6 +783,7 @@ See the Planning Extraction Summary: building Lever C and several stored vectors
 - 2026-11-22 round 19: 0 CRIT / 0 HIGH / 1 MED / 2 LOW; skew=none; action=none (`/review-loop` round 1 of 3 over Phase 4's scratch tooling — `sv_trace.py`, `sv_stitch_product.py` and `sv-measure.py`'s new modes — and the plan's Phase 4 lines, executor leg sg2; all three applied in scratch; the self-test and the decode check owed to the composer)
 - 2026-11-22 round 20: 0 CRIT / 0 HIGH / 0 MED / 2 LOW; skew=none; action=none (`/review-loop` round 2 of 3 over the same scratch tooling, executor leg sg3; round 19's three fixes confirmed on the composer's green self-test, decode check and refusal smoke; two new LOWs, both a guard's reach and its test, applied in scratch; the self-test owed to the composer)
 - 2026-11-22 round 21: 0 CRIT / 0 HIGH / 1 MED / 0 LOW; skew=none; action=none (`/review-loop` round 3 of 3, the cap, over the same scratch tooling, executor leg sg4; round 20's two fixes confirmed on the composer's green self-test; MED-001, the note path's reach seeded from the harness only, applied in scratch; the cap is reached with that fix unconfirmed by a further executor round, the codex peer pass being its confirm; the self-test and the decode check owed to the composer)
+- 2026-11-22 round 22: 0 CRIT / 0 HIGH / 2 MED / 0 LOW; skew=none; action=none (codex gpt-6-astra medium, Phase 4 tooling peer review, pass stage-4.p1 peer round 1 of 5; round 21's MED-001 fix present; PR-MED-4501 (an import rebinding alone missed by the note-path gate) and PR-MED-4502 (a failed `--again` attempt reporting the previous run's success) verified as labelled and applied by leg sg5; the self-test and the decode check owed to the composer, peer round 23 to confirm)
 
 Format /review will append:
 - YYYY-MM-DD round N: X CRIT / X HIGH / X MED / X LOW; skew=<class>; action=<rec>
@@ -1799,6 +1811,60 @@ Fix-delta self-check: PASS.
 - The plan is LF.
 
 Cap: this is round 3 of 3. The review reached its cap with MED-001 fixed and not confirmed by a further round of mine. Per the leg's instruction, the codex peer pass that follows is the confirm, and the composer records the cap transition.
+
+### Round 22 — 2026-11-22
+(Transcribed verbatim by executor leg sg5 from `.cursor/loops/stage-4-peer-r22.log`, the last `### Round 22` header; codex rc=0, escape-check post clean, refs unchanged.)
+Source: Codex — codex gpt-6-astra medium — Phase 4 tooling peer review (stage-4.p1, peer round 1)
+Status: Open (2 pending)
+
+Scope:
+
+- job 1: checked stitched output, refusals, exception guards and quiet hooks; guarded failures report types, expected refusals use controlled text, and the self-test restores all three hooks (`sv_stitch_product.py:691–723,996–1001`). No confirmed disclosure defect.
+- job 2: checked refusal order, audio custody and vector cleanup; preflight refusals precede audio reads, decoding uses the encrypted temporary store with `persist_key=False`, and boundaries/finally blocks clear owners and exception frames.
+- job 3: checked scratch loading and pins; modules execute the same bytes whose digest is retained (`sv-measure.py:164–170`). Both trace modes pin `ffl_lib.py`; replay-source reads must match the executed digest (`sv_trace.py:967–985`). Round 21’s changes are present.
+- job 4: checked product-versus-scratch comparisons, decode fields, checkout gates and note-path analysis; probability-only differences are detected and stitched comparisons cover the required fields. Found the import-binding and retry defects below.
+- job 5: checked per-side trace failures, configuration restriction and recorded fields; errors remain counted while processing continues, configuration is restricted to repository `validation/config`, and records contain synthetic placements, codes and metrics without vectors.
+- job 6: checked scope and supplied verification evidence; Git status is clean, and only the plan differs from `4c29283`. The requested product/scripts/validation/extension diff is empty. Frozen-file equality is accepted from supplied evidence; no kept-recording script was invoked. Reviewed fixtures use synthetic inputs.
+
+Findings:
+
+- **PR-MED-4501** (MED, regression verification, `.cursor/loops/sv_trace.py:454`): The note-path gate can miss an executable change made solely by rebinding an imported dependency. Reproduction: in the existing synthetic note/helper fixture, change the caller’s import to alias another already-existing helper with different behaviour, leaving the caller and both helper definitions unchanged. Reachability includes both target definitions, but omits the caller’s local import binding; comparing their unchanged definitions therefore reports no executable change. Evidence: `"found.add((target[0], target[1]))"` bypasses the local alias, while whole-module seeding uses `"pending.extend((module, name) for name in info.defs)"` (`:478`). Although `dumps` can compare aliases (`:571–572`), this binding never reaches it. Recommendation: Fix-now - Include used import bindings in the compared reach and add an import-only rebinding regression case.
+
+- **PR-MED-4502** (MED, retry correctness, `.cursor/loops/sv-measure.py:1194`): A failed `--again` attempt can report success using the previous run’s records. Reproduction: retain a complete successful run at the same clean HEAD, request `--again`, and make an enrolment WAV unavailable or invalid. Encounter inventory checks pass, but enrolment fails; the handler clears only the temporary attempt and continues. The final summary reads the older complete record and can return zero despite no retry decode occurring. Evidence: `"_clear_folder(part)"` followed by `"continue"` (`:1196–1197`); later, `"summary_record = _read_json(run)"` and `"complete_sets += bool(summary_record.get(\"complete\"))"` (`:1263–1266`) feed the success return at `:1271`. Recommendation: Fix-now - Track failures of the current attempt and prevent previous records from satisfying completion for a requested retry.
+
+Verification:
+
+- Files read: 15 unique scoped files.
+- Jobs evidenced: 6/6.
+- Findings verified statically: 2 MED.
+- Supplied results: 70 self-tests passed; zero decode differences across 7/7 sets.
+- No scripts, tests, network commands or writes performed.
+
+PEER-ROUND-22 RESULT: 2 findings (CRIT 0 / HIGH 0 / MED 2 / LOW 0).
+
+Executor verification and /fix (leg sg5, 2026-11-22):
+- PR-MED-4501: verified, MED as labelled.
+  - The peer is right. In `_references`, a used module-level alias added only its target `(target module, name)`, never the binding `(module, local name)` itself. And `reach` seeded a whole module from its definitions only.
+  - So `from scribe_desktop.helpers import unused as used`, in place of `import used`, reached two unchanged helpers and compared no binding. The result was 0 executable changes for a call that now runs other code.
+  - /fix decision: Applied.
+  - /fix notes:
+    - A used name resolved through a module-level alias (not a function's own import, which is inside the definition's dump) also adds the binding `(module, name)`. A module alias used as `module.attr` is covered too, because its `Name` node is visited.
+    - A whole note module's import bindings are seeded with its definitions.
+    - `dumps` compares a binding as its `(module, name)` target, so a rebinding is an executable change of the caller's module binding.
+    - The trace's check 4 gains "import-rebinding": note's `import WORDS, used` becomes `import WORDS, unused as used`, with the caller and both helpers unchanged. Expected: exactly `scribe_desktop.note:used`. Without the fix that case reports none.
+    - The other check 4 cases are unchanged by the fix, because their bindings are identical at both commits.
+  - /fix date: 2026-11-22; /fix applied by: Claude Code
+- PR-MED-4502: verified, MED as labelled.
+  - A set whose enrolment WAV fails clears its attempt and `continue`s. The summary then reads `root/<set>/run.json`, which still holds the previous complete run at that HEAD, so the exit could be 0 with no decode made.
+  - The same holds for a re-run from a dirty tree, which never skips a set. A run without `--again` at a clean HEAD skips a complete set, so it cannot reach this.
+  - /fix decision: Applied.
+  - /fix notes:
+    - `against_product_mode` keeps the sets whose attempt failed in this run (`failed`).
+    - The summary is now `against_product_summary(root, sets, failed)`, which counts such a set as not complete whatever an older record says. The totals line adds `attempts failed N`, and the exit is 0 only with no failed attempt.
+    - The older records are kept: they are a complete earlier run at the same commit, and the decode check still reads their differences.
+    - Check 2b gains "summary:older-complete" (an older complete record counts, `(0, 1, 0)`) and "summary:failed-attempt" (the same record with that set's attempt failed counts as not complete, `(0, 0, 0)`).
+  - /fix date: 2026-11-22; /fix applied by: Claude Code
+- Neither fix changes a measured figure, a comparison or a printed table beyond the totals line's new count. `SELF_TEST_CHECKS` stays 70 (the new assertions are inside checks 2b and the trace's check 4). The plan is LF. Peer round 23 is the confirm.
 
 ## Tasks
 
