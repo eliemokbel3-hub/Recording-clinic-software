@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** stronger-voice (guided enrolment and matching within a consult; line splitting and several voice vectors measured for a follow-up plan)
-**Overall Progress:** `0%`
+**Overall Progress:** `32%`
 
 ## Lifecycle State
 - Active
@@ -16,7 +16,7 @@
 - Related: `plan-practitioner-profile.md` (this plan amends its D3, D8 and D13; its D-P1 pass mark stays 0.50); `plan-ui-refresh.md` (its deferred Phase 6 keeps the number 0.4.1); `plan-phase3a-note-pipeline.md` (Task 9.1's ten consultations restart after this plan's install); `docs/testing/exit-gate-options.md` (route 4, a product change for one failure family).
 
 ## Goal
-Make the app label who is speaking correctly in a real consultation. Two levers are built, each measured first: (A) a guided voice enrolment with an on-screen reading script that covers the practitioner's normal, quiet, short-phrase and turned-away speech; (B) matching that uses the consultation itself to recover the practitioner's lines near the pass mark. Two more are measured here and built, if at all, by a follow-up plan: (C) splitting a transcript line where the speaker changes, and several stored voice vectors. Then one release (0.4.2), a re-enrolment, and the restart of Task 9.1's ten consultations. Shadow mode stays on. No gate claim.
+Make the app label who is speaking correctly in a real consultation. Two levers are built, each measured first: (A) a guided voice enrolment with an on-screen reading script that covers the practitioner's normal, quiet, short-phrase and turned-away speech; (B) matching that uses the consultation itself to recover the practitioner's lines near the pass mark. Two more are measured here and built, if at all, by a follow-up plan: (C) splitting a transcript line where the speaker changes, and several stored voice vectors. Then one release (0.4.2), a re-enrolment, and the restart of Task 9.1's ten consultations. Shadow mode stays on. No gate claim. Settled at Task 0.7 (2026-11-21, "Confirm B1-35"): Lever B is row B1-35, a fixed recovery mark at 0.35 under the pass mark. After a match it recovers practitioner lines that score from 0.35 to just under 0.50; it does not draw on the rest of the consultation, which was the session-adaptation rows' approach (B2/B3, not built).
 
 ## Planning Extraction Summary
 
@@ -27,7 +27,7 @@ Make the app label who is speaking correctly in a real consultation. Two levers 
 ### Agreed Scope (Build Now)
 - Phase 0: measure, in scratch only, with truth by construction (D2) and numbers-only real speech (D7); freeze the bars first; select what is built by one fixed order (D9).
 - Lever A, guided enrolment: built in any case (the practitioner's request, 2026-11-20). One stored vector; no schema change.
-- Lever B, matching within a consult: the first candidate in D4's ordered table that qualifies under D9; none means Lever A alone.
+- Lever B, matching within a consult: the first candidate in D4's ordered table that qualifies under D9; none means Lever A alone. Settled at Task 0.7 (2026-11-21): row B1-35.
 - Lever C (splitting a merged line) and several stored voice vectors: measured in scratch against their frozen bars and reported; not built by this plan (the practitioner's "Measure now, build next (Recommended)" and "Measure now, build later (Recommended)", 2026-11-20).
 - Regression on the seven seen synthetic sets, before and after, and product parity on the stitched truth.
 - One release, 0.4.2, installed with shadow mode on; the practitioner re-enrols; Task 9.1 restarts at C01 with a fresh config hash.
@@ -42,7 +42,7 @@ Make the app label who is speaking correctly in a real consultation. Two levers 
   - Recommended next action: a follow-up plan in Plan Mode, seeded by this plan's tables and by these open design points from review round 2: the final pieces when one line holds several cuts, frame alignment and the live path's zero-padded last frame (PR-MED-008); the measurement harness's per-condition counts after a split (PR-MED-009); a cut that moves a line's first word or separates a number from its unit, which changes a warning or a learning refusal (PR-MED-012); a live speed check at real-time cadence (PR-MED-014); centre parameters when no session-rule row is built (PR-HIGH-006); a split that is right in time and wrong in speaker (PR-HIGH-009); a v2 profile's minimum number of vectors and its consent renewal (PR-MED-015); readiness readers that have no audio to score (PR-MED-016); whether `consent-v3` covers several vectors.
   - Risk if deferred: ux-degradation: a quick back-and-forth stays one line under one label, so one speaker's words in it carry the other's label; the practitioner corrects it at review.
   - Revisit by: revisit-when: this plan's Task 0.7 brief is read (the tables say whether either is worth building), and again when the ten consultations are scored.
-- Two-tier clinician labels: a line matched only by the session rule (below the pass mark) is labelled the practitioner's and flagged, but not auto-placed in a clinician-owned section.
+- Two-tier clinician labels: a line matched only by the session rule (below the pass mark) is labelled the practitioner's and flagged, but not auto-placed in a clinician-owned section. (Task 0.7, 2026-11-21: with B1-35 built, that line is one the recovery mark labels, on its own score from 0.35 to under 0.50 after a direct match.)
   - Why deferred: it needs a new stored transcript field (older builds could not read new transcripts) and about a day; the practitioner chose "Defer (Recommended)" on 2026-11-20.
   - Intended future outcome: a wrongly matched patient line can never enter assessment, diagnosis, advice or plan unflagged, and never teach a phrase or a shorthand rule.
   - Relevant files / subsystems: `transcription.py` (`TranscriptSegment`), `note.py` (`admissible_sections`, the router), `note_config.py` (the phrase learners), `ui/note.py` (the edit-to-rule learner), `ui/models.py` (the line chooser).
@@ -88,6 +88,7 @@ Make the app label who is speaking correctly in a real consultation. Two levers 
 - One fixed order decides what is built, with Lever A alone as its last case (D4, D9).
   - Why: a recovery mark under the pass mark is one constant; session adaptation is new logic and a new in-memory custody; an order fixed before the numbers leaves no choice to make after them.
   - Alternatives rejected: always building session adaptation; choosing the best-looking row.
+  - Result (Task 0.7, 2026-11-21): the order selected B1-35, and the practitioner confirmed it.
   - Still applies to follow-up work: Yes
 - Lever B never removes a practitioner label today's rule gives, and never changes how a clinician is confirmed (D4).
   - Why: the fault observed is practitioner lines lost to the other label; a rule that only adds, and only when today's rule has already confirmed the practitioner, cannot make today's confirmed lines worse.
@@ -96,6 +97,7 @@ Make the app label who is speaking correctly in a real consultation. Two levers 
 - Speaker-model vectors may be held in memory for the transcription pass, never stored, in scratch as in the product (C4).
   - Why: the session rule cannot work from one number per segment; the practitioner accepted it ("Accept, memory only (Recommended)", 2026-11-20).
   - Alternatives rejected: storing vectors in the transcript (a biometric of the patient at rest); a scratch cache of vectors on disk (the same rule applies to synthetic audio, so one rule has no exception to police).
+  - Settled for this plan's product build (Task 0.7, 2026-11-21): the built row B1-35 reads one number per segment, so the product keeps no vector, and C4's owner, collection helper and live handover are not built here. The rule still holds for scratch, and for the follow-up plan if it builds session adaptation or several vectors.
   - Still applies to follow-up work: Yes
 
 ## Key Findings
@@ -151,7 +153,7 @@ N/A.
 - If a part did not match the rest, the weakest one is named and recorded again, once. The profile is saved, and a strength line says in plain words how well the parts matched each other.
 
 ### Flow 3 — A consultation after the change
-- With Lever B built, lines the practitioner spoke quietly or briefly are labelled theirs when the consultation holds enough of their clear speech. A left-out practitioner line draws its warning. A quick back-and-forth is still one line (the follow-up plan).
+- With Lever B built, lines the practitioner spoke quietly or briefly are labelled theirs. As built (B1-35, Task 0.7, 2026-11-21): a line that scores at or above 0.35 is labelled theirs whenever at least one of their lines matched at the pass mark and today's rule confirms them. A left-out practitioner line draws its warning. A quick back-and-forth is still one line (the follow-up plan).
 
 ### Flow 4 — Release and restart
 - Build of record, re-verify, install with shadow mode on, re-enrol, mock smoke, a fresh config hash, then C01.
@@ -292,10 +294,10 @@ None. The profile stays schema v1 with one vector. The transcript gains no field
 See the Planning Extraction Summary: building Lever C and several stored vectors (deferred to a follow-up plan); two-tier clinician labels (deferred); routing of uncued lines, a third voice, the frozen constants and texts, and a comparison with another scribe (excluded).
 
 ## Current State / Handoff Note
-- Last completed step: Planning complete (Plan Mode with Fable, then `/review-plan`, 2026-11-20); codex plan peer-review rounds 1 to 5 applied (2026-11-20). Round 2 reduced the scope by two practitioner decisions: Lever C and several voice vectors are measured here and built by a follow-up plan.
-- Current in-progress step: the cross-family plan review (`/peer-loop plan review`, codex `gpt-6.2-astra` high, cap 5) reached its cap without converging: findings per round 25, 32, 22, 23 and 17, none critical, every one applied or closed by a recorded scope decision. Whether to run more rounds or to build is the practitioner's decision.
-- Immediate next action: the practitioner chose to build ("Start the build", 2026-11-20); `/execute-loop` is running (Run state below). Task 0.1, the practitioner's approval of the reading script, first.
-- Open blockers / open questions: Tasks 0.1, 0.2 and 0.7 are the practitioner's decisions; Tasks 0.3, 0.5b, 0.6, 4.2 and 4.3 are the practitioner's runs.
+- Last completed step: Phase 0 (2026-11-21): every Phase 0 task is done. Task 0.7's decision was "Confirm B1-35": Lever A is built with Lever B row B1-35, Lever C is not built, and the version is 0.4.2. Earlier: planning complete (Plan Mode with Fable, then `/review-plan`, 2026-11-20); codex plan peer-review rounds 1 to 5 applied (2026-11-20). Round 2 reduced the scope by two practitioner decisions: Lever C and several voice vectors are measured here and built by a follow-up plan.
+- Current in-progress step: the Phase 0 close: review, the peer pass, `/document` and the commit (the composer's).
+- Immediate next action: after the Phase 0 close, Phase 1 (Task 1.1). The earlier entry, kept for the record: the practitioner chose to build ("Start the build", 2026-11-20) after the plan review reached its cap (findings per round 25, 32, 22, 23 and 17, none critical).
+- Open blockers / open questions: Tasks 4.2 and 4.3 are the practitioner's runs. Tasks 0.1, 0.2 and 0.7 (decisions) and 0.3, 0.5b and 0.6 (runs) are done.
 - Context a fresh session needs: the first Task 9.1 score of 2026-11-20 is set aside and is recorded nowhere in the repository; the ten restart after this plan's install.
 - Executor handoff (leg svx1, 2026-11-20T22:47+11:00): Task 0.4's code is written, not run (verify=composer; this leg runs no Python). Task 0.4 stays 🟨 until the long runs and the premise at 0 differences.
   - Written (git-ignored, `.cursor/loops/` only; no tracked file changed but this plan): `sv_lib.py` (D4's 76 rows with fixed ids and `R0`; `PASS_MARK = 0.50` literal; D5's six grid points `F3.0-W1.5`, `F3.0-W1.0`, `F3.0-W2.0`, `F4.0-W1.5`, `F4.0-W1.0`, `F4.0-W2.0`; D7's 78 combinations `K0`, `P1:R0`, `P1:<row id>`; scratch `R0`, `run_row`, `form_centres`, the D5 rules, the two-class truth with the tie tested first and overlap regions excluded, cut scoring, exposure; C4's `VectorOwner`, `vector_boundary`, `clear_exception_frames`; the size and key check `vector_free_problems`) and `sv-measure.py` (`--self-test`, `--pass`, `--premise`, `--record-before`; `--sets`, `--stitched` and `--trace` are left for later legs). Neither imports `ffl_lib` or `lcm_lib` (the set names and ids are copied), so no hash check is needed yet.
@@ -399,6 +401,47 @@ See the Planning Extraction Summary: building Lever C and several stored vectors
   - No self-test change was needed. With real pins, the pins case checks that each pin equals its file's SHA-256 instead of running the placeholder refusal. The summary line now reads `frozen`. The chain-refusal case builds its own pins.
   - Task 0.6 gains a dated "Frozen" line with the four hashes. The script's own SHA-256 is the composer's to record at the freeze commit. Task 0.6 stays open: its practitioner run is still to come.
   - For the composer: `.venv/Scripts/python.exe .cursor/loops/sv-measure-kept.py --self-test < /dev/null` should exit 0 and print 33 `| <case> | pass |` rows, then `Pinned SHA-256 values: frozen`, `Self-test cases: 33` and `Self-test failures: 0`. If the pins case fails, one of the four files no longer matches its pin.
+- Executor handoff (leg svx10, 2026-11-21T01:50+11:00): the plan only; nothing was run by this leg. I read the pass and premise logs, the self-test outputs and the sets report whole.
+  - Task 0.4 stays 🟨, one evidence line short. The size and key check has not yet run over the pass's records (`sv-selftest-5.txt` predates them: `0 JSON file(s) checked`). The command and its expected lines are on the task.
+  - Task 0.5 gains its "Done (agent)" 0.5a line (bars B and C's seen-set lines, the labelling-against-routing comparison). It stays 🟥: 0.5b and 0.5c are to come, and no selection is made.
+  - The progress figure is 9 % (2 of 22 tasks done).
+  - Next: the composer's one self-test run for Task 0.4. Then the practitioner: Task 0.3's recordings, then 0.5b and 0.6.
+- Executor handoff (leg svx11, 2026-11-21T01:53+11:00): the plan only; nothing was run by this leg.
+  - Task 0.4 is 🟩. `.cursor/loops/sv-selftest-6.txt` (the composer's run with `--config validation/config`, which leg svx10's command left out) checks the pass's 191 JSON records under `sv-out/` and ends 55 passed, 0 failed; the evidence is on the task.
+  - Task 0.5 stays 🟥. The progress figure is 14 % (3 of 22 tasks).
+  - Next, the practitioner's: Task 0.3's recordings, then 0.5b and 0.6.
+- Executor handoff (leg svx12, 2026-11-21T15:05+11:00): the plan only; nothing was run by this leg. I read `.cursor/loops/sv-stitched-paste.md` whole.
+  - Task 0.3 is 🟩: the practitioner's word, and the stitched run found all thirteen and kept 6 of 6 parts per take.
+  - Task 0.5 gains its "Done (practitioner)" 0.5b line:
+    - bar A1 met for P1, and P0's quiet line not met;
+    - bar A2 met (+7.2);
+    - the calibrated figure 0.651;
+    - bar B's stitched lines met by every row;
+    - bar C's halving met but its wrong-split rate not met at any point;
+    - parity 0.
+  - Task 0.5 stays 🟥 until 0.5c. The progress figure is 18 % (4 of 22 tasks).
+  - Next: the practitioner's Task 0.6 run (the command is given in chat), then 0.5c.
+- Executor handoff (leg svx13, 2026-11-21T18:25+11:00): the plan only; nothing was run by this leg. I read `.cursor/loops/sv-kept-paste.md` whole.
+  - Task 0.6 is 🟩. Its "Done (practitioner)" line holds the "For the record" block's content only: COMPLETE, no override, each combination's three words.
+  - Task 0.5 is 🟩. 0.5c walked D9's order over the three line sets: B1-45 and B1-40 fail on their kept direction word (`not met`); B1-35 meets every line of bar B, so the selected release id is B1-35.
+  - B1-35 adds over P1 at R0 +2.2 / +7.2 / +23.8 recall points on the stitched pools (overall / quiet / close-turn), and its kept third word is `adds`. Bars A2 (met) and C (met at no grid point) are recorded for the follow-up plan.
+  - Task 0.7 is untouched and stays 🟥. The progress figure is 27 % (6 of 22 tasks).
+  - Next: the practitioner's Task 0.7 decision, on the composer's brief.
+- Executor handoff (leg svx14, 2026-11-21T19:00+11:00): plans only; nothing was run by this leg.
+  - Task 0.7 is 🟩: the practitioner's "Confirm B1-35", the brief's points and the consequences. Lever A plus Lever B row B1-35; no vector kept; Lever C not built; 0.4.2.
+  - Phase 0 is marked done (all seven tasks). The progress figure is 32 % (7 of 22 tasks).
+  - Siblings reconciled with dated lines: the Goal; Agreed Scope's Lever B line; two Key Design Decisions (the order's result; C4 settled for the product build); Flow 3; the handoff note's top four lines; Phase 2's built row and which of Task 2.1's parts apply; Task 5.1's version.
+  - Swept for contradicted siblings by search (`uses the consultation itself`, `enough of their clear speech`, `row is built`, `the selected row`, `Lever B built`). What remains is conditional on the built row's type and stays true for B1-35.
+  - `.cursor/plans/plan-practitioner-profile.md` (LF, kept) gains four dated lines only: D3 (the recovery mark 0.35 after a match; pass mark and remainder rule unchanged), D8 (the guided six-part capture, still in memory, one vector), D13 (`speaker_1` also takes B1-35's relabelled segments; no vector kept), D-P1 (unchanged).
+  - Next: the composer's Phase 0 close (review, peer pass, `/document`, commit), then Phase 1.
+- Executor handoff (leg svx15, 2026-11-21T19:08+11:00): Phase 0's close review, plans only; nothing was run by this leg.
+  - `/review-loop` over Phase 0's tracked diff since `42032e1` (both plans), cap 3: converged after one round (round 10). It found no CRIT, HIGH or MED, so no further round was run.
+  - Round 10: 0 CRIT / 0 HIGH / 0 MED / 5 LOW, all wording, all applied. Every recorded figure and word in Tasks 0.3 to 0.7 and the svx10 to svx14 bullets matched its evidence file, and no selection or decision moved.
+  - The progress figure counts the 22 numbered tasks (0.1 to 0.7, 1.1, 1.2, 1.4, 2.1, 2.2, 4.1 to 4.3, 5.1, 5.2, P.1 to P.5); Step H's five boxes are not counted (round 10 LOW-005). It stays 32 %.
+  - The practitioner-profile plan's D8 dated line was reworded (round 10 LOW-001); it still has four added lines and LF endings.
+- Executor handoff (leg svx16, 2026-11-21T19:12+11:00): the plan only; nothing was run by this leg except the history check.
+  - Phase 0's close review is done. Round 10 (`/review-loop`) applied 5 LOW. Round 11 (codex `gpt-6-astra` medium, pass `stage-0.p2`, peer round 1 of 5) found nothing, so the pass converged. Round 11's block is transcribed verbatim, and its Review History line is added.
+  - Next: the composer runs `/document`, commits Phase 0 locally, then Phase 1 (Task 1.1).
 - Last plan sync: 2026-11-21
 - Loop config: executor=claude-p model="claude-opus-5-5" effort=high profile=default; peer=codex model="gpt-6-astra" effort=medium; architect=off; cadence=every-phase; caps=review:3,peer:5; gates=executor; cap-raise=executor; high-auto=on; peer-max=12; notify=action-only; scope=all; autocommit=on; isolation=none; merge=off; perms=scoped; liveness=10; monitor-delivery=auto; verify=composer
 - Run state: `/execute-loop` run `stronger-voice-20261120-200910-dc24` (isolation none, builds on `main`), started 2026-11-20; preflight done; no away grant (no away scope available: isolation none admits no merge, and the agent never drives the desktop app, so there is no live smoke tool).
@@ -413,6 +456,8 @@ See the Planning Extraction Summary: building Lever C and several stored vectors
 - 2026-11-21 round 7: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=same-family; action=none (`/security-review` over the same files after round 6's fixes, executor leg svx7; the one LOW is a sibling of round 6 LOW-003)
 - 2026-11-21 round 8: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=none; action=none (codex `gpt-6-astra` medium, Task 0.6 code peer review, pass `stage-0.p1` peer round 1 of 5; peer labels, pending the executor's leg-1 verification)
 - 2026-11-21 round 9: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none (codex `gpt-6-astra` medium, Task 0.6 code peer review, pass `stage-0.p1` peer round 2 of 5; confirms round 8's PR-LOW-3801 fix; the pass converged)
+- 2026-11-21 round 10: 0 CRIT / 0 HIGH / 0 MED / 5 LOW; skew=none; action=none (`/review-loop` round 1 of 3 over Phase 0's tracked diff since `42032e1`, both plans, executor leg svx15; every recorded number matched its evidence; the five are wording, all applied)
+- 2026-11-21 round 11: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none (codex gpt-6-astra medium, Phase 0 close documents peer review, pass stage-0.p2 peer round 1 of 5; the pass converged)
 
 Format /review will append:
 - YYYY-MM-DD round N: X CRIT / X HIGH / X MED / X LOW; skew=<class>; action=<rec>
@@ -1048,9 +1093,52 @@ Verification:
 
 PEER-ROUND-9 RESULT: 0 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 0).
 
+### Round 10 — 2026-11-21
+Round status: Closed
+Source: Claude Code
+Scope: Phase 0's tracked diff, `git diff 42032e1 -- .cursor/plans/plan-stronger-voice.md .cursor/plans/plan-practitioner-profile.md` (Tasks 0.3 to 0.7, the svx10 to svx14 handoff bullets, the Task 0.7 sibling lines and the four dated lines on the practitioner-profile plan). `/review-loop` round 1 of 3, executor leg svx15 (no Python run). The frozen scratch code is not re-reviewed (rounds 6 to 9).
+Checked against the evidence, each figure and word:
+- Task 0.4: `sv-pass.log` (seven sets `errors 0, complete`, `PASS PROBLEMS: 0`, `PASS_END rc=0`, HEAD `7e730b1`, desktop clean); `sv-premise.log` (50 / 22 / 22 / 23 / 22 / 22 / 22, `PREMISE DIFFERENCES TOTAL: 0 (sets complete 7/7)`); `sv-selftest-5.txt` (the fixture cases named, `0 JSON file(s) checked`, 55 passed); `sv-selftest-6.txt` (191 JSON and 15 other files, 55 passed).
+- Task 0.5a against `sv-sets-report.md`: the cohort 183, R0's two rates and seconds, every B1 figure, B2's 32 of 36 at +0.03 or +0.10 and B2-21 to B2-24 at 1.11 % (+0.51), B3 from +0.61 to +1.34, bar C's 86 encounters, 16.9 s, F3.0-W1.0's 3 kept cuts and 1 wrong split on `h5-21`, the seven left-out counts, the one tied segment on `h5-11`.
+- Task 0.5b against `sv-stitched-paste.md`: every part kept and every required part at its target, the quiet pool's 25.2 s and 27.6 s, the ten dialogues on the match branch, A1 and A2, the part cosines (0.701 lowest, the rest 0.822 to 0.885) and 0.651, every row's stitched lines, bar C's 270.9 s to 9.7–22.9 s and 16 to 19 wrong splits (5.34 to 6.34 per 5 min), the four segments past 30 s, parity 0.
+- Task 0.6 against `sv-kept-paste.md`: status, override and every combination's three words; its lead line's hash check is the composer's leg svx13 prompt ("18917bc5...9d15, matched").
+- Task 0.5c against D9's text: the order, the three line sets of bar B as the only gating lines, `unmeasured` not met (none reads so), bars A1, A2 and C reporting only, and D9's "what the selected row adds".
+- The progress figures 9 / 14 / 18 / 27 / 32 % (2, 3, 4, 6 and 7 of the 22 numbered tasks).
+- C1: no session id, real-speech number, pooled real-speech total, accent count or machine path in either plan's diff (`C:\sv-sets\` is the synthetic-set folder C10 allows; `stronger-voice\` is a subfolder name D2 already gives).
+- The practitioner-profile lines against the code: `ATTRIBUTION_THRESHOLD: Final = 0.50` (`speaker_embedding.py:82`); with a match `attribute_speakers` labels the matches `speaker_1` and the whole remainder `speaker_2` (`transcription.py:972-974`), and `enrolled_cluster` returns the highest-mean label with its mean (`:926-934`), so with a match the number is the mean of the direct matches.
+- Line endings: both plans `i/lf w/lf` (`git ls-files --eol`).
+Finding verification: 6 candidates; 1 dropped (Task P.3's mock is sized for a session-adaptation row: still enough for B1-35, which needs one direct match, so nothing contradicts); 0 downgraded.
+Missed-issue pass: re-read the Goal, Agreed Scope, Deferred, Accepted Assumptions, Key Design Decisions, Flows 1 to 4, D1 to D9, C1 to C10, Validation and Phases 1 to P whole for statements the decision settles; result: LOW-002 and LOW-003.
+
+- **[LOW]** LOW-001: `.cursor/plans/plan-practitioner-profile.md` D8's dated line — "and one redo of the weakest part" reads as a redo on every enrolment, and "the equal-weight mean of the parts" leaves out that a left-out part is not in it; stronger-voice D3 redoes only when a part scores under the calibrated figure, at most once, and stores the mean of the captured parts' final attempts — Triage: Fix-now; Fix route: fix-on-fast; Desired: the line says both as D3 does; /fix decision: Applied; /fix notes: "at most one redo, of the weakest part, when a part does not match the rest" and "the normalised equal-weight mean of the captured parts (final attempts)"; the file's LF endings kept; siblings: D3's and D13's dated lines and the D-P1 note re-read, accurate; /fix date: 2026-11-21; /fix applied by: Claude Code
+- **[LOW]** LOW-002: `.cursor/plans/plan-stronger-voice.md` Step H — H3 reads "C4's ownership and the enrolment's memory bound first", but with B1-35 no owner is built (Task 0.7's consequences); only the `R0` case is reconciled in Step H's heading — Triage: Fix-now; Fix route: fix-on-fast; Desired: a dated line under Step H saying H3's focus with B1-35; /fix decision: Applied; /fix notes: a dated sub-bullet under H3: with B1-35 no vector is kept and C4's owner is not built, so H3 covers the enrolment's memory bound and lease and the recovery mark's two guarantees (it only adds `speaker_1` labels, and nothing runs without a confirmed match); siblings: Task 2.1's B2/B3 parts (already reconciled by the Phase 2 built-row line), Task 5.2's B2/B3 documents (Task 0.7's consequences); /fix date: 2026-11-21; /fix applied by: Claude Code
+- **[LOW]** LOW-003: `.cursor/plans/plan-stronger-voice.md` the Deferred two-tier item and Task 5.2's review-guide wording — "a line matched only by the session rule (below the pass mark)" and "a line may be labelled yours from the sound of this consultation" describe session adaptation, which is not built; with B1-35 the line below the pass mark is matched by the recovery mark, on its own score, after a direct match — Triage: Fix-now; Fix route: fix-on-fast; Desired: a dated note beside each, the original words kept; /fix decision: Applied; /fix notes: one dated parenthesis at each place (Task 0.7: the recovery mark B1-35; the guide's line then says a line that scores just under the usual match may be labelled yours once your voice has matched in the consultation, still for the practitioner's approval); siblings: searched `session rule`, `sound of this consultation`, `session adaptation`, `uses the consultation`: C4's Key Design Decision and C5 and Task 5.2's "recovery mark or session rule" are generic or already settled; /fix date: 2026-11-21; /fix applied by: Claude Code
+- **[LOW]** LOW-004: `.cursor/plans/plan-stronger-voice.md` Task 0.7's brief bullet on the accepted residue — it says "Shadow mode cannot show (2) or (3)" while its three consequences carry no numbers — Triage: Fix-now; Fix route: fix-on-fast; Desired: the consequences numbered as Accepted Assumptions numbers them; /fix decision: Applied; /fix notes: "(1)", "(2)", "(3)" added before the three; no word of the summary changed otherwise (this is the plan's summary of the brief, not the words the practitioner read); siblings: Accepted Assumptions already numbered; /fix date: 2026-11-21; /fix applied by: Claude Code
+- **[LOW]** LOW-005: `.cursor/plans/plan-stronger-voice.md` the progress figure — the svx10 to svx14 bullets count "of 22 tasks", but the Tasks section holds 27 checkboxes (Step H and H1 to H4 are the other five), and the denominator is said nowhere — Triage: Fix-now; Fix route: fix-on-fast; Desired: the denominator stated once, the earlier bullets kept; /fix decision: Applied; /fix notes: stated in the svx15 handoff bullet: the figure counts the 22 numbered tasks (0.1 to 0.7, 1.1, 1.2, 1.4, 2.1, 2.2, 4.1 to 4.3, 5.1, 5.2, P.1 to P.5); Step H's five boxes are not counted; siblings: none; /fix date: 2026-11-21; /fix applied by: Claude Code
+Fix-delta self-check: PASS — each of the five applied hunks found by search where it was made (the practitioner-profile plan's D8 line at :256, still four added lines in that file; the Deferred two-tier item; Task 5.2's guide wording; Task 0.7's numbered residue; H3's dated line; LOW-005's denominator in the svx15 handoff bullet); `git diff --check` clean and both plans still `i/lf w/lf`; no recorded figure, word, selection or decision changed
+
+### Round 11 — 2026-11-21
+(Transcribed verbatim by executor leg svx16 from `.cursor/loops/stage-0-peer-r11.log`, the last `### Round 11` header; codex rc=0, escape-check post clean, refs unchanged.)
+Source: Codex — codex gpt-6-astra medium — Phase 0 close documents peer review (stage-0.p2, peer round 1)
+Status: Closed (0 pending)
+
+Scope:
+
+- job 1: checked Tasks 0.5–0.7 and svx12–svx15 against the three evidence files; recorded rates, differences, seconds, counts, grid results and words match. Calibration is 0.651; lowest part is take a, part 1, at 0.701.
+- job 2: checked the selection against D9 and bar B; B1-45 and B1-40 fail kept direction, and B1-35 is the first qualifying row. Its gains match +2.2/+7.2/+23.8 points and `adds`. A1, A2 and C remain report-only; `unmeasured` cannot qualify.
+- job 3: checked the reviewed additions against C1 and D7; no prohibited consultation identifiers, numerical results, accent counts or personal machine paths found. Task 0.6 preserves the permitted block’s status, override and combination words.
+- job 4: checked “Confirm B1-35,” the allowed decision options and sibling build instructions; consistent with Lever A plus B1-35, Lever C excluded, no consultation vector retention and version 0.4.2. Earlier handoff bullets remain historical records.
+- job 5: checked the four practitioner-profile additions against stronger-voice D3/D4 and the named code symbols; consistent with the unchanged 0.50 pass mark, conditional addition of `speaker_1` labels, unchanged stored clinician and similarity, and guided enrolment’s capture contract.
+
+Findings: none.
+
+Verification: 7 scoped files read; 5 jobs evidenced. Round 10’s applied wording fixes checked. No files written, scripts executed, tests run or network commands issued.
+
+PEER-ROUND-11 RESULT: 0 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 0).
+
 ## Tasks
 
-### Phase 0 — Measure (scratch only)
+### Phase 0 — Measure (scratch only) — done 2026-11-21 (Tasks 0.1 to 0.7)
 - [x] 🟩 Task 0.1: Approve the reading script   [decision]
   - Chosen: approve the six parts below as written (2026-11-20); rationale: the practitioner's answer, "Approve as written".
   - Options: approve the six parts below as written / edit any part's words or cue.
@@ -1067,31 +1155,109 @@ PEER-ROUND-9 RESULT: 0 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 0).
   - Options: confirm Validation / Verification (the definitions, the bars, the calibration's derivation) and the tables, ids and orders of D2, D4, D5, D7 and D9 as written / change a figure now.
   - Output: one commit of this plan holding the frozen figures, before any new number (C3).
   - Blocks: Tasks 0.4 to 0.7.
-- [ ] 🟥 Task 0.3: Record the truth recordings   [operator]
+- [x] 🟩 Task 0.3: Record the truth recordings   [operator]
   - The practitioner records the thirteen files of D2 in Audacity into the measurement folder's new `stronger-voice\` subfolder: each part for at least twice its target (60 / 30 / 25 / 30 / 25 / 30 s), reading the passage again when its end is reached; the computer voice for at least 120 s. The composer gives the folder path and the Windows-voice command in chat, never in a tracked file.
   - Done when the practitioner says the thirteen recordings exist.
-- [ ] 🟨 Task 0.4: Build the seen sets, decode and evaluate them once, prove the premise
+  - Done (2026-11-21): the practitioner said all thirteen are in the `stronger-voice\` subfolder ("other.wav done, all 13 in the folder"). Their Task 0.5b run found all thirteen and kept 6 of 6 parts in each take.
+- [x] 🟩 Task 0.4: Build the seen sets, decode and evaluate them once, prove the premise
   - Files: new `.cursor/loops/sv_lib.py` (D4's table with its ids, D5's grid, D7's combination table, the pure rules, scratch's `R0` with the literal 0.50), `.cursor/loops/sv-measure.py`. On the practitioner's "start now": `scripts/build-validation-set.py` for the seven sets into `C:\sv-sets\`; D2's one pass per encounter over each set, writing everything D2 lists (the per-row and per-grid-point summaries and timings included, since nothing vector-based can be recomputed later); D8's "before" harness reports with their commit id and SHA-256s.
   - Expected: the premise's two parts (Validation): 0 differences on every encounter, and the generated fixture's checks pass.
   - Verification: the 0-differences line and the fixture line; a failed premise stops the phase and is reported. `git status` shows nothing written outside `.cursor/loops/`; no file under `sv-out/` holds a vector (a size and key check in the script's own self-test).
-- [ ] 🟥 Task 0.5: The truth tables and the selection
+  - Status (2026-11-21, leg svx10): all but one evidence line is in. Stays 🟨.
+    - In:
+      - The pass at `7e730b1` (`.cursor/loops/sv-pass.log`): every set `errors 0, complete`, `PASS PROBLEMS: 0`, `PASS_END rc=0`.
+      - The premise's first part (`.cursor/loops/sv-premise.log`): 0 differences on each set (50 / 22 / 22 / 23 / 22 / 22 / 22 encounters), `PREMISE DIFFERENCES TOTAL: 0 (sets complete 7/7)`.
+      - The premise's second part, the generated fixture (`.cursor/loops/sv-selftest-5.txt`, `SELF-TEST: 55 passed, 0 failed`): the sub-window and cut-candidate times at known sample positions, a segment with no text, an encounter with no segment, the no-match branch, the shortcut, three roles in two classes, an overlap beside an eligible transition, and a tie.
+      - D8's before reports at `7e730b1` with the desktop clean (the sets report's provenance line).
+      - `git status` clean after the freeze commit.
+    - Missing: the size and key check over the pass's records. That self-test ran before the pass wrote anything, and its line reads `0 JSON file(s) checked`. The writer refuses a vector before writing, but the plan names the self-test's check over `sv-out/`.
+    - The command that produces it (reads `sv-out/`, writes nothing there): `.venv/Scripts/python.exe .cursor/loops/sv-measure.py --self-test < /dev/null > .cursor/loops/sv-selftest-6.txt`. Task 0.4 is done when that file's `size and key check over every file already under sv-out` line reads `[ok]` with a non-zero JSON count, and it ends `SELF-TEST: 55 passed, 0 failed`.
+  - Done (2026-11-21, leg svx11): the missing line is in, so every evidence line the task names is met.
+    - The composer ran the self-test after the pass, as `.venv/Scripts/python.exe .cursor/loops/sv-measure.py --self-test --config validation/config < /dev/null`. The self-test refuses without `--config validation/config`, which the command above leaves out.
+    - Its output is `.cursor/loops/sv-selftest-6.txt`, exit 0. It reads `[ok] size and key check over every file already under sv-out` (`191 JSON file(s) checked; 15 other file(s) ignored`), so no file under `sv-out/` holds a vector. It ends `SELF-TEST: 55 passed, 0 failed`, the generated fixture's cases included.
+    - With the pass and premise evidence above (`sv-pass.log`, `sv-premise.log`: 0 differences, 7 of 7 sets complete) and `git status` clean after the freeze commit.
+- [x] 🟩 Task 0.5: The truth tables and the selection
   - 0.5a (agent): `sv-measure.py --sets` over what Task 0.4 wrote: every candidate row against bar B's seen-set lines; D5's grid against bar C's seen-set line; and the labelling-against-routing comparison. That comparison is made on the seen-set cohort only (Validation). For each encounter the note is composed, with identical cues, under `R0`'s labels and under true labels: a segment whose true class (D2) is the clinician takes the document's confirmed clinician label, any other takes the other label; a tied or non-overlapping segment keeps its measured label and is counted. The true labels are given to composition directly, with the confirmed clinician's label as the clinician; no stored attribution is rebuilt. An encounter in which the true labels leave the clinician's label on no text-bearing segment is counted `unevaluable` and left out of the three counts. Reported by line identity (segment and word coordinates), never as two pooled counts: lines added under true labels, lines removed, and clinician lines still left out under true labels.
   - 0.5b (practitioner)   [operator]: `sv-measure.py --stitched` over the truth recordings, from a normal terminal with both builds closed (the composer gives the PowerShell command in chat); the practitioner pastes its tables (D6). P0 and P1 at `R0` against bar A1; P2 against bar A2; every candidate row with P1 against bar B's stitched lines, with each row's recall difference from P1 at `R0`; D5's grid against bar C, with eligible mixed seconds, proposed and kept cuts, and the count of close-turn body segments past 30 s; the part-consistency figures. Its self-test, with generated signals and fakes, proves the script before the practitioner runs it: a hand-checkable multi-turn dialogue (truth seconds, transitions, matching, mixed seconds, the pools); a span over 8 s arriving while a turn is open, a closed turn under 1 s, the other voice running out and restarting past its reserved spans, the same turns under all four gap values, and an other-voice file with no speech refused; no source sample in both a preamble and a scored body; a close-turn dialogue whose preamble forms centres and one where none can be formed (`unmeasured`); a sub-window at an equal distance from both centres and a piece that holds no sub-window centre; a cut inside an overlap region; a full 30 s part through the file-backed capture with no wall-clock wait and no queue overflow; a short optional file and a short required file; the manifest refusals; the temporary store destroyed after a pass and after a failed pass; the reservation at a span boundary, and a voice left with no body turn refused; an optional part with no speech left out while a required one is refused; a word and a sub-window centre exactly on a cut; an exception held during second-profile and sub-window scoring, with the vector no longer reachable.
   - 0.5c (after a COMPLETE run of 0.6): D9's order is walked and its result stated; bars A2 and C are stated for the follow-up plan.
   - Expected: one table per bar with `met` / `not met` / `unmeasured`, and one selected release id (`R0` or a row id).
-- [ ] 🟥 Task 0.6: Real speech   [operator]
+  - Done (agent), 2026-11-21: 0.5a. `sv-measure.py --sets` exit 0, the report `.cursor/loops/sv-sets-report.md` ends `SETS: COMPLETE`, over the pass at `7e730b1`. Synthetic sets only.
+    - The cohort is 183 of 183: every encounter's clinician is confirmed at baseline, all through the match branch.
+    - R0: clinician seconds labelled other 0.71 % of 5,030.1 s; other speakers' seconds labelled clinician 0.61 % of 2,830.5 s.
+    - Bar B's seen-set lines. No row makes a cohort encounter stop confirming, and every row lowers the clinician-labelled-other rate. So the other-labelled-clinician line (a rise of at most 0.5 point) decides:
+      - B1: all four rows meet every line. B1-45: 0.41 % / 0.68 % (+0.07). B1-40 and B1-35: 0.12 % / 1.02 % (+0.42). B1-30: 0.08 % / 1.02 % (+0.42).
+      - B2: 32 of the 36 rows meet every line, at +0.03 or +0.10. B2-21 to B2-24 fail the other-labelled-clinician line: 1.11 % (+0.51).
+      - B3: all 36 rows fail it, from 1.22 % (+0.61) to 1.95 % (+1.34).
+    - Bar C's seen-set line (no wrong split). Every grid point has 86 encounters with centres and 16.9 s of eligible mixed speech. Five of the six points meet it. F3.0-W1.0 does not: 3 kept cuts, 1 wrong split, on `heldout-5` encounter `h5-21`.
+    - Labelling against routing, on the cohort, with 0 encounters unevaluable:
+      - True labels add no note line and remove none on any encounter of any set. No encounter's lines change, and no next-patient boundary moves. One tied segment kept its measured label (`heldout-5`, `h5-11`).
+      - Clinician lines still left out under true labels: scripts 122, heldout 78, heldout-2 282, heldout-3 276, heldout-4 270, heldout-5 254, heldout-6 279.
+      - On these sets the labels are not what leaves lines out; routing is.
+    - No selection is made yet. Bar B also needs its stitched lines (0.5b, after Task 0.3's recordings) and its kept-consultation words (0.6). Bar C's stitched lines are 0.5b's too. Task 0.5 stays 🟥 until 0.5b and 0.5c.
+  - Done (practitioner), 2026-11-21: 0.5b. Their `sv-measure.py --stitched` run from a normal terminal ended `STITCHED: COMPLETE`. The pasted tables are kept in `.cursor/loops/sv-stitched-paste.md`, with the 36 identical B2 rows and the 36 identical B3 rows collapsed to one line each and no value changed. Their own voice and a computer voice, synthetic words (D6, C1).
+    - Recordings: all thirteen. Every take-A and take-B part was kept (6 of 6 each), and each required part reached its target. The quiet pool was measured: each take's quiet file holds 25.2 s and 27.6 s of detected speech, against 8 s needed. Ten dialogues were built and decoded, all on the match branch, with no turn dropped.
+    - Bar A1 (reported; it gates nothing), at R0, as overall / quiet / close-turn recall with overall false match:
+      - P1: 96.3 % / 92.8 % / 76.1 %, false match 0.0 %. A1 met.
+      - P0 beside it: 91.9 % / 63.7 % / 37.2 %, false match 0.0 %. Its quiet line is not met.
+    - Bar A2 (reported for the follow-up plan): P2's quiet recall is 100.0 % against P1's 92.8 % (+7.2, at least +5.0 needed), with no more false match (0.0 %). Met.
+    - Part consistency: the lowest part cosine is take a part 1, 0.701; every other part is 0.822 to 0.885. The calibrated figure is 0.651 (the lowest less 0.05).
+    - Bar B's stitched lines (with P1): every row meets all three. As overall / quiet / close-turn recall and overall false match:
+      - B1-45: 97.5 / 92.8 / 100.0 %, 0.0 %. B1-40: 97.5 / 100.0 / 100.0 %. B1-35: 98.6 / 100.0 / 100.0 %. B1-30: 99.5 / 100.0 / 100.0 %. The B1 rows' false match is 0.0 %, and their close-turn recall is 100.0 % (+23.8 points on R0).
+      - Every B2 row: 99.9 / 100.0 / 76.1 %, false match 0.0 %.
+      - Every B3 row: the same recall as B2, false match 0.7 %.
+    - Bar C (reported for the follow-up plan). The halving line is met at all six grid points: eligible mixed speech goes from 270.9 s to 9.7–22.9 s. The wrong-split rate line is not met at any point: 16 to 19 wrong splits in 15.0 min of single-speaker exposure, 5.34 to 6.34 per 5 min against at most 1. Four close-turn body segments run past 30 s, where the live path would force-close a span.
+    - Parity: `PARITY DIFFERENCES TOTAL: 0`, scratch R0 against the pipeline's own labels, clinician and number with P1.
+    - Still owed for the selection: bar B's kept-consultation words (Task 0.6, the practitioner's run), then 0.5c, D9's order walked over all three line sets. Task 0.5 stays 🟥 until 0.5c.
+  - Done (agent), 2026-11-21: 0.5c, D9's order walked. A row qualifies when it meets every line of bar B: the stitched lines with P1 (0.5b), the seen-set lines (0.5a), and the kept-consultation direction and sanity words for P1 with that row (0.6). A line that reads `unmeasured` is not met; none does.
+    - Step 1, B1-45: the stitched lines are met and the seen-set lines are met. Its kept direction word is `not met`, so it does not qualify.
+    - Step 2, B1-40: the stitched and seen-set lines are met. Its kept direction word is `not met`, so it does not qualify.
+    - Step 3, B1-35: the stitched lines are met (recall 98.6 % overall, 100.0 % quiet, 100.0 % close-turn; false match 0.0 %). The seen-set lines are met: no cohort encounter stops confirming, clinician labelled other falls from 0.71 % to 0.12 %, and other labelled clinician rises from 0.61 % to 1.02 % (+0.42, within 0.5). The kept words are direction `met` and sanity `met`. It qualifies, so the walk stops here.
+    - The selected release id is B1-35, built with Lever A (Phase 2's built row; Task 0.7 confirms it).
+    - What B1-35 adds over the guided profile alone (P1 at R0), per D9:
+      - on the stitched pools, +2.2 points overall recall, +7.2 quiet and +23.8 close-turn, with false match unchanged at 0.0 %;
+      - on kept consultations, the third word `adds`;
+      - its seen-set cost is the +0.42 point of other speakers labelled clinician above.
+    - Reported for the follow-up plan, gating nothing here:
+      - Bar A2 is met: P2's quiet recall is 100.0 % against P1's 92.8 % (+7.2), with no more false match.
+      - Bar C is met at no grid point. On the stitched recordings every point halves mixed speech but fails the wrong-split rate (5.34 to 6.34 per 5 min against at most 1). On the seen sets five of the six points have no wrong split; F3.0-W1.0 has one, on `h5-21`.
+      - Bar A1 (reported) is met for P1.
+    - The Expected line is met. There is one table per bar with its words (0.5a's report and 0.5b's paste, summarised above), and one selected release id, B1-35.
+- [x] 🟩 Task 0.6: Real speech   [operator]
   - Files: new `.cursor/loops/sv-measure-kept.py` (D7). Hardened by `/review-loop`, a codex pass and `/security-review` (its refusals, its two output blocks against their exact lists, its hash checks, its clearing between recordings and on a failure), then frozen by SHA-256 in one commit together with `sv_lib.py`.
   - The practitioner runs it over the installed app's kept recordings with both builds closed (the PowerShell command is given in chat) and relays the "For the record" block only. A status of `INCOMPLETE` gives no words: its reason code is relayed, the cause is fixed, and the script is run again. If a word reads `unmeasured`, their own "For you only" block says why, and they may run it again with `--allow-low-count`.
   - Expected: status COMPLETE, whether the override was given, and for each combination id its three words.
   - Recorded in a tracked file: the "For the record" block's content and nothing else (C1).
   - Frozen (2026-11-21, leg svx9; after `/review-loop` round 6, `/security-review` round 7 and the codex pass `stage-0.p1`, rounds 8–9, converged): `sv-measure-kept.py` pins, by SHA-256, `sv_lib.py` `f53244af0c2393ccafd6554e0f7d54dda56ea7b429616074edc07cb0b00a63c0`, `ffl_lib.py` `f7d2d75c4e1dbac9ba91413ee7f42d546fc7fc0575e3ffe0b6aba43314d38d03`, `ffl-measure-kept.py` `36e215c5fe92e0734f7161226c99b72b0fd956235c8a8630395ccb8df25f603d` and `sv_stitch.py` `8d0677307f1072bf7c643473338a23ae0019a9b5232e44217d3c33414a6ee414`. Its own SHA-256 changed when these were filled in; the composer records it at the freeze commit, and it is checked before the practitioner's run (Validation, Phase 0).
   - Frozen script (2026-11-21, composer, at the freeze commit): `sv-measure-kept.py` `18917bc55f849f6070aa56a905c369cdb0f87ad73793efc5f847457bb9d19d15`; its self-test with the real pins: 33 cases, 0 failures, `Pinned SHA-256 values: frozen`. A change to any of the five files needs a new freeze.
-- [ ] 🟥 Task 0.7: The exit   [decision]
+  - Done (practitioner), 2026-11-21: the frozen script run from a normal terminal, its SHA-256 checked against the frozen value first. The "For the record" block's content:
+    - status COMPLETE; override not given;
+    - K0: direction baseline, sanity met, against P1:R0 baseline;
+    - P1:R0: direction not met, sanity met, against P1:R0 baseline;
+    - P1:B1-45 and P1:B1-40: direction not met, sanity met, against P1:R0 adds;
+    - P1:B1-35 and P1:B1-30: direction met, sanity met, against P1:R0 adds;
+    - every P1:B2 row (B2-01 to B2-36) and every P1:B3 row (B3-01 to B3-36): direction met, sanity met, against P1:R0 adds.
+- [x] 🟩 Task 0.7: The exit   [decision]
   - The brief, in plain English: every table against its bar; the release id D9's order gives and so what is built; what the selected row adds over the guided profile alone (D9); the calibrated part-consistency figure; the labelling-against-routing comparison (synthetic sets only) and the kept-consultation words; bars A2 and C as evidence for the follow-up plan; one paragraph stating the accepted residue with its three consequences (Accepted Assumptions).
   - Options: confirm the order's result / decline Lever B, which is the `R0` case, for a reason recorded by name. Labelling a consultation is not re-opened here; no option changes the consent text, a bar or the order.
   - Decide after: Tasks 0.5 and 0.6.
   - Blocks: Phases 1 and 2.
   - Records: the dated decision lines here and on `plan-practitioner-profile.md` (D3, D8, D13; D-P1 noted as unchanged).
+  - Chosen: confirm B1-35 (2026-11-21); rationale: the practitioner's answer, "Confirm B1-35", to the composer's brief, the recommended option. The other option was guided enrolment only (`R0`, with a reason recorded by name).
+  - The brief put to the practitioner before that answer:
+    - Every bar's result, as recorded on Tasks 0.5 and 0.6.
+    - D9's order: B1-45 and B1-40 fail on their kept direction word, and B1-35 is the first row that meets every line of bar B.
+    - What B1-35 adds over the guided profile alone: +2.2 / +7.2 / +23.8 points of stitched recall (overall / quiet / close-turn) and the kept third word `adds`. Its seen-set cost is +0.42 point of other speakers labelled clinician. P1 at R0's own kept direction word is `not met`.
+    - The calibrated part-consistency figure is 0.651 (lowest part: take a part 1, 0.701).
+    - Labelling against routing: on the synthetic sets true labels change no note line, so routing, not labelling, leaves lines out. This build is not expected to fill an empty note on its own.
+    - For the follow-up plan: bar A2 is met; bar C is not met (wrong-split rate 5.34 to 6.34 per 5 min against at most 1).
+    - The accepted residue and its three consequences (Accepted Assumptions): (1) a patient line in a clinician-owned section with no warning; (2) in normal mode, a phrase learned from a patient's words; (3) in normal mode, a shorthand autofill rule. Shadow mode cannot show (2) or (3), so rubric R4 on the ten is read before shadow mode is turned off.
+    - The version is 0.4.2, with no profile schema change.
+  - Consequences:
+    - Lever A is built (Phase 1), with Lever B row B1-35 (Phase 2; Task 2.1's built row is B1-35).
+    - B1-35 reads one number per segment, so no speaker-model vector is kept (D4, C4). Phase 2's B2/B3-only parts (the owner, the collection helper, the live handover and their tests) and Task 5.2's B2/B3-only documents do not apply. Task 5.2's "Only with Lever B shipped" documents do.
+    - Lever C and several stored vectors are not built here (the follow-up plan, Deferred).
+    - The version is 0.4.2 (Task 5.1).
+  - Recorded on `plan-practitioner-profile.md`: a dated decision line at D3, D8 and D13, and a note at D-P1 that it is unchanged (B1-35 is a recovery mark; the pass mark 0.50 does not move).
 
 ### Phase 1 — Guided enrolment (Lever A)
 - [ ] 🟥 Task 1.1: The script, strings and part logic (Qt-free)
@@ -1111,6 +1277,7 @@ PEER-ROUND-9 RESULT: 0 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 0).
   - Verification: the suite.
 
 ### Phase 2 — Matching within a consult (Lever B; skipped when the release id is `R0`)
+- Built row (Task 0.7, 2026-11-21): B1-35, a recovery mark at 0.35. Phase 2 runs. Of Task 2.1, the parts for every built row and the B1 parts apply. The B2/B3 parts do not: the owner, the collection helper, `LiveResult`, `drain` and `stop`, the receiver's `finally`, their B2/B3 tests and C4's ownership tests.
 - [ ] 🟥 Task 2.1: The built row
   - Files: `desktop/src/scribe_desktop/transcription.py` (the pure rule for the built row beside `attribute_speakers`, its one call inside `assemble_transcript`'s attribution branch so both drivers share it, and the similarity field's docstring, which today calls the number the final cluster's mean); `desktop/src/scribe_desktop/speaker_embedding.py` (the row's constants with their dated decision line; `ATTRIBUTION_THRESHOLD` and its test pin unchanged). For a B2 or B3 row also: the clearable owner, the collection helper, both drivers' use of it, `LiveResult`, `drain` and `stop` in `transcription.py`, and the receiver's `finally` in `desktop/src/scribe_desktop/ui/models.py`. `attribute_speakers`, `enrolled_cluster`, `label_speakers`, `transcript_before` and `speaker_eval.py` are not edited.
   - Where the grid is tested. Scratch tests the whole table as a class (`sv-measure.py --self-test`, before Task 0.4's pass): every row's parameters, every refusal to run, the order and the count of 76. The product tests only the built row, and only cases that row can reach.
@@ -1142,14 +1309,14 @@ PEER-ROUND-9 RESULT: 0 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 0).
 
 ### Phase 5 — Version, documents, hardening
 - [ ] 🟥 Task 5.1: Version
-  - The five version places and the two tests, to 0.4.2; one dated line on `plan-ui-refresh.md` (0.4.1 stays reserved).
+  - The five version places and the two tests, to 0.4.2; one dated line on `plan-ui-refresh.md` (0.4.1 stays reserved). Confirmed at Task 0.7 (2026-11-21).
 - [ ] 🟥 Task 5.2: Documents
   - Always, on every exit:
     - the guided enrolment: `docs/security/threat-model.md` (practitioner-profile surfaces 1, 2, 5 and 8: the capture, its limits and its memory bound), `docs/security/data-flow-map.md` (flow 12 with the new capture limits and its no-audio non-flow), `docs/security/retention-schedule.md` (the voice-profile row; the truth recordings as their own row beside the enrolment-WAV row), `docs/design-system.md` (the guided card);
     - learning rests on the speaker label, not on who spoke. That is true today and with `R0`, so every place that says a patient's line never reaches learning, or that only the practitioner's own lines or words are learned, is restated: threat-model surface 10 and its sibling statements (found by searching each document for "own lines", "own words", "never reaches" and "teaches nothing", and for any other promise about a patient's, carer's or interpreter's line, not by line number), `docs/security/data-flow-map.md` flows 13 and 15, its summary table and its learning non-flow, the retention schedule's learned-phrase and shorthand rows, and the source wording of Task 1.4;
     - the measurements: the threat model's "Kept recordings" section and flow 27 (the new kept-consultation script holds consultation vectors in memory under C4; the stitched dialogues' encrypted temporary store), `docs/testing/speaker-measurement.md`, `docs/testing/kept-recordings.md` (the new script, its two output blocks and what may be recorded), `docs/testing/validation-harness.md` (a dated measurement section, with bars A2 and C as measured for the follow-up plan);
     - `docs/release/pilot-builds.md` (the rollback note on a guided profile), `CHANGELOG.md`, `AGENTS.md`.
-  - Only with Lever B shipped: the recovery mark or session rule, the larger exposure it gives the learning residue, with the three consequences; the trim case; the similarity number's meaning on a relabelled document (the mean of the direct matches, not of every line labelled the practitioner's) in the threat model, in `docs/testing/speaker-measurement.md` and in the transcript field's docstring (Task 2.1); `docs/security/data-flow-map.md` flows 7 and 14 (the pass); `docs/practice/clinician-review-guide.md` (speaker labels: a line may be labelled yours from the sound of this consultation; check the speaker before moving a line into your own sections; the practitioner's approval); the `docs/pilot/` findings register (one row: a patient line labelled the clinician's by the matching rule, controlled).
+  - Only with Lever B shipped: the recovery mark or session rule, the larger exposure it gives the learning residue, with the three consequences; the trim case; the similarity number's meaning on a relabelled document (the mean of the direct matches, not of every line labelled the practitioner's) in the threat model, in `docs/testing/speaker-measurement.md` and in the transcript field's docstring (Task 2.1); `docs/security/data-flow-map.md` flows 7 and 14 (the pass); `docs/practice/clinician-review-guide.md` (speaker labels: a line may be labelled yours from the sound of this consultation; check the speaker before moving a line into your own sections; the practitioner's approval; with B1-35, Task 0.7, 2026-11-21: a line that scores just under the usual match may be labelled yours once your voice has matched in the consultation); the `docs/pilot/` findings register (one row: a patient line labelled the clinician's by the matching rule, controlled).
   - Only with a B2 or B3 row shipped: the threat model's practitioner-profile surface 6 (it says today that no model embedding outlives a window: restated with C4's owner, its collection helper, its handover, its join-timeout case and its traceback rule); the retention schedule's in-memory row.
   - With release id `R0`: the documents say Lever B was measured and not built; no register row.
   - Line endings kept per file (`git ls-files --eol`).
@@ -1157,6 +1324,7 @@ PEER-ROUND-9 RESULT: 0 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 0).
   - [ ] 🟥 H1: `/review-loop` to convergence
   - [ ] 🟥 H2: `/simplify` — log findings; trivial → `/fix`, substantial → scoped `/review-plan`
   - [ ] 🟥 H3: `/security-review` — C4's ownership and the enrolment's memory bound first
+    - With B1-35 (Task 0.7, 2026-11-21; review round 10 LOW-002): no vector is kept and C4's owner is not built. So H3 covers the enrolment's memory bound and lease, and the recovery mark's two guarantees: it only adds `speaker_1` labels, and nothing runs without a confirmed match.
   - [ ] 🟥 H4: cross-family codex re-check, code and documents as separate slices
 
 ### Phase P — Release and restart (practitioner-run; runs on every exit, Lever A alone included)
