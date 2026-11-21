@@ -2548,6 +2548,7 @@ Fix-delta self-check: PASS.
     - It takes no `--enrolment`: take A comes from the folder's own manifest.
     - Before the practitioner's run: review, a peer pass and `/security-review`; then a freeze by SHA-256 of `sv-measure.py` and `sv_stitch_product.py` (the mode itself checks that `sv_lib.py` and `sv_stitch.py` are at their pins).
     - The leg sg1 bullet gives the command, the expected time and what is pasted.
+    - Frozen (2026-11-22, after `/security-review` round 27; peer pass `stage-4.p1` accept-closed at its cap): `sv-measure.py` 545edf9374b4f90dd57628b173f2425698fc96605ca43e7af0509f944448be6e, `sv_trace.py` 8f2c3dd8dad59cf7c0487c89bc4c1c3877e62dac8834325787cdfd8703777866, `sv_stitch_product.py` fd7424e9dabb660466e859dcae329046286c92772358ff6b49459f12779bb5f6. Checked against them the same day: self-test 70 passed, 0 failed; the decode check at `4c29283` printed the first two values, 0 executable note-path changes and `DECODE DIFFERENCES TOTAL: 0 (sets passed 7 of 7, row B1-35)`. Any run of Task 4.1's trace or Task 4.3's stitched mode must print these values; a later edit to any of the three is a new freeze.
 
 ### Phase 5 — Version, documents, hardening
 - [ ] 🟥 Task 5.1: Version
