@@ -296,7 +296,7 @@ See the Planning Extraction Summary: building Lever C and several stored vectors
 ## Current State / Handoff Note
 - Last completed step: Phase 2, closed (2026-11-22, legs sb1 to sb5; committed `4c29283`, not pushed). Task 2.2 PASSED: `sv-measure.py --sets --against-product` from the clean tree at `4c29283` found 0 differences on 7 of 7 sets (183 encounters, 31 relabelled, 0 errors). Its records are under `sv-out/after/4c29283…/`. Before that, Phase 2's build and review (2026-11-21, legs sb1 to sb4): Task 2.1 (row B1-35) is 🟩 on the composer's green suite (11176 passed, 9 skipped). The `/review-loop` converged at round 17 (round 16: 1 MED and 1 LOW, both plan text, applied). The codex pass `stage-2.p1` converged at round 18 with 0 findings. Task 2.2's scratch mode is written and its self-test passes (56 passed), but its long run is owed, so Task 2.2 stays 🟨. Phase 2 has no live smoke of its own: no screen changed, and the labels' live check is Task P.3's mock smoke. Before that, Phase 1 (2026-11-21): Tasks 1.1, 1.2 and 1.4 are 🟩. The review converged at round 13 and the codex pass `stage-1.p1` at round 15. The suite passed: 11156 passed, 9 skipped. Its live smoke was HELD on the practitioner's word, not performed, and is owed before Task P.1. Before that, Phase 0 (2026-11-21): every Phase 0 task is done. Task 0.7's decision was "Confirm B1-35": Lever A is built with Lever B row B1-35, Lever C is not built, and the version is 0.4.2. Earlier: planning complete (Plan Mode with Fable, then `/review-plan`, 2026-11-20); codex plan peer-review rounds 1 to 5 applied (2026-11-20). Round 2 reduced the scope by two practitioner decisions: Lever C and several voice vectors are measured here and built by a follow-up plan.
 - Current in-progress step: Phase 4 (2026-11-22, leg sg1). Tasks 4.1 and 4.3 are 🟨: their scratch tooling is written (`sv_trace.py`, `sv_stitch_product.py`, the new modes in `sv-measure.py`) and not yet run; see the "Executor handoff (leg sg1)" bullet. Task 4.2 is the practitioner's and needs nothing built. Phase 2 is done (`4c29283`), Phase 1 (`9fb3777`), the Phase 0 close `8bedfc4`. The product learns from a relabelled line (leg sb2), a residue for Task 5.2.
-- Immediate next action (2026-11-22, leg sg1): the composer runs the new self-test (70 checks), commits the plan so the checkout is clean, then runs the decode check; the long runs wait on the practitioner's "start now" (the leg sg1 bullet lists each with its command and expected time). Task 4.3's script is hardened and frozen before the practitioner's run.
+- Immediate next action (2026-11-22, leg sg2): the composer runs the self-test (70 checks), commits the plan, runs the decode check again and one refusal smoke (the leg sg2 bullet), then resumes the executor for review round 20 (round 2 of 3) of the hardening. Earlier (leg sg1): the composer runs the new self-test (70 checks), commits the plan so the checkout is clean, then runs the decode check; the long runs wait on the practitioner's "start now" (the leg sg1 bullet lists each with its command and expected time). Task 4.3's script is hardened and frozen before the practitioner's run.
 - Earlier entry (kept for the record): Phase 4.
   - Task 4.1 first. Its leg writes `sv-measure.py --trace` (scratch). Its decode check reads Task 2.2's clean-HEAD records at `4c29283` against Phase 0's, so the seven sets need no new decode while `desktop/` is unchanged since `4c29283`.
   - The long parts still run on the practitioner's word: the paired trace's gate configuration over the 31 relabelled encounters (overnight), and D8's "after" harness reports. See Task 4.1's dated line.
@@ -701,7 +701,26 @@ See the Planning Extraction Summary: building Lever C and several stored vectors
   - Open points (none is a must-pause):
     - (1) A freeze of `sv-measure.py` for Task 4.3 also covers Task 4.1's dispatch, so a later change to `sv-measure.py` needs a new freeze before Task 4.3's run. That is why the trace's logic lives in `sv_trace.py`.
     - (2) D8's "after" reports have no provenance mode like `--record-before`. Their hashes and commit go into the plan by hand. A `--record-after` is a small addition if the composer wants it.
-    - (3) The stitched run checks its frozen pair's bytes on disk and where they were imported from, after import. A file swapped between import and check is a same-user local race on scratch files, not a check of the loaded bytes; Task 0.6's script ran verified bytes, and the hardening may ask for that here.
+    - (3) The stitched run checks its frozen pair's bytes on disk and where they were imported from, after import. A file swapped between import and check is a same-user local race on scratch files, not a check of the loaded bytes; Task 0.6's script ran verified bytes, and the hardening may ask for that here. [2026-11-22, leg sg2: closed by round 19 MED-001; the pins are now the bytes that ran.]
+- Executor handoff (leg sg2, 2026-11-22T01:58+11:00): Task 4.1's decode check is recorded, and the hardening `/review-loop` has started.
+  - Task 4.1: the decode check's run at `11c3827` is recorded in the task (0 differences on 7 of 7 sets, 183 encounters). On the note path, the `ui/models.py` hunks were read: one wording constant changed (`LEARNING_NOT_ATTRIBUTED_NOTE`, the message of the two learning verdicts); the rest is Phase 1's new enrolment script and text functions, which the note path does not reach. Task 4.1 stays 🟨.
+  - Round 19 (`/review-loop` round 1 of 3): 0 CRIT / 0 HIGH / 1 MED / 2 LOW, all applied in scratch (the Review Findings Log has the detail).
+    - MED-001: the checked load. `sv-measure.py` runs every scratch module from bytes read once and keeps their SHA-256 on the module. The pin checks (the stitched run's and the trace's) read that digest, so the check is of the code that ran (Task 0.6's rule).
+    - LOW-001: the practitioner-run mode prints no traceback, warning, thread exception or unraisable, and a failure outside its inner guard is named by type.
+    - LOW-002: the gate also holds `validation/` unchanged since the verified commit, and `--trace` takes only `--config validation/config`.
+  - Files changed in this leg:
+    - `sv-measure.py`: the checked loader and `ran_sha256`, the two hooks passing it, the trace's `--config` refusal and two docstring lines.
+    - `sv_stitch_product.py`: `Env.ran_sha256`, the pin refusal, the provenance wording, `product_mode`'s quiet hooks and outer guard, and the self-test (check 1's ran digests, two new refusal cases).
+    - `sv_trace.py`: `scratch_hashes` from the ran digests, `TraceHooks.ran_sha256`, `GATED_PATHS`, the gate's wording, and the self-test (check 3's real digests and two gate cases).
+    - The plan: the Task 4.1 record, round 19, this bullet.
+    - No product, test, rule or frozen file changed. `SELF_TEST_CHECKS` stays 70.
+  - For the composer now (every call ends `< /dev/null`):
+    1. `.venv/Scripts/python.exe .cursor/loops/sv-measure.py --self-test --config validation/config < /dev/null`: 70 `[ok]` lines, then `SELF-TEST: 70 passed, 0 failed`, exit 0.
+    2. `sha256sum` of the five frozen files: unchanged from Task 0.6's pins.
+    3. The decode check again, because its gate and pin code changed. First commit the plan, so the checkout is clean; the gate refuses otherwise. Then `.venv/Scripts/python.exe .cursor/loops/sv-measure.py --decode-check --verified 4c29283 < /dev/null`. Expect the same lines as at `11c3827`: `[provenance] sv_lib.py sha256 f53244af… (frozen: equal)`, note path 0 executable and 1 wording, and `DECODE DIFFERENCES TOTAL: 0 (sets passed 7 of 7, row B1-35)`, exit 0.
+    4. One refusal smoke for the new `--config` rule (reads nothing, decodes nothing): `.venv/Scripts/python.exe .cursor/loops/sv-measure.py --trace --verified 4c29283 --built C:/sv-sets --config desktop --stages off < /dev/null`. Expect one line, `[refused] --trace needs --config validation/config (the repository's own, as committed)`, exit 2.
+  - Then: the composer resumes me with the output for round 20, round 2 of 3, which confirms round 19's fixes. The long runs listed in the leg sg1 bullet are unchanged and still wait on the practitioner's "start now". The trace's command is the same, with `--config validation/config`.
+  - Residue (for the peer pass and `/security-review`): `sv-measure.py`'s own digest is a read of its file at its start, not the bytes Python compiled; the freeze's hash check just before the practitioner's run covers it, as for Task 0.6's script.
 - Last plan sync: 2026-11-22
 - Loop config: executor=claude-p model="claude-opus-5-5" effort=high profile=default; peer=codex model="gpt-6-astra" effort=medium; architect=off; cadence=every-phase; caps=review:3,peer:5; gates=executor; cap-raise=executor; high-auto=on; peer-max=12; notify=action-only; scope=all; autocommit=on; isolation=none; merge=off; perms=scoped; liveness=10; monitor-delivery=auto; verify=composer
 - Run state: `/execute-loop` run `stronger-voice-20261120-200910-dc24` (isolation none, builds on `main`), started 2026-11-20; preflight done; no away grant (no away scope available: isolation none admits no merge, and the agent never drives the desktop app, so there is no live smoke tool).
@@ -725,6 +744,7 @@ See the Planning Extraction Summary: building Lever C and several stored vectors
 - 2026-11-21 round 16: 0 CRIT / 0 HIGH / 1 MED / 1 LOW; skew=none; action=none (`/review-loop` round 1 of 3 over Phase 2's diff and the scratch `--sets --against-product` mode, executor leg sb3; B1-35 matches D4 and Task 0.7; both findings are plan text, applied: Task 4.3's command does not exist yet and the frozen kept script must not be re-run, and the residue's wording for Task 5.2)
 - 2026-11-21 round 17: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none (`/review-loop` round 2 of 3 over Phase 2's diff, executor leg sb3; round 16's two plan-text fixes confirmed against the code; the review converged)
 - 2026-11-21 round 18: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none (codex gpt-6-astra medium, Phase 2 code peer review, pass stage-2.p1 peer round 1 of 5; the pass converged; job 3's answer-hop check limited to its consumer contracts)
+- 2026-11-22 round 19: 0 CRIT / 0 HIGH / 1 MED / 2 LOW; skew=none; action=none (`/review-loop` round 1 of 3 over Phase 4's scratch tooling — `sv_trace.py`, `sv_stitch_product.py` and `sv-measure.py`'s new modes — and the plan's Phase 4 lines, executor leg sg2; all three applied in scratch; the self-test and the decode check owed to the composer)
 
 Format /review will append:
 - YYYY-MM-DD round N: X CRIT / X HIGH / X MED / X LOW; skew=<class>; action=<rec>
@@ -1614,6 +1634,69 @@ Verification: 11 files read; 4 jobs evidenced, with the job 3 limitation stated 
 
 PEER-ROUND-18 RESULT: 0 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 0).
 
+### Round 19 — 2026-11-22
+Round status: Closed
+Source: Claude Code
+Scope: Phase 4's scratch tooling (git-ignored, read whole):
+- the new `.cursor/loops/sv_trace.py` (Task 4.1);
+- the new `.cursor/loops/sv_stitch_product.py` (Task 4.3);
+- `.cursor/loops/sv-measure.py`'s changes since leg sg1 began: the docstring, `--again`, the self-test registration (sections 12 and 13), `_trace_hooks` and the dispatch;
+- the plan's Phase 4 lines.
+
+`/review-loop` round 1 of 3, executor leg sg2 (no Python run: verify=composer). The primary baseline is `11c3827` (the scratch files are untracked; the tracked diff is the plan only). The composer's runs before this round: the self-test 70 passed, 0 failed; the five frozen hashes equal; `git diff --stat -- desktop/ scripts/ validation/ extension/` empty; the decode check exit 0, `DECODE DIFFERENCES TOTAL: 0 (sets passed 7 of 7, row B1-35)`, note path 0 executable changes. Read against C1, C4, C9, D2, D8, Task 0.6's print rules (its rounds 6 to 9) and Tasks 4.1 to 4.3.
+Checked and clean:
+- The stitched mode's print surface (C1, Task 0.6):
+  - It prints numbers, the thirteen manifest names, part numbers, dialogue names, codes, the commit and four hashes.
+  - It never prints the folder's path: the not-a-folder refusal is a fixed line, and a read failure names the file by its manifest name and the error by its type (`sv_stitch._read`).
+  - It prints no word, because the tallies and the comparator read labels, spans and numbers only.
+  - The manifest refusal names a stray file in the folder, as the frozen Task 0.5b mode did (`sv_stitch.stitched_mode`), which D6 accepted for the practitioner's own folder.
+  - A failure inside `run_and_render` prints its type name only, exit 1.
+- The refusals come before any audio is read, in this order: the channel, the folder, its listing, the manifest, the pins, git, crash reports, then the exclusion. Then the models load, and only then does `run_product` read a WAV. The self-test's nine refusal cases (ten after MED-001's fix) each assert no read and one line.
+- Custody (C4, D2):
+  - Each dialogue is decoded through the frozen `make_deps` decode: `transcribe_in_temporary_store(..., persist_key=False)`, the store destroyed after its pass. The self-test counts exactly 10 stores, all gone, and 1 left by the armed failure, also gone.
+  - The decode's embedder is the plain one (`_no_capture`). The owner holds spectral features only and is cleared in `finally`.
+  - The profile vectors (each part's, both P1s and the profile) sit in one `ProfileHolder` behind `vector_boundary`, cleared in `finally` on every path. The self-test's failure case finds every embedded vector unreachable.
+  - Nothing is written: no `write_record` call, no file opened for writing.
+- A real difference fails the comparison:
+  - Take A's parts are compared exactly. Both sides call the product's `enrol` over the same captured audio (`enrol_part` wraps `enrol` with a recorder that returns the same float32 array), so 0.0 is the honest expectation, and a different capture, embedder or mean shows as `parts`.
+  - P1 is compared within 1e-6: the product's `math.fsum` mean against numpy's, open point (5).
+  - The dialogues: labels (the whole list), clinician and number are compared exactly with the row over the same decode's scores. The self-test's flipped-label and renumbered cases each report their one field.
+  - The pools gate against Task 0.5b's pasted strings. On fakes they differ (code 1, `NOT EQUAL (pools)`) and equal the run's own figures.
+  - The limits are compared per part with the frozen measurement's, and a changed cap or required flag shows.
+- The decode check and the trace (Task 4.1, D8): the comparator covers every field D8 lists, and the probability-alone case is reported as exactly `words:probability`. The gate is checked: a clean tree, `desktop/` unchanged and the verified commit resolved. The trace refuses on any executable note-path change, and its must-pause kinds are the plan's two. The sides' stored clinician and number come from the record; a stored attribution that differs between R0 and the product is listed, not hidden.
+- The frozen files are not edited. `sv-measure-kept.py` is imported by nothing in these modes and is not run.
+
+Finding verification: 4 candidates; 1 dropped (the late refusal in `run_product`, raised while the part vectors exist, did not clear its frames: it is raised inside `vector_boundary(holder)`, which clears a failure's frames and the holder before it goes further); 0 downgraded.
+Round classification: 3 🆕 / 0 ⚡ / 0 🔁.
+Missed-issue pass: re-read `sv_stitch_product.py` whole, `sv_trace.py` :240–282 and :898–1085, `sv-measure.py` :134–141 and :2160–2240, and Task 0.6's loader (`sv-measure-kept.py` :278–339). Result: MED-001 and LOW-002.
+
+#### MED-001: `.cursor/loops/sv-measure.py:139`, `sv_stitch_product.py` (the pin refusal), `sv_trace.py` (`scratch_hashes`) — the pin check reads the disk, not the bytes that ran
+- Classification: 🆕 (leg sg1's open point (3))
+- Triage: Fix-now; Fix route: fix-on-fast (scratch)
+- Why it matters:
+  - The frozen pair (`sv_lib.py`, `sv_stitch.py`; for the trace, `sv_lib.py` and `ffl_lib.py`) is imported by a plain `import`, which may run a cached `.pyc`. The pin check then reads each file from the disk again.
+  - A cached `.pyc` that does not match its source, or a file changed between the import and the check, would run unchecked bytes under a check that passes. Python checks a `.pyc` by its source's mtime and size, not its content.
+  - Task 4.3 is to be frozen "as Task 0.6's script was". That script ran each frozen file from bytes read once and checked (`load_modules`), so the check was of the code that ran.
+- Desired behaviour: every scratch module these modes import runs from bytes read once, with the SHA-256 of those bytes kept on the module. The pin checks and the printed provenance read that digest. A module not loaded that way refuses.
+- Pattern siblings: the trace's and the decode check's `scratch_hashes` (fixed with it); `--record-before`'s report hashes (they hash reports, not code: n/a).
+- Scope-expansion disposition: n/a (scratch, Task 4.3's own hardening).
+- /fix decision: Applied.
+- /fix notes:
+  - `sv-measure.py` installs, before its first scratch import, a meta-path finder for `sv_lib`, `sv_stitch`, `ffl_lib`, `sv_sets`, `sv_trace` and `sv_stitch_product`. Its loader reads each file once, keeps the SHA-256 of those bytes on the module (`__sv_ran_sha256__`) and executes exactly those bytes. No `.pyc` is read or written for them.
+  - `ran_sha256(name)` gives that digest, or None for a module not loaded from its checked bytes in the scratch folder. `sv-measure.py`'s own digest is read at its start; Python's own read of it is the one just before (a residue, named in the leg sg2 bullet).
+  - `sv_stitch_product`'s `Env` takes `ran_sha256` in place of `file_sha256` and `loaded_from`. It refuses a file at the wrong value or not checked, and its provenance says "the bytes that ran".
+  - `sv_trace.scratch_hashes` imports each listed module first, then reads the digests, so `ffl_lib.py` is checked before the trace uses it.
+  - The self-tests: the stitched-product check 1 asserts that the frozen pair's digests equal their pins in the running process, and its refusals gain "not-checked" and "own-not-checked". The trace's check 3 reads the real digests of `sv_lib.py`, `ffl_lib.py`, `sv_trace.py` and `sv-measure.py`. The check counts are unchanged (70).
+- /fix date: 2026-11-22; /fix applied by: Claude Code
+
+- **[LOW]** LOW-001: `.cursor/loops/sv_stitch_product.py` (`product_mode`) — outside `run_and_render`'s guard, the practitioner-run mode could print a traceback: from `real_env`'s imports, the exclusion's acquire or release, or the tables. A library's warning, a thread's uncaught exception or a finaliser's unraisable one would also be printed. Task 0.6's script silenced all four (its rounds 6 LOW-003 and 7 SEC-001), so that its run prints its tables and nothing else. Triage: Fix-now; Fix route: fix-on-fast (scratch); Desired: `product_mode` sets `threading.excepthook`, `sys.unraisablehook` and `warnings.showwarning` to a silent function first, and names any failure outside the inner guard by type only (exit 1); /fix decision: Applied; /fix notes: as desired, frames cleared first; not self-tested, because `real_env` is the real environment (the inner guard's path is check 5); /fix date: 2026-11-22; /fix applied by: Claude Code
+- **[LOW]** LOW-002: `.cursor/loops/sv_trace.py` (`gate`), `sv-measure.py` (the trace's dispatch) — the gate held only `desktop/` unchanged since the verified commit, and `--trace` took any `--config` folder. The trace composes every note with that config. A changed cue file after the verified commit, or another folder, would trace at a configuration the verified commit never had, and the record would not say so. Triage: Fix-now; Fix route: fix-on-fast (scratch); Desired: the gate also holds `validation/` unchanged; `--trace` refuses a `--config` other than the repository's `validation/config`; /fix decision: Applied; /fix notes: `GATED_PATHS = ("desktop", "validation")`. The gate's refusal names the folder (`validation-changed-since-verified:N`). The fake git filters by folder, and the trace's check 3 gains "config-moved" and "plan-only". `git diff --stat 4c29283 HEAD -- validation desktop scripts extension` is empty today, so the decode check's verdict is not expected to move; /fix date: 2026-11-22; /fix applied by: Claude Code
+
+Fix-delta self-check: PASS.
+- I re-read every applied hunk. No measured figure, comparison rule, bar or printed table changed. What changed are the refusals: a pin is now the bytes that ran, and the gate now covers `validation/` and the trace's config.
+- `SELF_TEST_CHECKS` stays 70: the new assertions are inside existing checks.
+- The plan is LF.
+
 ## Tasks
 
 ### Phase 0 — Measure (scratch only) — done 2026-11-21 (Tasks 0.1 to 0.7)
@@ -1826,6 +1909,15 @@ PEER-ROUND-18 RESULT: 0 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 0).
     - `sv-measure.py --decode-check --verified 4c29283` and `sv-measure.py --trace --verified 4c29283 --built C:/sv-sets --config validation/config --stages off|gate`, with their logic in the new scratch module `sv_trace.py`.
     - The note path is checked mechanically: every definition the replay can reach, compared at the two commits with docstrings left out. `ui/note_review.py` is added to D8's list.
     - The commands, the expected output and the long runs are in the "Executor handoff (leg sg1)" bullet.
+  - The decode check, run (2026-11-22, the composer, from the clean tree at `11c3827`; `desktop/` unchanged since the verified commit `4c29283`). Its part of the Expected line is met.
+    - Command: `.venv/Scripts/python.exe .cursor/loops/sv-measure.py --decode-check --verified 4c29283 < /dev/null`, exit 0, after the self-test passed (70 passed, 0 failed).
+    - Totals: `DECODE DIFFERENCES TOTAL: 0 (sets passed 7 of 7, row B1-35)`. That is 0 differences on each set: `scripts` 50, `heldout` 22, `heldout-2` 22, `heldout-3` 23, `heldout-4` 22, `heldout-5` 22, `heldout-6` 22, 183 encounters in all, the built row's own Phase 0 labels included.
+    - The note path: `[note-path] executable changes on the note path: 0`. Two files changed since Phase 0 (`8bedfc4` to `4c29283`):
+      - `note.py` +5 −2: the `spoken_by_confirmed_clinician` docstring only (Task 1.4's wording), read by the composer.
+      - `ui/models.py` +212 −1, read by leg sg2. The one change on the note path is the wording constant `LEARNING_NOT_ATTRIBUTED_NOTE` (Task 1.4's text and its comment). It is the message text of the two learning verdicts (`ui/note_review.py` :302, :394), shown on the Review screen; no outcome field, placement or count the harness writes reads it.
+      - Everything else in `ui/models.py` is new and not on the note path: Phase 1's `EnrolmentPart`, `ENROLMENT_SCRIPT`, `ENROLMENT_PART_NAMES`, the enrolment line constants and their eight text functions, and their `__all__` names. No reached definition names any of them.
+    - The full output is in the git-ignored `.cursor/loops/sg1-decode-check.txt`; its JSON is `sv-out/after/4c29283…/decode-check.json`.
+    - Still owed for this task, each on the practitioner's "start now": the paired trace (stages off, then the gate configuration) and D8's "after" harness reports. Task 4.1 stays 🟨 until they have run.
 - [ ] 🟥 Task 4.2: Kept-recordings drift, an observation   [operator]
   - The practitioner runs `scripts\replay-kept-recordings.py` on the developer build as they have before, with the existing `me.wav` where the tool takes an enrolment file. The report stays in their terminal.
   - Recorded in the plan, one of three and nothing else (C1): `refused` (the tool stopped before reading anything; fix and run again), `incomplete` (run again), or `complete` with one comparison word, `no check errors` or `check errors`. No comparison word is recorded for a run that did not complete. It observes drift under the old-style profile against the archived transcripts; it proves no parity and says nothing about the guided profile (Task 4.3 does).
