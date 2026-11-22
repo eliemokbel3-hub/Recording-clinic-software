@@ -259,7 +259,8 @@ def consider_rule_learning(
         if proposal.provenance != "autofill" or not is_learned_rule_id(proposal.rule_id):
             return RuleLearningVerdict(
                 messages=(
-                    "Not learned: this line came from your own config, not from a line you said.",
+                    "Not learned: this line came from your own config, not from a transcript "
+                    "line labelled as yours.",
                 )
             )
         status = learning_status()

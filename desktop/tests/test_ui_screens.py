@@ -7725,6 +7725,8 @@ class TestNoteScreenTypedEdits:
         assert on.edit_line(knee.proposal_id, "Knee effusion absent") is True
         assert on.rule_queue() == () and on.rule_replacement_queue() == ()
         assert "came from your own config" in on.edit_status_label.text()
+        # Review round 32 LOW-001: it names the speaker label, as the learners test it.
+        assert "line labelled as yours" in on.edit_status_label.text()
         on.deleteLater()
 
     # --- Task 2.4: pre-filled lines and the counted Save --------------------------
