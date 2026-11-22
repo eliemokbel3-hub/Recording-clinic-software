@@ -253,9 +253,11 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
    the pass mark (0.50) and the practitioner is confirmed, every segment
    scoring from 0.35 up to 0.50 is labelled `speaker_1` too
    (`transcription.recover_practitioner_labels`). It reads the cosines
-   already computed — no vector is kept, nothing new is written — and the
-   transcript's three attribution fields keep the values the direct
-   matches gave (the cosine is the mean of the segments at or above 0.50).
+   already computed — no vector is kept, nothing new is written — and, when
+   it runs, the transcript's three attribution fields keep the values the
+   direct matches gave (the cosine is the mean of the segments at or above
+   0.50); with no direct match the mark does not run and the unchanged
+   fallback's cluster and mean stand.
    Offline enforcement: `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`,
    `HF_HUB_DISABLE_TELEMETRY=1` set AND asserted at startup and before every
    ML import; models load from explicit local paths with

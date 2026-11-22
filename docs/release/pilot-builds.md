@@ -82,9 +82,10 @@ adds no persisted field, no schema version, no setting and no file in the data
 folder. A profile recorded by the guided enrolment is an ordinary one-vector
 `voice.enc` (schema 1), which 0.4.0 reads and uses; a profile recorded by 0.4.0
 works on 0.4.2 until the practitioner records again. A transcript made on
-0.4.2 carries the same three attribution fields with the same meaning (the
-similarity is the mean of the direct matches); only more of its segments may
-carry the practitioner's label. `encounter.enc`, `note.enc`, `generated.enc`,
+0.4.2 carries the same three attribution fields with the same meaning (with a
+direct match, the similarity is the mean of the direct matches; with none, it
+is the mean of the cluster the unchanged fallback confirmed, as on 0.4.0); only
+more of its segments may carry the practitioner's label. `encounter.enc`, `note.enc`, `generated.enc`,
 `saved-provenance.enc`, `write.enc`, the audit row and every Past-sessions
 entry keep the shape 0.4.0 reads; the audit row's `app_version` reads `0.4.2`.
 So the only step before installing 0.4.0 again is the pilot's own rule:
@@ -101,8 +102,10 @@ Config / Environment / Deployment Impact and Task P.3).
 
 **What an older build shows differently.** (1) 0.4.0's Practitioner tab
 records one 30-second read-aloud, with no parts, no redo and no strength
-line. (2) 0.4.0 labels only segments at or above 0.50 as the practitioner's,
-so a transcript it makes, or makes again, can label fewer lines as theirs than
+line. (2) Where the practitioner's voice matched directly, 0.4.0 labels only
+the segments at or above 0.50 as theirs (with no direct match, both builds use
+the same fallback: two clusters, the one scoring higher labelled theirs), so a
+transcript it makes, or makes again, can label fewer lines as theirs than
 0.4.2 would on the same recording; a transcript made on 0.4.2 opens on 0.4.0
 with its labels as stored. (3) The Review screen's note that a line was not
 learned reads 0.4.0's wording ("this line is not attributed to you - only
