@@ -16,7 +16,7 @@ practitioner on 2026-11-04; the longer goodbye-and-greeting list lines added 202
 the split-line line added 2026-10-27 for version 0.3.5, approved by the practitioner on
 2026-11-04; the misheard number, unit and abbreviation lines
 added after validation run 7 and the larger-model measurement, 2026-11, with no new
-version, approved by the practitioner on 2026-11-07, their counts refreshed with validation run 8's; the shadow-mode-off line added with them, approved by the practitioner on 2026-11-10 (its wording only: shadow mode stays on); the clinical-shorthand, suggested-section and suggested-next-patient lines and the renamed tick added 2026-11-09 for version 0.3.6, approved by the practitioner on 2026-11-10; the placed-answer and flagged-answer lines added 2026-11-17 for version 0.3.7, approved by the practitioner on 2026-11-17). For the
+version, approved by the practitioner on 2026-11-07, their counts refreshed with validation run 8's; the shadow-mode-off line added with them, approved by the practitioner on 2026-11-10 (its wording only: shadow mode stays on); the clinical-shorthand, suggested-section and suggested-next-patient lines and the renamed tick added 2026-11-09 for version 0.3.6, approved by the practitioner on 2026-11-10; the placed-answer and flagged-answer lines added 2026-11-17 for version 0.3.7, approved by the practitioner on 2026-11-17; the speaker-label line added 2026-11-23 for version 0.4.2, awaiting the practitioner's approval). For the
 practitioner, before saving a note and before finalising it in Cliniko.
 
 **Why this matters.** Ahpra's guidance on AI in healthcare ("Meeting your professional
@@ -66,6 +66,17 @@ note.
   can go unmarked. While you are still recording, the live view is provisional: the
   note is drawn from the transcript as it stands when you finish.
 - The speaker labels can be wrong, especially when people talk over each other.
+- **From version 0.4.2:** once your voice has matched clearly somewhere in the
+  consultation, a line that sounds only a little less like you — a quiet or short line,
+  for example — is labelled as yours too, from the sound of that consultation. This finds
+  more of your own lines, but a patient's, carer's or interpreter's line that sounds a
+  little like you can now be labelled as yours, and nothing marks it. Such a line can be
+  placed under your assessment, diagnosis, advice or plan headings with no warning, and,
+  when learning is on, adding or moving it, or typing over it, and then saving can teach
+  the app a phrase or a shorthand rule from it. **Check the speaker in the transcript
+  before you move a line into your own headings, add one there, or type over one.** The
+  similarity number on the "Clinician: confirmed from your voice profile" line describes
+  your clearest matches only, not these lines.
 - **"A possible next patient starts at line N [time]."** If the recording heard a goodbye
   and then a greeting, the Review screen says where a new patient may have arrived — the
   line's number, and the time shown at the start of that line in the transcript — and the

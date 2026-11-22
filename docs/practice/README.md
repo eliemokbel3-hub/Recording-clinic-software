@@ -26,8 +26,15 @@ the practitioner; and that a suggested line may be the next patient's — these 
 approved by the practitioner on 2026-11-10) and on 2026-11-17 for version 0.3.7 (the
 other person's answer to a question of the practitioner's placed with that question, and
 the answer to a left-out question marked for review — these lines approved by the
-practitioner on 2026-11-17) — each in the clinician review guide only. The
-patient documents are unchanged for 0.3.6 and 0.3.7: the transcript is still processed only on
+practitioner on 2026-11-17) — each in the clinician review guide only — and on
+2026-11-23 for version 0.4.2 (in the clinician review guide, that once the practitioner's
+voice has matched clearly, a line that sounds only a little less like them is labelled as
+theirs too, so the speaker is checked before a line is moved into their own headings; in
+the privacy information, the learning sentence restated: the program learns from lines it
+has labelled as the practitioner's, so now and then a line the patient said can be
+learned from — both awaiting the practitioner's approval and the independent review
+below). The patient documents are unchanged for 0.3.6 and 0.3.7, and the patient
+information sheet (`patient-info-v3`) is unchanged for 0.4.2: the transcript is still processed only on
 the practitioner's computer, nothing is sent to any cloud or online AI service, and no
 model is trained on it (since 0.3.6 the program's language model on that computer also
 reads the transcript to suggest headings; **[Reviewer: confirm the patient information's

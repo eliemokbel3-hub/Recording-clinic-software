@@ -67,6 +67,48 @@ the repository's visibility may have changed. If no attestation can be made, the
 check above can never pass, and the build of record needs a decision — never an
 install without that check.
 
+## Rolling back below 0.4.2
+
+0.4.2 (the stronger-voice build: the guided six-part voice enrolment, and the
+recovery mark — once the practitioner's voice has matched at the unchanged
+pass mark, a segment scoring from 0.35 up to 0.50 is labelled theirs too; on
+top of 0.4.0) is not yet a build of record (the stronger-voice plan's Task
+P.1). This section applies from that build on. 0.4.1 is not skipped by
+mistake: it stays reserved for the UI refresh's Phase 6
+(`.cursor/plans/plan-ui-refresh.md`).
+
+**Nothing at rest changes shape** (that plan's Schema / Data Changes). 0.4.2
+adds no persisted field, no schema version, no setting and no file in the data
+folder. A profile recorded by the guided enrolment is an ordinary one-vector
+`voice.enc` (schema 1), which 0.4.0 reads and uses; a profile recorded by 0.4.0
+works on 0.4.2 until the practitioner records again. A transcript made on
+0.4.2 carries the same three attribution fields with the same meaning (the
+similarity is the mean of the direct matches); only more of its segments may
+carry the practitioner's label. `encounter.enc`, `note.enc`, `generated.enc`,
+`saved-provenance.enc`, `write.enc`, the audit row and every Past-sessions
+entry keep the shape 0.4.0 reads; the audit row's `app_version` reads `0.4.2`.
+So the only step before installing 0.4.0 again is the pilot's own rule:
+finish or discard every recording first. Then reload the extension in
+`chrome://extensions` (the 0.4.0 installer puts back its own extension) and
+fully restart Chrome. The model pack is unchanged.
+
+**If the guided profile itself is the suspected fault, rolling back is not
+enough.** 0.4.0 keeps using the profile the guided enrolment saved. Record a
+new profile on 0.4.0 (Settings → Practitioner, "Re-record my voice": its own
+30-second read-aloud replaces the stored one; no second copy is kept), and
+repeat the mock consultation before any scoring (the stronger-voice plan's
+Config / Environment / Deployment Impact and Task P.3).
+
+**What an older build shows differently.** (1) 0.4.0's Practitioner tab
+records one 30-second read-aloud, with no parts, no redo and no strength
+line. (2) 0.4.0 labels only segments at or above 0.50 as the practitioner's,
+so a transcript it makes, or makes again, can label fewer lines as theirs than
+0.4.2 would on the same recording; a transcript made on 0.4.2 opens on 0.4.0
+with its labels as stored. (3) The Review screen's note that a line was not
+learned reads 0.4.0's wording ("this line is not attributed to you - only
+your own lines are learned"), though 0.4.0's learners test the same speaker
+label.
+
 ## Rolling back below 0.4.0
 
 0.4.0 (the UI refresh: the navigation rail, the header strip, the Review

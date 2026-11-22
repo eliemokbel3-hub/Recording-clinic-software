@@ -1,4 +1,4 @@
-# Threat Model (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot, kept recordings, note content design)
+# Threat Model (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot, kept recordings, note content design, stronger voice)
 
 Scope: the implemented system — extension shell, native-messaging host,
 registration chain, logging, credential/session-crypto foundations (Phase 1),
@@ -408,9 +408,15 @@ note inherit exactly that posture.
    `_consider_learning` queues what the Qt-free
    `ui/note_review.consider_learning` decides — Task H6) and only after
    `note.spoken_by_confirmed_clinician` (tested there FIRST, before the
-   learning status is read) says the utterance is the CONFIRMED clinician's —
-   a patient's, carer's or interpreter's line never reaches the learner,
-   whatever the settings; (b)
+   learning status is read) says the utterance carries the CONFIRMED
+   clinician's speaker LABEL — a line labelled as another speaker never
+   reaches the learner, whatever the settings. The label is the voice
+   match's (or the clinician's own choice of speaker), not proof of who
+   spoke: a patient's, carer's or interpreter's line that was labelled the
+   clinician's reaches the learner like the clinician's own (restated by
+   the stronger-voice plan's Task 5.2, 2026-11-23; since 0.4.2's recovery
+   mark such a label is more likely — the practitioner-profile section's
+   surface 8, THE RECOVERY MARK); (b)
    only while `ui.models.learning_status` finds a READABLE profile whose
    consent record carries the CURRENT text version (`consent_is_current` —
    an older version disables learning until the practitioner re-consents on
@@ -792,7 +798,8 @@ note inherit exactly that posture.
    `contradiction` at error grade, or `contradiction_low_confidence` at
    review grade beside a low-probability word); Check 4 no longer flags its
    words (it is quoted); phrase learning never learns from it (the learners
-   take the confirmed clinician's lines only); autofill, pre-fill and Check 6
+   take only lines labelled the confirmed clinician's, and a joined reply is
+   another speaker's); autofill, pre-fill and Check 6
    read the transcript, not the note, so they are unchanged; the section
    suggestions see it as a placed line; and in a prose style its section
    becomes another speaker's ("Pt" frame) and the section's input digest
@@ -1246,7 +1253,13 @@ boundary 2: the defended adversary is outside the user's Windows session.
    numeric speaker-embedding vector — a derivative of the practitioner's
    voice that, with the same model, can recognise that voice again — plus the
    embedder identity, timestamps, speech seconds, the device name and the
-   consent record; never audio. What the structure enforces: the blob is
+   consent record; never audio. Since 0.4.2 (stronger-voice plan D3, Phase
+   1) the vector comes from the guided enrolment: the normalised
+   equal-weight mean of the captured script parts' vectors (`enrolment.
+   combine_parts`), with the speech seconds their sum — still ONE vector in
+   the same schema, so 0.4.0 reads a guided profile and 0.4.2 reads one
+   recorded by 0.4.0; the per-part figures and the strength share shown
+   after saving are computed in memory and never stored. What the structure enforces: the blob is
    AES-256-GCM under a key that exists on disk only DPAPI-wrapped
    (current-user scope) with a profile-specific description that
    `session_store.unwrap_key_from_file` VERIFIES, so a session key blob cannot
@@ -1287,6 +1300,24 @@ boundary 2: the defended adversary is outside the user's Windows session.
    is built, so no PCM reference outlives the embedding on the app's own path —
    and plaintext scrubbing is best-effort as for session audio (data-at-rest
    residuals above).
+   **The guided capture (stronger-voice plan D3, C2, C8; 0.4.2).** The tab
+   records the six parts of `ui/models.py` `ENROLMENT_SCRIPT` one at a time,
+   one `record_enrolment` call per attempt (unchanged), each with its own
+   limits: a speech target of 30 / 15 / 12 / 15 / 12 / 15 s (99 s in all)
+   and a capture cap of three times the target, at least 45 s (90 / 45 / 45
+   / 45 / 45 / 45 s). The memory bound: at most ONE part's PCM exists at a
+   time — the worker embeds it (`enrolment.enrol_part`, `enrol` unchanged
+   inside it) and drops it (`del pcm` in a `finally`) before the 3-second
+   get-ready beat, which holds no stream open, and before the next part
+   starts; the one redo of the weakest part is a further attempt under the
+   same rule. Between parts only numbers stay in memory until the save:
+   each part's mean vector, its speech seconds and its per-segment vectors
+   (the practitioner's own voice, used for the consistency figures and the
+   strength share), dropped when the worker returns. An optional part (the
+   quiet and moving-away parts) that reaches its cap short of its target is
+   left out; every other failure ends the enrolment with nothing saved. No
+   part's audio is ever written: the same tests as above, extended to the
+   card (`desktop/tests/test_ui_screens.py` `TestPractitionerScreen`).
 3. **The profile never reaches a log.** No module in the profile path logs;
    the profile and consent models' field names (`embedding`,
    `enrolment_speech_seconds`, `consent_text_version`) are registered log
@@ -1330,6 +1361,22 @@ boundary 2: the defended adversary is outside the user's Windows session.
    that final check has passed, the profile is built and `save_profile`
    runs regardless of a later Stop — the one residue — and the profile is
    then written and shown, and Delete removes it.
+   Since 0.4.2 (stronger-voice plan D3, C8) ONE lease covers the whole
+   guided enrolment: every part, each get-ready beat, the embeddings, the
+   one redo, the save and the result handler. Stop — which screen lock and
+   sleep press — is honoured inside each capture, before each part's
+   embedding, after every beat and once more just before the save; the
+   residue starts at that final check, as above, so "nothing was saved"
+   stays true until then. From the moment the lease is taken until it is
+   released the tab is busy on the lease alone (never on the worker
+   thread's running state, which reads idle while a finished worker's
+   result is still queued): Record, the consent box, the learning box,
+   Confirm consent and Delete are disabled and every handler that writes
+   or deletes a profile returns without acting, so a queued result cannot
+   race a Delete or a "Confirm consent" that would write the cached old
+   vector over the new one (that plan's Task 1.2; the controls are disabled
+   through the microphone handoff too, its review round 14 PR-MED-4201). A
+   failed microphone handoff shows its error before the lease is released.
    This is a device-ownership and correctness guard (no two readers of one
    microphone, no enrolment audio mixed into a session), not a trust
    boundary.
@@ -1402,6 +1449,76 @@ boundary 2: the defended adversary is outside the user's Windows session.
    and stays the documented hardening if Phase 6's measurement finds a
    problem. This is a responsibility boundary — the practitioner's choice,
    recorded — not a control claim.
+   **THE RECOVERY MARK (stronger-voice plan D4, row B1-35; Task 0.7, the
+   practitioner's "Confirm B1-35", 2026-11-21; C5; 0.4.2).** What it does:
+   in `assemble_transcript`'s attribution branch only — the one speaker
+   pass both drivers share, so the batch path and the live tail drain
+   agree — `transcription.recover_practitioner_labels` takes the labels
+   `attribute_speakers` gave and relabels as `speaker_1` every segment
+   scoring at or above `speaker_embedding.RECOVERY_MARK` (0.35) and under
+   the pass mark `ATTRIBUTION_THRESHOLD` (0.50, unchanged — the
+   practitioner-profile plan's D-P1), but only when at least one segment
+   scored at or above the pass mark and `enrolled_cluster` over those labels
+   confirms `speaker_1`. What it never does: take a `speaker_1` label away;
+   relabel a segment with no score (a slice under 25 ms) or with a
+   directionless vector (-1); run in the no-match branch, after the
+   single-speaker shortcut or without a profile; keep a vector (it reads
+   the one number per segment surface 6 already keeps, so surface 6's bound
+   is unchanged); or change how the clinician is confirmed. Its acceptance
+   check (`enrolled_cluster` over the new labels must still confirm
+   `speaker_1`, else the change is discarded whole) cannot fail for this
+   row, and a test over generated score lists pins that
+   (`desktop/tests/test_attribution.py` `TestRecoveryMark`,
+   `TestRecoveryInAssembly`; `test_live_transcription.py`
+   `TestRecoveryMarkOnBothDrivers`). THE NUMBER: the stored clinician and
+   `enrolment_similarity` are the ones `enrolled_cluster` returned over the
+   labels before the mark ran — the mean over the DIRECT matches (at or
+   above 0.50), not over every line labelled the practitioner's — so on a
+   relabelled transcript the confirmation line's "similarity 0.xx" says how
+   well the direct matches matched, and the recovered lines each scored
+   less. THE TRIM: `transcript_before` is unchanged and keeps the clinician
+   and number whenever a remaining segment with that label holds text, so
+   after a trim that removes every direct match the remaining practitioner
+   lines may all be recovered ones while the number still comes from the
+   trimmed-away direct matches (pinned in `TestRecoveryInAssembly`). THE
+   LARGER EXPOSURE — an accepted residue (the stronger-voice plan's
+   Accepted Assumptions; the practitioner chose "No labelling", so false
+   matches against real patients are NOT measured): in a consultation where
+   the practitioner's voice matched, a patient's, carer's or interpreter's
+   segment scoring from 0.35 to under 0.50 is now labelled the
+   practitioner's. Measured only on synthetic voices: other speakers' speech
+   labelled the clinician rose from 0.61 % to 1.02 % over the seven seen
+   synthetic sets (within the plan's bar of 0.5 point), and no computer-voice speech was labelled the
+   practitioner's on their own stitched script recordings. Three
+   consequences follow, as for any line wrongly labelled the clinician's but
+   now more often: (1) the line is admitted to the four clinician-owned
+   sections and their chooser with no warning (and a left-out one draws
+   `clinician_line_omitted`); (2) in NORMAL mode with learning on (a current
+   consent with the opt-in), adding or moving it and then Save can learn a
+   phrase from it, kept as plain text in the cue file until deleted,
+   although the consent text says only the practitioner's own lines are
+   used; (3) in normal mode a typed Edit over it queues its original words
+   as a shorthand trigger, and Save can write that trigger and the typed
+   text as an autofill rule that later pre-fills notes. A shadow recording
+   teaches nothing and learning off writes nothing, so the pilot's shadow
+   consultations cannot show (2) or (3); the facts are pinned as they are
+   (`test_ui_screens.py` `TestNoteScreenTypedEdits`, the relabelled-patient-
+   line tests). The refusal filter is NOT a control on this residue: its
+   opener rule refuses a line opening with a capitalised word that is
+   neither a common starter nor an admitted opener (a patient's "My …", for
+   one) as name-like — the name heuristic, applied to every speaker's line
+   alike — and the shorthand trigger is a line's last content words
+   (`note_config.propose_rule_trigger`), which the opener rule reaches only
+   when that tail begins at the line's first word, as on a short line.
+   Controls: shadow mode (on), the practitioner's review of the speaker
+   labels before moving a line into their own sections (the clinician
+   review guide), the review-later lists and Delete on the Practitioner
+   tab. The recorded hardening is the stronger-voice plan's deferred
+   two-tier label (a recovered line flagged and never auto-placed in a
+   clinician-owned section), decided before shadow mode is turned off;
+   rubric R4 on the ten pilot consultations is read first. Findings
+   register: F-174, controlled. A change of the mark is a new dated
+   decision with that plan's measurement repeated (C5).
 9. **Consent, first run and deletion are UI state at the same-user
    boundary, not identity (Phase 3, D10; consent v2 and re-consent at Phase
    5, Task 5.0).** What the structure enforces: the Practitioner tab shows
@@ -1492,10 +1609,17 @@ boundary 2: the defended adversary is outside the user's Windows session.
     is: at most four normalised content tokens from the START of a line the
     practitioner added or moved during review — a bounded prefix, which for
     a line of two to four content words is that line's whole content — and
-    never a patient's line (the ownership test in `ui/note_review.py`
-    `consider_learning` over `note.spoken_by_confirmed_clinician`, pinned —
-    since Task H6 the widget's `ui/note.py` `_consider_learning` only applies
-    its verdict).
+    only from a line LABELLED as the confirmed clinician's (the ownership
+    test in `ui/note_review.py` `consider_learning` over
+    `note.spoken_by_confirmed_clinician`, pinned — since Task H6 the widget's
+    `ui/note.py` `_consider_learning` only applies its verdict). The test
+    reads the speaker label, not who spoke: a line labelled as another
+    speaker never teaches, but a patient's, carer's or interpreter's line
+    that the voice match labelled the clinician's teaches like the
+    clinician's own — more likely since 0.4.2's recovery mark (surface 8,
+    THE RECOVERY MARK, its consequence (2); restated by the stronger-voice
+    plan's Task 5.2, 2026-11-23). "The practitioner's own words" in this
+    surface's title means the words of lines labelled theirs.
     The controls that bound what gets written are the five call sites listed
     at the Phase 3A section's surface 1; the two on this tab are the consent
     gate (a readable profile, the CURRENT consent version, the opt-in —
@@ -1695,10 +1819,13 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     clinician may write in their own note. A typed line still draws
     `clinician_asserted`. Undo restores the replaced line; edits freeze at Save.
 13. **Learned rules — trigger and wording admission (D5, D11; C5, C6).** BUILT
-    (Phase 2). Admission, three refusals and no edit (C5): the trigger is the
-    practitioner's OWN utterance (`spoken_by_confirmed_clinician` on the segment
-    the typed line replaced — another speaker's line, or a hand-authored config
-    line with no utterance behind it, teaches nothing) reduced by
+    (Phase 2). Admission, three refusals and no edit (C5): the trigger is an
+    utterance LABELLED as the confirmed clinician's (`spoken_by_confirmed_clinician`
+    on the segment the typed line replaced — a line labelled as another
+    speaker, or a hand-authored config line with no utterance behind it,
+    teaches nothing; a patient's line the voice match labelled the
+    clinician's does teach — the practitioner-profile section's surface 8,
+    THE RECOVERY MARK, its consequence (3); restated 2026-11-23) reduced by
     `note_config.propose_rule_trigger` to its last ≤ 6 content tokens (a
     heuristic on WHAT is learned, not a control) and passed through THE refusal
     filter `refuse_learning_candidate` with its real position context; the
@@ -2358,8 +2485,10 @@ ENFORCED.
   change, and no new widget that can hold note text — the suggestion status
   line is a plain-text `QLabel`, and `tests/test_shadow_exits.py`'s pins hold
   unchanged (C8). Adding a suggested line teaches a cue exactly as any
-  hand-add does (the learning gate: consent v3 with the opt-in, the
-  clinician's own lines only, closed for a shadow recording).
+  hand-add does (the learning gate: consent v3 with the opt-in, lines
+  labelled the confirmed clinician's only — the label, not proof of who
+  spoke, the practitioner-profile section's surface 8 — closed for a shadow
+  recording).
 - **Bounded cost (D7, D9).** Windows of 40 lines (Task C.0 (a); about 36 s
   each on this computer by C.0's ESTIMATE from Task 0.3's measured rates,
   about 48 s at the speed drift Phase R saw — an estimate, not a bound: the
@@ -5128,6 +5257,53 @@ rounds and a `/security-review`), by a 57-case self-test with injected
 fakes and by the synthetic dry run, not by a pin; the verdict words of two
 blocks over different recordings can say something about one recording,
 which is why only one verdict-bearing block is relayed.
+The stronger-voice plan's Task 0.6 measurement (2026-11-21) —
+`.cursor/loops/sv-measure-kept.py` — is the same class under the same
+rules. Before any folder named on its command line is read it checks the
+SHA-256 of every scratch file it runs (`sv_lib.py`, `ffl_lib.py`, the frame
+`ffl-measure-kept.py` and `sv_stitch.py`) against values pinned in it, and
+runs each from exactly the checked bytes; the practitioner checked the
+script's own frozen SHA-256 before the run. Its refusals precede any
+decryption, in the frame's order with two more arguments: `--enrolment`
+(the practitioner's enrolment WAV) and `--take-a` (their stronger-voice
+script recordings — their own voice and a computer voice, no patient — from
+which the guided profile is built in memory). NEW TO THIS CLASS: it holds a
+consultation's SPEAKER-MODEL VECTORS in memory — a numeric derivative of
+every voice heard, the patient's included. Each kept recording is decrypted
+into memory and re-transcribed ONCE over a memory-keyed temporary store
+(`persist_key=False`); while that pass runs, its per-segment vectors sit in
+ONE clearable owner, read only inside one boundary that clears an
+exception's traceback frames, and the owner is cleared before the next
+recording is decrypted, on a failure too; only labels and numbers leave
+it, and no vector is written, logged or printed (the plan's C4). It
+composes the note under each labelling with the shipped extractive
+provider and never opens the archived transcript or saved note. It prints
+two blocks and nothing else, on every run: "For you only" (counts, seconds,
+note lines, warnings and score-band shares — for the practitioner's screen,
+never copied into a tracked file) and "For the record" (the status, whether
+the low-count override was given, and three words per combination — or, on
+an `INCOMPLETE` run, one reason code from a fixed list), the only lines
+relayed and recorded; neither holds a session id, a path or transcript
+text. It is not run again: it compares the old labelling with the product,
+which since 0.4.2 applies the recovery mark. RESIDUE: as above, a scratch
+checked by reading it (the plan's `/review-loop` round 6, `/security-review`
+round 7 and a codex pass of two rounds), by a 33-case self-test with
+injected fakes and by its pins, not by a test in the suite.
+The same plan's stitched measurements (its Tasks 0.5b and 4.3:
+`.cursor/loops/sv-measure.py --stitched`, with `sv_stitch.py`, and
+`--stitched --against-product`, with `sv_stitch_product.py`, each frozen by
+SHA-256 before the practitioner's run) read NO kept recording. They read
+the practitioner's thirteen script recordings — plain WAVs in a
+`stronger-voice\` subfolder of the measurement folder, their own voice
+reading synthetic passages and a Windows voice — build the guided profile
+in memory through the product's own capture limits, and stitch dialogues
+IN MEMORY, never written in the clear; each dialogue goes through the real
+batch driver over an encrypted temporary store with a memory-only key
+(`persist_key=False`), torn down after its pass and after a failed one.
+Their tables hold numbers only and, holding no patient content, may be
+recorded as totals. The thirteen recordings are the practitioner's own
+files, outside the app's custody, deleted by name at that plan's close
+(the retention schedule's "Stronger-voice truth recordings" row).
 
 OLDER BUILDS (D14). 0.2.0 opens a kept entry's transcript and notes and
 ignores the audio (listing and reading test only `key.dpapi` and `pending`);

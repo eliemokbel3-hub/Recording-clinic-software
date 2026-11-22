@@ -1,4 +1,4 @@
-# Data-Flow Map (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot, kept recordings, invented-text guard, validation pass, validation runs 6 and 7, note content design)
+# Data-Flow Map (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot, kept recordings, invented-text guard, validation pass, validation runs 6 and 7, note content design, stronger voice)
 
 Every place data lives or moves in the implemented system. Since Phase 2 the
 desktop app carries **clinical data**: consultation audio, transcripts, and —
@@ -246,6 +246,16 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
    absent model or a profile made by another model leaves this flow exactly
    as before and the Review screen names the fallback; nothing about the
    profile is written back and no audio or embedding is retained.
+   Since 0.4.2 (stronger-voice plan D4, row B1-35; threat model,
+   practitioner-profile surface 8, THE RECOVERY MARK) the assembly's one
+   speaker pass, shared by this flow and the live tail drain (flow 14), also
+   applies the recovery mark: once at least one segment scored at or above
+   the pass mark (0.50) and the practitioner is confirmed, every segment
+   scoring from 0.35 up to 0.50 is labelled `speaker_1` too
+   (`transcription.recover_practitioner_labels`). It reads the cosines
+   already computed — no vector is kept, nothing new is written — and the
+   transcript's three attribution fields keep the values the direct
+   matches gave (the cosine is the mean of the segments at or above 0.50).
    Offline enforcement: `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`,
    `HF_HUB_DISABLE_TELEMETRY=1` set AND asserted at startup and before every
    ML import; models load from explicit local paths with
@@ -581,7 +591,23 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     numbers (speech seconds, seconds captured, a level) reach the tab, over a Qt
     signal. `enrolment.enrol` embeds each VAD segment with the pinned speaker
     model (flow 8) and averages one L2-normalised vector; the worker then drops
-    its PCM reference, and `practitioner_profile.save_profile` writes
+    its PCM reference. Since 0.4.2 (stronger-voice plan D3, Phase 1) the tab's
+    "Record your voice" card captures the six parts of the reading script
+    (`ui/models.py` `ENROLMENT_SCRIPT`) in turn, one `record_enrolment` call
+    per attempt with that part's limits — a speech target of 30 / 15 / 12 /
+    15 / 12 / 15 s and a cap of three times the target, at least 45 s
+    (90 / 45 / 45 / 45 / 45 / 45 s) — separated by a 3-second get-ready beat
+    with no stream open, all under the ONE lease. Each part's PCM is embedded
+    (`enrolment.enrol_part`) and dropped before the next part starts, so at
+    most one part's audio is in memory at a time; what stays until the save
+    is numbers (each part's mean vector, speech seconds and per-segment
+    vectors). The weakest part under the consistency figure
+    (`enrolment.PART_CONSISTENCY_FIGURE`, 0.651) is recorded once more; the
+    quiet and moving-away parts are left out when they reach their cap
+    short of their target. The saved vector is the normalised equal-weight
+    mean of the kept parts' vectors (`enrolment.combine_parts`) and the
+    speech seconds their sum; the strength line shown after saving is
+    computed in memory and not stored. Then `practitioner_profile.save_profile` writes
     `%LOCALAPPDATA%\ClinikoScribe\profile\key.dpapi` (first enrolment only —
     DPAPI-wrapped, current-user, with the profile description) and `voice.enc`
     (AES-256-GCM under that key: the vector, the embedder identity, the
@@ -616,8 +642,11 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     Review screen (`ui/note.py`), the clinician adds a whole transcript utterance
     to a section, or moves a routed line to another section, through the
     "Edit the note" controls (the transcript panel stays display-only). If
-    the utterance is the CONFIRMED clinician's (`note.spoken_by_confirmed_
-    clinician` — any other speaker's line stops here) and the learning
+    the utterance carries the CONFIRMED clinician's speaker label
+    (`note.spoken_by_confirmed_clinician` — a line labelled as any other
+    speaker stops here; the label is the voice match's, so a patient's line
+    the match labelled the clinician's goes on, more often since 0.4.2's
+    recovery mark, flow 7) and the learning
     status — read at review start and re-read at this add or move
     (`ui.models.learning_status`: a readable profile, the current consent
     version, the opt-in) — says learning is on, the utterance's leading two
@@ -638,8 +667,11 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     (`{phrase: {section, learned_at}}`) the same way. The Practitioner tab
     lists the sidecar's recent entries and every non-shipped phrase in the
     cue file (`note_config.load_learned_phrases`) and deletes one from both
-    files (`delete_user_cue`). Only the practitioner's own words leave the
-    review, as config plaintext, by their consent (text v3 — the current
+    files (`delete_user_cue`). Only the words of lines labelled the
+    practitioner's leave the review — their own, unless the voice match
+    labelled someone else's line as theirs (threat model,
+    practitioner-profile surface 8, THE RECOVERY MARK) — as config
+    plaintext, by their consent (text v3 — the current
     version; v2 was current when this flow was built); nothing here is
     logged (the phrase is shown on the local UI only).
 
@@ -678,7 +710,10 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     (the last open span and any queued windows) runs on the processing
     `TaskThread` inside the transcriber callable (`ui/models._live_transcript`
     via `claim_live_transcriber`), never on the GUI thread, and writes
-    `transcript.enc` once through `assemble_transcript`; the worker's models
+    `transcript.enc` once through `assemble_transcript` (since 0.4.2 that
+    one speaker pass also applies the recovery mark, exactly as flow 7, over
+    the cosines the worker already holds — no vector is kept; a fixture run
+    through both drivers pins that they agree); the worker's models
     are released before the batch fallback builds its own. Discard stops and
     joins the worker and requires its buffers CONFIRMED cleared
     (`buffers_cleared`) BEFORE the session key is destroyed — an uncleared
@@ -734,7 +769,10 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     flow: the Review screen's Edit control (`ui/note.py` `edit_line`) produces the
     typed line over a note line or proposal (in memory, beside the draft — the
     same review-window plaintext as the rest of the note review); when the replaced
-    line is the confirmed clinician's own utterance the trigger (its tail
+    line is an utterance labelled the confirmed clinician's (the label, not
+    proof of who spoke: a patient's line the voice match labelled the
+    clinician's qualifies too — threat model, practitioner-profile surface 8,
+    THE RECOVERY MARK, consequence (3)) the trigger (its tail
     through `refuse_learning_candidate`) and the typed wording (through
     `refuse_typed_wording`) are QUEUED in memory and written by the Save-time
     writer `append_learned_rules` — and only by it — into
@@ -1591,7 +1629,30 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       a status line, four recording counts and, on a `COMPLETE` run with at least 2 recordings whose clinician is
       confirmed, one `met` or
       `not met` per threshold, refused by its builder if it holds anything
-      else (no total, share, median or maximum).
+      else (no total, share, median or maximum). The stronger-voice plan's
+      Task 0.6 measurement (`.cursor/loops/sv-measure-kept.py`, 2026-11-21,
+      git-ignored; it and the four scratch files it runs frozen by SHA-256
+      and checked again before any folder is read) is a scratch of the same
+      kind under the same rules, with `--enrolment` and `--take-a` (the
+      practitioner's own script recordings) beside the folder and `--config`.
+      Each kept recording is re-transcribed once in memory over a memory-keyed
+      temporary store, and — new to this kind — its per-segment
+      SPEAKER-MODEL VECTORS (a numeric derivative of every voice heard) are
+      held in one clearable owner for that pass only, cleared before the next
+      recording is decrypted and on a failure, never written, logged or
+      printed; the note is composed under each labelling with the shipped
+      provider, and the archived transcript and saved note are never opened.
+      It prints a "For you only" block (counts and seconds, never copied into
+      a tracked file) and a "For the record" block — the status, the
+      low-count override and three words per combination, or one reason code
+      — the only part relayed and written into that plan. It is not run
+      again (threat model, "Kept recordings", MEASUREMENT SCRATCH). The same
+      plan's stitched measurements (`sv-measure.py --stitched`, and
+      `--stitched --against-product`) read no kept recording: they read the
+      practitioner's thirteen script recordings (their own voice and a
+      Windows voice, no patient), stitch dialogues in memory and run each
+      through the real batch driver over a memory-keyed temporary store torn
+      down after its pass; their number tables may be recorded as totals.
 
 28. **The transcription-guard measurement (invented-text guard plan Task 1.5,
     D7, C12; BUILT 2026-10-12; developer build only, practitioner-run, zero
@@ -1721,11 +1782,15 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
   writes TWO things into that class, both by consent and both reviewable and
   deletable on the Practitioner tab rather than guaranteed non-clinical:
   (1) a learned phrase (flow 13): two to four words from the start of a line
-  the PRACTITIONER said and added or moved during review — structurally never
-  a patient's line, and shape-filtered against names, numbers, dates and
-  medication names, but the filter cannot judge meaning; (2) a learned rule
-  (threat-model note-learning surface 13): its trigger is taken from the
-  practitioner's OWN utterance through the same refusal filter
+  LABELLED the practitioner's and added or moved during review — structurally
+  never a line labelled as another speaker, but the label is the voice
+  match's, so a patient's line the match labelled the practitioner's can
+  teach (more often since 0.4.2's recovery mark; threat model,
+  practitioner-profile surface 8) — and shape-filtered against names,
+  numbers, dates and medication names, but the filter cannot judge meaning
+  or who spoke; (2) a learned rule
+  (threat-model note-learning surface 13): its trigger is taken from an
+  utterance labelled the practitioner's, through the same refusal filter
   (`refuse_learning_candidate`), and its wording is text the practitioner
   TYPED over a line, through the narrower `refuse_typed_wording` — numbers,
   dates and medication names refused, and NO name check (D11) — written
@@ -1794,6 +1859,10 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
   WAV or a temp file — and the buffers, the VAD's recurrent state and the
   worker's PCM reference are all dropped before the profile is written; the
   only artefacts a completed enrolment leaves are `key.dpapi` and `voice.enc`.
+  Since 0.4.2's guided enrolment the same holds for each of the six parts and
+  the one redo: a part's PCM is dropped once it is embedded, before the next
+  part starts, and nothing of any part is written (the stronger-voice plan's
+  C2).
   Pinned with a mock backend under a temporary `LOCALAPPDATA`
   (`desktop/tests/test_enrolment.py`) and at the tab level with a fake capture
   over a temporary profile root (`desktop/tests/test_ui_screens.py`).

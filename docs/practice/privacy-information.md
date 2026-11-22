@@ -7,7 +7,9 @@
 
 Draft 1 (2026-10-01; the record of a recording and "How we use it" updated 2026-10-07 for
 the pilot build, approved by the practitioner the same day; the kept recording added
-2026-10-08 for version 0.3.0, approved by the practitioner on 2026-11-10).
+2026-10-08 for version 0.3.0, approved by the practitioner on 2026-11-10; the learning
+sentence in "How we use it" restated 2026-11-23 for version 0.4.2, awaiting the
+practitioner's approval).
 Text for the practice's privacy policy and collection notice, describing what Clinic
 Scribe does with patients' information. Fill in the bracketed parts; keep it in step with
 the [patient information](patient-information-and-consent.md) (`patient-info-v3`) and
@@ -56,11 +58,16 @@ program's draft with the note they wrote themselves, to check the quality of its
 the scores they keep hold no name and nothing that was said. The program does not diagnose,
 suggest treatment or make decisions about your care, and your practitioner reviews and
 finalises every note. No AI model is trained on your information. If your practitioner
-turns it on, the program learns short phrases from lines **your practitioner** adds or
-moves in a note, so that later notes are filed under the right headings, and shorthand
-from wording your practitioner types over a note line — never from anything you said.
+turns it on, the program learns short phrases from lines it has labelled as **your
+practitioner's**, when they add or move such a line in a note, so that later notes are
+filed under the right headings, and shorthand from wording they type over such a line.
+The program tells voices apart by how they sound, so now and then a line you said can
+be labelled as your practitioner's and learned from; your practitioner can see and
+delete everything it has learned. **[Reviewer: confirm this wording, and that a
+patient's words occasionally learned from this way is covered by the practice's
+existing collection notice.]**
 An automatic check looks at the shape of words, not their meaning: a phrase taken from
-what your practitioner said is refused if it looks like it contains a name, a number, a
+a line labelled as your practitioner's is refused if it looks like it contains a name, a number, a
 date or a medicine name, but wording your practitioner types is checked only for
 numbers, dates and medicine names, so keeping patient names out of their own shorthand
 is up to your practitioner. The check cannot guarantee that nothing identifying is ever

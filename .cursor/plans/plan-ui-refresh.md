@@ -2307,6 +2307,7 @@ Built in THIS worktree on `claude/ui-refresh-bf9282`, by `/execute` or a FRESH `
   - Blocks: Phase 6.
 
 ### Phase 6 — 0.4.1: the checklist, the full Review composition, the Chrome panel (after P.4; P.4 chose (c) on 2026-11-18: after the clinic 1 exit gate)
+- (2026-11-23, the stronger-voice plan's Task 5.1) The next release after 0.4.0 is 0.4.2, the stronger-voice plan's guided enrolment and matching row B1-35 (`.cursor/plans/plan-stronger-voice.md`); it skips 0.4.1, which stays reserved for this phase. This phase's scope and its install rule are unchanged; its Task 6.7 starts from the version places as that release left them.
 - [ ] 🟥 **6.1 `models.setup_checklist`** (D7): `SetupItem`, `setup_checklist(...)`, `setup_complete(...)`; tests in `test_ui_models.py` (four rows, each tick, the detail lines reuse the named existing texts, completeness).
 - [ ] 🟥 **6.2 `ui/setup_checklist.py` and the one report.** The page (D7); `MainWindow._setup_items()` reading the four facts (the window's `_clinic_registry`, never the screen); `StatusPanel.registration_status` initialised and kept; the three refresh paths (end of `__init__` after the rail exists, `_on_tab_changed`, the 5 s timer in `showEvent`/`hideEvent`); `page_requested` → `show_page`; `completed` (connected after the first refresh) → rail entry hidden, `setTabVisible(i, False)`, move to Record if current.
 - [ ] 🟥 **6.3 The landing rule.** Replace `ui/main_window.py:781-785` with the D7 rule; the page list becomes nine with "Set up" at 0 (this phase's one navigation test change).
