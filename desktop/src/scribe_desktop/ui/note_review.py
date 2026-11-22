@@ -239,8 +239,9 @@ def consider_rule_learning(
     learning_status: LearningStatusReader,
 ) -> RuleLearningVerdict:
     """The shorthand the typed line ``typed`` teaches, or why not. The
-    source is what the line REPLACED (``typed.replaces``): one of the
-    practitioner's OWN utterances — ``segment_index``, the segment the
+    source is what the line REPLACED (``typed.replaces``): an utterance
+    LABELLED as the practitioner's (the speaker label, not proof of who
+    spoke) — ``segment_index``, the segment the
     replaced line quotes, tested for ownership first and without reading the
     learning status — yields a new rule (trigger from the utterance's tail
     through THE refusal filter, wording through ``refuse_typed_wording``) or,

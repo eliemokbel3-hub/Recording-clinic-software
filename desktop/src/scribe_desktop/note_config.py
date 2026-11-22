@@ -1916,7 +1916,8 @@ LEARNED_RULE_AUTO_CONFIRM_AFTER: Final = 3
 # learned from a typed edit is an ordinary ``AutofillRule`` in the user
 # ``autofill_rules.json`` whose id carries this prefix — the ONE way a learned
 # rule is told from a hand-authored one — with its metadata in a sidecar the
-# loader never reads. A trigger is the practitioner's OWN utterance reduced to
+# loader never reads. A trigger is an utterance LABELLED as the practitioner's
+# (the speaker label, not proof of who spoke) reduced to
 # at most this many content tokens (and at least ``LEARNED_PHRASE_MIN_TOKENS``,
 # as a cue phrase is: one token would fire on almost every consultation).
 LEARNED_RULES_SIDECAR_FILENAME: Final = "autofill_rules.learned.json"

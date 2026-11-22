@@ -215,7 +215,8 @@ Clinical-content discipline (Critical Constraints, design-system):
   rendered — read back from the proposal label, never copied from the
   proposal — so a rendering bug produces evidence ``finalise_note`` refuses.
   The one thing this tab writes outside the session store is a learned
-  PHRASE — the practitioner's own words, by their consent — to their cue file.
+  PHRASE — the words of a line labelled as the practitioner's, by their
+  consent — to their cue file.
 """
 
 from __future__ import annotations

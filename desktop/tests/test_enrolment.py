@@ -695,6 +695,12 @@ class TestEnrolmentScript:
             "Not learned: this line is not labelled as yours - only lines labelled as yours "
             "are learned."
         )
+        # Review round 30 MED-001: the learning-on line names the label too.
+        assert models.LEARNING_ON_LINE == (
+            "Phrase learning is on: lines labelled as yours that you add or move, and shorthand "
+            "you type over them, are learned when you press Save note on the Review screen."
+        )
+        assert "own lines" not in models.LEARNING_ON_LINE
 
 
 # --- the D15 controller activity ------------------------------------------------------

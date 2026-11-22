@@ -1315,7 +1315,9 @@ boundary 2: the defended adversary is outside the user's Windows session.
    (the practitioner's own voice, used for the consistency figures and the
    strength share), dropped when the worker returns. An optional part (the
    quiet and moving-away parts) that reaches its cap short of its target is
-   left out; every other failure ends the enrolment with nothing saved. No
+   left out, and the one redo, if it reaches its cap short, keeps that
+   part's first attempt; every other failure ends the enrolment with
+   nothing saved. No
    part's audio is ever written: the same tests as above, extended to the
    card (`desktop/tests/test_ui_screens.py` `TestPractitionerScreen`).
 3. **The profile never reaches a log.** No module in the profile path logs;

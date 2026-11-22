@@ -3548,9 +3548,11 @@ LEARNING_STALE_CONSENT_HINT: Final = (
 LEARNING_OPTED_OUT_HINT: Final = (
     "Phrase learning is off - turn it on on the Practitioner tab."
 )
+# Stronger-voice plan Task 5.2 (review round 30): like the not-learned note
+# below, it names the speaker label, which is what the learners test.
 LEARNING_ON_LINE: Final = (
-    "Phrase learning is on: lines you add or move, and shorthand you type over your own "
-    "lines, are learned when you press Save note on the Review screen."
+    "Phrase learning is on: lines labelled as yours that you add or move, and shorthand you "
+    "type over them, are learned when you press Save note on the Review screen."
 )
 # Shown on the Note tab's learning line while phrases are QUEUED (live smoke
 # 2026-09-17: the practitioner read the queue as done and left the review
