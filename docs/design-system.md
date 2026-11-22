@@ -408,7 +408,8 @@ view patterns · tokens · microcopy.
   writes it.** After an add or a move the edit group's status line says either "Will
   learn '<phrase>' for <section> when you press Save note on the Review screen.", "Not learned:
   contains a name/number/date/medication (<class>)", "Not learned: this line is not
-  attributed to you …", or the one-line reason learning is off (naming the Practitioner
+  labelled as yours …" (since 0.4.2; the learners test the speaker label, not who spoke —
+  0.4.0 said "not attributed to you"), or the one-line reason learning is off (naming the Practitioner
   tab) — a status line, never a modal, never a prompt (plan D9 as amended: auto-learn,
   review later). A typed shorthand the rules file would refuse is told so at the edit in
   the clinician's words per class — "Not learned: the typed wording reads as more than

@@ -16,7 +16,7 @@ practitioner on 2026-11-04; the longer goodbye-and-greeting list lines added 202
 the split-line line added 2026-10-27 for version 0.3.5, approved by the practitioner on
 2026-11-04; the misheard number, unit and abbreviation lines
 added after validation run 7 and the larger-model measurement, 2026-11, with no new
-version, approved by the practitioner on 2026-11-07, their counts refreshed with validation run 8's; the shadow-mode-off line added with them, approved by the practitioner on 2026-11-10 (its wording only: shadow mode stays on); the clinical-shorthand, suggested-section and suggested-next-patient lines and the renamed tick added 2026-11-09 for version 0.3.6, approved by the practitioner on 2026-11-10; the placed-answer and flagged-answer lines added 2026-11-17 for version 0.3.7, approved by the practitioner on 2026-11-17; the speaker-label line added 2026-11-23 for version 0.4.2, awaiting the practitioner's approval). For the
+version, approved by the practitioner on 2026-11-07, their counts refreshed with validation run 8's; the shadow-mode-off line added with them, approved by the practitioner on 2026-11-10 (its wording only: shadow mode stays on); the clinical-shorthand, suggested-section and suggested-next-patient lines and the renamed tick added 2026-11-09 for version 0.3.6, approved by the practitioner on 2026-11-10; the placed-answer and flagged-answer lines added 2026-11-17 for version 0.3.7, approved by the practitioner on 2026-11-17; the speaker-label line and the suggested-headings label line added 2026-11-23 for version 0.4.2, awaiting the practitioner's approval). For the
 practitioner, before saving a note and before finalising it in Cliniko.
 
 **Why this matters.** Ahpra's guidance on AI in healthcare ("Meeting your professional
@@ -211,6 +211,11 @@ where each line came from: the transcript, something you typed, or your own pre-
    line someone else said is never suggested for your assessment, diagnosis, advice or
    plan. A suggestion never stops you saving, and adding a suggested line of yours teaches
    the app a phrase just as adding any line of yours does (when learning is on).
+   **From version 0.4.2:** "someone else" and "of yours" here mean how the app labelled
+   the line, not who said it. A patient's, carer's or interpreter's line labelled as yours
+   (the speaker-label line above) can be suggested for your assessment, diagnosis, advice
+   or plan, and adding it can teach the app a phrase. Check the speaker before you add a
+   suggested line.
    **A suggested line may be the next patient's.** The app holds suggestions back only
    after a change of patient it has spotted (the lines marked `[next patient?]`); where it
    spotted none, a line from the next patient can be suggested like any other line, with

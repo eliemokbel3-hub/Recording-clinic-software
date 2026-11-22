@@ -29,7 +29,8 @@ the answer to a left-out question marked for review — these lines approved by 
 practitioner on 2026-11-17) — each in the clinician review guide only — and on
 2026-11-23 for version 0.4.2 (in the clinician review guide, that once the practitioner's
 voice has matched clearly, a line that sounds only a little less like them is labelled as
-theirs too, so the speaker is checked before a line is moved into their own headings; in
+theirs too, so the speaker is checked before a line is moved into their own headings, and
+that a suggested heading's "someone else" means how the app labelled the line; in
 the privacy information, the learning sentence restated: the program learns from lines it
 has labelled as the practitioner's, so now and then a line the patient said can be
 learned from — both awaiting the practitioner's approval and the independent review
