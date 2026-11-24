@@ -33,8 +33,8 @@ theirs too, so the speaker is checked before a line is moved into their own head
 that a suggested heading's "someone else" means how the app labelled the line; in
 the privacy information, the learning sentence restated: the program learns from lines it
 has labelled as the practitioner's, so now and then a line the patient said can be
-learned from — both awaiting the practitioner's approval and the independent review
-below). The patient documents are unchanged for 0.3.6 and 0.3.7, and the patient
+learned from — both approved by the practitioner on 2026-11-25, and awaiting the independent
+review below). The patient documents are unchanged for 0.3.6 and 0.3.7, and the patient
 information sheet (`patient-info-v3`) is unchanged for 0.4.2: the transcript is still processed only on
 the practitioner's computer, nothing is sent to any cloud or online AI service, and no
 model is trained on it (since 0.3.6 the program's language model on that computer also

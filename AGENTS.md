@@ -201,7 +201,7 @@ UI refresh Phase M (2026-11-17 → 2026-11-18; built by `/execute` in this sessi
 - Phase P (2026-11-24):
   - The held live smoke PASSED on the developer build: the two Review-screen lines ("yes it showed, both pass"); the guided card after its passage was made larger (the practitioner's "Bigger text", leg sv9, review round 36; their re-check: "Pass").
   - P.1 (on the practitioner's word "Push and build"): `main` pushed at `2fbb052` (CI run 45377108062 green); 0.4.2 is a build of record (`Release` run 45377119380, attested; `docs/release/pilot-builds.md`). The diff from Task 4.1's verified commit holds no change any measurement reads, so none was repeated.
-- Shadow mode stays on; 0.4.0 stays installed. NEXT: P.2 the practitioner's install (re-verify from a normal terminal; shadow mode on); the practice documents' 0.4.2 approvals before P.3; P.3 re-enrol and the mock smoke; P.4 the ten Task 9.1 consultations restart at C01.
+- Shadow mode stays on; 0.4.0 stays installed. The practice documents' four 0.4.2 lines (the review guide's two, the privacy information's restated sentence, the practice README's) were approved by the practitioner on 2026-11-25 ("Approve all four"); the independent review of `docs/practice/` is still owed. NEXT: P.2 the practitioner's install (re-verify from a normal terminal; shadow mode on); P.3 re-enrol and the mock smoke; P.4 the ten Task 9.1 consultations restart at C01.
 
 ## Last Session
 - Date: 2026-11-23 (Windows host; Claude Code desktop, composer `claude-opus-5-5`); before that 2026-11-22 → 2026-11-23; before that 2026-11-21; before that 2026-11-20; before that 2026-11-18 → 2026-11-19
