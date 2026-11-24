@@ -688,28 +688,47 @@ class TestGuidedCardWidth:
     heading, the Practitioner tab's content fits across its scroll area (it
     has no sideways bar, so anything wider would be cut off) and each card
     label shows its whole text. A passage label that stopped word-wrapping
-    would hold the content at the passage's full width and fail."""
+    would hold the content at the passage's full width and fail.
 
-    def test_every_part_fits_across_at_150_percent(self, qapp: Any, tmp_path: Path) -> None:
+    Since the practitioner's smoke (2026-11-24, "Bigger text"; leg sv9) the
+    passage is in the theme's reading size, so it is laid out at 100 % too,
+    and the whole passage fits within the scroll area's height: it can be
+    read in one view while moving round the treatment table."""
+
+    @pytest.mark.parametrize(
+        "chars_lines", [_AT_150_CHARS_LINES, _AT_100_CHARS_LINES], ids=["150", "100"]
+    )
+    def test_every_part_fits_across(
+        self, qapp: Any, tmp_path: Path, chars_lines: tuple[int, int]
+    ) -> None:
+        from scribe_desktop.ui import theme
+
         window = _main_window(tmp_path)
         screen = window.practitioner_screen
         window.show_page(screen)
-        _laid_out(qapp, window, *_at_150(window))
+        _laid_out(qapp, window, *_stand_in(window, chars_lines))
         try:
             assert window.tabs.currentWidget() is screen
             viewport = screen.scroll_area.viewport()
+            assert screen.passage_label.property("role") == "reading"
             for index, part in enumerate(models.ENROLMENT_SCRIPT):
                 for redo in (False, True):
                     screen._show_part(index, part.target_speech_seconds, redo=redo)  # noqa: SLF001
                     qapp.processEvents()
                     qapp.processEvents()
                     assert screen.passage_label.text() == part.text
+                    # Shown and polished: the passage in the reading size, the
+                    # cue beside it in the body size.
+                    body = screen.part_cue_label.font().pointSize()
+                    passage = screen.passage_label.font().pointSize()
+                    assert passage == theme.LIGHT.size_reading > body, index
                     assert screen.scroll_content.width() <= viewport.width(), (index, redo)
                     for label in screen._card_labels:  # noqa: SLF001
                         assert label.isVisibleTo(screen)
                         assert label.width() <= viewport.width(), (index, label.text()[:24])
                         needed = label.heightForWidth(label.width())
                         assert label.height() >= needed, (index, label.text()[:24])
+                    assert screen.passage_label.height() <= viewport.height(), index
         finally:
             screen._reset_card()  # noqa: SLF001
             _close(window)

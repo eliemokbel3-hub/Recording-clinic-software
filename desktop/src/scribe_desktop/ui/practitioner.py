@@ -574,6 +574,8 @@ class PractitionerScreen(QWidget):
         # Shown while an enrolment runs: the part's heading, its cue, its
         # passage and the fixed "keep reading" line. All PLAIN TEXT labels with
         # Qt's default interaction flags, so the passage is never selectable.
+        # The passage is in the larger reading size, to be read while moving
+        # round the treatment table (the practitioner's smoke, leg sv9).
         self.part_heading_label = QLabel()
         self.part_heading_label.setTextFormat(Qt.TextFormat.PlainText)
         self.part_heading_label.setWordWrap(True)
@@ -584,6 +586,7 @@ class PractitionerScreen(QWidget):
         self.passage_label = QLabel()
         self.passage_label.setTextFormat(Qt.TextFormat.PlainText)
         self.passage_label.setWordWrap(True)
+        set_role(self.passage_label, "reading")
         self.keep_reading_label = QLabel(models.ENROLMENT_KEEP_READING_LINE)
         self.keep_reading_label.setTextFormat(Qt.TextFormat.PlainText)
         self.keep_reading_label.setWordWrap(True)

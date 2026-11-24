@@ -57,7 +57,9 @@ _FOLLOWING_PROPERTY: Final = "scribe_scheme_following"
 
 # The values the three dynamic properties may take; each has its rules in
 # ``render_qss``.
-ROLES: Final = frozenset({"danger", "error", "strong", "muted", "title", "success"})
+ROLES: Final = frozenset(
+    {"danger", "error", "strong", "muted", "title", "success", "reading"}
+)
 VARIANTS: Final = frozenset({"primary", "danger", "link"})
 # The shell's object ids (Phase 3 builds the widgets; the rules exist now).
 SHELL_IDS: Final = (
@@ -104,6 +106,9 @@ class Tokens:
     size_caption: int
     size_title: int
     size_heading: int
+    # A passage read aloud from a distance: the guided enrolment's part text,
+    # read while moving round the treatment table (stronger-voice leg sv9).
+    size_reading: int
     # Spacing, radii, the rail.
     space_1: int
     space_2: int
@@ -143,6 +148,7 @@ LIGHT: Final = Tokens(
     size_caption=9,
     size_title=14,
     size_heading=11,
+    size_reading=16,
     space_1=4,
     space_2=8,
     space_3=12,
@@ -179,6 +185,7 @@ DARK: Final = Tokens(
     size_caption=9,
     size_title=14,
     size_heading=11,
+    size_reading=16,
     space_1=4,
     space_2=8,
     space_3=12,
@@ -326,6 +333,7 @@ def render_qss(t: Tokens) -> str:
         _rule('QLabel[role="muted"]', f"color: {t.text_muted}"),
         _rule('QLabel[role="title"]', f"font-size: {t.size_title}pt", "font-weight: 600"),
         _rule('QLabel[role="success"]', f"color: {t.success}"),
+        _rule('QLabel[role="reading"]', f"font-size: {t.size_reading}pt"),
         _rule(
             'QLabel[role="danger"]:disabled, QLabel[role="error"]:disabled, '
             'QLabel[role="muted"]:disabled, QLabel[role="success"]:disabled',
@@ -803,7 +811,7 @@ def _repolish(widget: QWidget) -> None:
 
 
 def set_role(widget: QWidget, role: str) -> None:
-    """Give a label its role (``ROLES``) — its colour and weight."""
+    """Give a label its role (``ROLES``) — its colour, weight or size."""
     if role not in ROLES:
         raise ValueError(f"unknown role: {role}")
     widget.setProperty("role", role)

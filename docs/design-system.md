@@ -160,12 +160,15 @@ view patterns · tokens · microcopy.
 - **A guided capture is one card, never a dialog or a sub-page** (stronger-voice plan
   D3, Phase 1). The voice enrolment's six parts run inside the Practitioner tab's
   "Record your voice" group: a heading ("Part 2 of 6: Speak quietly", "(again)" on
-  the one redo), a cue in capitals, the passage as a plain label that cannot be
-  selected, the fixed "keep reading" line and the part's own counter (its
+  the one redo), a cue, the passage as a plain label that cannot be
+  selected (in the larger `reading` role, `size_reading`, so it can be read while
+  moving round the treatment table — the practitioner's smoke, 2026-11-24), the
+  fixed "keep reading" line and the part's own counter (its
   denominator from the part), with a 3-second get-ready line between parts; the card
   is hidden at rest and Stop stays live throughout. The script and every string are
   data in `ui/models.py` (`ENROLMENT_SCRIPT` and the `ENROLMENT_*` lines); the card is
-  pinned at 150 % (`tests/test_ui_phase_s.py` `TestGuidedCardWidth`). Results read as
+  pinned at 150 % and 100 %, each passage within one view's height
+  (`tests/test_ui_phase_s.py` `TestGuidedCardWidth`). Results read as
   plain words with at most one number (the strength line, the weak-part and left-out
   lines).
 
@@ -829,15 +832,16 @@ style or background setter fails `desktop/tests/test_ui_theme.py`.
   icons take `text_muted`, and `accent` for the lit entry, through `theme.colour` —
   the one place a token becomes Qt's colour, accepting only a value a token set holds.
 - **Type:** one family list (Segoe UI Variable Text, then Segoe UI, then Arial — the
-  application font) and four sizes: `size_body` (the application font), `size_caption`
+  application font) and five sizes: `size_body` (the application font), `size_caption`
   (the rail cue and the rail entries' text), `size_title` (a title label, the app
-  title), `size_heading` (defined, not yet drawn). **Spacing** `space_1`–`space_5`, **radii** `radius_control` and
+  title), `size_heading` (defined, not yet drawn), `size_reading` (a passage read
+  aloud from a distance: the guided enrolment's part text, since 0.4.2). **Spacing** `space_1`–`space_5`, **radii** `radius_control` and
   `radius_card`, and the `rail_width`.
 - **Emphasis is a role, never rich text.** Every message label stays `PlainText`
   (user-written text is never read as markup); its colour and weight come from
   `theme.set_role(label, role)`: `danger` (red and bold — a warning that must be read),
   `error` (red — a failed or refused line), `strong` (bold), `muted`, `title`,
-  `success`.
+  `success`, `reading` (the larger reading size, no colour or weight).
 - **Button variants** (`theme.set_variant`): `primary` (Start on the Record page, Save
   note, the Clinics tab's Validate), `danger` (outlined in red: the Record page's and the
   Review screen's Discard, Delete now, Delete recording, Delete voice profile, Delete
