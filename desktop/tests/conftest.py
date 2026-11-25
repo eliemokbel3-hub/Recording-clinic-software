@@ -48,6 +48,8 @@ REAL_PILOT_SETTINGS_ROOT = note_config.pilot_settings_root
 # Development-recordings plan Task 1.1: the real development-settings
 # resolver, for its own test.
 REAL_DEVELOPMENT_SETTINGS_ROOT = note_config.development_settings_root
+# Past-sessions-backup plan Task 1.4: the real backup-settings resolver.
+REAL_BACKUP_SETTINGS_ROOT = note_config.backup_settings_root
 # Codex round 27 PR-LOW-001: the real ``.part`` kernel seam, captured before
 # ``pytest_configure`` replaces it with ``_no_real_part_kernel``.
 REAL_PART_KERNEL = past_sessions.part_kernel
@@ -60,6 +62,12 @@ REAL_REPLAY_EXCLUSION = replay_kept._acquire_exclusion
 REAL_CUDA_DEVICE_COUNT = transcription.cuda_device_count
 REAL_PRELOAD_CUDA_LIBRARIES = transcription.preload_cuda_libraries
 REAL_LOAD_LIBRARY = transcription._load_library
+# Past-sessions-backup plan D8 / C9: the set-aside's real DPAPI seams (the
+# blob classifier and the in-memory round trip), captured before the
+# ``_no_real_set_aside_dpapi`` fixture replaces them — the ONE real-DPAPI
+# set-aside test passes them to its store by name.
+REAL_CLASSIFY_KEY_BLOB = past_sessions._classify_entry_key_blob
+REAL_DPAPI_PROBE = past_sessions.dpapi_round_trip
 
 
 def _no_cuda_device() -> int:
@@ -328,6 +336,20 @@ def pinned_development_root(
 
 
 @pytest.fixture(autouse=True)
+def pinned_backup_root(
+    monkeypatch: pytest.MonkeyPatch, models_root_factory: Callable[[], Path]
+) -> Path:
+    """Past-sessions-backup plan Task 1.4 (C9), for EVERY test: the default
+    root of ``config\\backup.json`` (``note_config.backup_settings_root``) is
+    a fresh, EMPTY folder of the test's own, as ``pinned_development_root``
+    — no test reads or writes the host's own backup setting. Returns the
+    pinned root."""
+    root = models_root_factory()
+    monkeypatch.setattr(note_config, "backup_settings_root", lambda: root)
+    return root
+
+
+@pytest.fixture(autouse=True)
 def _no_real_windows_layer(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """C6, for EVERY test (every ``MainWindow`` and ``app.main`` test
     included): building the real ``Win32WindowsLayer`` — the registry, WER,
@@ -453,6 +475,59 @@ def part_kernel(monkeypatch: pytest.MonkeyPatch) -> FsPartKernel:
     kernel = FsPartKernel()
     monkeypatch.setattr(past_sessions, "part_kernel", lambda: kernel)
     return kernel
+
+
+def fake_unprotect(
+    *, description: str, key: bytes = b"\x01" * 32, error: BaseException | None = None
+) -> Callable[[bytes], tuple[str, bytes]]:
+    """A stand-in for ``CryptUnprotectData`` (past-sessions-backup plan D9):
+    ``session_store.unwrap_key_blob(..., unprotect=)`` and
+    ``dpapi_round_trip(unprotect=)`` take it, so every refusal is asserted
+    with an INJECTED answer — ``error`` raised, else ``(description, key)``
+    returned — never from what a damaged real blob happens to draw."""
+
+    def unprotect(blob: bytes) -> tuple[str, bytes]:
+        if error is not None:
+            raise error
+        return description, key
+
+    return unprotect
+
+
+def dpapi_error(code: int) -> BaseException:
+    """A ``pywintypes.error`` carrying ``code`` as its ``winerror`` — what
+    pywin32 raises from ``CryptUnprotectData`` (Windows only: pywin32 is a
+    Windows dependency)."""
+    import pywintypes
+
+    error: BaseException = pywintypes.error(code, "CryptUnprotectData", "injected")
+    return error
+
+
+@pytest.fixture(autouse=True)
+def _no_real_set_aside_dpapi(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Past-sessions-backup plan C9, for EVERY test: a store built without
+    the set-aside's seams reaches these instead of the host's DPAPI — inject
+    ``classify_key_blob`` / ``dpapi_probe`` (the one ``windows_only`` test
+    passes ``REAL_CLASSIFY_KEY_BLOB`` and ``REAL_DPAPI_PROBE`` by name). The
+    set-aside swallows a seam's exception (it is "DPAPI does not answer"),
+    so the reach is recorded and fails the test at teardown, as
+    ``taskbar_guard`` does."""
+    reached: list[str] = []
+
+    def classify(blob: bytes) -> str:
+        reached.append("classify_key_blob")
+        raise AssertionError("a test reached the real set-aside key classifier (C9)")
+
+    def probe() -> bool:
+        reached.append("dpapi_probe")
+        raise AssertionError("a test reached the real DPAPI probe (C9)")
+
+    monkeypatch.setattr(past_sessions, "_classify_entry_key_blob", classify)
+    monkeypatch.setattr(past_sessions, "dpapi_round_trip", probe)
+    yield
+    if reached:
+        pytest.fail(f"a test reached the real set-aside DPAPI seams (C9): {reached}")
 
 
 @pytest.fixture(autouse=True)

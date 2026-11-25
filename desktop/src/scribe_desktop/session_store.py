@@ -647,27 +647,141 @@ def unwrap_key_from_file(
     """Read + DPAPI-unwrap `key.dpapi` (or ``filename``). Missing/zero-length/
     truncated blobs, a failed unwrap, and a blob whose stored description is
     not ``description`` raise KeyCustodyError — the data under that key is
-    cryptographically unrecoverable through THIS custody store."""
+    cryptographically unrecoverable through THIS custody store. The unwrap
+    itself is ``unwrap_key_blob`` (past-sessions-backup plan D9), whose
+    structured refusals all arrive here as one ``KeyCustodyError``; a read
+    error is chained as the ``OSError`` cause (``AuditLog._open_key`` and
+    ``past_sessions._transient`` read it)."""
     _require_windows()
-    import win32crypt
-
     key_path = session_dir / filename
     try:
         blob = key_path.read_bytes()
     except OSError as exc:
         raise KeyCustodyError(f"key custody blob unreadable: {exc}") from exc
-    if key_blob_is_dead(len(blob)):
-        raise KeyCustodyError("key custody blob is zero-length or truncated")
+    return unwrap_key_blob(blob, description=description)
+
+
+# Past-sessions-backup plan D9: what ``unwrap_key_blob`` refuses, by name.
+# ``dpapi_refused`` is DPAPI itself answering that this login cannot open the
+# blob (one of ``_DPAPI_REFUSED_CODES``); every other exception from the call
+# is ``dpapi_error`` — Windows could not do it just now, or answered something
+# unrecognised — which never qualifies an entry for the set-aside.
+KeyBlobRefusal = Literal[
+    "dead", "dpapi_refused", "dpapi_error", "foreign_description", "bad_length"
+]
+# NTE_BAD_KEY_STATE ("Key not valid for use in specified state") and
+# ERROR_INVALID_DATA, compared as unsigned 32-bit values (pywin32 reports an
+# HRESULT signed).
+_NTE_BAD_KEY_STATE: Final = 0x8009000B
+_ERROR_INVALID_DATA: Final = 13
+_DPAPI_REFUSED_CODES: Final = frozenset({_NTE_BAD_KEY_STATE, _ERROR_INVALID_DATA})
+
+Unprotect = Callable[[bytes], tuple[str, bytes]]
+
+
+# The texts ``unwrap_key_from_file`` always raised, by refusal (unchanged).
+_KEY_BLOB_MESSAGES: Final[dict[str, str]] = {
+    "dead": "key custody blob is zero-length or truncated",
+    "dpapi_refused": "key custody blob failed DPAPI unwrap",
+    "dpapi_error": "key custody blob failed DPAPI unwrap",
+    "foreign_description": "key custody blob was wrapped for a different store",
+    "bad_length": "unwrapped key has wrong length",
+}
+
+
+class KeyBlobError(KeyCustodyError):
+    """``unwrap_key_blob``'s structured refusal (``reason`` a
+    ``KeyBlobRefusal``). A ``KeyCustodyError`` with the text it always had,
+    so every caller of ``unwrap_key_from_file`` sees the outcome it always
+    did. Content-free."""
+
+    def __init__(self, reason: KeyBlobRefusal) -> None:
+        super().__init__(_KEY_BLOB_MESSAGES[reason])
+        self.reason: KeyBlobRefusal = reason
+
+
+def _dpapi_unprotect(blob: bytes) -> tuple[str, bytes]:
+    import win32crypt
+
+    stored_description, key = win32crypt.CryptUnprotectData(blob, None, None, None, 0)
+    return stored_description, key
+
+
+def _refused_by_dpapi(exc: BaseException) -> bool:
+    """True ONLY for ``pywintypes.error`` carrying one of the two codes of
+    ``_DPAPI_REFUSED_CODES`` (signed or unsigned) — anything else, an import
+    of ``pywintypes`` that fails included, is not a refusal (D9: the
+    fail-safe direction moves nothing)."""
     try:
-        stored_description, key = win32crypt.CryptUnprotectData(blob, None, None, None, 0)
+        import pywintypes
+    except ImportError:
+        return False
+    if not isinstance(exc, pywintypes.error):
+        return False
+    code = getattr(exc, "winerror", None)
+    return type(code) is int and (code & 0xFFFFFFFF) in _DPAPI_REFUSED_CODES
+
+
+def unwrap_key_blob(
+    blob: bytes, *, description: str, unprotect: Unprotect | None = None
+) -> SessionCrypto:
+    """DPAPI-unwrap a key blob ALREADY READ (past-sessions-backup plan D9) —
+    so a passing read error is never judged as the blob. ``KeyBlobError``
+    names the refusal: ``dead`` (too short to be a blob), ``dpapi_refused``
+    (``_refused_by_dpapi``), ``dpapi_error`` (any other exception from the
+    call), ``foreign_description`` (wrapped for another store) or
+    ``bad_length`` (the unwrapped key is not 32 bytes). ``unprotect`` is the
+    test seam for ``CryptUnprotectData`` (None: the real one, Windows only)."""
+    if key_blob_is_dead(len(blob)):
+        raise KeyBlobError("dead")
+    if unprotect is None:
+        _require_windows()
+        unprotect = _dpapi_unprotect
+    try:
+        stored_description, key = unprotect(blob)
     except Exception as exc:  # pywin32 raises pywintypes.error (not OSError-rooted)
-        raise KeyCustodyError("key custody blob failed DPAPI unwrap") from exc
+        refusal: KeyBlobRefusal = "dpapi_refused" if _refused_by_dpapi(exc) else "dpapi_error"
+        raise KeyBlobError(refusal) from exc
     if stored_description != description:
-        raise KeyCustodyError("key custody blob was wrapped for a different store")
+        raise KeyBlobError("foreign_description")
     try:
         return SessionCrypto.from_key(key)
     except ValueError as exc:
-        raise KeyCustodyError("unwrapped key has wrong length") from exc
+        raise KeyBlobError("bad_length") from exc
+
+
+def dpapi_round_trip(
+    *,
+    protect: Callable[[bytes], bytes] | None = None,
+    unprotect: Unprotect | None = None,
+) -> bool:
+    """Past-sessions-backup plan D8's probe: a fresh random 32-byte value is
+    protected and unprotected by DPAPI IN MEMORY (no file is written) and
+    must come back equal. False on any difference or exception — so a key
+    blob is judged only while DPAPI demonstrably works for this login. The
+    two arguments are test seams (None: the real calls, Windows only).
+    Never raises."""
+    value = os.urandom(32)
+    try:
+        if protect is None or unprotect is None:
+            _require_windows()
+        wrapped = (protect if protect is not None else _dpapi_protect_probe)(value)
+        _description, back = (unprotect if unprotect is not None else _dpapi_unprotect)(
+            wrapped
+        )
+        return bool(back == value)
+    except Exception:  # noqa: BLE001 - any failure is "DPAPI does not work just now"
+        return False
+
+
+def _dpapi_protect_probe(data: bytes) -> bytes:
+    import win32crypt
+
+    # Not a key description (no store reads it), so it does not carry the
+    # app's folder name (``test_install_layout``'s literal scan).
+    description = "Clinic Scribe DPAPI probe"
+    blob: bytes = win32crypt.CryptProtectData(data, description, None, None, None, 0)
+    return blob
 
 
 # Windows' reparse tag for a directory junction (a "mount point").
@@ -771,6 +885,31 @@ def _verified_note_with_identity(
     what a valid note is. Every failure is typed and the caller's custody is
     untouched (the "key retained" wording states that custody fact). Also
     returns the note's identity, from the plaintext already in hand."""
+    return _note_core(
+        crypto, note_blob, transcript_plain, lambda: _resolve_session_identity(session_dir)
+    )
+
+
+def note_from_blob(
+    note_blob: bytes, crypto: SessionCrypto, transcript_plain: bytes, *, session_id: str
+) -> GeneratedNote:
+    """``read_note``'s validation of bytes already read (the single core,
+    ``_note_core``), bound to ``session_id`` — what a Past-sessions entry's
+    folder name gives ``_resolve_session_identity`` (an entry holds no
+    ``audio.enc`` header to read first). The backup's open check
+    (past-sessions-backup plan D5) calls it, so a note a backup accepts is
+    one ``read_note`` accepts."""
+    return _note_core(crypto, note_blob, transcript_plain, lambda: session_id).note
+
+
+def _note_core(
+    crypto: SessionCrypto,
+    note_blob: bytes,
+    transcript_plain: bytes,
+    identity: Callable[[], str],
+) -> _CompletedNote:
+    """decrypt -> parse -> session binding (``identity``, resolved only
+    after the parse, as it always was) -> transcript-digest match."""
     try:
         plain = crypto.decrypt(note_blob)
     except InvalidTag as exc:
@@ -784,7 +923,7 @@ def _verified_note_with_identity(
         note = GeneratedNote.from_bytes(plain)
     except ValidationError as exc:
         raise StoreCorruptError("note artifact is malformed; key retained") from exc
-    if note.session_id != _resolve_session_identity(session_dir):
+    if note.session_id != identity():
         raise StoreCorruptError("note is bound to another session; key retained")
     if note.transcript_digest != digest_bytes(transcript_plain):
         raise StoreCorruptError("note does not describe this transcript; key retained")
@@ -1015,7 +1154,6 @@ def _read_generated(
     """``generated.enc`` decoded with its exact plaintext: None when there is
     none; ``StoreCorruptError`` (terse) when it cannot be read, is over its
     bound, fails authentication, does not parse or names another session."""
-    label = "generated note unreadable"
     try:
         blob: bytes | None = read_capped(
             session_dir / GENERATED_FILENAME, MAX_GENERATED_FILE_BYTES
@@ -1024,6 +1162,25 @@ def _read_generated(
         return None
     except (OSError, StoreCorruptError):
         blob = None
+    return _generated_core(blob, crypto, session_id)
+
+
+def generated_from_blob(blob: bytes, crypto: SessionCrypto, session_id: str) -> GeneratedRecord:
+    """``read_generated``'s validation of bytes already read (bound, then
+    ``_generated_core``) — the backup's open check calls it (past-sessions-
+    backup plan D5), so a generated note a backup accepts is one
+    ``read_generated`` accepts."""
+    return _generated_core(
+        blob if len(blob) <= MAX_GENERATED_FILE_BYTES else None, crypto, session_id
+    ).record
+
+
+def _generated_core(
+    blob: bytes | None, crypto: SessionCrypto, session_id: str
+) -> _KeptGenerated:
+    """authenticate under ``generated:<id>`` -> parse -> session binding;
+    the terse ``StoreCorruptError`` for any failure (None: unreadable)."""
+    label = "generated note unreadable"
     plaintext = _authentic(blob, crypto, generated_aad(session_id), label)
     try:
         record = GeneratedRecord.model_validate_json(plaintext)

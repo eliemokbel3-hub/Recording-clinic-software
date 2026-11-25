@@ -485,6 +485,10 @@ _NON_PATH_LITERALS: dict[tuple[str, str], str] = {
         "reads the installer's registry VALUE named BACKUP_VALUE_NAME (D6, Task 3.4); "
         "no folder is built"
     ),
+    ("past_sessions_backup.py", "BACKUP_FILENAME_PREFIX"): (
+        "a Past-sessions backup FILE's name prefix (past-sessions-backup plan D2); "
+        "no folder is built"
+    ),
 }
 _NAME = "clinikoscribe"
 # The names that carry the folder name without spelling it: a reference to

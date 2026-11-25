@@ -3648,3 +3648,351 @@ class TestRealLedgerKey:
                 description=past_sessions.PAST_SESSION_KEY_DESCRIPTION,
                 filename=past_sessions.EXPORT_LEDGER_KEY_FILENAME,
             )
+
+
+# ---------------------------------------------------------------------------
+# The set-aside (past-sessions-backup plan D8, Task 1.1). Every classifier
+# answer is INJECTED (``_answers``: a key blob's prefix names it) — never read
+# from what a damaged real blob happens to draw; the one real-DPAPI test is
+# ``TestRealSetAsideSeams``.
+# ---------------------------------------------------------------------------
+
+_REFUSAL_ANSWERS = ("dpapi_refused", "dead", "dpapi_error", "foreign_description", "bad_length")
+
+
+def _answers(blob: bytes) -> str:
+    """The fake classifier: the fake entry key opens (``ok``); a blob that
+    starts ``<answer>:`` draws that answer."""
+    if blob.startswith(_FAKE):
+        return "ok"
+    for answer in _REFUSAL_ANSWERS:
+        if blob.startswith(answer.encode("ascii") + b":"):
+            return answer
+    return "unexpected"
+
+
+def _aside_store(tmp_path: Path, **overrides: Any) -> PastSessionStore:
+    kwargs: dict[str, Any] = {"classify_key_blob": _answers, "dpapi_probe": lambda: True}
+    kwargs.update(overrides)
+    return _store(tmp_path, **kwargs)
+
+
+def _refuse(store: PastSessionStore, sid: str, answer: str = "dpapi_refused") -> None:
+    (store.root / sid / KEY_FILENAME).write_bytes(answer.encode("ascii") + b":" + b"x" * 40)
+
+
+def _files(directory: Path) -> dict[str, bytes]:
+    return {path.name: path.read_bytes() for path in sorted(directory.iterdir())}
+
+
+def _set_asides(store: PastSessionStore) -> list[Path]:
+    prefix = store.root.name + past_sessions.SET_ASIDE_PREFIX
+    return sorted(p for p in store.root.parent.iterdir() if p.name.startswith(prefix))
+
+
+class TestSetAside:
+    def test_a_refused_entry_is_moved_byte_identical_and_no_longer_listed(
+        self, tmp_path: Path
+    ) -> None:
+        store = _aside_store(tmp_path)
+        readable = _published(store)
+        refused = _published(store)
+        _refuse(store, refused)
+        before = _files(store.root / refused)
+        kept_before = _files(store.root / readable)
+        report = store.set_aside_refused()
+        assert report.moved == (refused,)
+        assert (report.held, report.left, report.failed) == (0, 0, 0)
+        assert report.folder is not None
+        assert report.folder.parent == store.root.parent
+        assert report.folder.name.startswith("past_sessions.unreadable-20261001-090000-")
+        assert _files(report.folder / refused) == before
+        assert not (store.root / refused).exists()
+        assert _files(store.root / readable) == kept_before
+        assert [listing.session_id for listing in store.list_entries()] == [readable]
+
+    @pytest.mark.parametrize("probe", [lambda: False, lambda: None, "raise"])
+    def test_a_failed_probe_moves_nothing(self, tmp_path: Path, probe: Any) -> None:
+        def raising() -> bool:
+            raise RuntimeError("DPAPI did not answer")
+
+        store = _aside_store(tmp_path, dpapi_probe=raising if probe == "raise" else probe)
+        sid = _published(store)
+        _refuse(store, sid)
+        with pytest.raises(PastSessionError) as info:
+            store.set_aside_refused()
+        assert info.value.reason == "dpapi_unavailable"
+        assert (store.root / sid / KEY_FILENAME).exists()
+        assert _set_asides(store) == []
+
+    def test_an_unlistable_archive_refuses_with_nothing_moved(self, tmp_path: Path) -> None:
+        store = _aside_store(tmp_path)
+        store.root.parent.mkdir(parents=True, exist_ok=True)
+        store.root.write_bytes(b"not a folder")
+        with pytest.raises(PastSessionError) as info:
+            store.set_aside_refused()
+        assert info.value.reason == "unreadable"
+        assert _set_asides(store) == []
+
+    def test_a_missing_archive_has_nothing_to_set_aside(self, tmp_path: Path) -> None:
+        assert _aside_store(tmp_path).set_aside_refused() == past_sessions.SetAsideReport()
+
+    @pytest.mark.parametrize(
+        "answer", ["dead", "dpapi_error", "foreign_description", "bad_length", "unexpected"]
+    )
+    def test_any_other_classifier_answer_is_left(self, tmp_path: Path, answer: str) -> None:
+        store = _aside_store(tmp_path)
+        sid = _published(store)
+        (store.root / sid / KEY_FILENAME).write_bytes(answer.encode("ascii") + b":" + b"y" * 40)
+        before = _files(store.root / sid)
+        report = store.set_aside_refused()
+        assert (report.moved, report.left, report.held) == ((), 1, 0)
+        assert _files(store.root / sid) == before
+        assert _set_asides(store) == []
+
+    def test_a_classifier_that_raises_is_left(self, tmp_path: Path) -> None:
+        def raising(blob: bytes) -> str:
+            raise RuntimeError("no answer")
+
+        store = _aside_store(tmp_path, classify_key_blob=raising)
+        sid = _published(store)
+        _refuse(store, sid)
+        assert store.set_aside_refused().left == 1
+        assert (store.root / sid / KEY_FILENAME).exists()
+
+    def test_a_pending_entry_and_an_unreadable_key_are_left(self, tmp_path: Path) -> None:
+        store = _aside_store(tmp_path)
+        source = _source()
+        store.write_entry(source, LINKED)  # published with ``pending``, not committed
+        pending = source.session_id
+        _refuse(store, pending)
+        unreadable = _published(store)
+        key = store.root / unreadable / KEY_FILENAME
+        key.unlink()
+        key.mkdir()  # cannot be read as a file
+        report = store.set_aside_refused()
+        assert (report.moved, report.left) == ((), 2)
+        assert (store.root / pending / PENDING_FILENAME).exists()
+        assert key.is_dir()
+
+    def test_an_unreadable_link_state_is_left_and_nothing_under_it_is_read(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = _aside_store(tmp_path)
+        sid = _published(store)
+        _refuse(store, sid)
+        target = store.root / sid
+        real = past_sessions.link_state
+
+        def unreadable(path: Path) -> bool | None:
+            return None if path == target else real(path)
+
+        classified: list[bytes] = []
+
+        def spy(blob: bytes) -> str:
+            classified.append(blob)
+            return _answers(blob)
+
+        monkeypatch.setattr(past_sessions, "link_state", unreadable)
+        report = _aside_store(tmp_path, classify_key_blob=spy).set_aside_refused()
+        assert (report.moved, report.left) == ((), 1)
+        assert classified == []
+        assert (target / KEY_FILENAME).exists()
+
+    def test_not_counted_a_keyless_leftover_an_unopenable_label_and_a_readable_entry(
+        self, tmp_path: Path
+    ) -> None:
+        store = _aside_store(tmp_path)
+        readable = _published(store)
+        bad_label = _published(store)
+        (store.root / bad_label / LABEL_FILENAME).write_bytes(b"\0" * 64)
+        leftover = store.root / _sid()
+        leftover.mkdir()
+        (leftover / TRANSCRIPT_FILENAME).write_bytes(b"left over")
+        report = store.set_aside_refused()
+        assert report == past_sessions.SetAsideReport()
+        assert {p.name for p in store.root.iterdir()} >= {readable, bad_label, leftover.name}
+        assert _set_asides(store) == []
+
+    def test_a_refused_entry_holding_a_recording_file_is_held(self, tmp_path: Path) -> None:
+        store = _aside_store(tmp_path)
+        live = _kept(store)
+        zeroed = _kept(store)
+        store.delete_recording(zeroed, on_destroyed=lambda: False)  # zeros kept as evidence
+        audio_only = _kept(store)
+        (store.root / audio_only / AUDIO_KEY_FILENAME).unlink()
+        unknown = _published(store)
+        (store.root / unknown / AUDIO_KEY_FILENAME).mkdir()  # cannot be inspected
+        for sid in (live, zeroed, audio_only, unknown):
+            _refuse(store, sid)
+        before = {sid: _files(store.root / sid) for sid in (live, zeroed, audio_only)}
+        report = store.set_aside_refused()
+        assert (report.moved, report.held, report.left) == ((), 4, 0)
+        assert {sid: _files(store.root / sid) for sid in before} == before
+        assert _set_asides(store) == []
+
+    def test_a_zeroed_key_entry_moves_once_its_deletion_is_tidied(self, tmp_path: Path) -> None:
+        store = _aside_store(tmp_path)
+        sid = _kept(store)
+        store.delete_recording(sid, on_destroyed=lambda: False)
+        _refuse(store, sid)
+        assert store.set_aside_refused().held == 1
+        # The repair records the deletion on the existing row, then clears it.
+        assert store.tidy_dead_recordings(cleared=frozenset({sid})) == 2
+        report = store.set_aside_refused()
+        assert report.moved == (sid,) and report.held == 0
+
+    def test_a_failed_rename_is_counted_and_the_rest_still_move(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = _aside_store(tmp_path)
+        stuck, moves = sorted([_published(store), _published(store)])
+        for sid in (stuck, moves):
+            _refuse(store, sid)
+        before = _files(store.root / stuck)
+        real = os.rename
+
+        def rename(src: Any, dst: Any) -> None:
+            if Path(src).name == stuck:
+                raise PermissionError(errno.EACCES, "in use")
+            real(src, dst)
+
+        monkeypatch.setattr(os, "rename", rename)
+        report = store.set_aside_refused()
+        assert report.moved == (moves,)
+        assert report.failed == 1
+        assert _files(store.root / stuck) == before
+        assert report.folder is not None and (report.folder / moves).is_dir()
+
+    def test_an_empty_set_aside_folder_is_removed_unless_it_cannot_be(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = _aside_store(tmp_path)
+        sid = _published(store)
+        _refuse(store, sid)
+
+        def refuse(src: Any, dst: Any) -> None:
+            raise PermissionError(errno.EACCES, "in use")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(os, "rename", refuse)
+            report = store.set_aside_refused()
+        assert (report.moved, report.failed, report.folder) == ((), 1, None)
+        assert _set_asides(store) == []
+
+        def no_rmdir(self: Path) -> None:
+            raise PermissionError(errno.EACCES, "in use")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(os, "rename", refuse)
+            patch.setattr(Path, "rmdir", no_rmdir)
+            report = store.set_aside_refused()
+        assert (report.moved, report.failed) == ((), 1)
+        [folder] = _set_asides(store)
+        assert report.folder == folder and list(folder.iterdir()) == []
+        assert (store.root / sid / KEY_FILENAME).exists()
+
+    def test_the_folder_is_a_new_name_every_call_never_an_existing_one(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = _aside_store(tmp_path)
+        first, second = _published(store), _published(store)
+        _refuse(store, first)
+        existing = store.root.with_name("past_sessions.unreadable-20261001-090000-aaaaaaaa")
+        existing.mkdir()
+        (existing / "theirs").write_bytes(b"kept")
+        tokens = iter(["aaaaaaaa", "bbbbbbbb", "cccccccc"])
+        monkeypatch.setattr(past_sessions.secrets, "token_hex", lambda _n: next(tokens))
+        report = store.set_aside_refused()
+        assert report.folder is not None and report.folder.name.endswith("-bbbbbbbb")
+        assert _files(existing) == {"theirs": b"kept"}
+        _refuse(store, second)
+        again = store.set_aside_refused()
+        assert again.folder is not None and again.folder.name.endswith("-cccccccc")
+        assert (again.folder / second).is_dir() and (report.folder / first).is_dir()
+
+    def test_a_folder_that_cannot_be_made_refuses_with_nothing_moved(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = _aside_store(tmp_path)
+        sid = _published(store)
+        _refuse(store, sid)
+
+        def no_mkdir(path: Any, *args: Any, **kwargs: Any) -> None:
+            raise PermissionError(errno.EACCES, "denied")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(os, "mkdir", no_mkdir)
+            with pytest.raises(PastSessionError) as info:
+                store.set_aside_refused()
+        assert info.value.reason == "set_aside_unavailable"
+        # No free name: every name the loop tries is already taken.
+        taken = store.root.with_name("past_sessions.unreadable-20261001-090000-dddddddd")
+        taken.mkdir()
+        monkeypatch.setattr(past_sessions.secrets, "token_hex", lambda _n: "dddddddd")
+        with pytest.raises(PastSessionError) as info:
+            store.set_aside_refused()
+        assert info.value.reason == "set_aside_unavailable"
+        assert (store.root / sid / KEY_FILENAME).exists()
+        assert list(taken.iterdir()) == []
+
+    def test_the_caches_forget_the_moved_ids(self, tmp_path: Path) -> None:
+        store = _aside_store(tmp_path)
+        sid = _published(store)
+        _refuse(store, sid)
+        assert store.sweep_report(SEVEN, NOW).undated == 1
+        assert sid in store._undated
+        store._completed_dates[sid] = NOW
+        store._started_dates[sid] = NOW
+        assert store.set_aside_refused().moved == (sid,)
+        assert sid not in store._undated
+        assert sid not in store._completed_dates and sid not in store._started_dates
+
+    @pytest.mark.parametrize("kind", ["junction", "symlink"])
+    def test_a_linked_entry_is_left_and_nothing_under_it_is_opened(
+        self, tmp_path: Path, kind: str
+    ) -> None:
+        """A junction whose target holds NO ``key.dpapi``: were the link
+        followed, the entry would read as a keyless leftover and be
+        skipped; it is ``left``, and the target is never classified."""
+        classified: list[bytes] = []
+
+        def spy(blob: bytes) -> str:
+            classified.append(blob)
+            return _answers(blob)
+
+        store = _aside_store(tmp_path, classify_key_blob=spy)
+        store.root.mkdir(parents=True)
+        target = tmp_path / "elsewhere"
+        target.mkdir()
+        (target / TRANSCRIPT_FILENAME).write_bytes(b"theirs")
+        _link(kind, store.root / _sid(), target)
+        refused_target = tmp_path / "refused-elsewhere"
+        refused_target.mkdir()
+        (refused_target / KEY_FILENAME).write_bytes(b"dpapi_refused:" + b"z" * 40)
+        _link(kind, store.root / _sid(), refused_target)
+        report = store.set_aside_refused()
+        assert (report.moved, report.left) == ((), 2)
+        assert classified == []
+        assert _files(target) == {TRANSCRIPT_FILENAME: b"theirs"}
+        assert (refused_target / KEY_FILENAME).exists()
+
+
+@windows_only
+class TestRealSetAsideSeams:
+    def test_a_real_blob_unwraps_and_the_probe_round_trips(self, tmp_path: Path) -> None:
+        """C9's one real-DPAPI set-aside test, under ``tmp_path``: a real
+        entry-key blob answers ``ok``, the probe round-trips, and a blob with
+        one flipped byte answers one of the closed set and raises nothing
+        (which one is not assumed)."""
+        from conftest import REAL_CLASSIFY_KEY_BLOB, REAL_DPAPI_PROBE
+
+        directory = tmp_path / "entry"
+        directory.mkdir()
+        past_sessions._wrap_entry_key(SessionCrypto(), directory)
+        blob = (directory / KEY_FILENAME).read_bytes()
+        assert REAL_CLASSIFY_KEY_BLOB(blob) == "ok"
+        assert REAL_DPAPI_PROBE() is True
+        flipped = bytearray(blob)
+        flipped[len(flipped) // 2] ^= 0xFF
+        assert REAL_CLASSIFY_KEY_BLOB(bytes(flipped)) in past_sessions.KEY_BLOB_ANSWERS

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scribe-desktop"
-version = "0.4.2"
+version = "0.5.0"
 description = "Windows desktop companion for the Cliniko clinical scribe"
 # Plan targets 3.12+; dev machine runs 3.14 (recorded in plan Key Findings)
 requires-python = ">=3.12"
@@ -16,7 +16,9 @@ dependencies = [
     # `TestSuspectField` pins: `TranscriptWord.suspect` is omitted from the
     # stored transcript when False (invented-text-guard plan D4).
     "pydantic>=2.12",
-    "cryptography>=43",
+    # >=44 for Argon2id (past-sessions-backup plan D3); the frozen build's
+    # hash-pinned 49.0.0 proves it on every build (`--self-check-offline`).
+    "cryptography>=44",
     "keyring>=25",
     "psutil>=6",
     # Phase 2: DPAPI key custody (win32crypt.CryptProtectData) — user-approved

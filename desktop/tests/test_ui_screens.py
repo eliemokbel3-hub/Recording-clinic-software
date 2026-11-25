@@ -10989,6 +10989,22 @@ class _FakePastAudit:
         self.calls.append(("recording_kept", session_id, at, created_at))
         return True
 
+    # Past-sessions-backup plan Task 1.2: the backup's audit surface (its
+    # callers come in Phases 2 and 3).
+    def backup_snapshot(self) -> Any:
+        self.calls.append(("backup_snapshot",))
+        from scribe_desktop.audit import AuditSnapshot
+
+        return AuditSnapshot(None, (), ())
+
+    def row_state(self, session_id: str) -> str:
+        self.calls.append(("row_state", session_id))
+        return "none"
+
+    def restore_row(self, plaintext: bytes, session_id: str, month: str, *, now: datetime) -> str:
+        self.calls.append(("restore_row", session_id, month))
+        return "add_row"
+
 
 def _ps_store(
     root: Path, *, clock: datetime = _PS_NOW, unwrap: Callable[[Path], SessionCrypto] | None = None

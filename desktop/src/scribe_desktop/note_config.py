@@ -142,6 +142,7 @@ from typing import Annotated, Any, Final, Literal, NamedTuple, Self, final
 
 from pydantic import (
     AfterValidator,
+    AwareDatetime,
     BaseModel,
     ConfigDict,
     Field,
@@ -1354,6 +1355,103 @@ def keep_recordings_on(config_root: Path | None = None) -> bool:
     """Whether a recording started NOW may be kept for development, given the
     patient's written consent and the tick above Start (D1, D2)."""
     return read_development_settings(config_root).keep_recordings
+
+
+# ---------------------------------------------------------------------------
+# The backup setting (past-sessions-backup plan Task 1.4; D6, D10, C7).
+# ---------------------------------------------------------------------------
+
+BACKUP_SETTINGS_FILENAME: Final = "backup.json"
+MAX_BACKUP_SETTINGS_BYTES: Final = 4096
+# A folder path, never a file name; JSON doubles each backslash, so this
+# keeps the file well inside its bound.
+MAX_BACKUP_FOLDER_CHARS: Final = 1024
+
+
+class BackupSettings(BaseModel):
+    """On-disk shape of ``config\\backup.json``, in both channels:
+    ``{"schema_version": 1, "folder": <path or null>, "last_backup_at":
+    <time or null>}`` (D10). Content-free (C7): the last admitted folder
+    (proposed to the next dialog only while it still passes the location
+    rule, ``exclusions.proposed_backup_folder``) and the last backup's
+    ``made_at``. Nothing else — never a passphrase or anything derived from
+    one. Absent or unreadable reads as no folder and no date."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1] = 1
+    folder: str | None = Field(default=None, min_length=1, max_length=MAX_BACKUP_FOLDER_CHARS)
+    last_backup_at: AwareDatetime | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _integer_version(cls, data: Any) -> Any:
+        # Round 26's rule, as the development setting.
+        if isinstance(data, dict) and "schema_version" in data:
+            if type(data["schema_version"]) is not int:
+                raise ValueError("the backup setting's version is an integer")
+        return data
+
+    @field_validator("folder")
+    @classmethod
+    def _plain_text(cls, folder: str | None) -> str | None:
+        if folder is not None and any(ord(ch) < 0x20 for ch in folder):
+            raise ValueError("a folder path holds no control character")
+        return folder
+
+    def to_bytes(self) -> bytes:
+        return (self.model_dump_json(indent=2) + "\n").encode("utf-8")
+
+    @classmethod
+    def from_bytes(cls, blob: bytes) -> BackupSettings:
+        """The stored file, which must NAME its ``schema_version`` (the
+        development setting's rule); ``ValueError`` for anything else."""
+        data = json.loads(blob)
+        if not isinstance(data, dict) or "schema_version" not in data:
+            raise ValueError("not a backup settings file")
+        return cls.model_validate(data)
+
+
+class BackupSettingsRead(NamedTuple):
+    """What ``read_backup_settings`` found, and whether the empty answer is
+    because the file could not be read."""
+
+    settings: BackupSettings
+    unreadable: bool
+
+
+def backup_settings_root() -> Path:
+    """Where ``backup.json`` lives when no root is passed: the config root.
+    A separate resolver so the test suite pins it to an empty folder for
+    every test (``conftest.pinned_backup_root``) — no test reads or writes
+    the host's own setting."""
+    return default_config_root()
+
+
+def read_backup_settings(config_root: Path | None = None) -> BackupSettingsRead:
+    """The backup setting, bounded (``_read_flag_file``): absent → no folder
+    and no date; present but unreadable, over its bound, naming no version or
+    not valid → the same, reported as unreadable. Never raises."""
+    root = config_root if config_root is not None else backup_settings_root()
+    found = _read_flag_file(
+        root / BACKUP_SETTINGS_FILENAME, BackupSettings.from_bytes, MAX_BACKUP_SETTINGS_BYTES
+    )
+    if isinstance(found, str):
+        return BackupSettingsRead(BackupSettings(), unreadable=found == "unreadable")
+    return BackupSettingsRead(found, unreadable=False)
+
+
+def save_backup_settings(settings: BackupSettings, *, config_root: Path | None = None) -> Path:
+    """Replace the backup settings file atomically through the config
+    directory's one write path; ``NoteConfigWriteError`` on any failure
+    (and for a document over its bound, which the reader would refuse), the
+    file never partial."""
+    root = config_root if config_root is not None else backup_settings_root()
+    blob = settings.to_bytes()
+    if len(blob) > MAX_BACKUP_SETTINGS_BYTES:
+        raise NoteConfigWriteError(f"{BACKUP_SETTINGS_FILENAME} would be over its bound")
+    _write_config_file(root, BACKUP_SETTINGS_FILENAME, blob)
+    return root / BACKUP_SETTINGS_FILENAME
 
 
 # ---------------------------------------------------------------------------

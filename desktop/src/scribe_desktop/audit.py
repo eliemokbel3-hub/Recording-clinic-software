@@ -63,9 +63,10 @@ import os
 import re
 import secrets
 import shutil
+import stat
 import tempfile
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta, tzinfo
 from pathlib import Path
 from typing import Annotated, Any, Final, Literal
@@ -421,7 +422,7 @@ def _decode(plaintext: bytes) -> AuditRow | _Newer:
     refused."""
     try:
         data = json.loads(plaintext)
-    except ValueError:
+    except (ValueError, RecursionError):  # nesting past the stack is not a row
         data = None
     if isinstance(data, dict):
         version = data.get("schema_version")
@@ -681,6 +682,118 @@ def _write_refused(code: str) -> Change:
 # ---------------------------------------------------------------------------
 
 
+def valid_month(month: str) -> tuple[int, int] | None:
+    """``month`` as (year, month) when it is a ``YYYY-MM`` folder name naming
+    a real calendar month for which ``month_prune_at`` computes; None
+    otherwise (``_MONTH_RE`` alone admits a month 13)."""
+    match = _MONTH_RE.fullmatch(month)
+    if match is None:
+        return None
+    year, number = int(match.group(1)), int(match.group(2))
+    if not 1 <= number <= 12:
+        return None
+    try:
+        month_prune_at(year, number)
+    except (ValueError, OverflowError):
+        return None
+    return year, number
+
+
+def row_importable(plaintext: bytes, session_id: str, month: str) -> bool:
+    """Past-sessions-backup plan D1, a PURE function: ``plaintext`` (an
+    authenticated row's) decodes to a row whose own session id is
+    ``session_id`` and whose session-date month is ``month`` — or is a row of
+    a NEWER schema (kept byte for byte, D9). Anything else is not
+    importable."""
+    try:
+        decoded = _decode(plaintext)
+    except ValueError:
+        return False
+    if decoded is _NEWER:
+        return True
+    return (
+        isinstance(decoded, AuditRow)
+        and decoded.session_id == session_id
+        and _month_folder(decoded.session_date) == month
+    )
+
+
+@dataclass(frozen=True)
+class RowDescriptor:
+    """One row file a backup will copy (D9): its month folder, session id,
+    path and size — never its bytes (the worker reads each by path)."""
+
+    month: str
+    session_id: str
+    path: Path
+    size: int
+
+
+@dataclass(frozen=True)
+class AuditSnapshot:
+    """``backup_snapshot``'s answer: the store key's bytes (a ``bytearray``
+    the caller wraps and zeroes; None for an empty store), the rows to copy,
+    and the ids whose row files cannot be described (``unknown_ids``)."""
+
+    key: bytearray | None = field(repr=False)
+    rows: tuple[RowDescriptor, ...]
+    unknown_ids: tuple[str, ...]
+
+
+RowState = Literal["readable", "newer", "unreadable", "none"]
+RowOutcome = Literal[
+    "add_row",
+    "provenance_recovered",
+    "skipped_present_row",
+    "skipped_unreadable_row",
+    "skipped_pruned_row",
+    "skipped_undecodable_row",
+    "conflict_row",
+    "row_mismatch",
+    "failed_row_write",
+]
+
+
+def _describe_row(
+    path: Path, month: str, session_id: str
+) -> RowDescriptor | Literal["unknown", "not_a_row"]:
+    """One row file's descriptor (D9): never a link, an ordinary file of at
+    most ``MAX_ROW_FILE_BYTES``; ``unknown`` for anything else, one that
+    cannot be inspected included. A name that is a folder is ``not_a_row``,
+    as ``_row_paths`` decides. Never raises."""
+    if link_state(path) is not False:
+        return "unknown"
+    try:
+        status = os.lstat(path)
+    except OSError:
+        return "unknown"
+    if stat.S_ISDIR(status.st_mode):
+        return "not_a_row"
+    if not stat.S_ISREG(status.st_mode) or status.st_size > MAX_ROW_FILE_BYTES:
+        return "unknown"
+    return RowDescriptor(month, session_id, path, status.st_size)
+
+
+def _bare(local: AuditRow, backed_up: AuditRow) -> bool:
+    """D9: a local ``pre_audit`` row holds no fact the backed-up row could
+    erase — its Past-sessions state ``none`` (or ``archived`` dated no later
+    than the backed-up row's), its deletion ``pending``, an empty recording
+    record, an untouched write and no events."""
+    past = local.past_session
+    if past.state == "archived":
+        theirs = backed_up.past_session.at
+        if past.at is not None and (theirs is None or past.at > theirs):
+            return False
+    elif past.state != "none":
+        return False
+    return (
+        local.deletion.state == "pending"
+        and local.recording == RecordingRecord()
+        and local.write == AuditWrite()
+        and local.events == ()
+    )
+
+
 @dataclass(frozen=True)
 class AuditListing:
     """``rows``' answer: the readable rows (oldest month first), and how
@@ -702,6 +815,8 @@ class AuditLog:
         logger: logging.Logger | None = None,
         clock: Callable[[], datetime] = _utc_now,
         local_zone: tzinfo | None = None,
+        wrap_key: Callable[[SessionCrypto, Path], object] | None = None,
+        unwrap_key: Callable[[Path], SessionCrypto] | None = None,
     ) -> None:
         self._root = root if root is not None else default_audit_root()
         self._logger = logger
@@ -710,6 +825,22 @@ class AuditLog:
         # this computer's own (tests inject one).
         self._zone = local_zone
         self._failures = 0
+        # Past-sessions-backup plan D9: the store key's custody, given the
+        # store ROOT — a test seam. None is DPAPI under
+        # ``AUDIT_KEY_DESCRIPTION``, looked up when it is called.
+        self._wrap_key = wrap_key
+        self._unwrap_key = unwrap_key
+
+    def _wrap(self, crypto: SessionCrypto) -> None:
+        if self._wrap_key is not None:
+            self._wrap_key(crypto, self._root)
+        else:
+            wrap_key_to_file(crypto, self._root, description=AUDIT_KEY_DESCRIPTION)
+
+    def _unwrap(self) -> SessionCrypto:
+        if self._unwrap_key is not None:
+            return self._unwrap_key(self._root)
+        return unwrap_key_from_file(self._root, description=AUDIT_KEY_DESCRIPTION)
 
     @property
     def root(self) -> Path:
@@ -1074,6 +1205,231 @@ class AuditLog:
         _write_export(path, buffer.getvalue().encode("utf-8-sig"))
         return len(listing.rows)
 
+    # --- the backup's export and import surface (past-sessions-backup D9) ---
+
+    def backup_snapshot(self) -> AuditSnapshot:
+        """What a backup copies of this store, NON-CREATING and STRICT: the
+        store key's bytes and one ``RowDescriptor`` per row file. A store
+        with no key and no rows is EMPTY (no key, no rows). A missing key
+        beside rows, an unreadable or unavailable key, or a store or month
+        folder that cannot be listed raises ``AuditUnavailable`` (Back up
+        refuses). The inventory is ``_row_paths``'s (a file whose name is
+        not a session id plus the row suffix is not a row; a linked month
+        folder is not this store's); an id with more than one row file, a
+        row file that is a link or not an ordinary file, one in a month
+        folder that names no real month, or one over ``MAX_ROW_FILE_BYTES``
+        goes to ``unknown_ids`` and is not described. Never the ciphertext."""
+        try:
+            crypto = self._open_key(create=False)
+        except _NoKey:
+            # ``_open_key``'s inventory skips a month it cannot inspect, so
+            # EMPTY is confirmed by the strict one too: no month refused and
+            # no row-shaped file in any (round 23 PR-MED-2303).
+            if self._strict_rows_present():
+                raise AuditUnavailable("key_missing") from None
+            return AuditSnapshot(None, (), ())
+        try:
+            key = bytearray(crypto.export_key())
+        finally:
+            crypto.destroy()
+        try:
+            found: dict[str, list[RowDescriptor | None]] = {}
+            for folder in self._strict_month_folders():
+                good_month = valid_month(folder.name) is not None
+                for path in sorted(folder.iterdir()):
+                    name = path.name
+                    session_id = name[: -len(ROW_SUFFIX)]
+                    if not (name.endswith(ROW_SUFFIX) and _SESSION_ID_RE.fullmatch(session_id)):
+                        continue
+                    described = _describe_row(path, folder.name, session_id)
+                    if described == "not_a_row":
+                        continue
+                    found.setdefault(session_id, []).append(
+                        described if good_month and described != "unknown" else None
+                    )
+            rows: list[RowDescriptor] = []
+            unknown: list[str] = []
+            for session_id, descriptors in found.items():
+                only = descriptors[0] if len(descriptors) == 1 else None
+                if only is not None:
+                    rows.append(only)
+                else:
+                    unknown.append(session_id)
+            return AuditSnapshot(key, tuple(rows), tuple(sorted(unknown)))
+        except BaseException as exc:
+            # The key leaves only inside a returned snapshot (C3): any other
+            # exit zeroes it first.
+            for index in range(len(key)):
+                key[index] = 0
+            if isinstance(exc, OSError):
+                raise AuditUnavailable("unavailable") from None
+            raise
+
+    def _strict_rows_present(self) -> bool:
+        """Whether the strict inventory holds any row-shaped file (a folder
+        is not a row); ``AuditUnavailable("unavailable")`` when the store or
+        a month folder cannot be listed or a month cannot be inspected."""
+        try:
+            for folder in self._strict_month_folders():
+                for path in folder.iterdir():
+                    name = path.name
+                    session_id = name[: -len(ROW_SUFFIX)]
+                    if not (name.endswith(ROW_SUFFIX) and _SESSION_ID_RE.fullmatch(session_id)):
+                        continue
+                    if _describe_row(path, folder.name, session_id) != "not_a_row":
+                        return True
+        except OSError:
+            raise AuditUnavailable("unavailable") from None
+        return False
+
+    def _strict_month_folders(self) -> Iterator[Path]:
+        """``_month_folders`` that raises ``OSError`` for a store that exists
+        but cannot be listed (a missing store yields nothing) and for a
+        month folder whose link state cannot be read."""
+        try:
+            children = sorted(self._root.iterdir())
+        except FileNotFoundError:
+            return
+        for child in children:
+            if not _MONTH_RE.fullmatch(child.name):
+                continue
+            linked = link_state(child)
+            if linked is None:
+                raise OSError("a month folder cannot be inspected")
+            if not linked and child.is_dir():
+                yield child
+
+    def _row_files_of(self, session_id: str) -> list[Path]:
+        """Every path in a month folder named as ``session_id``'s row, by one
+        ``lstat`` each (whatever it is — a file, a link, a folder);
+        ``OSError`` when the store, a month folder or a path cannot be
+        inspected — never read as absent."""
+        name = f"{session_id}{ROW_SUFFIX}"
+        paths: list[Path] = []
+        for folder in self._strict_month_folders():
+            try:
+                os.lstat(folder / name)
+            except FileNotFoundError:
+                continue
+            paths.append(folder / name)
+        return paths
+
+    def row_state(self, session_id: str) -> RowState:
+        """D9: this store's row for ``session_id`` — ``readable``, ``newer``
+        (a newer schema), ``unreadable`` (it does not authenticate or decode,
+        the key cannot be used, more than one file holds it, it is a link,
+        or a month folder cannot be inspected — never ``none``), or ``none``.
+        Creates nothing; never raises past the id check."""
+        validate_session_id(session_id)
+        try:
+            paths = self._row_files_of(session_id)
+        except OSError:
+            return "unreadable"
+        if not paths:
+            return "none"
+        if len(paths) > 1 or link_state(paths[0]) is not False:
+            return "unreadable"
+        try:
+            crypto = self._open_key(create=False)
+        except (AuditUnavailable, _NoKey):
+            return "unreadable"
+        try:
+            decoded = self._read(paths[0], crypto)
+        finally:
+            crypto.destroy()
+        if isinstance(decoded, AuditRow):
+            return "readable"
+        return "newer" if decoded is _NEWER else "unreadable"
+
+    def restore_row(
+        self, plaintext: bytes, session_id: str, month: str, *, now: datetime
+    ) -> RowOutcome:
+        """D9: import ONE backed-up row (``plaintext``, already authenticated
+        under the backup's audit key) into ``month`` — the manifest's
+        validated month — RE-ENCRYPTED under this store's key with the
+        plaintext unchanged (a ``_NEWER`` row too). Refused as
+        ``row_mismatch`` when a decoded row names another id or month (or the
+        month is not a real one); ``skipped_undecodable_row`` when it is
+        neither a row nor a newer one; ``skipped_pruned_row`` once its
+        month's ``month_prune_at`` has passed. A local row file for the id is
+        KEPT — ``skipped_present_row`` when it reads,
+        ``skipped_unreadable_row`` when it does not (or there are two) —
+        except a BARE ``pre_audit`` row (``_bare``) in the SAME month facing a
+        ``recorded`` row, which is replaced (``provenance_recovered``); a
+        ``pre_audit`` row holding facts, or in another month, faces it as
+        ``conflict_row``. Otherwise the row is written (``add_row``), a
+        store made on a computer with none, as any first audit write does.
+        ``failed_row_write`` when the key, the folder (a linked month folder
+        included) or the write fails. Never raises past the id check."""
+        validate_session_id(session_id)
+        parsed_month = valid_month(month)
+        if parsed_month is None:
+            return "row_mismatch"
+        try:
+            decoded = _decode(plaintext)
+        except ValueError:
+            return "skipped_undecodable_row"
+        if isinstance(decoded, AuditRow) and (
+            decoded.session_id != session_id or _month_folder(decoded.session_date) != month
+        ):
+            return "row_mismatch"
+        if month_prune_at(*parsed_month) <= now:
+            return "skipped_pruned_row"
+        try:
+            crypto = self._open_key()
+        except AuditUnavailable:
+            return "failed_row_write"
+        try:
+            return self._restore_row(plaintext, decoded, session_id, month, crypto)
+        finally:
+            crypto.destroy()
+
+    def _restore_row(
+        self,
+        plaintext: bytes,
+        decoded: AuditRow | _Newer,
+        session_id: str,
+        month: str,
+        crypto: SessionCrypto,
+    ) -> RowOutcome:
+        try:
+            present = self._row_files_of(session_id)
+        except OSError:
+            return "failed_row_write"
+        target = self._root / month / f"{session_id}{ROW_SUFFIX}"
+        if len(present) > 1:
+            return "skipped_unreadable_row"
+        if present:
+            local = (
+                self._read(present[0], crypto)
+                if link_state(present[0]) is False
+                else None
+            )
+            if not isinstance(local, AuditRow):
+                return "skipped_unreadable_row"
+            if not (
+                isinstance(decoded, AuditRow)
+                and decoded.origin == "recorded"
+                and local.origin == "pre_audit"
+            ):
+                return "skipped_present_row"
+            if present[0].parent.name != month or not _bare(local, decoded):
+                return "conflict_row"
+            outcome: RowOutcome = "provenance_recovered"
+        else:
+            outcome = "add_row"
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if link_state(target.parent) is not False:
+                return "failed_row_write"  # SEC-003, as ``_update``
+            atomic_write_bytes(
+                target, crypto.encrypt(plaintext, _row_aad(session_id)), error_label="audit row"
+            )
+        except (OSError, StoreWriteError):
+            self._count_failure("restore_row")
+            return "failed_row_write"
+        return outcome
+
     # --- the unreadable-key reset (D9) --------------------------------------
 
     def key_unreadable(self) -> bool:
@@ -1119,7 +1475,7 @@ class AuditLog:
         crypto = SessionCrypto()
         try:
             self._root.mkdir(parents=True, exist_ok=True)
-            wrap_key_to_file(crypto, self._root, description=AUDIT_KEY_DESCRIPTION)
+            self._wrap(crypto)
         except Exception as exc:  # noqa: BLE001 - DPAPI raises pywintypes.error (not OSError)
             try:
                 self._root.rmdir()  # only ever the EMPTY folder made just now
@@ -1262,7 +1618,7 @@ class AuditLog:
             crypto = SessionCrypto()
             try:
                 self._root.mkdir(parents=True, exist_ok=True)
-                wrap_key_to_file(crypto, self._root, description=AUDIT_KEY_DESCRIPTION)
+                self._wrap(crypto)
             except Exception:  # noqa: BLE001 - DPAPI raises pywintypes.error (not OSError)
                 crypto.destroy()
                 raise AuditUnavailable("write_failed") from None
@@ -1270,7 +1626,7 @@ class AuditLog:
         if key_blob_is_dead(size):
             raise AuditUnavailable("key_unreadable")
         try:
-            return unwrap_key_from_file(self._root, description=AUDIT_KEY_DESCRIPTION)
+            return self._unwrap()
         except KeyCustodyError as exc:
             # Round 7 LOW-007: a blob that could not be READ (antivirus or a
             # backup holding the file) is a passing ``unavailable`` — never

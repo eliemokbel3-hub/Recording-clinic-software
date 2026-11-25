@@ -738,6 +738,17 @@ class _AuditRecorder:
     ) -> bool:
         pytest.fail("a draft-write test destroyed a kept recording")
 
+    # Past-sessions-backup plan Task 1.2: never reached here (the tab is
+    # never opened by these tests).
+    def backup_snapshot(self) -> Any:
+        pytest.fail("a draft-write test backed up the audit record")
+
+    def row_state(self, session_id: str) -> str:
+        pytest.fail("a draft-write test read a row's state for a restore")
+
+    def restore_row(self, plaintext: bytes, session_id: str, month: str, *, now: datetime) -> str:
+        pytest.fail("a draft-write test restored an audit row")
+
 
 def test_the_audit_recorder_implements_the_past_sessions_surface() -> None:
     """The window hands this recorder to the Past sessions tab: it must

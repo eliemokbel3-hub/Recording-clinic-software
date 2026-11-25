@@ -87,6 +87,7 @@ import logging
 import math
 import os
 import re
+import secrets
 import shutil
 import stat
 import unicodedata
@@ -126,18 +127,27 @@ from scribe_desktop.session_store import (
     TRANSCRIPT_FILENAME,
     ArchiveSource,
     GeneratedRecord,
+    KeyBlobError,
     SessionChunkStore,
     atomic_write_bytes,
+    dpapi_round_trip,
     generated_aad,
+    generated_from_blob,
     iter_chunks,
     link_state,
+    note_from_blob,
     read_generated,
     read_note,
+    unwrap_key_blob,
     unwrap_key_from_file,
     validate_session_id,
     wrap_key_to_file,
 )
-from scribe_desktop.transcription import TranscriptDocument, read_transcript
+from scribe_desktop.transcription import (
+    TranscriptDocument,
+    read_transcript,
+    transcript_from_blob,
+)
 
 PAST_SESSIONS_DIRNAME: Final = "past_sessions"
 # D1: the entry key's DPAPI description — distinct from every other store's.
@@ -244,6 +254,10 @@ PAST_SESSION_REASONS: Final[dict[str, str]] = {
     "export_unrecorded": "the export could not be recorded, so nothing was written",
     "export_failed": "the file could not be written",
     "export_cleanup_failed": "a partial unencrypted file may remain in the folder you chose",
+    # Past-sessions-backup plan D8 / D10: the set-aside's two refusals (the
+    # page's own lines are ``set_aside_line``'s, Task 3.4).
+    "dpapi_unavailable": "Windows could not verify a test value just now - nothing was moved",
+    "set_aside_unavailable": "the set-aside folder could not be made - nothing was moved",
 }
 
 
@@ -567,6 +581,93 @@ def _unwrap_ledger_key(root: Path) -> SessionCrypto:
     )
 
 
+# Past-sessions-backup plan D8: the set-aside's two seams. ``ClassifyKeyBlob``
+# answers ONE of ``KEY_BLOB_ANSWERS`` for a key blob already read (an entry
+# key description); ``DpapiProbe`` is the in-memory DPAPI round trip.
+ClassifyKeyBlob = Callable[[bytes], str]
+DpapiProbe = Callable[[], bool]
+KEY_BLOB_ANSWERS: Final = frozenset(
+    {"ok", "dead", "dpapi_refused", "dpapi_error", "foreign_description", "bad_length"}
+)
+# A DPAPI blob is a few hundred bytes; a larger key file is not one of ours
+# and is never read whole.
+MAX_KEY_BLOB_BYTES: Final = 64 * 1024
+SET_ASIDE_PREFIX: Final = ".unreadable-"
+_SET_ASIDE_TRIES: Final = 8
+
+
+def _classify_entry_key_blob(blob: bytes) -> str:
+    """The default ``ClassifyKeyBlob``: ``unwrap_key_blob`` under the
+    archive's key description, the unwrapped key destroyed at once."""
+    try:
+        crypto = unwrap_key_blob(blob, description=PAST_SESSION_KEY_DESCRIPTION)
+    except KeyBlobError as exc:
+        return exc.reason
+    except Exception:  # noqa: BLE001 - an unforeseen failure is Windows not answering
+        return "dpapi_error"
+    crypto.destroy()
+    return "ok"
+
+
+BackupLeftOut = Literal[
+    "holds_recording", "unreadable", "incomplete", "damaged", "changed", "uninspectable"
+]
+
+
+@dataclass(frozen=True)
+class FileIdentity:
+    """One file as a backup's snapshot saw it through its open handle (D5):
+    size, modification time (ns), file number and device — what the copy
+    must find again."""
+
+    size: int
+    mtime_ns: int
+    file_index: int
+    device: int
+
+    @classmethod
+    def of(cls, status: os.stat_result) -> FileIdentity:
+        return cls(status.st_size, status.st_mtime_ns, status.st_ino, status.st_dev)
+
+
+@dataclass(frozen=True)
+class SnapshotEntry:
+    """One committed entry a backup will copy (D5 hop B): its id, its key's
+    plain bytes (a ``bytearray`` the planner wraps and zeroes at once), each
+    required file's identity by kind, and the SHA-256 of ``label.enc`` as
+    read. Never its content."""
+
+    session_id: str
+    key: bytearray = field(repr=False)
+    files: dict[str, FileIdentity] = field(repr=False)
+    label_sha256: str = field(repr=False)
+
+
+@dataclass(frozen=True)
+class ArchiveSnapshot:
+    """``backup_snapshot``'s answer: the entries to copy, and how many were
+    left out by reason (content-free)."""
+
+    entries: tuple[SnapshotEntry, ...]
+    left_out: dict[BackupLeftOut, int]
+
+
+@dataclass(frozen=True)
+class SetAsideReport:
+    """``set_aside_refused``'s answer (D8), content-free: the ids moved, how
+    many refused-key entries were NOT moved because a recording file is
+    present or cannot be ruled out (``held``), how many could not be safely
+    assessed (``left``), and how many renames failed (``failed``). An entry
+    this login can open is never counted. ``folder`` is the set-aside folder
+    when one was made and kept (None otherwise)."""
+
+    moved: tuple[str, ...] = ()
+    held: int = 0
+    left: int = 0
+    failed: int = 0
+    folder: Path | None = field(default=None, repr=False)
+
+
 class _EntryKeeper:
     """The ``session_store.ArchiveKeeper`` one Complete is given (D4): the
     store plus the label the UI resolved."""
@@ -601,12 +702,21 @@ class PastSessionStore:
         unwrap_key: UnwrapKey = _unwrap_entry_key,
         wrap_ledger_key: WrapKey = _wrap_ledger_key,
         unwrap_ledger_key: UnwrapKey = _unwrap_ledger_key,
+        classify_key_blob: ClassifyKeyBlob | None = None,
+        dpapi_probe: DpapiProbe | None = None,
     ) -> None:
         self._root = root if root is not None else default_past_sessions_root()
         self._clock = clock
         self._logger = logger
         self._wrap_key = wrap_key
         self._unwrap_key = unwrap_key
+        # Past-sessions-backup plan D8: the set-aside's blob classifier and
+        # its DPAPI probe (test seams, faked in tests; the existing
+        # ``unwrap_key`` takes a folder and folds every failure into one
+        # error, so it cannot serve here). None is the real one, looked up
+        # when it is called, so the conftest's sentinel covers every store.
+        self._classify_key_blob = classify_key_blob
+        self._dpapi_probe = dpapi_probe
         # Development-recordings Task 3.3: the export ledger's key custody —
         # given the archive ROOT, it writes / reads ``exports-key.dpapi``
         # there (a test seam, like the entry key's).
@@ -1529,6 +1639,264 @@ class PastSessionStore:
             raise PastSessionError("delete_failed")
         self._forget_dates(entry.name)
 
+    # --- the backup's snapshot (past-sessions-backup plan D5 hop B) ---------
+
+    def backup_snapshot(self) -> ArchiveSnapshot:
+        """What a backup copies of the archive (D5 hop B, GUI thread),
+        reading no content but each entry's label. A STRICT listing (an
+        archive that exists but cannot be listed raises
+        ``PastSessionError("unreadable")``; a missing one is empty). Per
+        id-shaped child, in order: its own link state (a link, or one that
+        cannot be read, is ``uninspectable``); a child that is not a folder,
+        a ``key.dpapi`` CONFIRMED absent (a keyless leftover) or a ``pending``
+        marker is not an entry and is skipped silently, and either one whose
+        presence cannot be told is ``uninspectable``; the recording key, read
+        once BEFORE any content (``live`` → ``holds_recording``, ``unknown``
+        → ``uninspectable``); ``key.dpapi`` an ordinary single-link file, then
+        unwrapped ONCE through the store's seam, and the label decoded with
+        that key (either failing → ``unreadable``); the label's required file
+        set (``incomplete`` both ways). A file that is itself a link, or not a
+        single-link regular file, is ``uninspectable``. Each entry's key leaves
+        as a ``bytearray`` the caller zeroes; every ``SessionCrypto`` is
+        destroyed here."""
+        try:
+            children = sorted(self._root.iterdir())
+        except FileNotFoundError:
+            return ArchiveSnapshot((), {})
+        except OSError:
+            raise PastSessionError("unreadable") from None
+        entries: list[SnapshotEntry] = []
+        left_out: dict[BackupLeftOut, int] = {}
+        current: SnapshotEntry | None = None
+        try:
+            for child in children:
+                if not _SESSION_ID_RE.fullmatch(child.name):
+                    continue
+                answer = self._snapshot_entry(child)
+                if isinstance(answer, SnapshotEntry):
+                    current = answer
+                    entries.append(answer)
+                    current = None
+                elif answer != "skip":
+                    left_out[answer] = left_out.get(answer, 0) + 1
+            return ArchiveSnapshot(tuple(entries), left_out)
+        except BaseException:
+            # The keys leave only inside a returned snapshot (C3): a failed
+            # one zeroes every key it took, the one in hand included.
+            for entry in (*entries, *((current,) if current is not None else ())):
+                entry.key[:] = bytes(len(entry.key))
+            raise
+
+    def _snapshot_entry(self, child: Path) -> SnapshotEntry | BackupLeftOut | Literal["skip"]:
+        if link_state(child) is not False:
+            return "uninspectable"
+        try:
+            if not stat.S_ISDIR(os.lstat(child).st_mode):
+                return "skip"
+        except OSError:
+            return "uninspectable"
+        try:
+            os.lstat(child / KEY_FILENAME)
+        except FileNotFoundError:
+            return "skip"  # a keyless leftover: not an entry
+        except OSError:
+            return "uninspectable"
+        try:
+            os.lstat(child / PENDING_FILENAME)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            return "uninspectable"
+        else:
+            return "skip"  # not yet committed: not an entry
+        recording = _audio_key_state(child / AUDIO_KEY_FILENAME)
+        if recording == "live":
+            return "holds_recording"
+        if recording == "unknown":
+            return "uninspectable"
+        if not isinstance(inspect_entry_file(child / KEY_FILENAME), tuple):
+            return "uninspectable"
+        try:
+            crypto = self._unwrap_key(child)
+        except Exception:  # noqa: BLE001 - left out as unreadable, never a raise
+            return "unreadable"
+        try:
+            return self._snapshot_files(child, crypto)
+        finally:
+            crypto.destroy()
+
+    def _snapshot_files(
+        self, child: Path, crypto: SessionCrypto
+    ) -> SnapshotEntry | BackupLeftOut:
+        looked = inspect_entry_file(child / LABEL_FILENAME, read_cap=MAX_LABEL_FILE_BYTES)
+        if looked == "absent":
+            return "incomplete"
+        if not isinstance(looked, tuple):
+            return "uninspectable"
+        label_identity, label_blob = looked
+        try:
+            label = _parse_label(crypto.decrypt(label_blob, _label_aad(child.name)))
+        except Exception:  # noqa: BLE001 - the label does not open: unreadable
+            return "unreadable"
+        if label.session_id != child.name:
+            return "unreadable"
+        required = {"transcript": True, "note": label.has_saved, "generated": label.has_generated}
+        files: dict[str, FileIdentity] = {"label": label_identity}
+        for kind, needed in required.items():
+            found = inspect_entry_file(child / ENTRY_FILE_KINDS[kind])
+            if found == "absent":
+                if needed:
+                    return "incomplete"
+                continue
+            if not needed:
+                return "incomplete" if found != "unreadable" else "uninspectable"
+            if not isinstance(found, tuple):
+                return "uninspectable"
+            files[kind] = found[0]
+        key = bytearray(crypto.export_key())
+        try:
+            return SnapshotEntry(child.name, key, files, hashlib.sha256(label_blob).hexdigest())
+        except BaseException:
+            key[:] = bytes(len(key))
+            raise
+
+    # --- the set-aside (past-sessions-backup plan D8) -----------------------
+
+    def set_aside_refused(self) -> SetAsideReport:
+        """Move every entry whose key this Windows login can no longer open —
+        and ONLY those — unread, into ONE new folder beside the archive
+        (``past_sessions.unreadable-<YYYYMMDD-HHMMSS>-<8 hex>``, never an
+        existing name). It mirrors ``AuditLog.reset``, per entry. NOTHING is
+        deleted, decrypted or rewritten, and no audit row is touched.
+
+        In order: (a) the DPAPI probe — False or any exception refuses
+        (``PastSessionError("dpapi_unavailable")``, nothing moved); (b) a
+        STRICT listing — an archive that cannot be listed refuses
+        (``unreadable``); (c) per id-shaped child (``_set_aside_answer``) —
+        ``moved`` candidates, ``held`` (a recording file present or not
+        ruled out), ``left`` (could not be safely assessed), or not counted;
+        (d) when anything qualifies, one ``os.mkdir`` (any ``OSError``, or no
+        free name, refuses ``set_aside_unavailable`` with nothing moved),
+        then one ``os.rename`` per entry — a failed one is counted and the
+        rest still tried — and a folder left empty removed again, best
+        effort; (e) the caches forget the moved ids. GUI thread; one call
+        that never yields (D11)."""
+        probe = self._dpapi_probe if self._dpapi_probe is not None else dpapi_round_trip
+        try:
+            probe_ok = probe() is True
+        except Exception:  # noqa: BLE001 - a probe that raises is a failed probe
+            probe_ok = False
+        if not probe_ok:
+            self._log(None, "set_aside_dpapi_unavailable")
+            raise PastSessionError("dpapi_unavailable")
+        try:
+            children = sorted(self._root.iterdir())
+        except FileNotFoundError:
+            return SetAsideReport()
+        except OSError:
+            raise PastSessionError("unreadable") from None
+        candidates: list[Path] = []
+        held = left = 0
+        for child in children:
+            if not _SESSION_ID_RE.fullmatch(child.name):
+                continue
+            answer = self._set_aside_answer(child)
+            if answer == "qualifies":
+                candidates.append(child)
+            elif answer == "held":
+                held += 1
+            elif answer == "left":
+                left += 1
+        if not candidates:
+            return SetAsideReport(held=held, left=left)
+        folder = self._make_set_aside_folder()
+        moved: list[str] = []
+        failed = 0
+        for entry in candidates:
+            try:
+                os.rename(entry, folder / entry.name)
+            except OSError:
+                failed += 1
+                self._log(entry.name, "set_aside_failed")
+                continue
+            moved.append(entry.name)
+            self._forget_dates(entry.name)
+        kept_folder: Path | None = folder
+        if not moved:
+            try:
+                folder.rmdir()  # only ever the EMPTY folder made just now
+                kept_folder = None
+            except OSError:
+                pass
+        return SetAsideReport(tuple(moved), held, left, failed, kept_folder)
+
+    def _set_aside_answer(self, child: Path) -> Literal["qualifies", "held", "left", "skip"]:
+        """D8 (c) for one id-shaped child, in order: its OWN link state first
+        (``<link>\\key.dpapi`` would be another folder's key) — a link or an
+        unreadable state is ``left`` and nothing under it is looked at; a
+        child that is not a folder, or whose ``key.dpapi`` is CONFIRMED absent
+        (a keyless leftover), is ``skip``; a ``pending`` marker not confirmed
+        absent, a ``key.dpapi`` that is a link or not an ordinary single-link
+        file, or a read error is ``left``; then the blob classifier — ``ok``
+        is ``skip`` (this login opens it), ``dpapi_refused`` goes on, any
+        other answer is ``left``; a refused-key entry qualifies only with
+        ``audio-key.enc`` and ``audio.enc`` each CONFIRMED absent, else
+        ``held``."""
+        if link_state(child) is not False:
+            return "left"
+        try:
+            if not stat.S_ISDIR(os.lstat(child).st_mode):
+                return "skip"
+        except OSError:
+            return "left"
+        key_path = child / KEY_FILENAME
+        if _absent(key_path):
+            return "skip"
+        if not _absent(child / PENDING_FILENAME):
+            return "left"
+        blob = _read_single_link_file(key_path, MAX_KEY_BLOB_BYTES)
+        if blob is None:
+            return "left"
+        classify = (
+            self._classify_key_blob
+            if self._classify_key_blob is not None
+            else _classify_entry_key_blob
+        )
+        try:
+            answer = classify(blob)
+        except Exception:  # noqa: BLE001 - a classifier that raises judged nothing
+            return "left"
+        if answer == "ok":
+            return "skip"
+        if answer != "dpapi_refused":
+            return "left"
+        if _audio_key_state(child / AUDIO_KEY_FILENAME) == "absent" and _absent(
+            child / AUDIO_FILENAME
+        ):
+            return "qualifies"
+        return "held"
+
+    def _make_set_aside_folder(self) -> Path:
+        """ONE new folder beside the archive by ``os.mkdir`` — the audit
+        set-aside's naming and its never-an-existing-name loop.
+        ``PastSessionError("set_aside_unavailable")`` on any other
+        ``OSError`` or when no free name is found."""
+        stamp = self._clock().astimezone(UTC).strftime("%Y%m%d-%H%M%S")
+        for _ in range(_SET_ASIDE_TRIES):
+            candidate = self._root.with_name(
+                f"{self._root.name}{SET_ASIDE_PREFIX}{stamp}-{secrets.token_hex(4)}"
+            )
+            try:
+                os.mkdir(candidate)
+            except FileExistsError:
+                continue
+            except OSError:
+                self._log(None, "set_aside_unavailable")
+                raise PastSessionError("set_aside_unavailable") from None
+            return candidate
+        self._log(None, "set_aside_unavailable")
+        raise PastSessionError("set_aside_unavailable")
+
     def sweep(self, retention_days: int | None, now: datetime) -> list[str]:
         """``sweep_report``'s deleted ids (the retention sweep as a list)."""
         return [session_id for session_id, _date in self.sweep_report(retention_days, now).expired]
@@ -1738,6 +2106,64 @@ class PastSessionStore:
         return label if label.session_id == entry.name else None
 
 
+# Past-sessions-backup plan D2 / D5: an entry's content files by the kind a
+# backup names them by (the key file is never one of them).
+ENTRY_FILE_KINDS: Final[dict[str, str]] = {
+    "label": LABEL_FILENAME,
+    "transcript": TRANSCRIPT_FILENAME,
+    "note": NOTE_FILENAME,
+    "generated": GENERATED_FILENAME,
+}
+
+
+def entry_opens(
+    session_id: str, key: bytes | bytearray, files: dict[str, bytes]
+) -> datetime | None:
+    """The backup's open check (past-sessions-backup plan D5), a PURE
+    function — no disk: ``files`` (an entry's content by kind,
+    ``ENTRY_FILE_KINDS``) under ``key``. The label authenticates under
+    ``_label_aad(id)``, parses, names this id, and its ``has_saved`` /
+    ``has_generated`` match the files present; then the transcript, the
+    saved note (its session binding and transcript digest) and the generated
+    note are accepted by the SAME validation ``read_transcript``,
+    ``read_note`` and ``read_generated`` apply. Returns the label's
+    completion date, or None when the entry does not open. Every plaintext
+    is dropped before it returns, and the key copy destroyed."""
+    try:
+        validate_session_id(session_id)
+        crypto = SessionCrypto.from_key(bytes(key))
+    except ValueError:
+        return None
+    try:
+        if not set(files) <= set(ENTRY_FILE_KINDS) or "transcript" not in files:
+            return None
+        label_blob = files.get("label")
+        if label_blob is None or len(label_blob) > MAX_LABEL_FILE_BYTES:
+            return None
+        label = _parse_label(crypto.decrypt(label_blob, _label_aad(session_id)))
+        if (
+            label.session_id != session_id
+            or label.has_saved != ("note" in files)
+            or label.has_generated != ("generated" in files)
+        ):
+            return None
+        transcript_from_blob(files["transcript"], crypto)
+        if "note" in files:
+            note_from_blob(
+                files["note"],
+                crypto,
+                crypto.decrypt(files["transcript"]),
+                session_id=session_id,
+            )
+        if "generated" in files:
+            generated_from_blob(files["generated"], crypto, session_id)
+    except Exception:  # noqa: BLE001 - "does not open" is an answer, never a raise
+        return None
+    finally:
+        crypto.destroy()
+    return label.completed_at
+
+
 def _parse_label(plaintext: bytes) -> PastSessionLabel:
     """A stored label, else ``ValueError`` — the ONE reading rule, used by
     the listing and by the write-time verify (round 24), so a label that
@@ -1773,6 +2199,60 @@ def _read_capped(path: Path, cap: int) -> bytes:
     if len(blob) > cap:
         raise PastSessionError("unreadable")
     return blob
+
+
+def _read_single_link_file(path: Path, cap: int) -> bytes | None:
+    """``path``'s bytes, read ONCE through one handle, only when ``path`` is
+    itself not a link (its own ``link_state``, read BEFORE it is opened —
+    a handle check alone would follow a file link) and the opened file is
+    a regular file with no other name (``st_nlink`` 1) of at most ``cap``
+    bytes. None for anything else, a read error included. Never raises
+    (past-sessions-backup plan D5 / D8)."""
+    if link_state(path) is not False:
+        return None
+    try:
+        with path.open("rb") as stream:
+            status = os.fstat(stream.fileno())
+            if not stat.S_ISREG(status.st_mode) or status.st_nlink != 1:
+                return None
+            blob = stream.read(cap + 1)
+    except OSError:
+        return None
+    return blob if len(blob) <= cap else None
+
+
+FileLook = Literal["absent", "linked", "unreadable"]
+
+
+def inspect_entry_file(
+    path: Path, *, read_cap: int | None = None
+) -> tuple[FileIdentity, bytes] | FileLook:
+    """One entry file for a backup (past-sessions-backup plan D5), through
+    ONE handle: its own ``link_state`` first (a handle check alone would
+    follow a file link) — ``linked`` for a link, ``unreadable`` when that
+    cannot be read; then opened once — ``absent`` when it is not there;
+    ``linked`` when the handle is not a regular file with no other name
+    (``st_nlink`` 1); ``unreadable`` for any other error, or more than
+    ``read_cap`` bytes. Otherwise its identity from that handle and the
+    bytes read through it (``b""`` with no ``read_cap``). Never raises."""
+    state = link_state(path)
+    if state is None:
+        return "unreadable"
+    if state:
+        return "linked"
+    try:
+        with path.open("rb") as stream:
+            status = os.fstat(stream.fileno())
+            if not stat.S_ISREG(status.st_mode) or status.st_nlink != 1:
+                return "linked"
+            blob = b"" if read_cap is None else stream.read(read_cap + 1)
+    except FileNotFoundError:
+        return "absent"
+    except OSError:
+        return "unreadable"
+    if read_cap is not None and len(blob) > read_cap:
+        return "unreadable"
+    return FileIdentity.of(status), blob
 
 
 def _require_same(actual: bytes, expected: bytes) -> None:

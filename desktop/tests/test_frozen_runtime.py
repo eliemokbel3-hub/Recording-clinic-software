@@ -399,6 +399,40 @@ class TestOfflineSelfCheck:
 
         assert app_module.run_offline_self_check(_SELF_CHECK, find) == 2
 
+    def test_argon2id_derives_through_the_backup_seam(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Past-sessions-backup plan Task 1.7: a passing check derived 32
+        bytes through ``past_sessions_backup.argon2id_derive`` (the real
+        primitive, at the smallest fixed parameters)."""
+        from scribe_desktop import app as app_module
+        from scribe_desktop import past_sessions_backup
+
+        calls: list[dict[str, int]] = []
+        real = past_sessions_backup.argon2id_derive
+
+        def spy(secret: bytes, salt: bytes, **params: int) -> bytes:
+            calls.append(params)
+            return real(secret, salt, **params)
+
+        monkeypatch.setattr(past_sessions_backup, "argon2id_derive", spy)
+        assert app_module.run_offline_self_check(_SELF_CHECK, self._absent) == 0
+        assert calls == [{"iterations": 1, "lanes": 1, "memory_cost": 8}]
+
+    @pytest.mark.parametrize("failure", [ImportError, RuntimeError, MemoryError])
+    def test_argon2id_unavailable_is_exit_3(
+        self, monkeypatch: pytest.MonkeyPatch, failure: type[BaseException]
+    ) -> None:
+        from scribe_desktop import app as app_module
+        from scribe_desktop import past_sessions_backup
+
+        def unavailable(*args: object, **kwargs: object) -> bytes:
+            raise failure("Argon2id is not available")
+
+        monkeypatch.setattr(past_sessions_backup, "argon2id_derive", unavailable)
+        assert app_module.SELF_CHECK_KDF == 3
+        assert app_module.run_offline_self_check(_SELF_CHECK, self._absent) == 3
+
     def test_a_find_that_raises_is_not_absent(self) -> None:
         from scribe_desktop import app as app_module
 

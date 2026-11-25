@@ -483,7 +483,8 @@ def audit_bundle(bundle: Path, run: Runner = _run) -> list[str]:
         elif result.returncode != 0:
             failures.append(
                 f"the offline self-check exited {result.returncode} "
-                "(1: the offline variables; 2: a Qt networking module is importable)"
+                "(1: the offline variables; 2: a Qt networking module is importable; "
+                "3: Argon2id is not available)"
             )
     return failures
 

@@ -458,15 +458,18 @@ class TestTheAudit:
             f"Qt networking is bundled: _internal/{name}"
         ]
 
-    @pytest.mark.parametrize("code", [1, 2])
+    @pytest.mark.parametrize("code", [1, 2, 3])
     def test_a_failed_self_check_fails(
         self, release: ModuleType, tmp_path: Path, code: int
     ) -> None:
+        """Code 3 since the past-sessions-backup plan (Task 1.7): the frozen
+        build could not derive with Argon2id."""
         bundle = _bundle(release, tmp_path)
         failures = release.audit_bundle(bundle, _Runner({"--self-check-offline": code}))
         assert failures == [
             f"the offline self-check exited {code} "
-            "(1: the offline variables; 2: a Qt networking module is importable)"
+            "(1: the offline variables; 2: a Qt networking module is importable; "
+            "3: Argon2id is not available)"
         ]
 
     def test_a_self_check_that_never_ends_fails(

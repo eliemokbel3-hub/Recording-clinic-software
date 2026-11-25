@@ -1438,6 +1438,13 @@ def read_transcript(session_dir: Path, crypto: SessionCrypto) -> TranscriptDocum
         blob = transcript_path.read_bytes()
     except OSError as exc:
         raise StoreWriteError(f"transcript artifact unreadable: {exc}") from exc
+    return transcript_from_blob(blob, crypto)
+
+
+def transcript_from_blob(blob: bytes, crypto: SessionCrypto) -> TranscriptDocument:
+    """``read_transcript``'s validation of bytes already read — decrypt,
+    then parse — shared with the backup's open check (past-sessions-backup
+    plan D5), so a transcript a backup accepts is one the reader accepts."""
     try:
         plain = crypto.decrypt(blob)
     except InvalidTag as exc:

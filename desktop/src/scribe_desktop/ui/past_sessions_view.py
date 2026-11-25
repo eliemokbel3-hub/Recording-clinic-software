@@ -26,8 +26,11 @@ from scribe_desktop.audit import (
     AUDIT_RESET_REASONS,
     AuditResetError,
     AuditRow,
+    AuditSnapshot,
     AuditUnavailable,
     PastSessionEvent,
+    RowOutcome,
+    RowState,
 )
 from scribe_desktop.exclusions import EXPORT_UNCHECKED
 from scribe_desktop.past_sessions import (
@@ -112,6 +115,17 @@ class PastSessionsAudit(Protocol):
     def record_recording_exported(
         self, session_id: str, *, created_at: float | None = None
     ) -> bool: ...
+
+    # Past-sessions-backup plan D9 (Task 1.2): the backup's export and
+    # import surface — declared ahead of its callers (Back up…, Open a
+    # backup…, Phases 2 and 3), as Task 1.4's members were.
+    def backup_snapshot(self) -> AuditSnapshot: ...
+
+    def row_state(self, session_id: str) -> RowState: ...
+
+    def restore_row(
+        self, plaintext: bytes, session_id: str, month: str, *, now: datetime
+    ) -> RowOutcome: ...
 
 
 # --- the list and the opened entry (Flow 5, D5, D13) ------------------------

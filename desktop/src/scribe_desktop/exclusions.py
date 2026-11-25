@@ -162,7 +162,12 @@ class HostEntry:
 
 # --- Windows constants ----------------------------------------------------------
 
+DRIVE_REMOVABLE: Final = 2
 DRIVE_REMOTE: Final = 4
+DRIVE_CDROM: Final = 5
+DRIVE_RAMDISK: Final = 6
+FILE_ATTRIBUTE_DIRECTORY: Final = 0x10
+FILE_ATTRIBUTE_REPARSE_POINT: Final = 0x400
 FILE_ATTRIBUTE_NOT_CONTENT_INDEXED: Final = 0x2000
 # The attributes ``SetFileAttributesW`` accepts; what a folder already carries
 # is kept, everything else (DIRECTORY, REPARSE_POINT, ...) is masked off.
@@ -251,6 +256,15 @@ class WindowsLayer(Protocol):
         """``GetDriveTypeW`` of a drive root such as ``C:\\``."""
         ...
 
+    def volume_of(self, path: str) -> tuple[str, int]:
+        """The volume holding ``path``: its GUID name
+        (``GetVolumeNameForVolumeMountPointW`` on the mount point
+        ``GetVolumePathNameW`` finds) and that volume's drive type — so a
+        drive letter and a mounted folder of one volume answer the same
+        name (past-sessions-backup plan D7). Raises ``OSError`` when either
+        cannot be read."""
+        ...
+
     def file_attributes(self, path: str) -> int:
         """The file attributes of ``path`` itself (a link is not followed);
         raises ``OSError`` when they cannot be read."""
@@ -292,7 +306,14 @@ def _kernel32() -> Any:
     kernel32.GetDriveTypeW.restype = ctypes.c_uint
     kernel32.SetFileAttributesW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32]
     kernel32.SetFileAttributesW.restype = ctypes.c_int
+    for name in ("GetVolumePathNameW", "GetVolumeNameForVolumeMountPointW"):
+        function = getattr(kernel32, name)
+        function.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+        function.restype = ctypes.c_int
     return kernel32
+
+
+_VOLUME_BUFFER_CHARS: Final = 32_768
 
 
 class Win32WindowsLayer:
@@ -309,6 +330,18 @@ class Win32WindowsLayer:
 
     def drive_type(self, root: str) -> int:
         return int(_kernel32().GetDriveTypeW(root))
+
+    def volume_of(self, path: str) -> tuple[str, int]:
+        kernel32 = _kernel32()
+        mount = ctypes.create_unicode_buffer(_VOLUME_BUFFER_CHARS)
+        if not kernel32.GetVolumePathNameW(path, mount, _VOLUME_BUFFER_CHARS):
+            raise ctypes.WinError(ctypes.get_last_error())
+        name = ctypes.create_unicode_buffer(_VOLUME_BUFFER_CHARS)
+        if not kernel32.GetVolumeNameForVolumeMountPointW(
+            mount.value, name, _VOLUME_BUFFER_CHARS
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return name.value, int(kernel32.GetDriveTypeW(name.value))
 
     def file_attributes(self, path: str) -> int:
         return os.stat(path, follow_symlinks=False).st_file_attributes
@@ -404,9 +437,10 @@ def app_data_root(layer: WindowsLayer) -> Path:
 
 def _normalised(path: str) -> str:
     r"""A Windows path for comparison: ``\\?\X:\`` reduced to ``X:\``,
-    ``\\?\UNC\server`` to ``\\server``, case folded, no trailing separator."""
+    ``\\?\UNC\server`` to ``\\server`` (the ``UNC`` in any case: Windows
+    reads it so, round 23 PR-MED-2302), case folded, no trailing separator."""
     text = path.replace("/", "\\")
-    if text.startswith("\\\\?\\UNC\\"):
+    if text[: len("\\\\?\\UNC\\")].upper() == "\\\\?\\UNC\\":
         text = "\\\\" + text[len("\\\\?\\UNC\\") :]
     elif text.startswith("\\\\?\\"):
         text = text[len("\\\\?\\") :]
@@ -504,23 +538,215 @@ def check_export_location(layer: WindowsLayer, folder: Path) -> ExclusionWarning
     round 20 MED-003): sync software the layer cannot see, an external drive
     Windows itself reports as fixed (a USB SSD), and another volume mounted
     into a folder of a fixed drive (the drive letter's type is read, not the
-    mounted volume's)."""
+    mounted volume's).
+
+    Since the past-sessions-backup plan (D7) the detections run through the
+    shared ``_destination``, which refuses a ``\\\\`` path or a remote drive
+    letter from the path's TEXT before any call that touches the path. What
+    is refused is unchanged; one code moved: a network path whose resolution
+    fails is now ``location_network`` (it was ``location_unchecked``)."""
     try:
-        for warning in check_location(layer, folder):
-            return ExclusionWarning(warning.code, _EXPORT_LOCATION_LINES[warning.code])
-        real = _normalised(layer.realpath(str(folder)))
-        drive, _rest = ntpath.splitdrive(real)
-        if not (len(drive) == 2 and drive[1] == ":") or (
-            layer.drive_type(drive.upper() + "\\") != DRIVE_FIXED
-        ):
-            return ExclusionWarning("location_not_fixed", EXPORT_NOT_FIXED)
-        channels: tuple[install_layout.Channel, ...] = ("production", "dev")
-        for of in channels:
-            own = _normalised(layer.realpath(str(install_layout.app_data_root_via(layer, of))))
-            if _contains(own, real):
-                return ExclusionWarning("location_app_folder", EXPORT_APP_FOLDER)
+        code = _destination(layer, folder, _letter_is_fixed)
     except Exception:  # noqa: BLE001 - a destination that cannot be checked is refused
-        return ExclusionWarning("location_unchecked", EXPORT_UNCHECKED)
+        code = "location_unchecked"
+    if code is None:
+        return None
+    return ExclusionWarning(code, _EXPORT_LINES[code])
+
+
+_EXPORT_LINES: Final[dict[str, str]] = {
+    **_EXPORT_LOCATION_LINES,
+    "location_not_fixed": EXPORT_NOT_FIXED,
+    "location_app_folder": EXPORT_APP_FOLDER,
+    "location_unchecked": EXPORT_UNCHECKED,
+}
+
+
+def _text_refusal(layer: WindowsLayer, path: str) -> str | None:
+    """D7's FIRST detection, from the path's text and its drive root alone
+    (no call that touches the path itself): a ``\\\\`` path — UNC, or any
+    other prefixed form — or a drive letter whose root is remote. A
+    prefixed path that names no drive letter once its prefix is removed
+    (the ``GLOBALROOT`` namespace and the like) is refused too: its network
+    identity cannot be told from the text (round 23 PR-MED-2302)."""
+    text = _normalised(path)
+    if text.startswith("\\\\"):
+        return "location_network"
+    drive, _rest = ntpath.splitdrive(text)
+    if len(drive) == 2 and drive[1] == ":":
+        if layer.drive_type(drive.upper() + "\\") == DRIVE_REMOTE:
+            return "location_network"
+    elif path.replace("/", "\\").startswith("\\\\"):
+        return "location_network"
+    return None
+
+
+DriveRule = Callable[[WindowsLayer, str], str | None]
+
+
+def _destination(layer: WindowsLayer, folder: Path, drive_rule: DriveRule) -> str | None:
+    """The detections both destination rules share, in D7's order: the
+    text-first refusal; then ``check_location``'s (OneDrive, network after
+    resolving, the roaming profile); then the caller's ``drive_rule`` on the
+    resolved path; then either channel's data folder (round 26 SEC-005's
+    rule). A refusal's code, or None. Exceptions pass to the caller, which
+    refuses (fail closed)."""
+    code = _text_refusal(layer, str(folder))
+    if code is not None:
+        return code
+    for warning in check_location(layer, folder):
+        return warning.code
+    real = _normalised(layer.realpath(str(folder)))
+    code = drive_rule(layer, real)
+    if code is not None:
+        return code
+    channels: tuple[install_layout.Channel, ...] = ("production", "dev")
+    for of in channels:
+        own = _normalised(layer.realpath(str(install_layout.app_data_root_via(layer, of))))
+        if _contains(own, real):
+            return "location_app_folder"
+    return None
+
+
+def _letter_is_fixed(layer: WindowsLayer, real: str) -> str | None:
+    """Export's drive rule: the drive LETTER's type must be fixed."""
+    drive, _rest = ntpath.splitdrive(real)
+    if not (len(drive) == 2 and drive[1] == ":") or (
+        layer.drive_type(drive.upper() + "\\") != DRIVE_FIXED
+    ):
+        return "location_not_fixed"
+    return None
+
+
+# --- a Past-sessions backup's destination and source (past-sessions-backup D7) --
+
+BACKUP_SAME_DISK: Final = (
+    "A backup on this computer's own disk does not survive that disk - use it only until "
+    "you can copy to another drive."
+)
+BACKUP_DRIVE_REFUSED: Final = (
+    "that folder is not on a drive a backup can be kept on (a CD or DVD, a RAM disk, or a "
+    "drive that could not be identified)."
+)
+BACKUP_SOURCE_REFUSED: Final = "Copy the backup to a drive attached to this computer first."
+_BACKUP_DRIVE_TYPES: Final = frozenset({DRIVE_FIXED, DRIVE_REMOVABLE})
+_ARCHIVE_LINES: Final[dict[str, str]] = {
+    **_EXPORT_LOCATION_LINES,
+    "location_drive": BACKUP_DRIVE_REFUSED,
+    "location_app_folder": EXPORT_APP_FOLDER,
+    "location_unchecked": EXPORT_UNCHECKED,
+}
+
+
+@dataclass(frozen=True)
+class ArchiveBackupLocation:
+    """``check_archive_backup_location``'s answer: ``refused`` (``line`` says
+    why), ``warned`` (the same-disk line; the run may go on) or ``ok``. The
+    code is content-free, for the log."""
+
+    outcome: Literal["refused", "warned", "ok"]
+    code: str
+    line: str | None = None
+
+
+class _Volume:
+    """What the archive drive rule learned, for the same-disk comparison."""
+
+    name: str | None = None
+
+
+def _volume_rule(volume: _Volume) -> DriveRule:
+    """A backup's drive rule: the resolved folder exists and is a folder;
+    the VOLUME's own type (not the drive letter's — a mounted folder is
+    judged as the volume it holds) is fixed or removable; remote is a
+    network location; a CD-ROM, a RAM disk and anything else is refused."""
+
+    def rule(layer: WindowsLayer, real: str) -> str | None:
+        attributes = layer.file_attributes(real)
+        if not attributes & FILE_ATTRIBUTE_DIRECTORY:
+            return "location_unchecked"
+        name, kind = layer.volume_of(real)
+        if kind == DRIVE_REMOTE:
+            return "location_network"
+        if kind not in _BACKUP_DRIVE_TYPES or not name:
+            return "location_drive"
+        volume.name = name
+        return None
+
+    return rule
+
+
+def check_archive_backup_location(
+    layer: WindowsLayer | None, folder: Path
+) -> ArchiveBackupLocation:
+    """Where a Past-sessions backup may be written (past-sessions-backup plan
+    D7). REFUSED: no layer; a ``\\\\`` path or a remote drive letter (from
+    the text, before any call that touches the path); OneDrive, the roaming
+    profile, a network location once resolved; a folder that is absent or
+    not a folder; a CD-ROM, a RAM disk or a volume of unknown type; either
+    channel's data folder; anything the layer cannot resolve or inspect.
+    WARNED when the folder's volume is the data folder's (by GUID name, so a
+    drive letter and a mounted folder of one volume compare equal). Removable
+    drives are admitted. Read-only; never raises. Named residues: sync the
+    code cannot see; a virtual disk is judged as the volume it presents."""
+    if layer is None:
+        return _archive_refused("location_unchecked")
+    volume = _Volume()
+    try:
+        code = _destination(layer, folder, _volume_rule(volume))
+        if code is not None:
+            return _archive_refused(code)
+        data = layer.realpath(str(install_layout.app_data_root_via(layer)))
+        data_volume, _kind = layer.volume_of(data)
+    except Exception:  # noqa: BLE001 - a destination that cannot be checked is refused
+        return _archive_refused("location_unchecked")
+    if volume.name is None or not data_volume:
+        return _archive_refused("location_unchecked")
+    if volume.name.casefold() == data_volume.casefold():
+        return ArchiveBackupLocation("warned", "location_same_volume", BACKUP_SAME_DISK)
+    return ArchiveBackupLocation("ok", "location_ok")
+
+
+def _archive_refused(code: str) -> ArchiveBackupLocation:
+    return ArchiveBackupLocation("refused", code, _ARCHIVE_LINES[code])
+
+
+def proposed_backup_folder(layer: WindowsLayer | None, remembered: str | None) -> Path | None:
+    """The remembered folder (``config\\backup.json``) to hand a save or open
+    dialog, ONLY when it still passes ``check_archive_backup_location`` at
+    this moment — text-first, so a drive letter that has become a network
+    drive is never touched (D7). None otherwise: the dialog then starts at
+    the system drive's root, never Documents."""
+    if layer is None or not remembered:
+        return None
+    folder = Path(remembered)
+    if check_archive_backup_location(layer, folder).outcome == "refused":
+        return None
+    return folder
+
+
+def check_backup_source(layer: WindowsLayer | None, file: Path) -> ExclusionWarning | None:
+    """Whether Open a backup may read ``file`` (D7): the text-first refusal;
+    then the path must be an ordinary file, not a link or a folder (its own
+    attributes, not followed); then its RESOLVED folder must pass the
+    destination rule's refusals (no same-disk warning for a source). None
+    when admitted; otherwise the one refusal, "Copy the backup to a drive
+    attached to this computer first." — and a refused source receives no
+    read of its bytes (nothing here opens it). Never raises."""
+    refused = ExclusionWarning("source_refused", BACKUP_SOURCE_REFUSED)
+    if layer is None:
+        return refused
+    try:
+        if _text_refusal(layer, str(file)) is not None:
+            return refused
+        attributes = layer.file_attributes(str(file))
+        if attributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY):
+            return refused
+        folder = Path(ntpath.dirname(layer.realpath(str(file))))
+        if _destination(layer, folder, _volume_rule(_Volume())) is not None:
+            return refused
+    except Exception:  # noqa: BLE001 - a source that cannot be checked is refused
+        return refused
     return None
 
 

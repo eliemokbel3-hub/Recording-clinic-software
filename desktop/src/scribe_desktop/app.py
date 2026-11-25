@@ -666,7 +666,13 @@ SELF_CHECK_FLAG: Final = "--self-check-offline"
 SELF_CHECK_OK: Final = 0
 SELF_CHECK_OFFLINE_ENV: Final = 1
 SELF_CHECK_QT_NETWORK: Final = 2
+# Past-sessions-backup plan Task 1.7 (D3): the frozen build proves Argon2id on
+# every build — 32 bytes from a fixed, non-secret input at small fixed
+# parameters, through the backup's own derivation seam.
+SELF_CHECK_KDF: Final = 3
 _QT_NETWORK_MODULES: Final = ("PySide6.QtNetwork", "PySide6.QtWebSockets")
+_KDF_PROBE_INPUT: Final = b"Clinic Scribe self-check"
+_KDF_PROBE_SALT: Final = bytes(16)
 
 
 def run_offline_self_check(
@@ -677,7 +683,9 @@ def run_offline_self_check(
     start does — and, since the gpu-decoding plan (D2), check that every
     popped GPU variable (``POPPED_GPU_VARIABLES``) is gone, which the
     assertion alone would not notice — then check no Qt networking module can
-    be found — and return the exit code (``SELF_CHECK_*``). Otherwise
+    be found — then, since the past-sessions-backup plan (Task 1.7), that
+    Argon2id derives (``_kdf_works``) — and return the exit code
+    (``SELF_CHECK_*``). Otherwise
     ``None``: not the check, and the arguments are ignored. It opens no
     window, writes no log and reads no data root, so it may run before the
     install-folder check (an audit runs the bundle where it was built, never
@@ -699,7 +707,25 @@ def run_offline_self_check(
             found = True
         if found:
             return SELF_CHECK_QT_NETWORK
+    if not _kdf_works():
+        return SELF_CHECK_KDF
     return SELF_CHECK_OK
+
+
+def _kdf_works() -> bool:
+    """Whether the backup's derivation seam (``argon2id_derive``) gives 32
+    bytes at the smallest parameters Argon2id accepts. Any failure — the
+    module, the primitive or the call — is False. Nothing secret is used and
+    nothing is kept."""
+    try:
+        from scribe_desktop import past_sessions_backup
+
+        derived = past_sessions_backup.argon2id_derive(
+            _KDF_PROBE_INPUT, _KDF_PROBE_SALT, iterations=1, lanes=1, memory_cost=8
+        )
+    except Exception:  # noqa: BLE001 - exit code only, by design
+        return False
+    return len(derived) == past_sessions_backup.KEY_BYTES
 
 
 def _show_not_installed_warning() -> None:

@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** past-sessions-backup
-**Overall Progress:** `32%` (14 of 44 tasks)
+**Overall Progress:** `48%` (21 of 44 tasks)
 
 ## Lifecycle State
 - Active — REWRITTEN 2026-11-25 as one clean body (the practitioner: "Yes, rewrite it"). It replaces the October 2026 body and the two correction layers (D13, D14) that plan peer-review rounds 6 and 7 added; it folds in every verified finding of rounds 1–8 and three simplifications the practitioner chose that day (decisions 0.10–0.12), and three more taken during the review of this body (0.13–0.15). Nothing is built. NOT ready to build until a fresh cross-family plan peer pass over this body converges (Current State / Handoff Note).
@@ -242,6 +242,35 @@ See `Planning Extraction Summary` (state-once). In one line each: kept recording
 - 2026-11-26: the practitioner said "Commit and build" (committed `685743a`). The build proceeds under the practitioner's round-17 rule (no HIGH finding), so the Lifecycle line's "NOT ready to build until ... converges" is superseded by that rule. `/execute-loop` run `past-sessions-backup-20261126-063148-9edc` (worktree `C:/Recording clinic software-wt/past-sessions-backup-20261126-063148-9edc`, branch `loop/past-sessions-backup-20261126-063148-9edc`, base `main` at `685743a`), from Task 0.8. The worktree has no `.venv`: ruff and mypy run from the base checkout's venv by absolute path; pytest and `npm run qa` are composer-run (verify=composer).
 - 2026-11-26: Task 0.8 DONE (leg x1): the dry-run baselines — the five greps, both suites' counts, ruff and mypy — are recorded under Task 0.8 in Tasks; nothing differs from Key Findings, no gate opened. NEXT: Task 1.1.
 - 2026-11-26: Phase 0's `/review-loop` CONVERGED (leg r1): round 18 found 1 MED and 2 LOW in Task 0.8's record (the `desktop/src` count is 23 lines, `ui/models.py` 5; two lines named by their symbols; `PLAN.md`'s deferred sentence is outside the grep's phrases), all applied to Task 0.8's entry; round 19 was clean. No gate opened. NEXT: Task 1.1.
+- 2026-11-26 (leg x1): Phase 1 BUILT, Tasks 1.1–1.7, each 🟨 "built, suite owed"; ruff and mypy clean (73 files). New: `past_sessions_backup.py`, `tests/backup_fakes.py`, `test_backup_container.py`, `test_backup_write.py`, `test_archive_backup_location.py`; the conftest gains `pinned_backup_root`. OWED: the composer's full desktop suite and `npm run qa` (0.5.0), and the one line in `scripts/build-release.py` that Task 1.7 names (outside this leg's write paths). One change of outcome to check in review: a recording export to a `\\` path whose resolution fails now reads `location_network`, not `location_unchecked` (both refuse). `test_shadow_exits.py` and `test_schema_versions.py` unedited. No gate opened. NEXT: the composer's suite run, then Phase 1's `/review-loop`.
+- 2026-11-26 (leg x2): the composer's run had 8 failures, all in the new backup tests. Causes: (1) a product bug — the header drew a fresh KDF salt instead of the one hop A derived `K_b` with, so a written file did not open with its passphrase; `prepare_backup` now requires the run's `backup_kdf` and `new_header` takes `kdf=`, with two new tests (the header's parameters derive the same key; a run without its key or parameters is refused). (2) `backup_fakes.build` ran the manifest callback before the payload callback; the payload now goes first. (3) one test sealed a row before the audit store had a key. Also done: `scripts/build-release.py`'s code-3 text and its test. ruff and mypy clean. OWED: the composer's re-run of the full desktop suite. No gate opened.
+- 2026-11-26 (leg r1): the composer's suite ran green (desktop 11382 passed / 10 skipped; the tenth skip is the set-aside's symlink case on a host without the symlink privilege, intended; extension 313 passed). Tasks 1.1–1.7 are marked 🟩 (21 of 44, 48%).
+  - Phase 1's `/review-loop` CONVERGED in two rounds. Round 21 found 1 MED and 2 LOW, all applied:
+    - The proved copy's payload is now closed on every exit, so a write that fails between audit rows zeroes the plain audit key.
+    - `RecursionError` from the header or manifest JSON becomes `header_invalid` / `manifest_invalid`.
+    - `check_export_location`'s docstring names the moved code.
+  - Three new tests. Round 22 was clean.
+  - The export change from `location_unchecked` to `location_network` is supported by D7 (text-first for both rules; both refuse).
+  - ruff and mypy clean (73 files). No gate opened.
+  - OWED: the composer's run of the full desktop suite (the fixes touched `past_sessions_backup.py`, `exclusions.py`, `test_backup_write.py` and `test_backup_container.py`).
+- 2026-11-26 (leg v1): peer round 23 (codex, stage-2.p1, round 1 of the cap of 5) verified and fixed in one leg (verify-then-fix).
+  - All four findings verified; PR-MED-2301 regraded to LOW, since only a non-local exception reaches it.
+  - All four applied:
+    - the snapshot producers zero every exported key on a failed exit;
+    - an extended UNC namespace in any case, and a prefixed path with no drive letter, is refused from its text;
+    - a no-key audit store is empty only after the strict inventory agrees;
+    - the writer owns the descriptor from the exclusive create on, and a part with no identity is left and flagged.
+  - 10 new test functions, plus new cases on four existing text-first tests, across `test_backup_write.py`, `test_audit.py` and `test_archive_backup_location.py`.
+  - ruff and mypy clean. No gate opened.
+  - OWED: the composer's full desktop suite.
+- 2026-11-26 (leg v2): peer round 24 (codex, stage-2.p1, round 2 of the cap of 5) confirmed all four round 23 fixes and raised one LOW, PR-LOW-2401.
+  - Verified, then fixed in the same leg: a `RecursionError` from audit-row JSON is now read by the shared `_decode` as not a row, so each consumer keeps its per-row outcome. Back up lists the row unknown, Open does not import it, `row_state` says unreadable and Restore skips it.
+  - Five new tests in `test_audit.py`, `test_backup_write.py` and `test_backup_container.py`. ruff and mypy clean. No gate opened.
+  - OWED: the composer's full desktop suite.
+- 2026-11-26 (leg v3): peer round 25 (codex, stage-2.p1, round 3 of the cap of 5) confirmed all five earlier fixes and raised one LOW, PR-LOW-2501.
+  - Verified, then fixed in the same leg: an entry file over D2's per-file bound is now refused `too_large` by the planner, before any file exists or is read in full (it was refused only after the copy, as `unexpected`). The worker's read is capped at the bound too.
+  - One new test (the refusal and the boundary-equal success). ruff and mypy clean. No gate opened.
+  - OWED: the composer's full desktop suite.
 - Loop config: executor=claude-p model="claude-opus-5-5" effort=high profile=default; peer=codex model="gpt-6-astra" effort=high; architect=off; cadence=every-phase; caps=review:3,peer:5; gates=executor; cap-raise=executor; high-auto=on; peer-max=12; notify=action-only; scope=all; autocommit=on; isolation=worktree; merge=off; perms=scoped; liveness=10; monitor-delivery=auto; verify=composer
 
 ## Tasks
@@ -278,13 +307,20 @@ Grouped into phases for `/execute-loop` (a review loop and a codex peer pass at 
 
 ### Phase 1 — Custody, the container and the writer (no UI)
 
-- [ ] 🟥 **1.1 The key-blob seam and the set-aside (D8, D9).** `session_store.py`: `unwrap_key_blob(blob, *, description)` with its five structured refusals, `unwrap_key_from_file` rewritten over it (same outcomes), `dpapi_round_trip()`, and their conftest fakes. `past_sessions.py`: the two constructor seams `classify_key_blob` and `dpapi_probe`; `PastSessionStore.set_aside_refused() -> SetAsideReport` — the probe, the strict listing, the per-entry rule, one rename per entry into a new folder beside the archive, the forgotten caches. NOTHING about deletion or recordings changes: `delete_entry`, `delete_recording`, `_recording_state`, `_audio_key_state`, `_remove_key_first`, `record_past_session`, the two callers' audit order and the retention sweep are untouched. Done when: Validation's `test_past_sessions.py` items pass, `unwrap_key_from_file`'s existing tests pass unedited, and `test_shadow_exits.py` is unedited.
-- [ ] 🟥 **1.2 The audit record's export and import surface (D9).** `AuditLog`'s `wrap_key` / `unwrap_key` seams (the blob seam is Task 1.1's); `backup_snapshot`, `row_state`, `restore_row`, the pure `row_importable`; `PastSessionsAudit` extended. The audit row, its schema version and the CSV are NOT touched. Done when: Validation's `test_audit.py` items pass and `git diff` of the schema pins is empty.
-- [ ] 🟥 **1.3 The container module `past_sessions_backup.py` (D2, D3, D4).** `FORMAT_VERSION`, `BACKUP_FILENAME_PREFIX` (and its `_NON_PATH_LITERALS` entry in `test_install_layout.py`, here), `MAX_BACKUP_BYTES`, the member caps; `BackupHeader`, `BackupManifest`; `manifest_aad`; `derive_key(passphrase, kdf) -> bytearray` with the envelope check first, `MemoryError` → `kdf_memory`, and the `_kdf_floor_for_tests` seam; the preflight with its directory walk behind the size-and-read seam; `verify_backup(fileobj_or_path, k_b) -> BackupFacts` (every step of D2's reader except the derivation — 1 to 3, the manifest's decryption, 5 and 6 — and the whole-file SHA-256, taking the derived key — it serves the writer's read-back, Open and Restore's second pass); `BackupReader` (`read_member` with its size-and-hash check, `unwrap_entry_key`, `unwrap_audit_key`); `open_backup(path, passphrase)` as derive plus verify, for tests; the closed code set of `BackupFormatError` / `BackupRunError`; `past_sessions.entry_opens(session_id, key, files)` (the pure open check, beside the label code it uses) and the bytes-level validation it shares with `read_transcript` (`transcription.py`), `read_note` and `read_generated` (`session_store.py`), extracted from those readers with their outcomes and tests unchanged. `desktop/pyproject.toml`: `cryptography>=44`. Done when: `test_backup_container.py` passes.
-- [ ] 🟥 **1.4 The location rule and the settings file (D7, D10).** `exclusions.py`: `DRIVE_REMOVABLE`, `DRIVE_CDROM`, `DRIVE_RAMDISK`; `WindowsLayer.volume_of`; the shared `_destination` with the text-first refusal; `check_archive_backup_location`; `check_backup_source`; `check_export_location` unchanged in outcome. `note_config.py`: `BackupSettings` with its bounded reader and atomic writer beside `DevelopmentSettings`. Done when: `test_archive_backup_location.py` passes, `test_exclusions.py` is unchanged in outcome, and the settings round trip is tested.
-- [ ] 🟥 **1.5 The writer (D1, D5, D6).** `past_sessions.py`: `PastSessionStore.backup_snapshot()`. `past_sessions_backup.py`: `prepare_backup(store, audit, run) -> BackupPlan` (hop B) and `write_backup_file(plan, k_b, destination, *, check_location) -> BackupReport` (hop C: the proved copy, the one-handle write, the read-back verification, the publish and its check, the `.part` rules). The report carries counts and the published file's name. Done when: `test_backup_write.py` passes.
-- [ ] 🟥 **1.6 Version 0.5.0** in the five version files and CHANGELOG `[Unreleased]`. Verification: `pytest -k version`.
-- [ ] 🟥 **1.7 The frozen build proves Argon2id.** `app.py`: the `--self-check-offline` path gains one step — derive 32 bytes with Argon2id from a fixed non-secret string at small fixed parameters through `past_sessions_backup`'s derivation seam; a failure exits `SELF_CHECK_KDF = 3`. `scripts/build-release.py`: the failure text explains code 3. Done when: the two unit tests of Validation's `test_app.py` line pass. (The frozen proof itself is H5's: the `Release` run's installer-build step passing.) Uses Task 1.3's derivation seam.
+- [x] 🟩 **1.1 The key-blob seam and the set-aside (D8, D9).** **DONE 2026-11-26** (verified by the composer's suite run after leg x2) `session_store.py`: `unwrap_key_blob(blob, *, description)` with its five structured refusals, `unwrap_key_from_file` rewritten over it (same outcomes), `dpapi_round_trip()`, and their conftest fakes. `past_sessions.py`: the two constructor seams `classify_key_blob` and `dpapi_probe`; `PastSessionStore.set_aside_refused() -> SetAsideReport` — the probe, the strict listing, the per-entry rule, one rename per entry into a new folder beside the archive, the forgotten caches. NOTHING about deletion or recordings changes: `delete_entry`, `delete_recording`, `_recording_state`, `_audio_key_state`, `_remove_key_first`, `record_past_session`, the two callers' audit order and the retention sweep are untouched. Done when: Validation's `test_past_sessions.py` items pass, `unwrap_key_from_file`'s existing tests pass unedited, and `test_shadow_exits.py` is unedited.
+  - BUILT 2026-11-26 (leg x1), suite owed (composer). `session_store.unwrap_key_blob` / `KeyBlobError` / `dpapi_round_trip`; `unwrap_key_from_file` over it with its old texts. `PastSessionStore(classify_key_blob=, dpapi_probe=)` (None: the real one, looked up at call time) and `set_aside_refused() -> SetAsideReport`. The conftest gains `fake_unprotect`, `dpapi_error` and an autouse sentinel `_no_real_set_aside_dpapi` (a reach fails at teardown); the real seams are `REAL_CLASSIFY_KEY_BLOB` / `REAL_DPAPI_PROBE`. Tests: `test_past_sessions.py` `TestSetAside`, `TestRealSetAsideSeams`; `test_audit.py` `TestUnwrapKeyBlob`.
+- [x] 🟩 **1.2 The audit record's export and import surface (D9).** **DONE 2026-11-26** (verified by the composer's suite run after leg x2) `AuditLog`'s `wrap_key` / `unwrap_key` seams (the blob seam is Task 1.1's); `backup_snapshot`, `row_state`, `restore_row`, the pure `row_importable`; `PastSessionsAudit` extended. The audit row, its schema version and the CSV are NOT touched. Done when: Validation's `test_audit.py` items pass and `git diff` of the schema pins is empty.
+  - BUILT 2026-11-26 (leg x1), suite owed (composer). `AuditLog(wrap_key=, unwrap_key=)` (None: DPAPI, looked up at call time, so the existing `wrap_key_to_file` monkeypatches still hold); `backup_snapshot() -> AuditSnapshot`, `row_state`, `restore_row -> RowOutcome` (`failed_row_write` on a key, folder or write failure); the pure `row_importable`. `PastSessionsAudit` gains the three members, and its two pinned doubles (`test_ui_encounter.py` `_AuditRecorder`, `test_ui_screens.py` `_FakePastAudit`) gain them too. Tests: `test_audit.py` `TestKeySeams`, `TestRowImportable`, `TestBackupSnapshot`, `TestRowState`, `TestRestoreRow`. `AuditRow`, `test_audit.py`'s existing tests and `test_schema_versions.py` unedited.
+- [x] 🟩 **1.3 The container module `past_sessions_backup.py` (D2, D3, D4).** **DONE 2026-11-26** (verified by the composer's suite run after leg x2) `FORMAT_VERSION`, `BACKUP_FILENAME_PREFIX` (and its `_NON_PATH_LITERALS` entry in `test_install_layout.py`, here), `MAX_BACKUP_BYTES`, the member caps; `BackupHeader`, `BackupManifest`; `manifest_aad`; `derive_key(passphrase, kdf) -> bytearray` with the envelope check first, `MemoryError` → `kdf_memory`, and the `_kdf_floor_for_tests` seam; the preflight with its directory walk behind the size-and-read seam; `verify_backup(fileobj_or_path, k_b) -> BackupFacts` (every step of D2's reader except the derivation — 1 to 3, the manifest's decryption, 5 and 6 — and the whole-file SHA-256, taking the derived key — it serves the writer's read-back, Open and Restore's second pass); `BackupReader` (`read_member` with its size-and-hash check, `unwrap_entry_key`, `unwrap_audit_key`); `open_backup(path, passphrase)` as derive plus verify, for tests; the closed code set of `BackupFormatError` / `BackupRunError`; `past_sessions.entry_opens(session_id, key, files)` (the pure open check, beside the label code it uses) and the bytes-level validation it shares with `read_transcript` (`transcription.py`), `read_note` and `read_generated` (`session_store.py`), extracted from those readers with their outcomes and tests unchanged. `desktop/pyproject.toml`: `cryptography>=44`. Done when: `test_backup_container.py` passes.
+  - BUILT 2026-11-26 (leg x1), suite owed (composer). The reader never uses `zipfile` (the preflight walks the records with `struct` and returns each member's span); the writer is `write_container`. The extracted validators: `transcription.transcript_from_blob`, `session_store.note_from_blob` / `generated_from_blob`. Tests: `test_backup_container.py` over `tests/backup_fakes.py` (fake key seams, a builder open to tampering, a hand-rolled ZIP).
+- [x] 🟩 **1.4 The location rule and the settings file (D7, D10).** **DONE 2026-11-26** (verified by the composer's suite run after leg x2) `exclusions.py`: `DRIVE_REMOVABLE`, `DRIVE_CDROM`, `DRIVE_RAMDISK`; `WindowsLayer.volume_of`; the shared `_destination` with the text-first refusal; `check_archive_backup_location`; `check_backup_source`; `check_export_location` unchanged in outcome. `note_config.py`: `BackupSettings` with its bounded reader and atomic writer beside `DevelopmentSettings`. Done when: `test_archive_backup_location.py` passes, `test_exclusions.py` is unchanged in outcome, and the settings round trip is tested.
+  - BUILT 2026-11-26 (leg x1), suite owed (composer). `_destination(layer, folder, drive_rule)` runs the text-first refusal, `check_location`, the caller's drive rule (export: the letter is fixed; backup: the VOLUME's type, fixed or removable, and the folder must exist) and the data folders; `check_archive_backup_location -> ArchiveBackupLocation`, `proposed_backup_folder` (the remembered folder only while it passes), `check_backup_source`. One change of outcome in export: a network path whose resolution would fail is now refused as `location_network` (was `location_unchecked`); both refuse. `note_config.BackupSettings` with `read_backup_settings` / `save_backup_settings` and the conftest pin `pinned_backup_root`. Tests: `test_archive_backup_location.py` (the settings round trip included); `test_exclusions.py` unedited.
+- [x] 🟩 **1.5 The writer (D1, D5, D6).** **DONE 2026-11-26** (verified by the composer's suite run after leg x2) `past_sessions.py`: `PastSessionStore.backup_snapshot()`. `past_sessions_backup.py`: `prepare_backup(store, audit, run) -> BackupPlan` (hop B) and `write_backup_file(plan, k_b, destination, *, check_location) -> BackupReport` (hop C: the proved copy, the one-handle write, the read-back verification, the publish and its check, the `.part` rules). The report carries counts and the published file's name. Done when: `test_backup_write.py` passes.
+  - BUILT 2026-11-26 (leg x1), suite owed (composer). `PastSessionStore.backup_snapshot() -> ArchiveSnapshot` over a shared `past_sessions.inspect_entry_file` (own link state first, one handle, single-link regular file, identity and bytes from that handle). `prepare_backup(store, audit, run, *, made_at=None)` takes the run's `backup_key` and `backup_kdf` (a `HoldsBackupKey` protocol, for Phase 2's `ArchiveRun`); the header carries hop A's KDF parameters and salt (leg x2: it had drawn a fresh salt, so the passphrase did not derive `K_b` again — a file the writer verified but nobody could open). `write_backup_file(..., check_location: Callable[[Path], bool])`: the writer yields one proved entry at a time into `write_container`, whose manifest may now be a callable asked after the payload. `BackupRunError` gains `part_may_remain` and `left_out`. Tests: `test_backup_write.py`; `backup_fakes.row` takes a `session_id`.
+- [x] 🟩 **1.6 Version 0.5.0** in the five version files and CHANGELOG `[Unreleased]`. Verification: `pytest -k version`. **DONE 2026-11-26** (verified by the composer's suite run after leg x2; extension 313 passed at 0.5.0)
+  - BUILT 2026-11-26 (leg x1), suite owed (composer): six fields in five files read 0.5.0 (`__init__.py`, `pyproject.toml`, `package.json`, `package-lock.json` twice, `manifest.ts`); CHANGELOG `[Unreleased]` gains the 0.5.0 Phase 1 entry (CRLF kept). `pytest -k version` and the extension's `npm run qa` are the composer's.
+- [x] 🟩 **1.7 The frozen build proves Argon2id.** **DONE 2026-11-26** (verified by the composer's suite run after leg x2) `app.py`: the `--self-check-offline` path gains one step — derive 32 bytes with Argon2id from a fixed non-secret string at small fixed parameters through `past_sessions_backup`'s derivation seam; a failure exits `SELF_CHECK_KDF = 3`. `scripts/build-release.py`: the failure text explains code 3. Done when: the two unit tests of Validation's `test_app.py` line pass. (The frozen proof itself is H5's: the `Release` run's installer-build step passing.) Uses Task 1.3's derivation seam.
+  - BUILT 2026-11-26 (leg x1), app side, suite owed (composer): `app.SELF_CHECK_KDF = 3` and `_kdf_works()` (32 bytes through `past_sessions_backup.argon2id_derive`, input fixed and non-secret, iterations 1, lanes 1, memory 8 KiB) after the Qt networking check. Tests: `test_frozen_runtime.py` `TestOfflineSelfCheck` (the seam reached at those parameters, exit 0; three failure types, exit 3); the existing self-check tests now also run the real Argon2id. Leg x2: `scripts/build-release.py`'s failure text now names "3: Argon2id is not available"; `test_build_release.py`'s self-check test covers code 3.
 
 ### Phase 2 — Back up on the Past sessions page
 
@@ -349,6 +385,12 @@ Grouped into phases for `/execute-loop` (a review loop and a codex peer pass at 
 - Round 17 — 2026-11-26 — codex `gpt-6.2-astra` high plan peer-review (consolidated body, round 9; a FOCUSED round on the set-aside and the add-only restore, on the practitioner's word "One focused round", with their rule: no HIGH finding → build): 0 CRIT / 0 HIGH / 7 MED / 2 LOW (9 labelled build-affecting), every one verified against the code at `5d63ed6` and applied IN PLACE: the link check before anything under an entry folder is looked at; no claim that a refused blob is intact, and the classifier tested with injected errors; a refusal when the set-aside folder cannot be made; ONE archive listing per Open with a per-id `classify_entry` and a recheck that can only withdraw a write; the final report counting only planned writes, and the leftover label; the lines that promised "which" reworded to "how many"; the page's cached unreadable count lowered after a set-aside; the deletion repair after an audit reset named as a residue; one test moved from Task 2.1 to Task 3.4. The reviewer's closing judgement: ready to build under the round's rule. skew=mixed action=none. The amendments of this round are unreviewed.
 - 2026-11-26 round 18: 0 CRIT / 0 HIGH / 1 MED / 2 LOW; skew=none; action=none
 - 2026-11-26 round 19: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
+- 2026-11-26 round 21: 0 CRIT / 0 HIGH / 1 MED / 2 LOW; skew=none; action=none
+- 2026-11-26 round 22: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
+- 2026-11-26 round 23: 0 CRIT / 0 HIGH / 2 MED / 2 LOW; skew=none; action=none
+- 2026-11-26 round 24: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=none; action=none
+- 2026-11-26 round 25: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=none; action=none
+- 2026-11-26 round 26: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none [recorded by the composer at stage-2.p1 peer round 4: the converged round omitted its summary line]
 
 ## Review Findings Log
 
@@ -2614,3 +2656,376 @@ Append pre-check: no compaction marker and no exact-name findings companion; rou
 No new findings — converged.
 
 Summary: 3 confirmed applied corrections / 0 disputed / 0 new PR-* / 0 regression PR-REG-*; verification: 0 defect candidates / 0 dropped / 0 downgraded.
+
+### Round 21 - 2026-11-26 - Phase 1 review (Tasks 1.1–1.7), /review-loop round 1
+
+Source: Claude Code (`claude-opus-5-5` high, executor leg r1 of `/execute-loop` run `past-sessions-backup-20261126-063148-9edc`, stage-2)
+Round status: Closed (3 applied)
+Scope: Phase 1's whole uncommitted diff against `HEAD` (`1446ae5`) plus the five new files (`past_sessions_backup.py`, `tests/backup_fakes.py`, `test_archive_backup_location.py`, `test_backup_container.py`, `test_backup_write.py`), read against D1–D14, the Critical Constraints and Tasks 1.1–1.7. Special attention: custody on every failure path; the container reader's bounds; the location rule; the content-free logging and audit rules. Suite evidence: the composer's run after leg x2 (desktop 11382 passed / 10 skipped, extension 313 passed), taken as given. The tenth skip is `test_past_sessions.py` `TestSetAside::test_a_linked_entry_is_left_and_nothing_under_it_is_opened[symlink]`: this host has no directory-symlink privilege, `_link` skips that kind only when `os.symlink` fails, and the junction case checks the same rule. Intended. No session id, patient content or machine-local path is recorded.
+
+**MED-001 — A write that fails while audit rows are copied leaves the plain audit key unzeroed.**
+Severity: MED · Class: 🆕 · Triage: Fix-now
+Evidence: `_ProvedCopy._copy_rows` unwraps the audit key into a `bytearray` and zeroes it in the generator's `finally`, which runs only when the generator finishes or is closed. `write_backup_file` passed `copy.payload()` straight into `write_container` and never closed it. A failure between two rows (an `OSError` from the stream, say) leaves the generator suspended, and the key stays in memory as long as anything holds the generator. The traceback in the `BackupRunError`'s context does hold it: the frame keeps `payload` alive. C3 and D4 say the run owns and zeroes its mutable buffers on every exit.
+/fix decision: Applied. `write_backup_file` holds the payload and closes it in a `finally` on every path; `_write_and_verify` takes it as an argument. Test: `test_backup_write.py` `test_a_failure_while_the_rows_are_copied_zeroes_the_audit_key` (two rows; the write fails after the first; the one audit key unwrapped is all zeros afterwards, and the `.part` is gone).
+
+- LOW-001 — `parse_header` (the header is unauthenticated and read before any key, on the GUI thread at Open) and `_parse_manifest` caught `ValueError` (and `ValidationError`) but not `RecursionError`. JSON nested past the stack would therefore escape as a bare exception instead of a closed code; C8 says every check of D2's reader refuses by name. Within 4 KiB this is unlikely to trip on 3.14's stack-based limit, but it is not guaranteed on every interpreter. Triage: Fix-now; Decision: Applied (`header_invalid` / `manifest_invalid`; two tests in `test_backup_container.py`, each patching `json.loads` to raise).
+- LOW-002 — `check_export_location`'s docstring said "the outcomes are unchanged", but one code moved. A `\\` path whose resolution fails was `location_unchecked` and is now `location_network`: the text-first refusal happens before `realpath`. Triage: Fix-now; Decision: Applied (the docstring names the moved code).
+
+The export outcome change, as the composer asked: **supported by the plan.** D7 requires the text-first refusal "for both the export rule and the new one", before any call that touches the file system, so the old path (a `realpath` raising, hence `location_unchecked`) can no longer be reached for a `\\` path. What is refused is unchanged: both codes refuse, with no way past either. `test_exclusions.py` is unedited and passes, which is Task 1.4's "unchanged in outcome" done-when. The visible difference is the line: the network line instead of the could-not-check line, which is the more accurate of the two.
+
+Checked with no finding:
+- Custody in hop B: the entry keys are wrapped under K_b and the plain `bytearray`s zeroed in `finally`.
+- `audit.row_state` / `restore_row` / the BARE rule: `failed_row_write` on every key, folder or write failure.
+- `unwrap_key`'s length refusal.
+- The set-aside: the link check comes first; only the two named DPAPI codes give `dpapi_refused`.
+- The preflight: size cap first; no ZIP64, comments, extras or flags; directory and local records agree; member-name pattern; header and manifest caps.
+- The KDF envelope is checked before derivation, with `MemoryError` as `kdf_memory`.
+- Hop C: one O_EXCL handle; read-back through the same handle; a rename that never replaces; the re-hash; `_remove_part` by identity plus the listable check for `part_may_remain`.
+- `_open_rows` zeroes its key in `finally`.
+- Every log line and audit field added is a closed code or a count, with no name, id or path text.
+
+Round Classification: 🆕 3 / ⚡ 0 / 🔁 0 (the first review of Phase 1).
+/fix notes: `past_sessions_backup.py` (the payload's close, two `RecursionError` catches, `Generator` return types), `exclusions.py` (docstring), `test_backup_write.py` (one test), `test_backup_container.py` (two tests). ruff and mypy exit 0 after the fixes; pytest owed by the composer. /fix date: 2026-11-26. /fix applied by: the executor (leg r1).
+
+### Round 22 - 2026-11-26 - Phase 1 review (Tasks 1.1–1.7), /review-loop round 2
+
+Source: Claude Code (`claude-opus-5-5` high, executor leg r1 of `/execute-loop` run `past-sessions-backup-20261126-063148-9edc`, stage-2)
+Round status: Closed (0 findings — converged)
+Scope: the whole Phase 1 diff again (baseline `1446ae5`, the five new files included), not only round 21's fixes.
+
+Post-fix checks:
+- The payload is closed in `write_backup_file`'s `finally` on every path after the `.part` exists. On success the closed generator is already exhausted.
+- `_remove_part` still runs in the `except` before the `finally`, and `part_may_remain` is unchanged.
+- No unwrapped key escapes on another path: `unwrap_key` zeroes a wrong-length key before raising, `_open_entries` and `_open_rows` zero theirs in `finally`, and `BackupReader`'s unwraps return to a caller that zeroes them.
+- The new write test's trigger is a row member (`audit/…`), not `audit-key.enc`. The audit key is unwrapped only inside the rows copy, and the plan is made before the seams are patched.
+- The header test reaches `json.loads` only through `parse_header`. The manifest test's first `json.loads` call is the header's, so its second is the manifest's.
+- `check_export_location`'s docstring now matches the code.
+
+ruff and mypy exit 0 (73 files). No session id, patient content or machine-local path is recorded.
+
+No findings.
+
+Round Classification: 🆕 0 / ⚡ 0 / 🔁 0 — converged.
+
+### Round 23 - 2026-11-26 - Phase 1 independent cross-family code peer-review (stage-2.p1, peer round 1)
+
+Source: Codex peer-review
+Round status: Closed (4 applied)
+Reviewer: GPT-family codex cross-family peer; executor Claude-family. Fresh CODE review of Tasks 1.1–1.7 against the current uncommitted diff from HEAD, in the run's own worktree, under `PEER_LOOP_NONINTERACTIVE`.
+Scope: `past_sessions_backup.py` read in full; every primary production diff named in the invocation; secondary tests and caller implementations where needed; D1–D14, Critical Constraints, Key Findings and Phase 1's task text. Rounds 21–22 read as the current review baseline; rounds 1–20 and the earlier Review History were not review material. No application code or test was changed. No real archive, backup or clinical content was opened, and no security payload was authored or run.
+Verification evidence: static review only. The composer's supplied post-round-22 results are accepted: desktop 11385 passed / 10 skipped, extension 313 tests passed, ruff and mypy clean (73 source files). No pytest, npm, ruff or mypy was run by this peer. Pair pre-check: no compaction marker, no exact-name findings companion, unique round headers 1–22; allocated round 23.
+
+Prior findings: the three round-21 fixes are confirmed in the current code: the writer closes its payload generator, the header and manifest parsers catch `RecursionError`, and Export's docstring names the changed refusal code. No original finding is disputed or repeated. Round 22's broader statement that no unwrapped key escapes another path is not true for an incomplete snapshot, as PR-MED-2301 details.
+
+#### New Findings
+
+**[MED] PR-MED-2301 — Snapshot construction has no complete ownership guard for exported mutable keys.**
+- Location: `desktop/src/scribe_desktop/past_sessions.py:1668`; sibling `desktop/src/scribe_desktop/audit.py:1227`; caller `desktop/src/scribe_desktop/past_sessions_backup.py:1232`.
+- Triage: Fix-now
+- Fix route: premium-only
+- Why it matters: C3 and D4 require mutable secret buffers to be zeroed on every failed run. The planner's cleanup covers only snapshots that returned successfully. An exception while building one leaves its exported keys outside that cleanup, including in a retained traceback.
+- Current behaviour: `PastSessionStore.backup_snapshot` accumulates `SnapshotEntry.key` bytearrays with no failure cleanup. After one valid entry, a `MemoryError` while reading or inspecting a later entry propagates before the snapshot returns; the earlier keys remain nonzero. `_snapshot_files` also creates its bytearray before hashing the label and constructing the return object, with no local transfer guard. `AuditLog.backup_snapshot` exports its bytearray before inventory, but zeroes it only for `OSError` inside the inventory loop; a `MemoryError` in that loop or while constructing the final rows/unknown tuples bypasses zeroing. `prepare_backup` cannot clean up either failed snapshot because it never received it. Destroying each source `SessionCrypto` does not zero these independent copies.
+- Desired behaviour: each snapshot producer owns every exported buffer until a successful transfer to the returned snapshot; on any exceptional exit it zeroes all buffers still owned. Protect the current entry as well as previously appended entries, and cover result construction. Retain the planner's existing cleanup after successful transfer.
+- Pattern to follow: the explicit `try/finally` key ownership in `_open_entries` and `_copy_rows`, and round 21's cleanup of a generator that has not completed.
+- Pattern siblings: searched `bytearray(` and `backup_snapshot(` in the three changed custody/container modules. Both snapshot producers and `_snapshot_files` are the affected sites. `unwrap_key` handles its wrong-length refusal, `_open_rows`, `_open_entries`, `_prove_entry` and `_copy_rows` guard their successfully returned mutable keys, and `prepare_backup` guards successfully returned snapshots. The immutable crypto-library copies are the plan's named residue, not this finding.
+- Invariant: a failed snapshot leaves no nonzero mutable entry-key or audit-key buffer owned by its frames; archive and audit files remain byte-identical.
+- Verification: with synthetic seams, retain references to the first entry's exported buffer, then inject `MemoryError` while inspecting the second entry; retain the raised exception and assert the first buffer is zero. Repeat after the audit key export, both during inventory and result construction. Add an allocation/return-boundary failure check for the current entry. Existing tests only check zeroing after the complete snapshot reaches the planner, or after a row-copy write fails.
+- Regression risk: do not zero a successfully transferred snapshot before `prepare_backup` wraps it, and do not change the existing left-out classifications or destroy any on-disk key.
+- Scope-expansion disposition: none — Tasks 1.3 and 1.5's existing custody contract.
+- /fix decision: Applied
+- /fix notes:
+  - `past_sessions.py` `backup_snapshot` wraps the walk. Any exit that is not a return zeroes every key taken, and the one in hand.
+  - `_snapshot_files` zeroes its own exported key if the `SnapshotEntry` cannot be built.
+  - Sibling `audit.py` `backup_snapshot`: the inventory and the result construction are both inside one guard that zeroes the key on any exception (`OSError` is still mapped to `AuditUnavailable("unavailable")`, anything else re-raised).
+  - The planner's cleanup after a successful transfer is unchanged.
+  - Tests:
+    - `test_backup_write.py` `test_a_snapshot_that_fails_after_an_entry_zeroes_that_entrys_key` (`MemoryError` on the second entry) and `test_an_entry_that_fails_as_it_is_returned_zeroes_its_own_key` (the return boundary);
+    - `test_audit.py` `test_a_failed_snapshot_zeroes_the_key_it_exported[inventory|result]`.
+  - No on-disk key or left-out classification changed.
+- /fix date: 2026-11-26
+- /fix applied by: Claude Code
+
+**[MED] PR-MED-2302 — Namespace stripping can hide a network path before the text-first refusal.**
+- Location: `desktop/src/scribe_desktop/exclusions.py:568`, through `_normalised` at line 438.
+- Triage: Fix-now
+- Fix route: premium-only
+- Why it matters: D7 and C2 require a recognisable network path to be refused before filesystem inspection. This is the shared enforcement point for backup destinations, remembered folders, backup sources and recording Export.
+- Current behaviour: `_text_refusal` first calls `_normalised`. That helper recognises the extended UNC namespace only with the uppercase spelling of its UNC component; otherwise its generic extended-prefix branch strips the namespace introducer. For an extended UNC path whose UNC component is lowercase or mixed case, the result no longer starts with the network prefix and has no drive letter. `_text_refusal` returns no refusal. Destination checks then call `realpath` on the original network path; the source check calls `file_attributes` on it first. A later refusal cannot undo that filesystem access. The new text-first tests cover ordinary UNC, uppercase extended UNC and mapped drive letters, but not this spelling variant.
+- Desired behaviour: recognise network namespace forms case-insensitively from the original separator-normalised text, before any prefix removal can erase their network identity. Preserve the intended handling of ordinary local paths and remote drive letters.
+- Pattern to follow: D7's text-only prefilter, with the existing fake layer asserting no `realpath`, attributes or volume call was made.
+- Pattern siblings: searched `_text_refusal`, `_normalised` and their call sites in `exclusions.py`. `_destination` serves `check_export_location` and `check_archive_backup_location` (also reached by `proposed_backup_folder`); `check_backup_source` calls the same prefilter directly. Fix the common helper and cover all these entry points; no independent new prefilter should be added to each caller.
+- Invariant: every recognised UNC namespace spelling is refused without a filesystem call on that path, for both read and write flows.
+- Verification: extend the fake-layer tests to the case variants of the extended UNC namespace component, in words here only; require the network/source refusal and an empty touched-path list for destination, source, remembered-folder and Export checks. No real network path needs to be contacted.
+- Regression risk: retain the existing fixed-only Export rule, fixed/removable backup rule and same-volume warning. This finding concerns pre-inspection refusal, not a claim that backup bytes were written remotely.
+- Scope-expansion disposition: none — Task 1.4's shared text-first rule.
+- /fix decision: Applied
+- /fix notes: `exclusions.py`.
+  - `_normalised` matches the extended `UNC` namespace in any case.
+  - Sibling, in the shared `_text_refusal` and not in each caller: a `\\`-prefixed path that names no drive letter once its prefix is removed (the `GLOBALROOT` namespace and the like) is refused as `location_network`. It fails closed: its network identity cannot be told from the text, and a destination dialog never returns such a path.
+  - Ordinary local paths, `\\?\X:\` paths and remote drive letters are judged as before. The fixed-only Export rule, the fixed-or-removable backup rule and the same-volume warning are unchanged.
+  - Tests in `test_archive_backup_location.py`: `_NAMESPACED` (upper-, lower- and mixed-case extended UNC, plus `GLOBALROOT`) added to the destination, Export, remembered-folder and source text-first tests, each asserting an empty `touched` list. A local `\\?\D:\` Export path is still admitted.
+- /fix date: 2026-11-26
+- /fix applied by: Claude Code
+
+**[MED] PR-MED-2303 — A missing audit key can bypass the strict snapshot inventory.**
+- Location: `desktop/src/scribe_desktop/audit.py:1222` (early `_NoKey` return), with `_open_key` at line 1589 and `_month_folders` at line 1537.
+- Triage: Fix-now
+- Fix route: premium-only
+- Why it matters: D1 and D9 forbid proceeding without a readable audit record and require an uninspectable month to refuse. Treating an uninspectable audit store as empty can produce an entries-only backup with neither row omissions nor unknown-row identifiers reported, although deletion history may exist there.
+- Current behaviour: before `_strict_month_folders` runs, `backup_snapshot` calls `_open_key(create=False)`. With the key missing, `_open_key` uses the old `_has_rows` / `_row_paths` / `_month_folders` inventory. `_month_folders` silently skips a month whose `link_state` is `None`. If no other visible row remains, `_open_key` raises `_NoKey` and `backup_snapshot` immediately returns an empty snapshot. The strict iterator that would refuse that exact unknown link state is never reached. Repro by seams: a month containing a synthetic row, a missing key, and that month's link-state check returning `None`. The result is empty instead of `AuditUnavailable`.
+- Desired behaviour: establish a genuinely empty audit inventory through the strict backup inventory before accepting `_NoKey`. A month that cannot be inspected must refuse even when no key exists; a confirmed fresh store must remain empty and non-creating.
+- Pattern to follow: `_strict_month_folders` explicitly raises for an unknown month link state, and `row_state` maps that failure to `unreadable`, never `none`.
+- Pattern siblings: searched `_NoKey`, `_has_rows`, `_row_paths`, `_month_folders` and `_strict_month_folders` in `audit.py`. The new snapshot's early return is the affected adapter to the legacy non-strict inventory; the existing keyed snapshot already reaches the strict iterator. `row_state` starts with its strict path scan. Keep this fix scoped to the backup emptiness proof unless a separately verified caller requires a broader change.
+- Invariant: empty means confirmed no key and no rows, not rows that could not be inspected; a backup never silently loses the distinction.
+- Verification: add the missing-key plus unknown-month-link-state case beside `TestBackupSnapshot`; assert `AuditUnavailable`, no writes and no snapshot. Through `prepare_backup`, assert `audit_unavailable` and no destination file. Preserve the fresh-store test and the existing keyed unlistable-month refusal.
+- Regression risk: do not create an audit key during backup or change the rule that confirmed linked month folders are outside the store's inventory.
+- Scope-expansion disposition: none — Task 1.2's strict, non-creating snapshot contract.
+- /fix decision: Applied
+- /fix notes: `audit.py`.
+  - On `_NoKey`, `backup_snapshot` now confirms EMPTY through the strict inventory (`_strict_rows_present`):
+    - a store or month folder that cannot be listed, or a month whose link state cannot be read, raises `AuditUnavailable("unavailable")`;
+    - any row-shaped name that `_describe_row` does not call a folder (a link included) raises `key_missing`.
+  - A fresh store stays empty and non-creating. No key is created; confirmed linked month folders stay outside the inventory; `_open_key` and the keyed path are unchanged.
+  - Tests:
+    - `test_audit.py` `test_no_key_beside_a_month_that_cannot_be_inspected_refuses` (no writes) and `test_no_key_beside_a_row_shaped_link_is_key_missing` (a junction, so no privilege is needed);
+    - `test_backup_write.py` `test_no_audit_key_beside_a_month_that_cannot_be_inspected_refuses` (`audit_unavailable`, no destination file);
+    - the fresh-store and keyed unlistable-month tests are unedited.
+- /fix date: 2026-11-26
+- /fix applied by: Claude Code
+
+**[LOW] PR-LOW-2304 — The writer's cleanup boundary starts after the exclusive create has already acquired resources.**
+- Location: `desktop/src/scribe_desktop/past_sessions_backup.py:1458`, `_create_part` at line 1519 and `_write_and_verify` at line 1539.
+- Triage: Fix-now
+- Fix route: premium-only
+- Why it matters: D6 promises a closed failure code, explicit handle cleanup and an honest partial-file warning for every failure after creation. The early setup paths do not have that ownership boundary.
+- Current behaviour: `_create_part` successfully creates the file, then calls `os.fstat`. If that call fails, it closes the descriptor and re-raises before `write_backup_file` enters its cleanup `try`. The newly created file is left behind with a raw exception and no `BackupRunError.part_may_remain` indication. After `_create_part` returns, constructing the copy/payload also occurs before that `try`. In addition, `_write_and_verify` has no explicit descriptor cleanup if `os.fdopen` fails before taking ownership. The normal write/verify failures are guarded; the acquisition-to-guard interval is not.
+- Desired behaviour: establish descriptor/path ownership immediately after exclusive creation and transfer it explicitly to the stream. Every setup failure closes any still-owned descriptor. If file identity could not be obtained, leave the file rather than guessing, but return a named failure with `part_may_remain=True`; use identity-checked removal when identity is available.
+- Pattern to follow: recording Export's explicit handling of `fdopen` failure in `past_sessions.py:1395`, together with this writer's stricter identity-only removal rule. Do not copy Export's unconditional empty-file unlink into the backup writer.
+- Pattern siblings: searched `_create_part`, `fdopen` and the create/verify call sites. The affected setup sites are the post-create `fstat`, the pre-try copy/payload construction and the descriptor-to-stream transfer. The later write/read-back failure and publish collision paths already use the intended cleanup/preservation policy.
+- Invariant: after a failed write, no descriptor remains owned by the failed run, and any file not confirmed removed is reflected in the closed error's partial-file flag.
+- Verification: inject an `OSError` in `fstat` after a successful exclusive create and a failure at the descriptor-to-stream transfer; assert closure, named failure, the correct partial-file flag, and preservation of unrelated files. Keep the existing successful one-handle and post-rename-hash tests.
+- Regression risk: do not remove an existing `.part`, delete without confirmed identity, replace a final file or remove an unverified published file. Severity is LOW because the earliest reproducible failure leaves an empty file, not plaintext or a lost archive key.
+- Scope-expansion disposition: none — Task 1.5's existing failure contract.
+- /fix decision: Applied
+- /fix notes: `past_sessions_backup.py`.
+  - `_create_part`: a failed `fstat` closes the descriptor and raises `BackupRunError("write_failed", part_may_remain=True)`. The file is left, because with no identity it cannot be removed safely.
+  - `write_backup_file`: the copy and payload are built inside the guard. The descriptor stays owned by the frame until `_write_and_verify` takes it, and a still-owned descriptor is closed before the identity-checked removal and again in `finally`.
+  - `_write_and_verify` closes the descriptor if `os.fdopen` fails.
+  - Export's unconditional unlink is not copied.
+  - Tests in `test_backup_write.py`:
+    - `test_a_part_whose_identity_cannot_be_read_is_left_and_said_to_remain`: closed, `write_failed`, `part_may_remain`, an unrelated file untouched;
+    - `test_a_failed_handover_to_the_stream_closes_and_removes_the_part`: closed, the part removed by identity.
+  - The one-handle and post-rename-hash tests are unedited.
+- /fix date: 2026-11-26
+- /fix applied by: Claude Code
+
+#### Review summary
+
+0 CRIT / 0 HIGH / 3 MED / 1 LOW. No separate regression finding. The set-aside remains move-only, does not call an audit writer, and retains recording-bearing entries; no deletion-method change was found. Header KDF reuse, bounded manifest-driven reading, the ordinary write/read-back/no-replace-publish/post-rename-hash path, content-free additions and self-check code 3 were checked without another finding. UI/run-gate and Restore orchestration remain later-phase work and were not reported as missing Phase 1 code.
+
+Recommended order: close the snapshot ownership and network-prefilter gaps, then the audit emptiness proof and early writer cleanup; the composer should run the focused failure-path tests and its normal suites after fixes.
+
+(3 prior fixes confirmed / 0 original findings disputed / 4 new PR-* / 0 regression PR-REG-*; verification: 7 candidates / 3 dropped / 1 downgraded.)
+Round Classification: 🆕 4 / ⚡ 0 / 🔁 0.
+
+#### Verified tuples — executor leg v1 (2026-11-26)
+
+Each finding was read against the code in the worktree before any edit.
+
+- PR-MED-2301 (peer: MED · Fix-now · premium-only): materiality=behavioral severity=low surface=production rec=Fix-now — `PastSessionStore.backup_snapshot` appends each `SnapshotEntry.key` with no failure cleanup, and `AuditLog.backup_snapshot` zeroes its exported key only on `OSError`. Every per-entry and per-row helper (`link_state`, `_audio_key_state`, `inspect_entry_file`, `_describe_row`; the label parse is caught) answers instead of raising. So only a non-local exception (`MemoryError`, or an unexpected bug) leaves the buffers unzeroed, hence LOW. C3 and D4 still name every exit.
+- PR-MED-2302 (peer: MED · Fix-now · premium-only): materiality=behavioral severity=med surface=production rec=Fix-now — `_normalised` matches only the uppercase extended-UNC namespace. A lowercase or mixed-case one has its extended prefix stripped, leaving text with no network prefix and no drive. `_text_refusal` then admits it, and `realpath` / `file_attributes` touch the network path, against D7's text-first rule. The tests cover only the uppercase spelling.
+- PR-MED-2303 (peer: MED · Fix-now · premium-only): materiality=behavioral severity=med surface=production rec=Fix-now — with no key, `_open_key(create=False)` decides emptiness through `_has_rows` → `_month_folders`, which skips a month whose `link_state` is None. `backup_snapshot` returns an empty snapshot on `_NoKey` before `_strict_month_folders` can refuse. D1 and D9 say an uninspectable month refuses.
+- PR-LOW-2304 (peer: LOW · Fix-now · premium-only): materiality=behavioral severity=low surface=production rec=Fix-now — `_create_part` closes the descriptor and re-raises a raw `OSError` when `fstat` fails, before `write_backup_file`'s guard. The new `.part` is left with no closed code and no `part_may_remain`. `_write_and_verify` leaks the descriptor if `os.fdopen` fails. Both are rare, and an empty file is left, not plaintext.
+
+Cap verdict: accept — production-behavioral — round 1 of the cap of 5; four verified fixes, all inside Phase 1's tasks (1.2, 1.4, 1.5); no CRIT or HIGH, no regression, no scope expansion.
+Leg route: verify-then-fix
+
+Decisions (/fix, same leg):
+- PR-MED-2301 → Applied (both snapshot producers and `_snapshot_files`; 4 tests).
+- PR-MED-2302 → Applied (`_normalised`, plus the shared `_text_refusal` sibling; tests on all four entry points).
+- PR-MED-2303 → Applied (the strict emptiness proof on `_NoKey`; 3 tests).
+- PR-LOW-2304 → Applied (descriptor ownership from the create to the stream; 2 tests).
+
+ruff and mypy exit 0 (73 files). pytest is owed by the composer.
+
+Fix-delta self-check: PASS — re-read the 10 applied production hunks across 4 files:
+- `past_sessions.py`: 2.
+- `audit.py`: 3.
+- `exclusions.py`: 2.
+- `past_sessions_backup.py`: 3 (`_create_part`, `_write_and_verify`, `write_backup_file`), plus the `contextlib` import.
+
+The checks:
+- the descriptor is closed before `_remove_part` and never twice;
+- the payload is closed on every path after the create;
+- the audit guard's `return` lies inside it, with zeroing only on an exception;
+- the no-key path creates nothing.
+
+### Round 24 - 2026-11-26 - Phase 1 independent cross-family code peer-review (stage-2.p1, peer round 2)
+
+Source: Codex peer-review
+Reviewer: GPT-family cross-family peer; executor Claude-family. Non-interactive fresh CODE re-review.
+Round status: Closed (1 applied)
+Scope: the current uncommitted Phase 1 diff against HEAD, Tasks 1.1-1.7, including the full container/writer and the named custody, audit, location, settings, integration and test changes. Judged against D1-D14, the Critical Constraints, Key Findings and Phase 1 task text. Rounds 21-23 read as current at their close; rounds 1-20 and pre-round-21 Review History were not review inputs. No UI/run-gate or restore-orchestration work from later phases is treated as missing Phase 1 code.
+
+Verification boundary: static code and test review only. No pytest, npm, ruff or mypy run; no security payload authored or executed; no real clinical data or backup opened. Accepted the composer's post-round-23 results: desktop 11410 passed / 10 skipped, ruff and mypy clean (73 source files), extension QA 313 tests passed. Pair pre-check: no compaction marker, no exact-name findings companion, unique round headers 1-23; allocated round 24. Only this Round block was appended.
+
+#### Confirmed fixes
+
+- PR-MED-2301: confirmed. `past_sessions.py:1671` guards the accumulated and current snapshot keys through result construction, and `past_sessions.py:1757` guards the exported key until `SnapshotEntry` returns. `audit.py:1235` guards inventory and result construction and zeroes its exported key on exceptional exit; the planner's successful-transfer cleanup remains at `past_sessions_backup.py:1257`. The executor's LOW regrading is reasonable: the reported escape requires an exceptional construction failure.
+- PR-MED-2302: confirmed. `exclusions.py:438` recognises the extended network namespace case-insensitively; the shared text prefilter at `exclusions.py:565` refuses prefixed paths without a drive letter before inspection. Destination, source, remembered-folder and Export paths use that shared rule, with the new test cases covering each. Ordinary extended local-drive paths retain their previous handling.
+- PR-MED-2303: confirmed. `audit.py:1224` now proves emptiness through `_strict_rows_present` before returning a no-key snapshot. Unknown month inspection refuses; row-shaped links prevent an empty result; a genuinely fresh store remains non-creating. The planner maps the refusal to `audit_unavailable`.
+- PR-LOW-2304: confirmed for the reported setup paths. `past_sessions_backup.py:1531` closes on failed identity acquisition and reports `write_failed` with `part_may_remain=True`; `:1463` guards copy/payload setup; `:1557` closes the descriptor on a failed `fdopen`. Later failure cleanup closes before identity-checked removal, and the removable-drive listability check still controls the partial-file flag. Existing files and an unverified published file remain preserved.
+
+No Round 23 finding is disputed or repeated. Round 21's payload-close and header/manifest parser fixes remain present. One parser sibling remains below.
+
+#### New Findings
+
+**[LOW] PR-LOW-2401 — Audit JSON recursion escapes the new per-row failure classifications.**
+- Location: `desktop/src/scribe_desktop/audit.py:709` and `:1369`, through the shared decoder at `:424`; backup callers `desktop/src/scribe_desktop/past_sessions_backup.py:942` and `:1402`.
+- Triage: Fix-now
+- Fix route: premium-only
+- Why it matters: D1 and D9 deliberately isolate an undecodable audit row: Back up leaves it out and records its id as unknown; Open classifies it as non-importable; `restore_row` returns `skipped_undecodable_row`. An authenticated but excessively nested JSON row instead aborts the operation. This is the audit-row sibling of round 21 LOW-001's header/manifest parser fix.
+- Current behaviour: `_decode` calls `json.loads` and catches only `ValueError`. `RecursionError` is not that exception type. `row_importable` and `restore_row` also catch only `ValueError`; `_read`, used by `row_state` and local-row restore checks, omits `RecursionError` too. In words, the repro is authenticated audit plaintext within the row byte cap whose JSON nesting exceeds the parser's recursion limit. At the backup snapshot's `row_state` call it can escape planning; when reached during row copying it becomes the writer's whole-run `unexpected` failure instead of a row omission. The Open reader and `restore_row` also let it escape their documented classifications. No payload is needed to exercise the failure through an injected parser exception.
+- Desired behaviour: normalise this parse failure to `_decode`'s existing terse invalid-row `ValueError`, so all of its consumers keep their existing unreadable/non-importable/skipped outcomes. Preserve valid newer-schema rows unchanged.
+- Pattern to follow: the narrowly typed `RecursionError` handling already added to `parse_header` and `_parse_manifest`, applied at the shared audit decoding boundary rather than repeated at each consumer.
+- Pattern siblings: searched `json.loads`, `RecursionError`, `_decode`, `row_importable` and the relevant exception handlers in the audit and container modules. Affected consumers are `row_importable` (`audit.py:709`), `restore_row` (`:1369`), and `_read` (`:1556`), including `row_state` (`:1337`) and the existing-local-row restore check (`:1404`). Container callers are `_open_rows` (`past_sessions_backup.py:942`) and `_prove_row` (`:1402`); `prepare_backup` also calls `row_state` (`:1248`). The header and manifest parsers already handle this exception. `_update`'s other direct decoder call (`audit.py:1536`) receives the app's own serialised row, not supplied row bytes. One shared decoder fix covers the affected sites.
+- Invariant: one authenticated but undecodable row does not escape its per-row outcome or prevent otherwise eligible entries/rows from being backed up; no source row is rewritten or removed.
+- Verification: use the existing synthetic seams to make the audit JSON parser raise `RecursionError` for a row only. Assert `row_importable` is false, `row_state` is `unreadable`, `restore_row` returns `skipped_undecodable_row` without creating a key or row, and Back up omits that row with its unknown-id/count while still copying another valid item. For Open, assert an authenticated undecodable row is excluded from `importable_rows`. Retain the newer-row and ordinary malformed-row checks. This review verified the call paths statically and did not run these tests.
+- Regression risk: changing the shared decoder affects existing audit reads too; retain its terse `ValueError` contract, current schema upgrades, id/month binding and `_NEWER` behaviour. LOW because authenticated malformed plaintext is required, and the observed failure is an aborted operation, with no demonstrated disclosure or source-data mutation.
+- Scope-expansion disposition: none — Tasks 1.2, 1.3 and 1.5's existing per-row error contract.
+- /fix decision: Applied
+- /fix notes: `audit.py` `_decode`.
+  - `json.loads` is caught as `(ValueError, RecursionError)` and read as no data, so the decoder raises its existing terse `ValueError("not an audit row")`. Its terse contract, the schema upgrades, the id and month binding and `_NEWER` are unchanged.
+  - Every sibling consumer the finding lists is covered by this one shared change, with no per-consumer edit: `row_importable`, `restore_row`, `_read` (`row_state`, the local-row restore check), and through them `_open_rows`, `_prove_row` and `prepare_backup`.
+  - Tests (`RecursionError` injected for one row's plaintext only):
+    - `test_audit.py` `TestRowNestedPastTheStack`: not importable; `row_state` unreadable while another row reads; `restore_row` gives `skipped_undecodable_row` with no key or row created; ordinary, newer and malformed rows unchanged.
+    - `test_backup_write.py` `test_a_row_nested_past_the_stack_is_left_out_and_the_rest_copied`: listed unknown, the entry not restorable, the other row copied.
+    - `test_backup_container.py` `test_an_authentic_row_nested_past_the_stack_is_not_importable`: Open excludes it from `importable_rows`.
+- /fix date: 2026-11-26
+- /fix applied by: Claude Code
+
+#### Review summary
+
+0 CRIT / 0 HIGH / 0 MED / 1 LOW. No separate regression finding. The snapshot ownership, strict emptiness proof, location prefilter, bounded manifest-driven container, key wrapping, ordinary one-handle write/read-back/publish flow, set-aside, audit provenance import and downstream integration were re-reviewed. No additional material finding survived verification. No change to deletion methods or the audit schema was identified.
+
+Recommended action: fix the shared audit parser boundary and add the focused synthetic exception-path checks; the composer then re-runs the applicable suites outside the sandbox. This round does not claim convergence.
+
+(4 prior fixes confirmed / 0 disputed / 1 new PR-* / 0 regression PR-REG-*; verification: 5 candidates / 4 dropped / 0 downgraded.)
+Round Classification: latent parser sibling of round 21 LOW-001; not a fix-induced regression.
+
+#### Verified tuples — executor leg v2 (2026-11-26)
+
+Recorded on this round, which carries the finding. The leg prompt's "Round 23" is read as a slip.
+
+- PR-LOW-2401 (peer: LOW · Fix-now · premium-only): materiality=behavioral severity=low surface=production rec=Fix-now — `audit._decode` (line 424) catches only `ValueError` around `json.loads`. `RecursionError` is not a subclass, so it escapes `row_importable` (`:710`), `restore_row` (`:1370`) and `_read` (`:1557`, so also `row_state`). It reaches `_open_rows` and `_prove_row` through them, past their per-row outcomes. One catch at the shared decoder routes it into the existing "not an audit row" `ValueError` for every consumer.
+
+Cap verdict: accept — production-behavioral — round 2 of the cap of 5; one verified LOW inside Phase 1's tasks (1.2, 1.3, 1.5); no CRIT or HIGH, no regression, no scope expansion.
+Leg route: verify-then-fix
+
+Decisions (/fix, same leg):
+- PR-LOW-2401 → Applied (one catch in the shared `_decode`; 5 tests in 3 files).
+
+ruff and mypy exit 0 (73 files). pytest is owed by the composer.
+
+Fix-delta self-check: PASS — re-read the 1 applied production hunk (`audit.py` `_decode`):
+- The new `except` clause only widens which parse failures become `data = None`, so the function still ends in its single `ValueError` raise outside the handler, with no chained detail.
+- The test injections compare by exact bytes or by the `"session_date"` key, which only audit rows carry. Header, manifest and label parsing pass through to the real parser.
+
+### Round 25 - 2026-11-26 - Phase 1 independent cross-family code peer-review (stage-2.p1, peer round 3)
+
+Source: Codex peer-review
+Reviewer: GPT-family codex cross-family peer; executor Claude-family. Non-interactive fresh CODE re-review.
+Round status: Closed (1 applied)
+Scope: the current uncommitted Phase 1 diff against HEAD, Tasks 1.1-1.7. Read the container/writer in full and the named custody, audit, location, settings, integration and test changes against D1-D14, Critical Constraints, Key Findings and Phase 1 task text. Rounds 21-24 were the current finding/fix baseline; closed rounds 1-20 were not review inputs. Later-phase UI, run-gate and restore orchestration are not treated as missing Phase 1 work.
+
+Verification boundary: static code and test review only. No pytest, npm, ruff or mypy run; no security payload authored or executed; no real clinical data or backup opened. Accepted the composer's post-round-24 results: desktop 11415 passed / 10 skipped (the extra skip is the host's unsupported set-aside symlink case), ruff and mypy clean (73 source files), extension QA 313 tests passed. Pair pre-check: no compaction marker, no exact-name findings companion, unique round headers 1-24; allocated Round 25. Only this Round block was appended.
+
+#### Confirmed fixes
+
+- PR-LOW-2401: confirmed at `desktop/src/scribe_desktop/audit.py:424`. The shared decoder catches `(ValueError, RecursionError)` and retains its terse invalid-row outcome. Read all five added tests: the three `TestRowNestedPastTheStack` tests in `test_audit.py`, the row-omission/copy test in `test_backup_write.py`, and the Open importability test in `test_backup_container.py`. Their parser injections are limited to audit-row input, and the tests check unreadable/non-importable/skipped outcomes, no creation on a skipped restore, continued copying of another row, and unchanged ordinary/newer/malformed-row handling. The shared change covers `row_importable`, `restore_row`, `_read` and their backup callers without changing the audit schema.
+- PR-MED-2301: confirmed. `past_sessions.py:1671` guards accumulated/current snapshot keys through result construction, `:1757` guards the newly exported entry key, and `audit.py:1235` guards its exported key through inventory/result construction. `prepare_backup` still zeroes successfully transferred buffers. Read the four exception-path tests and the successful-transfer test; no fix-induced caller regression found.
+- PR-MED-2302: confirmed. `exclusions.py:438` recognises the extended network namespace case-insensitively; `:565` also refuses extended-prefix forms without a drive letter before path inspection. The shared rule serves destination, source, remembered-folder and Export checks. The tests exercise all four surfaces and preserve ordinary extended local-drive handling.
+- PR-MED-2303: confirmed. `audit.py:1224` proves emptiness with the strict inventory on `_NoKey`; uninspectable months refuse and row-shaped links prevent an empty answer. The fresh-store path remains non-creating, and the planner maps the refusal to `audit_unavailable`.
+- PR-LOW-2304: confirmed for the reported acquisition and transfer failures. `past_sessions_backup.py:1531` closes a descriptor whose identity could not be obtained and reports that its part may remain; `:1463` guards copy/payload setup; `:1557` closes on failed `fdopen`. Ordinary failure cleanup closes before identity-checked removal and retains the destination-listability condition. The tests assert descriptor closure, honest partial-file flags and preservation of unrelated files. Round 21's payload-generator close remains in place.
+
+No prior finding is disputed or repeated. Round 21's header/manifest recursion catches and corrected Export docstring remain present.
+
+#### New Findings
+
+**[LOW] PR-LOW-2501 — The writer enforces the entry-file cap only after reading and writing the oversized payload.**
+- Location: `desktop/src/scribe_desktop/past_sessions_backup.py:1268`, `:1351` and `:1339`; the late bound is `EntryFiles._bounded` at `:288`, with exception mapping at `:1590`.
+- Triage: Fix-now
+- Fix route: premium-only
+- Why it matters: D2 specifies a 64 MiB entry-file limit with a named refusal. The writer currently uses the source file's size as its read bound, so that limit does not bound the copy/open check, and a valid oversized entry produces an unrelated whole-run failure after writing its payload.
+- Current behaviour: the snapshot records transcript/note/generated sizes without applying `MAX_ENTRY_FILE_BYTES`. `prepare_backup` sums them against the 1 GiB whole-file budget only. `_prove_entry` then passes `identity.size` to `inspect_entry_file`, which reads that many bytes plus its overflow probe, and authenticates/parses the result. For a valid transcript above 64 MiB but below the whole-file budget, the entry passes the open check (the transcript model has no corresponding byte limit). `payload` yields its key and files into the ZIP before constructing `EntryFiles`; that construction raises `ValidationError` for the size, and `_run_error` maps it to `unexpected`. No final backup is published, but the specific size refusal and intended per-file read bound are lost. A damaged oversized file is also read above the cap before being classified damaged.
+- Desired behaviour: check the planned per-file sizes against their kind's cap before copying any payload, returning the existing named `too_large` refusal for an oversized entry file. Prefer the planner's existing pre-create size check, where the sizes are already available. Keep the worker's read bound at or below the applicable cap and retain the existing identity/change checks.
+- Pattern to follow: `prepare_backup`'s existing pre-create whole-file/member-count refusal; the label's capped snapshot read and the audit snapshot's `MAX_ROW_FILE_BYTES` check. Retain `EntryFiles._bounded` as the independent reader/manifest validation.
+- Pattern siblings: searched `MAX_ENTRY_FILE_BYTES`, `EntryFiles(`, `read_cap=identity.size`, `MAX_MANIFEST_BYTES` and `_MEMBER_OVERHEAD` across the container module and its tests, then re-read the snapshot producer and shared file inspector. Transcript, saved-note and generated-note descriptors all use the same uncapped copy path. Label bytes are already capped at snapshot time; audit rows are capped when described and copied; the container reader validates manifest sizes before reading payload. No separate sibling finding is emitted.
+- Invariant: an entry-file size outside the backup format's envelope is rejected by its named size outcome before that file is read/copied beyond the envelope; source files remain untouched and no final backup is published.
+- Verification: use the existing synthetic `World` fixture and temporarily lower `MAX_ENTRY_FILE_BYTES` below an ordinary valid fixture transcript's ciphertext size. Assert `prepare_backup` gives `too_large` before any destination file exists and before the content copy/open check; retain a boundary-equal successful case and the existing whole-file cap and identity-change tests. This demonstrates the path without allocating a large document or authoring a security payload. Static verification only in this peer run.
+- Regression risk: preserve the distinct label cap, ordinary unreadable/damaged/changed classifications for files within bounds, snapshot-key cleanup and the reader's independent bounds. LOW: the current late rejection does prevent publishing an out-of-format backup, and no source-data mutation or disclosure was demonstrated.
+- Scope-expansion disposition: none — Tasks 1.3 and 1.5's existing format and writer bounds.
+- /fix decision: Applied
+- /fix notes: `past_sessions_backup.py`.
+  - The new `_file_cap(kind)` is `EntryFiles._bounded`'s rule (`MAX_LABEL_FILE_BYTES` for the label, `MAX_ENTRY_FILE_BYTES` otherwise), read at the call.
+  - `prepare_backup` refuses `too_large` when any planned entry file is over its kind's bound. This happens in the existing pre-create size check, before any file exists and before the copy or the open check.
+  - `_prove_entry` reads with `read_cap=min(identity.size, _file_cap(kind))`, so the worker never reads past the bound. A file larger than that reads as `unreadable` and is left out as `changed`.
+  - `EntryFiles._bounded` stays as the reader's independent check. The label's snapshot cap, the classifications within bounds and the snapshot-key cleanup are unchanged.
+  - Test: `test_backup_write.py` `test_an_entry_file_over_its_bound_is_too_large_before_anything_is_read`. With the cap one byte below the largest non-label file: `too_large`, no destination file, the open check never called. With the cap equal to it: the backup is written and opens with the entry. The existing whole-file cap and identity-change tests are unedited.
+- /fix date: 2026-11-26
+- /fix applied by: Claude Code
+
+#### Review summary
+
+0 CRIT / 0 HIGH / 0 MED / 1 LOW. No separate regression finding. The five prior fixes remain confirmed. The fresh pass also covered the bounded manifest-driven reader, KDF/header reuse, key wrapping, one-handle read-back and publish/hash check, set-aside's move-only rules, audit import/provenance handling, shared content validators, backup settings and self-check code 3. No additional finding survived verification.
+
+Recommended action: enforce the entry-file cap before the copy and add the focused small-fixture boundary checks; the composer then runs the applicable suites outside the sandbox. This round does not claim convergence.
+
+(5 prior fixes confirmed / 0 disputed / 1 new PR-* / 0 regression PR-REG-*; verification: 3 candidates / 2 dropped / 0 downgraded.)
+Round Classification: latent writer-bound gap; not a fix-induced regression.
+
+#### Verified tuples — executor leg v3 (2026-11-26)
+
+- PR-LOW-2501 (peer: LOW · Fix-now · premium-only): materiality=behavioral severity=low surface=production rec=Fix-now — the size checks in `prepare_backup` (`:1266`–`:1273`) are the member count and `MAX_BACKUP_BYTES` only. `_prove_entry` (`:1351`) reads with `read_cap=identity.size`, so an entry file over `MAX_ENTRY_FILE_BYTES` (64 MiB) but inside the 1 GiB budget is read, opened and yielded into the ZIP. Only then does `EntryFiles._bounded` (`:288`) raise, and `_run_error` maps the error to `unexpected`, not the named `too_large`. Nothing is published, so this is LOW.
+
+Cap verdict: accept — production-behavioral — round 3 of the cap of 5; one verified LOW inside Phase 1's tasks (1.3, 1.5); no CRIT or HIGH, no regression, no scope expansion.
+Leg route: verify-then-fix
+
+Decisions (/fix, same leg):
+- PR-LOW-2501 → Applied (the planner's per-file bound and the worker's capped read; 1 test).
+
+ruff and mypy exit 0 (73 files). pytest is owed by the composer.
+
+Fix-delta self-check: PASS — re-read the 3 applied hunks in `past_sessions_backup.py`:
+- The planner's check runs after the keys are wrapped and zeroed (the `finally` above), so a `too_large` refusal leaves no plain key behind.
+- `_file_cap` reads the module globals at the call, so `EntryFiles._bounded` and the planner always agree.
+- A plan within bounds gives `min(identity.size, cap) == identity.size`, so the worker's read is unchanged for every plan the planner admits.
+
+### Round 26 - 2026-11-26 - Phase 1 independent cross-family code peer-review (stage-2.p1, peer round 4)
+
+Source: Codex peer-review
+Reviewer: GPT-family codex cross-family peer; executor Claude-family. Non-interactive fresh CODE re-review.
+Round status: Closed
+Scope: the current uncommitted Phase 1 diff against HEAD, Tasks 1.1-1.7. Round 25's PR-LOW-2501, its verified tuple and applied fix were checked first, followed by the full `past_sessions_backup.py` and the scoped custody, shared validators, settings, audit, location, application/self-check, protocol-double and release changes. Tests were read where needed to verify claims. The reference is D1-D14, Critical Constraints, Key Findings and Phase 1's task text. Rounds 21-25 supplied the current finding/fix baseline; earlier closed findings were not used as review inputs. UI, the run gate and restore orchestration remain later-phase work.
+
+Verification boundary: static code and test review only. No pytest, npm, ruff or mypy run; no security payload authored or executed; no real archive, backup or clinical content opened. Accepted the composer's post-round-25 evidence: desktop pytest 11416 passed / 10 skipped, exit 0 (the additional skip is the set-aside symlink case this host cannot create); ruff and mypy clean (73 source files); extension QA 313 tests passed. Pair pre-check: no compaction marker and no exact-name findings companion; 25 unique Findings Log round headers, maximum 25. Allocated Round 26. Only this Round block was appended.
+
+#### Confirmed fix
+
+- PR-LOW-2501: confirmed. `desktop/src/scribe_desktop/past_sessions_backup.py:1272` applies `_file_cap(kind)` to every planned entry file before returning a plan or creating a destination file. The helper at `:1294` preserves the label's separate cap and applies `MAX_ENTRY_FILE_BYTES` to transcript, saved note and generated note, matching the independent `EntryFiles` validation at `:283`. The snapshot producer supplies exactly those kinds (`past_sessions.py:1743` and `:2111`); no additional entry-file kind bypasses the check. `_prove_entry` at `past_sessions_backup.py:1362` bounds the requested read by both the snapshot size and the applicable cap, while retaining the full identity comparison and label hash. `inspect_entry_file` at `past_sessions.py:2227` retains its one-byte overflow probe and rejects an over-bound result. For an admitted plan the effective read bound is unchanged; growth or replacement still follows the existing `changed` path.
+- Read `desktop/tests/test_backup_write.py:394`: the synthetic fixture lowers the cap below the largest non-label ciphertext, asserts the named `too_large` refusal and empty destination with the open check forbidden, then sets the cap equal to that size and proves a successful write and passphrase-open round trip. The planner's refusal remains after the `finally` at `past_sessions_backup.py:1257`, so snapshot entry/audit buffers are already zeroed. The previously fixed snapshot ownership and payload/descriptor cleanup boundaries remain intact where this change meets them. No earlier finding is disputed or repeated.
+
+#### Independent pass and downstream checks
+
+- Re-read the container module in full: bounded ZIP preflight, header/KDF validation before derivation, header-bound manifest authentication, exact member set and digests, per-entry key wraps, row and entry open checks, and `BackupReader`'s checked subsequent reads. The saved/generated/transcript validators remain shared with the existing readers; their extracted call paths preserve the original validation order and outcomes.
+- Rechecked the snapshot-to-copy contract, recording-key exclusions, row omissions and `not_restorable` finalisation, one-handle write/read-back, collision handling, post-publish hash check and failure cleanup. The size fix introduces no signature, result-shape or caller-contract change. The set-aside remains move-only; existing deletion methods and audit schema are unchanged.
+- Reviewed the shared location-rule integration, bounded backup settings, `PastSessionsAudit` and its test doubles, version fields, Argon2id self-check and release error-code wiring. No new material correctness, security, structural or downstream issue was verified. The shadow-exit and schema-version test files have no diff.
+
+#### Review summary
+
+No new findings — converged
+
+0 CRIT / 0 HIGH / 0 MED / 0 LOW; no regression finding. No corrective action from this round. The supplied suites are accepted rather than independently reproduced; frozen-build and practitioner checks remain at their planned gates.
+
+(1 prior fix confirmed / 0 disputed / 0 new PR-* / 0 regression PR-REG-*; verification: 2 candidates / 2 dropped / 0 downgraded.)
+Round Classification: no new or fix-induced finding.

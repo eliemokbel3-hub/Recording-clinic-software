@@ -23,9 +23,10 @@ from typing import Any
 
 import pytest
 
-from conftest import InertWarmup
+from conftest import InertWarmup, dpapi_error, fake_unprotect
 from encounter_fakes import CLINIC_ID, NOTE, PRACTITIONER, consent_for, context
 from scribe_desktop import audit as audit_mod
+from scribe_desktop import session_store
 from scribe_desktop.audit import (
     AUDIT_KEY_DESCRIPTION,
     CSV_COLUMNS,
@@ -50,8 +51,12 @@ from scribe_desktop.session_store import (
     KEY_FILENAME,
     SESSION_KEY_DESCRIPTION,
     CompletionFacts,
+    KeyBlobError,
+    KeyCustodyError,
     StoreWriteError,
     SweepResult,
+    dpapi_round_trip,
+    unwrap_key_blob,
     unwrap_key_from_file,
     wrap_key_to_file,
 )
@@ -2157,3 +2162,520 @@ class TestAppWiring:
         assert (last, pruned) == (100.0 + day, [1])
         assert prune_audit_if_due(audit, last, last + 900.0) == last
         assert pruned == [1]
+
+
+# ---------------------------------------------------------------------------
+# The key-blob seam (past-sessions-backup plan D9, Task 1.1): every answer
+# from an INJECTED ``CryptUnprotectData`` (``conftest.fake_unprotect``).
+# ---------------------------------------------------------------------------
+
+_BLOB = b"b" * 64
+_BAD_KEY_STATE = 0x8009000B
+
+
+class TestUnwrapKeyBlob:
+    def test_a_short_blob_is_dead_and_dpapi_is_never_called(self) -> None:
+        def never(blob: bytes) -> tuple[str, bytes]:
+            raise AssertionError("a dead blob reached DPAPI")
+
+        with pytest.raises(KeyBlobError) as info:
+            unwrap_key_blob(b"short", description=AUDIT_KEY_DESCRIPTION, unprotect=never)
+        assert info.value.reason == "dead"
+        crypto = unwrap_key_blob(
+            _BLOB,
+            description=AUDIT_KEY_DESCRIPTION,
+            unprotect=fake_unprotect(description=AUDIT_KEY_DESCRIPTION),
+        )
+        assert crypto.export_key() == b"\x01" * 32
+
+    def test_a_foreign_description_and_a_wrong_length(self) -> None:
+        for unprotect, reason in (
+            (fake_unprotect(description=SESSION_KEY_DESCRIPTION), "foreign_description"),
+            (fake_unprotect(description=AUDIT_KEY_DESCRIPTION, key=b"k" * 31), "bad_length"),
+        ):
+            with pytest.raises(KeyBlobError) as info:
+                unwrap_key_blob(_BLOB, description=AUDIT_KEY_DESCRIPTION, unprotect=unprotect)
+            assert info.value.reason == reason
+
+    def test_an_exception_that_is_not_a_dpapi_error_is_dpapi_error(self) -> None:
+        for error in (RuntimeError("no"), OSError(13, "denied"), ValueError("bad")):
+            with pytest.raises(KeyBlobError) as info:
+                unwrap_key_blob(
+                    _BLOB,
+                    description=AUDIT_KEY_DESCRIPTION,
+                    unprotect=fake_unprotect(description=AUDIT_KEY_DESCRIPTION, error=error),
+                )
+            assert info.value.reason == "dpapi_error"
+
+    @windows_only
+    @pytest.mark.parametrize(
+        ("code", "reason"),
+        [
+            (_BAD_KEY_STATE, "dpapi_refused"),
+            (_BAD_KEY_STATE - (1 << 32), "dpapi_refused"),  # signed, as pywin32 reports it
+            (13, "dpapi_refused"),
+            (5, "dpapi_error"),
+            (0x8009000C, "dpapi_error"),
+            (-13, "dpapi_error"),
+        ],
+    )
+    def test_only_the_two_named_codes_are_refused(self, code: int, reason: str) -> None:
+        unprotect = fake_unprotect(description=AUDIT_KEY_DESCRIPTION, error=dpapi_error(code))
+        with pytest.raises(KeyBlobError) as info:
+            unwrap_key_blob(_BLOB, description=AUDIT_KEY_DESCRIPTION, unprotect=unprotect)
+        assert info.value.reason == reason
+
+    @windows_only
+    def test_unwrap_key_from_file_keeps_one_outcome_for_every_refusal(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Every refusal still arrives as ``KeyCustodyError`` with its old
+        text, and a read error still chains its ``OSError``."""
+        (tmp_path / KEY_FILENAME).write_bytes(_BLOB)
+        for unprotect, text in (
+            (
+                fake_unprotect(description=AUDIT_KEY_DESCRIPTION, error=dpapi_error(13)),
+                "failed DPAPI unwrap",
+            ),
+            (fake_unprotect(description=AUDIT_KEY_DESCRIPTION, error=OSError()), "failed DPAPI"),
+            (fake_unprotect(description=SESSION_KEY_DESCRIPTION), "different store"),
+            (fake_unprotect(description=AUDIT_KEY_DESCRIPTION, key=b"k"), "wrong length"),
+        ):
+            monkeypatch.setattr(session_store, "_dpapi_unprotect", unprotect)
+            with pytest.raises(KeyCustodyError, match=text):
+                unwrap_key_from_file(tmp_path, description=AUDIT_KEY_DESCRIPTION)
+        (tmp_path / KEY_FILENAME).write_bytes(b"x")
+        with pytest.raises(KeyCustodyError, match="zero-length or truncated"):
+            unwrap_key_from_file(tmp_path, description=AUDIT_KEY_DESCRIPTION)
+        with pytest.raises(KeyCustodyError) as info:
+            unwrap_key_from_file(tmp_path / "absent", description=AUDIT_KEY_DESCRIPTION)
+        assert isinstance(info.value.__cause__, OSError)
+
+    def test_the_probe_round_trip(self) -> None:
+        held: dict[str, bytes] = {}
+
+        def protect(data: bytes) -> bytes:
+            held["value"] = data
+            return b"wrapped"
+
+        def unprotect_same(blob: bytes) -> tuple[str, bytes]:
+            return "probe", held["value"]
+
+        def unprotect_other(blob: bytes) -> tuple[str, bytes]:
+            return "probe", b"\0" * 32
+
+        def raising(blob: bytes) -> tuple[str, bytes]:
+            raise RuntimeError("DPAPI did not answer")
+
+        assert dpapi_round_trip(protect=protect, unprotect=unprotect_same) is True
+        assert held["value"] != b"\0" * 32 and len(held["value"]) == 32
+        assert dpapi_round_trip(protect=protect, unprotect=unprotect_other) is False
+        assert dpapi_round_trip(protect=protect, unprotect=raising) is False
+
+
+# ---------------------------------------------------------------------------
+# The backup's export and import surface (past-sessions-backup plan D9, Task
+# 1.2), through the store's own key seams — no host DPAPI.
+# ---------------------------------------------------------------------------
+
+_FAKE_AUDIT = b"FAKE-AUDIT-KEY:"
+
+
+def _fake_audit_wrap(crypto: SessionCrypto, root: Path) -> None:
+    (root / KEY_FILENAME).write_bytes(_FAKE_AUDIT + crypto.export_key())
+
+
+def _fake_audit_unwrap(root: Path) -> SessionCrypto:
+    blob = (root / KEY_FILENAME).read_bytes()
+    if not blob.startswith(_FAKE_AUDIT):
+        raise KeyCustodyError("not this store's key")
+    return SessionCrypto.from_key(blob[len(_FAKE_AUDIT) :])
+
+
+def _seamed(tmp_path: Path, name: str = "audit", clock: _Clock | None = None) -> AuditLog:
+    return AuditLog(
+        tmp_path / name,
+        clock=clock or _Clock(),
+        local_zone=UTC,
+        wrap_key=_fake_audit_wrap,
+        unwrap_key=_fake_audit_unwrap,
+    )
+
+
+def _plaintext(log: AuditLog, sid: str) -> tuple[bytes, str]:
+    """A row's plaintext and month, read under the fake key — what a backup
+    holds after its own authentication."""
+    path = _row_path(log, sid)
+    crypto = _fake_audit_unwrap(log.root)
+    try:
+        return crypto.decrypt(path.read_bytes(), b"audit:" + sid.encode()), path.parent.name
+    finally:
+        crypto.destroy()
+
+
+def _seal_fake(log: AuditLog, sid: str, plaintext: bytes, month: str = "2026-10") -> Path:
+    crypto = _fake_audit_unwrap(log.root)
+    try:
+        path = log.root / month / f"{sid}.enc"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(crypto.encrypt(plaintext, b"audit:" + sid.encode()))
+        return path
+    finally:
+        crypto.destroy()
+
+
+def _files_under(root: Path) -> dict[str, bytes]:
+    return {
+        str(path.relative_to(root)): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+_NEWER_DOC = json.dumps({"schema_version": 99, "anything": "kept as it is"}).encode()
+
+
+class TestKeySeams:
+    def test_the_store_key_goes_through_the_seams(self, tmp_path: Path) -> None:
+        log = _seamed(tmp_path)
+        sid = _begin_unlinked(log)
+        assert (log.root / KEY_FILENAME).read_bytes().startswith(_FAKE_AUDIT)
+        assert _only_row(log, sid).origin == "recorded"
+        assert log.reset() is not None
+        assert (log.root / KEY_FILENAME).read_bytes().startswith(_FAKE_AUDIT)
+        assert not log.key_unreadable()
+
+    def test_a_refusing_unwrap_is_key_unreadable(self, tmp_path: Path) -> None:
+        log = _seamed(tmp_path)
+        _begin_unlinked(log)
+
+        def refused(root: Path) -> SessionCrypto:
+            raise KeyCustodyError("refused")
+
+        broken = AuditLog(log.root, local_zone=UTC, wrap_key=_fake_audit_wrap, unwrap_key=refused)
+        assert broken.key_unreadable()
+
+
+class TestRowImportable:
+    def test_a_row_of_its_own_id_and_month_and_a_newer_row(self, tmp_path: Path) -> None:
+        log = _seamed(tmp_path)
+        sid = _begin_unlinked(log)
+        plaintext, month = _plaintext(log, sid)
+        assert month == "2026-10"
+        assert audit_mod.row_importable(plaintext, sid, "2026-10")
+        assert not audit_mod.row_importable(plaintext, _sid(), "2026-10")
+        assert not audit_mod.row_importable(plaintext, sid, "2026-09")
+        assert audit_mod.row_importable(_NEWER_DOC, _sid(), "2026-01")
+        assert not audit_mod.row_importable(b"not json", sid, "2026-10")
+        assert not audit_mod.row_importable(b'{"schema_version": 3}', sid, "2026-10")
+
+
+_TOO_DEEP = b'{"stands_for": "a row nested past the parser\'s stack"}'
+
+
+def _too_deep(monkeypatch: pytest.MonkeyPatch) -> list[bytes]:
+    """The audit parser raises ``RecursionError`` for ``_TOO_DEEP`` only —
+    the injected form of authenticated JSON nested past the stack."""
+    seen: list[bytes] = []
+    real = json.loads
+
+    def loads(text: Any, *args: Any, **kwargs: Any) -> Any:
+        if text == _TOO_DEEP:
+            seen.append(text)
+            raise RecursionError
+        return real(text, *args, **kwargs)
+
+    monkeypatch.setattr(audit_mod.json, "loads", loads)
+    return seen
+
+
+class TestRowNestedPastTheStack:
+    """Round 24 PR-LOW-2401: the shared decoder reads it as not a row, so
+    every consumer keeps its own per-row outcome."""
+
+    def test_it_is_not_importable_and_its_row_is_unreadable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        log = _seamed(tmp_path)
+        readable = _begin_unlinked(log)
+        deep = _sid()
+        _seal_fake(log, deep, _TOO_DEEP)
+        seen = _too_deep(monkeypatch)
+        assert not audit_mod.row_importable(_TOO_DEEP, deep, "2026-10")
+        assert log.row_state(deep) == "unreadable"
+        assert log.row_state(readable) == "readable"
+        assert seen  # the parser was reached, not bypassed
+
+    def test_restore_skips_it_and_creates_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        local = _seamed(tmp_path)
+        seen = _too_deep(monkeypatch)
+        outcome = local.restore_row(_TOO_DEEP, _sid(), "2026-10", now=T0)
+        assert outcome == "skipped_undecodable_row"
+        assert seen
+        assert not local.root.exists()  # no key, no row
+
+    def test_an_ordinary_and_a_newer_row_read_as_before(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        log = _seamed(tmp_path)
+        sid = _begin_unlinked(log)
+        plaintext, month = _plaintext(log, sid)
+        _too_deep(monkeypatch)
+        assert audit_mod.row_importable(plaintext, sid, month)
+        assert audit_mod.row_importable(_NEWER_DOC, _sid(), "2026-01")
+        assert not audit_mod.row_importable(b"not json", sid, month)
+
+
+class TestBackupSnapshot:
+    def test_a_fresh_store_is_empty_and_nothing_is_created(self, tmp_path: Path) -> None:
+        log = _seamed(tmp_path)
+        assert log.backup_snapshot() == audit_mod.AuditSnapshot(None, (), ())
+        assert not log.root.exists()
+
+    def test_rows_are_described_and_the_key_given_as_bytes(self, tmp_path: Path) -> None:
+        log = _seamed(tmp_path)
+        first, second = _begin_unlinked(log), _begin_unlinked(log)
+        (log.root / "2026-10" / "notes.txt").write_bytes(b"not a row")
+        (log.root / "2026-10" / f"{_sid()}.enc").mkdir()  # a folder: not a row
+        before = _files_under(log.root)
+        snapshot = log.backup_snapshot()
+        assert isinstance(snapshot.key, bytearray)
+        assert bytes(snapshot.key) == (log.root / KEY_FILENAME).read_bytes()[len(_FAKE_AUDIT) :]
+        assert {row.session_id for row in snapshot.rows} == {first, second}
+        for row in snapshot.rows:
+            assert row.month == "2026-10"
+            assert row.path == _row_path(log, row.session_id)
+            assert row.size == row.path.stat().st_size
+        assert snapshot.unknown_ids == ()
+        assert _files_under(log.root) == before
+
+    def test_duplicates_a_month_13_and_an_oversized_row_are_unknown(
+        self, tmp_path: Path
+    ) -> None:
+        log = _seamed(tmp_path)
+        good = _begin_unlinked(log)
+        doubled = _begin_unlinked(log)
+        plaintext, _month = _plaintext(log, doubled)
+        _seal_fake(log, doubled, plaintext, month="2026-09")
+        thirteenth = _sid()
+        _seal_fake(log, thirteenth, b"{}", month="2026-13")
+        oversized = _sid()
+        (log.root / "2026-10" / f"{oversized}.enc").write_bytes(
+            b"x" * (audit_mod.MAX_ROW_FILE_BYTES + 1)
+        )
+        snapshot = log.backup_snapshot()
+        assert [row.session_id for row in snapshot.rows] == [good]
+        assert snapshot.unknown_ids == tuple(sorted({doubled, thirteenth, oversized}))
+
+    def test_a_missing_or_unreadable_key_and_an_unlistable_month_refuse(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        log = _seamed(tmp_path)
+        _begin_unlinked(log)
+        key = (log.root / KEY_FILENAME).read_bytes()
+        (log.root / KEY_FILENAME).unlink()
+        with pytest.raises(AuditUnavailable) as info:
+            log.backup_snapshot()
+        assert info.value.reason == "key_missing"
+        assert not (log.root / KEY_FILENAME).exists()  # nothing created
+        (log.root / KEY_FILENAME).write_bytes(b"NOT-OURS:" + b"k" * 40)
+        with pytest.raises(AuditUnavailable) as info:
+            log.backup_snapshot()
+        assert info.value.reason == "key_unreadable"
+        (log.root / KEY_FILENAME).write_bytes(key)
+        real = Path.iterdir
+
+        def unlistable(self: Path) -> Any:
+            if self.name == "2026-10":
+                raise PermissionError(13, "denied")
+            return real(self)
+
+        monkeypatch.setattr(Path, "iterdir", unlistable)
+        with pytest.raises(AuditUnavailable) as info:
+            log.backup_snapshot()
+        assert info.value.reason == "unavailable"
+
+    def test_no_key_beside_a_month_that_cannot_be_inspected_refuses(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Round 23 PR-MED-2303: the lenient inventory skips the month, so
+        the store would read as fresh; the strict one refuses it."""
+        log = _seamed(tmp_path)
+        _begin_unlinked(log)
+        (log.root / KEY_FILENAME).unlink()
+        before = _files_under(log.root)
+        real = audit_mod.link_state
+
+        def month_unknown(path: Path) -> bool | None:
+            return None if path.name == "2026-10" else real(path)
+
+        monkeypatch.setattr(audit_mod, "link_state", month_unknown)
+        with pytest.raises(AuditUnavailable) as info:
+            log.backup_snapshot()
+        assert info.value.reason == "unavailable"
+        assert _files_under(log.root) == before  # no key created, nothing written
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="a directory junction is Windows-only")
+    def test_no_key_beside_a_row_shaped_link_is_key_missing(self, tmp_path: Path) -> None:
+        """A row-named link the lenient inventory does not count (it is not
+        an ordinary file) still means the store is not empty."""
+        import _winapi
+
+        log = _seamed(tmp_path)
+        (log.root / "2026-10").mkdir(parents=True)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        _winapi.CreateJunction(str(elsewhere), str(log.root / "2026-10" / f"{_sid()}.enc"))
+        with pytest.raises(AuditUnavailable) as info:
+            log.backup_snapshot()
+        assert info.value.reason == "key_missing"
+        assert not (log.root / KEY_FILENAME).exists()
+
+    @pytest.mark.parametrize("where", ["inventory", "result"])
+    def test_a_failed_snapshot_zeroes_the_key_it_exported(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, where: str
+    ) -> None:
+        """Round 23 PR-MED-2301: the key leaves only inside a returned
+        snapshot; any other exit zeroes it, a non-``OSError`` included."""
+        log = _seamed(tmp_path)
+        _begin_unlinked(log)
+        exported: list[bytearray] = []
+
+        def recording(*args: Any) -> bytearray:
+            buffer = bytearray(*args)
+            exported.append(buffer)
+            return buffer
+
+        def boom(*args: Any, **kwargs: Any) -> Any:
+            raise MemoryError
+
+        monkeypatch.setattr(audit_mod, "bytearray", recording, raising=False)
+        if where == "inventory":
+            monkeypatch.setattr(audit_mod, "_describe_row", boom)
+        else:
+            monkeypatch.setattr(audit_mod, "AuditSnapshot", boom)
+        with pytest.raises(MemoryError):
+            log.backup_snapshot()
+        assert len(exported) == 1 and len(exported[0]) > 0
+        assert exported[0] == bytearray(len(exported[0]))
+
+
+class TestRowState:
+    def test_each_state(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        log = _seamed(tmp_path)
+        readable = _begin_unlinked(log)
+        assert log.row_state(readable) == "readable"
+        assert log.row_state(_sid()) == "none"
+        newer = _sid()
+        _seal_fake(log, newer, _NEWER_DOC)
+        assert log.row_state(newer) == "newer"
+        garbage = _sid()
+        (log.root / "2026-10" / f"{garbage}.enc").write_bytes(b"\0" * 64)
+        assert log.row_state(garbage) == "unreadable"
+        doubled = _begin_unlinked(log)
+        plaintext, _month = _plaintext(log, doubled)
+        _seal_fake(log, doubled, plaintext, month="2026-09")
+        assert log.row_state(doubled) == "unreadable"
+        month = log.root / "2026-10"
+        real = audit_mod.link_state
+        monkeypatch.setattr(
+            audit_mod, "link_state", lambda path: None if path == month else real(path)
+        )
+        assert log.row_state(_sid()) == "unreadable"  # never "none"
+        assert log.row_state(readable) == "unreadable"
+
+
+class TestRestoreRow:
+    def _source_row(self, tmp_path: Path) -> tuple[str, bytes, str]:
+        source = _seamed(tmp_path, "source")
+        sid = _begin_unlinked(source)
+        plaintext, month = _plaintext(source, sid)
+        return sid, plaintext, month
+
+    def test_a_row_is_re_encrypted_under_the_local_key_into_its_month(
+        self, tmp_path: Path
+    ) -> None:
+        sid, plaintext, month = self._source_row(tmp_path)
+        local = _seamed(tmp_path)
+        assert not local.root.exists()
+        assert local.restore_row(plaintext, sid, month, now=T0) == "add_row"
+        assert (local.root / KEY_FILENAME).is_file()  # made, as a first write makes it
+        assert _row_path(local, sid).parent.name == month
+        assert _plaintext(local, sid)[0] == plaintext
+        assert _row_path(local, sid).read_bytes() != (
+            tmp_path / "source" / month / f"{sid}.enc"
+        ).read_bytes()
+        assert _only_row(local, sid).origin == "recorded"
+        # Again: the row is here now and is kept.
+        assert local.restore_row(plaintext, sid, month, now=T0) == "skipped_present_row"
+        assert len(list(local.root.glob(f"*/{sid}.enc"))) == 1
+
+    def test_a_newer_row_is_kept_byte_for_byte(self, tmp_path: Path) -> None:
+        local = _seamed(tmp_path)
+        sid = _sid()
+        assert local.restore_row(_NEWER_DOC, sid, "2026-08", now=T0) == "add_row"
+        assert _plaintext(local, sid) == (_NEWER_DOC, "2026-08")
+        assert local.row_state(sid) == "newer"
+        assert local.restore_row(_NEWER_DOC, sid, "2026-08", now=T0) == "skipped_unreadable_row"
+
+    def test_refusals_and_skips_write_nothing(self, tmp_path: Path) -> None:
+        sid, plaintext, month = self._source_row(tmp_path)
+        local = _seamed(tmp_path)
+        assert local.restore_row(b"not a row", sid, month, now=T0) == "skipped_undecodable_row"
+        assert local.restore_row(plaintext, _sid(), month, now=T0) == "row_mismatch"
+        assert local.restore_row(plaintext, sid, "2026-09", now=T0) == "row_mismatch"
+        assert local.restore_row(_NEWER_DOC, sid, "2026-13", now=T0) == "row_mismatch"
+        pruned = month_prune_at(2026, 10)
+        assert local.restore_row(plaintext, sid, month, now=pruned) == "skipped_pruned_row"
+        assert not local.root.exists()
+
+    def test_a_local_row_that_does_not_read_is_kept(self, tmp_path: Path) -> None:
+        sid, plaintext, month = self._source_row(tmp_path)
+        local = _seamed(tmp_path)
+        _begin_unlinked(local)  # makes the store and its key
+        path = local.root / month / f"{sid}.enc"
+        path.write_bytes(b"\0" * 64)
+        assert local.restore_row(plaintext, sid, month, now=T0) == "skipped_unreadable_row"
+        assert path.read_bytes() == b"\0" * 64
+
+    def test_a_bare_pre_audit_row_in_the_same_month_is_recovered(self, tmp_path: Path) -> None:
+        sid, plaintext, month = self._source_row(tmp_path)
+        local = _seamed(tmp_path)
+        assert local.update(sid, lambda row, now: row, stage="test", created_at=T0.timestamp())
+        assert _only_row(local, sid).origin == "pre_audit"
+        assert local.restore_row(plaintext, sid, month, now=T0) == "provenance_recovered"
+        assert _only_row(local, sid).origin == "recorded"
+        assert local.restore_row(plaintext, sid, month, now=T0) == "skipped_present_row"
+        assert len(list(local.root.glob(f"*/{sid}.enc"))) == 1
+
+    def test_a_pre_audit_row_with_facts_or_in_another_month_is_a_conflict(
+        self, tmp_path: Path
+    ) -> None:
+        sid, plaintext, month = self._source_row(tmp_path)
+        local = _seamed(tmp_path)
+        assert local.record_past_session(sid, "archived", created_at=T0.timestamp())
+        before = _row_path(local, sid).read_bytes()
+        assert local.restore_row(plaintext, sid, month, now=T0) == "conflict_row"
+        assert _row_path(local, sid).read_bytes() == before
+        other_sid, other_plain, other_month = self._source_row(tmp_path)
+        earlier = (T0 - timedelta(days=40)).timestamp()
+        assert local.update(other_sid, lambda row, now: row, stage="test", created_at=earlier)
+        assert _row_path(local, other_sid).parent.name != other_month
+        assert local.restore_row(other_plain, other_sid, other_month, now=T0) == "conflict_row"
+        assert len(list(local.root.glob(f"*/{other_sid}.enc"))) == 1
+
+    def test_a_linked_month_folder_is_never_written_through(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sid, plaintext, month = self._source_row(tmp_path)
+        local = _seamed(tmp_path)
+        _begin_unlinked(local)
+        target = local.root / month
+        real = audit_mod.link_state
+        monkeypatch.setattr(
+            audit_mod, "link_state", lambda path: True if path == target else real(path)
+        )
+        assert local.restore_row(plaintext, sid, month, now=T0) == "failed_row_write"
+        assert not (target / f"{sid}.enc").exists()
