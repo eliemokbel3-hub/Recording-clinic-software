@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** past-sessions-backup
-**Overall Progress:** `30%` (13 of 44 tasks)
+**Overall Progress:** `32%` (14 of 44 tasks)
 
 ## Lifecycle State
 - Active — REWRITTEN 2026-11-25 as one clean body (the practitioner: "Yes, rewrite it"). It replaces the October 2026 body and the two correction layers (D13, D14) that plan peer-review rounds 6 and 7 added; it folds in every verified finding of rounds 1–8 and three simplifications the practitioner chose that day (decisions 0.10–0.12), and three more taken during the review of this body (0.13–0.15). Nothing is built. NOT ready to build until a fresh cross-family plan peer pass over this body converges (Current State / Handoff Note).
@@ -239,6 +239,10 @@ See `Planning Extraction Summary` (state-once). In one line each: kept recording
 - 2026-11-26: the practitioner chose "One focused round": round 17, limited to the set-aside and the add-only restore (the set-aside has had one review). With no HIGH finding the plan goes to build; with one it comes back to the practitioner.
 - 2026-11-26: round 17 (focused) returned 9 findings — 0 HIGH, 7 MED, 2 LOW — every one verified and applied in place; the reviewer judged the set-aside and the add-only restore ready to build under the practitioner's rule. Round 17's amendments are themselves unreviewed; the build loop's per-phase reviews check the code against this body.
 - NEXT: by the practitioner's rule the plan goes to build. The commit of this plan file and the start of the build wait for their word. When the plan is built: `/execute-loop` from Task 0.8 in its own worktree (C13); the wizard takes the more-than-one-Active-plan path (Custom), since `plan-stronger-voice.md` and `plan-ui-refresh.md` are Active too.
+- 2026-11-26: the practitioner said "Commit and build" (committed `685743a`). The build proceeds under the practitioner's round-17 rule (no HIGH finding), so the Lifecycle line's "NOT ready to build until ... converges" is superseded by that rule. `/execute-loop` run `past-sessions-backup-20261126-063148-9edc` (worktree `C:/Recording clinic software-wt/past-sessions-backup-20261126-063148-9edc`, branch `loop/past-sessions-backup-20261126-063148-9edc`, base `main` at `685743a`), from Task 0.8. The worktree has no `.venv`: ruff and mypy run from the base checkout's venv by absolute path; pytest and `npm run qa` are composer-run (verify=composer).
+- 2026-11-26: Task 0.8 DONE (leg x1): the dry-run baselines — the five greps, both suites' counts, ruff and mypy — are recorded under Task 0.8 in Tasks; nothing differs from Key Findings, no gate opened. NEXT: Task 1.1.
+- 2026-11-26: Phase 0's `/review-loop` CONVERGED (leg r1): round 18 found 1 MED and 2 LOW in Task 0.8's record (the `desktop/src` count is 23 lines, `ui/models.py` 5; two lines named by their symbols; `PLAN.md`'s deferred sentence is outside the grep's phrases), all applied to Task 0.8's entry; round 19 was clean. No gate opened. NEXT: Task 1.1.
+- Loop config: executor=claude-p model="claude-opus-5-5" effort=high profile=default; peer=codex model="gpt-6-astra" effort=high; architect=off; cadence=every-phase; caps=review:3,peer:5; gates=executor; cap-raise=executor; high-auto=on; peer-max=12; notify=action-only; scope=all; autocommit=on; isolation=worktree; merge=off; perms=scoped; liveness=10; monitor-delivery=auto; verify=composer
 
 ## Tasks
 
@@ -259,7 +263,18 @@ Grouped into phases for `/execute-loop` (a review loop and a codex peer pass at 
 - [x] 🟩 **0.13 [decision] A session that still holds a kept development recording.** **DECIDED 2026-11-25 (practitioner): "Leave those sessions out (Recommended)"** — such a session is backed up only once its recording has been deleted, so the consent's sentence that a recording can be opened only from the practitioner's own Windows login on that computer stays exactly true (D12). Raised by peer round 12 (PR-HIGH-159). Rejected: backing the session up and deleting the recording at a key repair; a new consent version with fresh written consent. It replaces the same day's "Add it to the plan (Recommended)".
 - [x] 🟩 **0.14 [decision] How the rule for destroying older backups works.** **DECIDED 2026-11-25 (practitioner): "Simple rule, limits named (Recommended)"** — the app only reports facts about each backup and gives no verdict; the documents give ONE rule (an older backup is destroyed only when the newest says nothing eligible was left out, and never while anything on this computer is lost or unreadable: restore first); the rare double failures the rule cannot cover are named limits for the independent review (D14). It withdraws round 14's verdict line and three steps, which round 15 showed could not be made true in every state (PR-HIGH-181, PR-MED-184, PR-MED-185, PR-LOW-188). Within that choice, for approval with the documents at P.3: backups made BEFORE a loss, a set-aside, a restore or a new audit record are kept, and the rule applies again only to backups made afterwards. Rejected: more checks in the app to make a verdict airtight.
 - [x] 🟩 **0.15 [decision] Recovery after a Windows password reset.** **DECIDED 2026-11-25 (practitioner): "Set aside, then restore (Recommended)"** — the app moves the sessions this login can no longer open into a set-aside folder, nothing deleted, and Restore brings them back from a backup as on a new computer (D8). It REPLACES decision 0.9's repair in place, which review rounds 12–15 could not make safe (PR-HIGH-182, PR-MED-186). Within that choice, for approval with the documents at P.3: a session that still holds a kept recording is not moved (Delete recording must keep reaching it), and a session completed after the last backup stays set aside and unreadable. Rejected: keeping the repair with more checks.
-- [ ] 🟥 **0.8 Record the dry-run baselines** (Validation / Verification) from the run's own worktree before Task 1.1. Done when: the grep results and the two suites' counts are in this task.
+- [x] 🟩 **0.8 Record the dry-run baselines** (Validation / Verification) from the run's own worktree before Task 1.1. Done when: the grep results and the two suites' counts are in this task. **DONE 2026-11-26** (worktree at `685743a`, run `past-sessions-backup-20261126-063148-9edc`, leg x1):
+  - Document grep (the D14 inventory), matching lines per area: `docs` 45 lines in 12 files; `PLAN.md` 0; `desktop/src` 23 lines in 15 files.
+    - `docs`: `design-system.md` 7; `security/retention-schedule.md` 7; `security/threat-model.md` 7; `practice/privacy-information.md` 5; `practice/clinician-review-guide.md` 4; `practice/downtime-procedure.md` 4; `practice/development-recording-consent.md` 3; `practice/patient-information-and-consent.md` 3; `testing/validation-harness.md` 2; `practice/README.md` 1; `security/data-flow-map.md` 1; `security/intended-use.md` 1.
+    - `desktop/src/scribe_desktop`: `ui/models.py` 5; `ui/past_sessions_view.py` 3; `cliniko_client.py` 2; `ui/note.py` 2; one each in `clinics.py`, `note_config.py`, `note_suggest.py`, `prose_style.py`, `speech.py`, `transcription.py`, `validation.py`, `ui/bridge.py`, `ui/note_review.py`, `ui/session_screen.py`, `ui/theme.py`. The Past-sessions lines: `ui/past_sessions_view.py:187` (`DELETE_CONFIRM_MESSAGE`, "cannot be recovered"), `:216` (`RETENTION_WARNING`, "makes no backup of its own"), `:313` (`retention_confirm_text`, the shorter-retention confirmation, "cannot be recovered"). `ui/models.py:2695` (`COMPLETE_DONE_LINE`, "cannot be recovered") is about a session's audio at Complete; the rest use "nowhere else", "for good" or "cannot be undone" in other senses.
+    - `PLAN.md` 0 does not mean nothing to change there: its sentence "Backup/restore of Past sessions is deferred." (line 156, named in Key Findings and Task 4.3) matches none of the grep's phrases.
+  - `DRIVE_` in `exclusions.py`: two constants, `DRIVE_REMOTE = 4` (line 165) and `DRIVE_FIXED = 3` (line 469).
+  - `check_backup_exclusions|backup_exclusions` over `desktop/src`: 6 lines, all in `exclusions.py` (lines 32, 270, 342, 638, 648, 715) — the existing File-History check Key Findings names; none elsewhere. As expected: D7's new name `check_archive_backup_location` avoids it.
+  - `_NON_PATH_LITERALS` (`test_install_layout.py:470`), 12 entries: `identity.py` `PIPE_PREFIX`, `DEV_PIPE_PREFIX`; `secure_storage.py` `_SERVICE_PREFIX`; `session_store.py` `SESSION_KEY_DESCRIPTION`; `audit.py` `AUDIT_KEY_DESCRIPTION`; `past_sessions.py` `PAST_SESSION_KEY_DESCRIPTION`, `EXPORT_LEDGER_KEY_DESCRIPTION`; `practitioner_profile.py` `PROFILE_KEY_DESCRIPTION`, `STYLE_KEY_DESCRIPTION`; `app.py` `_single_instance_mutex_name`; `exclusions.py` `APP_FOLDER_NAME`, `backup_exclusions`. No `BACKUP_FILENAME_PREFIX` yet (Task 1.3 adds it).
+  - `cryptography` in `desktop/pyproject.toml`: line 19, `"cryptography>=43",` (Task 1.3 raises it to `>=44`).
+  - Desktop suite (composer-run from the worktree's `desktop`, `PYTHONPATH` the worktree's `desktop/src`, the base venv's python): 11177 passed, 9 skipped in 779 s, exit 0.
+  - Extension (composer-run: `npm ci` then `npm run qa` in the worktree's `extension`, Node 24.18.0): 13 test files, 313 tests passed, exit 0.
+  - `ruff check .` (worktree `desktop`, base venv): exit 0, "All checks passed!". `mypy` (same): exit 0, "Success: no issues found in 72 source files".
 
 ### Phase 1 — Custody, the container and the writer (no UI)
 
@@ -332,6 +347,8 @@ Grouped into phases for `/execute-loop` (a review loop and a codex peer pass at 
 - Round 15 — 2026-11-25 — codex `gpt-6.2-astra` high plan peer-review (consolidated body, round 7; the second of three extra rounds): 0 CRIT / 3 HIGH / 4 MED / 1 LOW (7 build-affecting, 1 record-only), every one verified. Five came from round 14's own change of approach (the verdict line and the three-step rule) or from the key repair, so the composer did not patch them: it put two questions to the practitioner, who answered "Simple rule, limits named (Recommended)" (decision 0.14) and "Set aside, then restore (Recommended)" (decision 0.15). Applied IN PLACE: the verdict line, the benign set, the keep-this-backup sentence and the three steps WITHDRAWN (the app gives counts and no verdict; D14 states ONE rule with four named limits); the key repair REMOVED with everything that existed for it (the blob classification in the planner, `repair_entry_key`, five outcome classes, the staging step in `delete_entry`, the `_remove_key_first` change, the changed delete-failed line) — Restore only adds, a present path is never touched, and a new set-aside (`set_aside_refused`, the third button) moves unread, beside the archive, the sessions whose key this login's DPAPI refuses; `.csbk.part` is kept after a failed Open; the kept-recording lines reworded. Tasks 0.14, 0.15 and 3.4 added, Task 1.1 re-scoped (44 tasks, 13 done). skew=fix-induced action=simplify-by-decision. One approved round remains (16).
 - Round 16 — 2026-11-25 — codex `gpt-6.2-astra` high plan peer-review (consolidated body, round 8; the LAST approved round): 0 CRIT / 2 HIGH / 5 MED / 3 LOW (10 labelled build-affecting), every one verified against the code. NOT clean, so the pass ENDS here without convergence and goes back to the practitioner. All ten are about the set-aside written that evening or wording left from earlier rounds; none reopens the container, the writer, the run gate, the open check or the add path. Applied IN PLACE: the set-aside folder is KEPT under the existing unreadable-session rule (189); a session with any recording file is not moved, so a pending deletion record is finished in place (190); `dpapi_refused` only for two named error codes, anything else `dpapi_error` and left (191); Restore disabled while the retention setting cannot be read (192); the set-aside's lines reworded and a readable session never counted (193); an unlisted present folder is `skipped_leftover`, and Flow 4 no longer promises every moved session comes back (194); no advice in the success line (195); D14's limit (ii) names the provenance-recovery comparison (196); the not-indexed start-up walk acknowledged (197); two restore assertions moved to Task 3.2 and the real-DPAPI test admitted under C9 (198). skew=fix-induced action=surface-and-ask.
 - Round 17 — 2026-11-26 — codex `gpt-6.2-astra` high plan peer-review (consolidated body, round 9; a FOCUSED round on the set-aside and the add-only restore, on the practitioner's word "One focused round", with their rule: no HIGH finding → build): 0 CRIT / 0 HIGH / 7 MED / 2 LOW (9 labelled build-affecting), every one verified against the code at `5d63ed6` and applied IN PLACE: the link check before anything under an entry folder is looked at; no claim that a refused blob is intact, and the classifier tested with injected errors; a refusal when the set-aside folder cannot be made; ONE archive listing per Open with a per-id `classify_entry` and a recheck that can only withdraw a write; the final report counting only planned writes, and the leftover label; the lines that promised "which" reworded to "how many"; the page's cached unreadable count lowered after a set-aside; the deletion repair after an audit reset named as a residue; one test moved from Task 2.1 to Task 3.4. The reviewer's closing judgement: ready to build under the round's rule. skew=mixed action=none. The amendments of this round are unreviewed.
+- 2026-11-26 round 18: 0 CRIT / 0 HIGH / 1 MED / 2 LOW; skew=none; action=none
+- 2026-11-26 round 19: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
 
 ## Review Findings Log
 
@@ -1936,7 +1953,7 @@ Every finding verified `build-affecting` and applied in place in the body (no co
 
 Source: Codex gpt-6.2-astra high — plan peer-review
 
-Round status: Open (12 pending)
+Round status: Closed — 12 verified, 12 dispositioned below 2026-11-25 (11 build-affecting applied, 1 record-only named) [2026-11-26: status line recorded by the composer at Phase 0's close; it had been left reading Open after the dispositions were written]
 
 **PR-HIGH-137 — The destruction rule can discard the only recoverable pre-reset audit history.**
 Materiality: build-affecting
@@ -2554,3 +2571,46 @@ Every finding was read against the plan body and the code at `5d63ed6`. All nine
 - **PR-LOW-207** — verified. /fix decision: APPLIED — `test_archive_run.py` tests the admission function; the button's "nothing moved" assertions belong to Task 3.4.
 
 /fix notes: amendments confirmed on disk (each replaced string asserted to occur exactly once). Siblings reconciled: Flow 4, D8's set-aside, planner, restorer and table bullets, D9, D10's button and lines, D12 (3), the Validation lists for `test_restore.py`, `test_past_sessions.py`, `test_archive_run.py` and the UI tests, the handoff note, and Tasks 3.1, 3.4 and 4.1. No practitioner decision is changed. New since their last reading, for approval at P.3 with the rest of the wording: the reworded set-aside confirmation and report lines, the summary label "In progress or left over here", and the second Restore's short report.
+
+### Round 18 - 2026-11-26 - Phase 0 review (Task 0.8's recorded baselines), /review-loop round 1
+
+Source: Claude Code (`claude-opus-5-5` high, executor leg r1 of `/execute-loop` run `past-sessions-backup-20261126-063148-9edc`, stage-1)
+Round status: Closed (3 applied)
+Scope: the uncommitted diff of this plan file only — Task 0.8's entry, the progress line and three new handoff lines (the run line, the Task 0.8 line, the Loop config line). Baseline: the worktree's `HEAD` (`685743a`). Every recorded baseline re-run in the worktree: the five greps (Grep tool), `ruff check .` (exit 0, "All checks passed!") and `mypy` (exit 0, 72 files); the two suites' counts are the composer's runs, taken as given. Progress re-counted: 14 checked of 44 task lines. No session id, patient content or machine-local path beyond the run's worktree path is recorded.
+
+**MED-001 — The document grep's `desktop/src` count is wrong.**
+Severity: MED · Class: 🆕 · Triage: Fix-now
+Evidence: Task 0.8 recorded 22 lines in 15 files and `ui/models.py` 4. The grep in count mode gives 23 lines, `ui/models.py` 5 (lines 1032, 2695, 3042, 3046, 3048). Task 0.8's whole deliverable is these numbers, and Task 4.1 reads them as the baseline.
+/fix decision: Applied — 23 lines; `ui/models.py` 5. Verified by re-running the grep (count mode).
+
+- LOW-001 — Task 0.8's "archive's own lines" sub-line misnamed two lines: `ui/past_sessions_view.py:313` is the shorter-retention confirmation (`retention_confirm_text`), `:216` is `RETENTION_WARNING`, and `ui/models.py:2695` (`COMPLETE_DONE_LINE`) is about a session's audio at Complete, not the archive. Triage: Fix-now; Decision: Applied (each line named by its symbol).
+- LOW-002 — `PLAN.md` 0 hides a known change: Key Findings and Task 4.3 name `PLAN.md:156` ("Backup/restore of Past sessions is deferred."), which none of the grep's phrases match. Triage: Fix-now; Decision: Applied (one sub-line under the grep's result).
+
+Round Classification: 🆕 3 / ⚡ 0 / 🔁 0 (the first review of this work).
+/fix notes: the three edits are confined to Task 0.8's entry; nothing outside the plan changed. /fix date: 2026-11-26. /fix applied by: the executor (leg r1).
+
+### Round 19 - 2026-11-26 - Phase 0 review (Task 0.8's recorded baselines), /review-loop round 2
+
+Source: Claude Code (`claude-opus-5-5` high, executor leg r1 of `/execute-loop` run `past-sessions-backup-20261126-063148-9edc`, stage-1)
+Round status: Closed (0 findings — converged)
+Scope: the whole Phase 0 diff of this plan file again (baseline `685743a`), not only round 18's fixes. Post-fix check: the `desktop/src` count (23 lines in 15 files, `ui/models.py` 5) re-run in count mode; the three Past-sessions lines and `COMPLETE_DONE_LINE` checked against their symbols in `ui/past_sessions_view.py` and `ui/models.py`; `PLAN.md:156` re-read. The other recorded baselines unchanged on re-run (`docs` 45 in 12, `PLAN.md` 0, the two `DRIVE_` constants, the six File-History lines, the 12 `_NON_PATH_LITERALS` entries, `cryptography>=43`); ruff and mypy exit 0 as recorded. Progress 14 of 44 = 32%. No session id, patient content or machine-local path beyond the run's worktree path.
+
+No findings.
+
+Round Classification: 🆕 0 / ⚡ 0 / 🔁 0 — converged.
+
+### Round 20 - 2026-11-26 - Phase 0 independent cross-family code peer-review (stage-1.p1, peer round 1)
+
+Source: Codex peer-review
+Round status: Closed
+Scope: the uncommitted diff against `685743a` of this plan only, Task 0.8 and its progress, handoff, Loop config and rounds 18–19 records. GPT-family peer of the Claude-family executor; fresh code-review mode under `PEER_LOOP_NONINTERACTIVE`. Rounds 1–17 and earlier Review History prose excluded.
+
+Verification: re-ran all five read-only searches in Validation / Verification. The document search returns 45 matching lines in 12 `docs` files, zero in `PLAN.md`, and 23 in 15 `desktop/src` files; every recorded per-file count matches. Confirmed the three `past_sessions_view.py` locations and their symbols, `models.py:2695` under `COMPLETE_DONE_LINE`, and `PLAN.md:156`'s deferred sentence outside the search phrases. Confirmed the two drive constants and values at `exclusions.py:165,469`, all six File-History matches at the recorded lines, all 12 `_NON_PATH_LITERALS` entries beginning at `test_install_layout.py:470`, no `BACKUP_FILENAME_PREFIX` in source or tests, and `pyproject.toml:19`'s `cryptography>=43`. Task checkboxes total 44 with 14 checked (32% rounded). HEAD and branch match the run handoff. The scoped additions contain no session id, patient content or machine-local path beyond the run's own worktree path. Round 18's three corrections are present and accurate; no downstream behavior changes arise from this record-only diff.
+
+Suite evidence: accepted the supplied composer results without rerunning pytest, npm, ruff or mypy: desktop 11177 passed / 9 skipped; extension 13 test files / 313 tests passed; ruff clean; mypy clean in 72 source files; all exit 0.
+
+Append pre-check: no compaction marker and no exact-name findings companion; round headers unique, highest 19 before this append.
+
+No new findings — converged.
+
+Summary: 3 confirmed applied corrections / 0 disputed / 0 new PR-* / 0 regression PR-REG-*; verification: 0 defect candidates / 0 dropped / 0 downgraded.
