@@ -5,6 +5,7 @@ the Phase-1 registration/self-test panel as a Status tab)."""
 from __future__ import annotations
 
 import ctypes
+import logging
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -129,12 +130,18 @@ from scribe_desktop.transcription import (
     RecoveryOutcome,
     TranscriptDocument,
 )
-from scribe_desktop.ui import icons, models
+from scribe_desktop.ui import icons, models, past_sessions_view
 from scribe_desktop.ui.bridge import ChromeBridge
 from scribe_desktop.ui.clinics import ClinicsScreen
 from scribe_desktop.ui.microphone import MicrophoneScreen
 from scribe_desktop.ui.note import NoteScreen
-from scribe_desktop.ui.past_sessions import PastSessionsScreen
+from scribe_desktop.ui.past_sessions import (
+    ArchiveRun,
+    AskPassphrase,
+    ChooseBackupPath,
+    PastSessionsScreen,
+    RunHop,
+)
 from scribe_desktop.ui.past_sessions_view import PAST_SESSIONS_TAB_TITLE
 from scribe_desktop.ui.practitioner import PractitionerScreen
 from scribe_desktop.ui.recovery import RecoveryScreen
@@ -503,6 +510,10 @@ class MainWindow(QMainWindow):
         start_hold: Callable[[], bool] | None = None,
         past_sessions_wav_path: Callable[[str], Path | None] | None = None,
         export_recovery_lines: Sequence[str] = (),
+        past_sessions_passphrase: AskPassphrase | None = None,
+        past_sessions_backup_path: ChooseBackupPath | None = None,
+        past_sessions_run_hop: RunHop | None = None,
+        past_sessions_logger: logging.Logger | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Clinic Scribe")
@@ -771,7 +782,17 @@ class MainWindow(QMainWindow):
             choose_wav_path=past_sessions_wav_path,
             windows_layer=windows_layer,
             export_recovery_lines=export_recovery_lines,
+            # Past-sessions-backup plan Task 2.3: Back up's passphrase and
+            # save dialogs and its worker, seams like the ones above.
+            ask_passphrase=past_sessions_passphrase,
+            choose_backup_path=past_sessions_backup_path,
+            run_hop=past_sessions_run_hop,
+            # Peer round 29 PR-LOW-202: an unforeseen backup failure's type.
+            logger=past_sessions_logger,
         )
+        # Past-sessions-backup plan D11: the one backup or restore run holding
+        # the run gate (None: none).
+        self._archive_run: ArchiveRun | None = None
 
         # UI refresh plan D4/D5: every screen stays a DIRECT page of this one
         # container — the everyday pages first, the four setup pages last
@@ -789,6 +810,9 @@ class MainWindow(QMainWindow):
         self.tabs.setDocumentMode(True)
         self.tabs.tabBar().hide()
         self._build_shell()
+        # Past-sessions-backup plan D11: the page asks this window to admit a
+        # run and to hold the gate.
+        self.past_sessions_screen.set_archive_gate(self)
         # Smoke S1: opening the Recovery tab re-lists it (stat-only, nothing
         # decrypted), so the tab never opens on a list gone stale while hidden.
         self.tabs.currentChanged.connect(self._on_tab_changed)
@@ -868,6 +892,7 @@ class MainWindow(QMainWindow):
             bridge.set_hotkey_status(self.hotkey_status)
             bridge.set_system_pause_status(self.system_pause_status)
             bridge.set_lock_refusal(self._lock_refusal)
+            bridge.set_archive_gate(lambda: self.archive_running)
             self.chrome_bridge = bridge
         return self.chrome_bridge
 
@@ -1560,11 +1585,98 @@ class MainWindow(QMainWindow):
         window."""
         return self._controller.custody_protected_ids()
 
+    # --- the backup and restore run gate (past-sessions-backup plan D11) -------
+
+    @property
+    def archive_running(self) -> bool:
+        """A backup or restore holds the run gate: the periodic sweep skips
+        all three of its steps, the Chrome bridge refuses every command that
+        starts, adopts, discards or opens a review of a recording, and the
+        window will not close."""
+        return self._archive_run is not None
+
+    def archive_run_refusal(self) -> str | None:
+        """Why a backup, a restore or a set-aside cannot run now (a line), or
+        None. The Recovery page is re-listed FIRST (a recording it would show
+        must refuse the run). In this order: a Cliniko draft write in flight
+        (first: its reservation is also one of the live ids); a live recording
+        or a Discard under way; a recording on the Recovery page (a recovered
+        transcript awaiting Complete or Discard included); a voice enrolment
+        (its Stop must stay usable); then every other work that refuses a
+        close — and the Past sessions page's own worker. The rule: whatever
+        refuses a close because work is in progress refuses a run too."""
+        recovery = self.recovery_screen
+        recovery.refresh()
+        if self._archive_run is not None:
+            return past_sessions_view.ARCHIVE_RUNNING_LINE
+        if self.is_writing:
+            return models.write_line("write_in_flight")
+        if self._live_session_ids() or self.session_screen.is_discarding:
+            return past_sessions_view.ARCHIVE_LIVE_LINE
+        if (
+            recovery.protected_session_ids()
+            or recovery.session_list.count()
+            or recovery.unreviewed_list.count()
+        ):
+            return past_sessions_view.ARCHIVE_RECOVERY_LINE
+        if self._controller.enrolling or self.practitioner_screen.is_busy:
+            return past_sessions_view.ARCHIVE_ENROLMENT_LINE
+        if (
+            self.session_screen.is_busy
+            or recovery.is_busy
+            or self.microphone_screen.is_busy
+            or self.transcript_screen.is_busy
+            or self.note_screen.is_busy
+            or self.clinics_screen.is_busy
+            or self.is_reverifying
+            or (self.chrome_bridge is not None and self.chrome_bridge.is_busy)
+            or self.past_sessions_screen.is_busy
+        ):
+            return past_sessions_view.ARCHIVE_BUSY_LINE
+        return None
+
+    def begin_archive_run(self, run: ArchiveRun) -> str | None:
+        """Called after a run's last dialog and before its first worker: the
+        admission evaluated and the gate taken in ONE call, with no event-loop
+        yield between the two. Taking it disables the navigation rail, the
+        Settings strip and every page; a dialog parented to this window stays
+        usable. Released only by ``ArchiveRun.close``. A refusal line, or
+        None once the gate is held."""
+        refusal = self.archive_run_refusal()
+        if refusal is not None:
+            return refusal
+        self._archive_run = run
+        run.hold_gate(self._release_archive_gate)
+        self._set_archive_disabled(True)
+        return None
+
+    def _release_archive_gate(self, run: ArchiveRun) -> None:
+        """``ArchiveRun.close``'s release: the window enabled again, and what
+        the gate held back refreshed — the Recovery page and Chrome's view
+        (a ``backup_running`` refusal drops with the gate)."""
+        if self._archive_run is not run:
+            return
+        self._archive_run = None
+        self._set_archive_disabled(False)
+        self.recovery_screen.refresh()
+        if self.chrome_bridge is not None:
+            self.chrome_bridge.publish()
+
+    def _set_archive_disabled(self, disabled: bool) -> None:
+        for widget in (self.rail, self.settings_strip, self.tabs):
+            widget.setEnabled(not disabled)
+
     def closeEvent(self, event: QCloseEvent) -> None:
         """Refuse to close while a worker thread runs (PR round 18, PR6):
         destroying a running QThread aborts the process. A force-kill is
         still safe — crash recovery (Flow 3) covers it — but a normal close
         must not tear down a live transcription/benchmark thread."""
+        if self._archive_run is not None:
+            # Past-sessions-backup plan D11: named first — before the note
+            # engine's `prepare_close` below, which a run never needs.
+            self.statusBar().showMessage(past_sessions_view.ARCHIVE_CLOSE_LINE)
+            event.ignore()
+            return
         if self.session_screen.is_discarding:
             # Installation plan round 40 LOW-002: named before the recording
             # line below, which would ask for the Discard already under way.
@@ -1619,6 +1731,9 @@ class MainWindow(QMainWindow):
             or self.clinics_screen.is_busy
             or self.is_reverifying
             or (self.chrome_bridge is not None and self.chrome_bridge.is_busy)
+            # Past-sessions-backup review round 27 MED-001: a backup hop's
+            # worker can still be ending after its run released the gate.
+            or self.past_sessions_screen.is_busy
         ):
             self.statusBar().showMessage(
                 "Work in progress - wait for transcription, note generation, "

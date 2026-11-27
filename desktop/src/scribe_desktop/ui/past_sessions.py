@@ -58,16 +58,32 @@ REFUSED, never asked; with no ``WindowsLayer`` Export is refused (fail
 closed); a shadow recording asks first (D7); the audit's export count rises
 only after the file is in place. Both are DELIBERATE writers: each records
 its own event, making a row if none exists (review round 15 PR-MED-003).
+
+Back up... (past-sessions-backup plan Flow 1; D4-D7, D10, D11): the run
+gate's admission, the passphrase dialog (twice), the save dialog (only its
+FOLDER is used), the location rule (refused, or the same-disk warning asked),
+then ``begin_archive_run`` takes the gate — the window's pages, rail and
+Settings strip disabled — and four hops run: A derives the key on a worker
+(written INTO the run object, never carried by a signal), B snapshots the
+archive and the audit record here on the GUI thread, C copies, proves,
+writes and verifies the file on a worker, and D records the last-backup date
+(``config\\backup.json``) and shows the success line. ``ArchiveRun.close``
+zeroes the passphrase and the key and releases the gate on EVERY exit. The
+dialogs and the worker are seams (``ask_passphrase``, ``choose_backup_path``,
+``run_hop``), so a test opens no real dialog and starts no thread.
 """
 
 from __future__ import annotations
 
+import logging
+import os
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, tzinfo
 from functools import partial
 from pathlib import Path
+from typing import Protocol
 
 from PySide6.QtCore import QStandardPaths, Qt, QTimer
 from PySide6.QtWidgets import (
@@ -86,7 +102,19 @@ from PySide6.QtWidgets import (
 )
 
 from scribe_desktop.audit import AuditRow
-from scribe_desktop.exclusions import WindowsLayer, check_export_location
+from scribe_desktop.exclusions import (
+    WindowsLayer,
+    check_archive_backup_location,
+    check_export_location,
+    proposed_backup_folder,
+)
+from scribe_desktop.logging_setup import log_event
+from scribe_desktop.note_config import (
+    BackupSettings,
+    NoteConfigError,
+    read_backup_settings,
+    save_backup_settings,
+)
 from scribe_desktop.past_sessions import (
     PastSessionEntry,
     PastSessionListing,
@@ -97,10 +125,21 @@ from scribe_desktop.past_sessions import (
     read_past_session_settings,
     save_past_session_settings,
 )
-from scribe_desktop.ui import models
+from scribe_desktop.past_sessions_backup import (
+    BackupPlan,
+    BackupReport,
+    KdfParams,
+    derive_key,
+    new_kdf_params,
+    prepare_backup,
+    write_backup_file,
+    zero,
+)
+from scribe_desktop.ui import backup_dialog, models
 from scribe_desktop.ui import past_sessions_view as view
 from scribe_desktop.ui.lists import NoCopyComboBox, NoCopyListWidget
 from scribe_desktop.ui.note import _place_note_text
+from scribe_desktop.ui.tasks import TaskThread
 from scribe_desktop.ui.theme import set_variant
 
 # How often the tab re-checks what changes without a click: the Delete now
@@ -114,6 +153,135 @@ ChooseCsvPath = Callable[[], Path | None]
 # Development-recordings Task 3.3: the recording export's save dialog, given
 # the session id (the proposed file name); only the chosen FOLDER is used.
 ChooseWavPath = Callable[[str], Path | None]
+# Past-sessions-backup plan Task 2.3: the passphrase dialog (``True``: Back up,
+# entered twice) — the passphrase as a ``bytearray``, or None when cancelled;
+# and the backup's save dialog, given the folder to start in (None: the
+# system drive's root) and the proposed file name — only the chosen FOLDER is
+# used.
+AskPassphrase = Callable[[bool], bytearray | None]
+ChooseBackupPath = Callable[[Path | None, str], Path | None]
+# ``run_hop(work, done)``: run ``work`` off the GUI thread and call ``done``
+# with its result on the GUI thread — exactly once, whatever happens (a
+# worker that ends with neither result is ``unexpected``, D4).
+HopDone = Callable[[object], None]
+RunHop = Callable[[Callable[[], object], HopDone], None]
+
+
+class ArchiveRun:
+    """ONE backup or restore run's secrets and gate (past-sessions-backup plan
+    D4), on the GUI thread. Created when the passphrase dialog is accepted;
+    it holds the passphrase and — once hop A has derived it — the backup key
+    ``K_b`` as ``bytearray``s, and, once ``MainWindow.begin_archive_run`` has
+    admitted it, the run gate (D11). ``close`` is idempotent and is called on
+    EVERY exit: it zeroes both buffers and releases the gate (the window then
+    re-enables itself and refreshes what the gate held back). Hop A's worker
+    writes the key IN through ``accept_key``; no signal ever carries a key,
+    a passphrase or anything derived from them. Residue (D4): ``bytes()``
+    and ``AESGCM`` make immutable copies that cannot be zeroed — "zeroed"
+    means these ``bytearray``s."""
+
+    def __init__(self, passphrase: bytearray) -> None:
+        self._passphrase: bytearray | None = passphrase
+        self._key: bytearray | None = None
+        self._kdf: KdfParams | None = None
+        self._release: Callable[[ArchiveRun], None] | None = None
+        self._closed = False
+
+    @property
+    def passphrase(self) -> bytearray | None:
+        return self._passphrase
+
+    @property
+    def backup_key(self) -> bytearray | None:
+        return self._key
+
+    @property
+    def backup_kdf(self) -> KdfParams | None:
+        return self._kdf
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    @property
+    def holds_gate(self) -> bool:
+        return self._release is not None
+
+    def accept_key(self, key: bytearray, kdf: KdfParams) -> None:
+        """Hop A's worker hands the derived key in (a closed run zeroes it at
+        once and keeps nothing)."""
+        if self._closed:
+            zero(key)
+            return
+        zero(self._key)
+        self._key = key
+        self._kdf = kdf
+
+    def drop_passphrase(self) -> None:
+        """Zeroed as soon as hop A returns: nothing after it needs it."""
+        zero(self._passphrase)
+        self._passphrase = None
+
+    def hold_gate(self, release: Callable[[ArchiveRun], None]) -> None:
+        """``MainWindow.begin_archive_run`` admitted this run: ``release`` is
+        called once, by ``close``."""
+        self._release = release
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self.drop_passphrase()
+        zero(self._key)
+        self._key = None
+        release, self._release = self._release, None
+        if release is not None:
+            release(self)
+
+
+class ArchiveGate(Protocol):
+    """The main window's run gate as the page uses it (D11)."""
+
+    def archive_run_refusal(self) -> str | None: ...
+
+    def begin_archive_run(self, run: ArchiveRun) -> str | None: ...
+
+
+def _derive_backup_key(run: ArchiveRun) -> object:
+    """Hop A's worker body for Back up: a fresh salt and D3's parameters, the
+    key derived from the run's passphrase and written INTO the run. Returns
+    nothing derived — True, or the closed failure (D4: every worker body
+    catches ``Exception``)."""
+    try:
+        passphrase = run.passphrase
+        if passphrase is None:
+            return view.HopFailed("unexpected")
+        kdf = new_kdf_params()
+        run.accept_key(derive_key(passphrase, kdf), kdf)
+    except Exception as exc:  # noqa: BLE001 - a closed code, never exception text (C3)
+        return view.hop_failure(exc)
+    return True
+
+
+def _as_failure(result: object) -> view.HopFailed:
+    """A hop's result that is not its success: the worker's own closed
+    failure, else ``unexpected``."""
+    return result if isinstance(result, view.HopFailed) else view.HopFailed("unexpected")
+
+
+def _write_backup(
+    plan: BackupPlan, run: ArchiveRun, folder: Path, admit: Callable[[Path], bool]
+) -> object:
+    """Hop C's worker body: the proved copy, the write, the read-back and the
+    publish (``write_backup_file``). Returns the key-free report, or the
+    closed failure."""
+    try:
+        key = run.backup_key
+        if key is None:
+            return view.HopFailed("unexpected")
+        return write_backup_file(plan, key, folder, check_location=admit)
+    except Exception as exc:  # noqa: BLE001 - a closed code, never exception text (C3)
+        return view.hop_failure(exc)
 
 
 def _record_deletion(
@@ -180,10 +348,35 @@ class PastSessionsScreen(QWidget):
         choose_wav_path: ChooseWavPath | None = None,
         windows_layer: WindowsLayer | None = None,
         export_recovery_lines: Sequence[str] = (),
+        ask_passphrase: AskPassphrase | None = None,
+        choose_backup_path: ChooseBackupPath | None = None,
+        run_hop: RunHop | None = None,
+        logger: logging.Logger | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._store = store
+        # Peer round 29 PR-LOW-202 (D4, C3): an unforeseen backup failure's
+        # TYPE name, logged once through ``log_event`` (None: not logged).
+        self._logger = logger
+        # Past-sessions-backup plan Task 2.3: the two dialogs and the worker
+        # are seams (None: the real ones), and the main window's run gate is
+        # set after the window is built (``set_archive_gate``; None refuses
+        # every run — fail closed).
+        self._ask_passphrase: AskPassphrase = (
+            ask_passphrase if ask_passphrase is not None else self._ask_real_passphrase
+        )
+        self._choose_backup_path: ChooseBackupPath = (
+            choose_backup_path if choose_backup_path is not None else self._ask_backup_path
+        )
+        self._run_hop: RunHop = run_hop if run_hop is not None else self._run_task
+        self._archive_gate: ArchiveGate | None = None
+        self._run: ArchiveRun | None = None
+        self._hops: list[TaskThread] = []
+        self._pending_hops: dict[TaskThread, HopDone] = {}
+        # D10: the last backup's ``made_at`` from ``config\backup.json``, re-read
+        # when the page is opened and after a backup (None: none recorded).
+        self._last_backup_at: datetime | None = None
         # Task 4.1 (Flow 6): the start-up exclusion warnings — fixed for the
         # run (computed before the window was built), so the derived status
         # line always carries them.
@@ -217,6 +410,7 @@ class PastSessionsScreen(QWidget):
         self._audit_key_unreadable = False
         self._shown_failures = 0
         self._shown_review: tuple[int, bool] = (0, False)
+        self._shown_backup: str | None = None
         # The latest retention sweep's report and the retention it ran under
         # (round 16 MED-002, round 17 LOW-020): its status lines are DERIVED
         # from it while that setting is still current (``_current_sweep``,
@@ -276,12 +470,27 @@ class PastSessionsScreen(QWidget):
         export_layout.addWidget(self.csv_line_label)
         export_box.setLayout(export_layout)
 
+        # Past-sessions-backup plan D10: Back up... in its own row under the
+        # export (Open a backup... joins it in Phase 3).
+        self.backup_button = QPushButton(view.BACKUP_LABEL)
+        self.backup_button.clicked.connect(self.on_backup)
+        self.backup_help_label = _plain_label(view.BACKUP_HELP)
+        backup_row = QHBoxLayout()
+        backup_row.addWidget(self.backup_button)
+        backup_row.addStretch(1)
+        self.backup_box = QGroupBox(view.BACKUP_GROUP_TITLE)
+        backup_layout = QVBoxLayout()
+        backup_layout.addLayout(backup_row)
+        backup_layout.addWidget(self.backup_help_label)
+        self.backup_box.setLayout(backup_layout)
+
         left = QWidget()
         left_layout = QVBoxLayout()
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.addWidget(list_box, 1)
         left_layout.addWidget(settings_box)
         left_layout.addWidget(export_box)
+        left_layout.addWidget(self.backup_box)
         left.setLayout(left_layout)
 
         # Right: the opened entry.
@@ -385,6 +594,7 @@ class PastSessionsScreen(QWidget):
         self._disarm_recording_delete()
         self._show_message("")
         self._reload_settings()
+        self._load_last_backup()
         listed = True
         if self._store is not None:
             try:
@@ -815,6 +1025,260 @@ class PastSessionsScreen(QWidget):
             )
         self._show_message(view.recording_exported_line(session_id))
 
+    # --- Back up (past-sessions-backup plan Flow 1; D4-D7, D10, D11) -------
+
+    @property
+    def is_busy(self) -> bool:
+        """A backup or restore hop's worker is running — "the Past sessions
+        page itself" in the run gate's admission (D11)."""
+        return bool(self._hops)
+
+    def set_archive_gate(self, gate: ArchiveGate | None) -> None:
+        """The main window's run gate (D11), set once the window is built."""
+        self._archive_gate = gate
+
+    def on_backup(self) -> None:
+        """Back up... (Flow 1): the admission check, the passphrase twice, the
+        save dialog (its FOLDER only), the location rule — refused, or the
+        same-disk warning asked — then the gate taken and hop A started.
+        Every exit before the gate closes the run object at once."""
+        store, audit, gate = self._store, self._audit, self._archive_gate
+        if store is None or audit is None or gate is None or self._run is not None:
+            self._show_message(view.BACKUP_NOT_AVAILABLE)
+            return
+        self._disarm_delete()
+        self._disarm_recording_delete()
+        refusal = gate.archive_run_refusal()
+        if refusal is not None:
+            self._show_message(refusal)
+            return
+        layer = self._windows_layer
+        if layer is None:  # fail closed: an unchecked destination is never written
+            self._show_message(view.BACKUP_NO_LAYER)
+            return
+        passphrase = self._ask_passphrase(True)
+        if passphrase is None:
+            return
+        run = ArchiveRun(passphrase)
+        self._run = run
+        try:
+            self._backup_from_dialogs(run, layer, gate)
+        except BaseException:
+            # Review round 27 LOW-001 (D4): an unforeseen raise still closes
+            # the run — both buffers zeroed, the gate released — and the
+            # exception hook still logs its type name.
+            self._fail_run(run)
+            raise
+
+    def _backup_from_dialogs(self, run: ArchiveRun, layer: WindowsLayer, gate: ArchiveGate) -> None:
+        """``on_backup`` once the run object exists: the save dialog, the
+        location rule, the gate, hop A."""
+        self._render_controls()
+        remembered = read_backup_settings(self._config_root).settings.folder
+        start = proposed_backup_folder(layer, remembered)
+        path = self._choose_backup_path(start, view.backup_default_name(self._clock(), self._zone))
+        if path is None:
+            self._end_run("")
+            return
+        folder = path.parent
+        location = check_archive_backup_location(layer, folder)
+        if location.outcome == "refused":
+            self._end_run(view.backup_refused_line(location.line or ""))
+            return
+        if location.outcome == "warned" and not self._confirm(
+            view.backup_same_disk_question(location.line or ""), view.BACKUP_SAME_DISK_ACTION
+        ):
+            self._end_run("")
+            return
+        # The admission again and the gate taken in ONE call, after the last
+        # dialog and before the first worker (D11).
+        refusal = gate.begin_archive_run(run)
+        if refusal is not None:
+            self._end_run(refusal)
+            return
+        accepted = location.outcome
+        self._show_message(view.BACKUP_RUNNING)
+        self._start_hop(
+            run,
+            partial(_derive_backup_key, run),
+            partial(self._backup_key_ready, run, layer, folder, accepted),
+        )
+
+    def _backup_key_ready(
+        self, run: ArchiveRun, layer: WindowsLayer, folder: Path, accepted: str, result: object
+    ) -> None:
+        """Hop A returned: the passphrase is zeroed at once. Then hop B here on
+        the GUI thread — the archive's and the audit record's snapshot, each
+        key wrapped under ``K_b`` (``prepare_backup``) — and hop C started on a
+        worker, whose destination check admits only the location outcome the
+        practitioner accepted (a folder that changed is refused)."""
+        run.drop_passphrase()
+        store, audit = self._store, self._audit
+        if run is not self._run or store is None or audit is None:
+            run.close()
+            return
+        if result is not True:
+            self._end_run(view.backup_failed_line(self._noted("derive", _as_failure(result))))
+            return
+        try:
+            plan = prepare_backup(store, audit, run, made_at=self._clock())
+        except Exception as exc:  # noqa: BLE001 - a closed code, never exception text (C3)
+            self._end_run(view.backup_failed_line(self._noted("snapshot", view.hop_failure(exc))))
+            return
+
+        def admit(candidate: Path) -> bool:
+            return check_archive_backup_location(layer, candidate).outcome == accepted
+
+        self._start_hop(
+            run,
+            partial(_write_backup, plan, run, folder, admit),
+            partial(self._backup_written, run, folder),
+        )
+
+    def _backup_written(self, run: ArchiveRun, folder: Path, result: object) -> None:
+        """Hop D: the published, verified file's report — the last-backup date
+        and the folder saved (a failure to save adds D6's sentence and changes
+        nothing else), the success line, the status line — or the failure's
+        line. Nothing is recorded for a file that was not verified."""
+        if run is not self._run:
+            run.close()
+            return
+        if not isinstance(result, BackupReport):
+            self._end_run(view.backup_failed_line(self._noted("write", _as_failure(result))))
+            return
+        saved = True
+        try:
+            save_backup_settings(
+                BackupSettings(folder=str(folder), last_backup_at=result.made_at),
+                config_root=self._config_root,
+            )
+        except (NoteConfigError, ValueError):
+            saved = False
+        else:
+            self._last_backup_at = result.made_at
+        self._end_run(view.backup_success_line(result, date_saved=saved))
+        self._render_status()
+
+    def _end_run(self, line: str | None) -> None:
+        """Every exit of a run: the run object closed (both buffers zeroed,
+        the gate released), then the line shown (None: the message is left
+        as it is)."""
+        run, self._run = self._run, None
+        if run is not None:
+            run.close()
+        if line is not None:
+            self._show_message(line)
+        self._render_controls()
+
+    def _fail_run(self, run: ArchiveRun) -> None:
+        """An unforeseen failure: ``run`` closed, with the fixed line when it
+        is still the page's run (D4)."""
+        if run is self._run:
+            self._end_run(view.backup_failed_line(view.HopFailed("unexpected")))
+        else:
+            run.close()
+
+    def _start_hop(self, run: ArchiveRun, work: Callable[[], object], done: HopDone) -> None:
+        """Dispatch one hop; a dispatch that fails ends the run, and so does a
+        handler that raises (D4; review round 27 LOW-001 — re-raised, so the
+        exception hook logs its type name)."""
+
+        def handled(result: object) -> None:
+            try:
+                done(result)
+            except BaseException:
+                self._fail_run(run)
+                raise
+
+        try:
+            self._run_hop(work, handled)
+        except Exception as exc:  # noqa: BLE001 - a failed dispatch is a closed code
+            self._noted("dispatch", view.hop_failure(exc))
+            self._fail_run(run)
+
+    def _noted(self, stage: str, failure: view.HopFailed) -> view.HopFailed:
+        """D4 (peer round 29 PR-LOW-202): an UNFORESEEN failure's type name
+        logged once, at the boundary that still has it, with its stage — the
+        name only, never its text, a path or anything of the run. A named
+        refusal or failure is its own line and is not logged. ``failure`` is
+        returned for the caller's line."""
+        if failure.error_type is not None and self._logger is not None:
+            log_event(
+                self._logger, "backup_unexpected", detail_code=stage, error_code=failure.error_type
+            )
+        return failure
+
+    # --- the real worker and dialogs (production only; tests inject them) ---
+
+    def _run_task(self, work: Callable[[], object], done: HopDone) -> None:
+        """``work`` on a ``TaskThread`` child of this page; ``done`` is called
+        exactly once on the GUI thread: with the result, with ``unexpected``
+        when the worker failed, or — the fallback (D4) — with ``unexpected``
+        when it ended with neither result signal. A start that raises before
+        the thread runs takes its registration back (peer round 29
+        PR-LOW-201: a thread that never ran sends no ``finished``, so nothing
+        else would) and re-raises to the dispatch, which ends the run."""
+        task = TaskThread(work, self)
+        task.succeeded.connect(self._on_hop_succeeded)
+        task.failed.connect(self._on_hop_failed)
+        task.finished.connect(self._on_hop_finished)
+        self._pending_hops[task] = done
+        self._hops.append(task)
+        try:
+            task.start()
+        except BaseException:
+            if not task.isRunning():  # a running worker keeps close protection
+                self._pending_hops.pop(task, None)
+                if task in self._hops:
+                    self._hops.remove(task)
+                task.deleteLater()
+            raise
+
+    def _deliver(self, task: object, result: object) -> None:
+        done = self._pending_hops.pop(task, None) if isinstance(task, TaskThread) else None
+        if done is not None:
+            done(result)
+
+    def _on_hop_succeeded(self, result: object) -> None:
+        self._deliver(self.sender(), result)
+
+    def _on_hop_failed(self, _message: str) -> None:
+        # ``Type: message`` is never shown or logged (C3): a closed code only.
+        self._deliver(self.sender(), view.HopFailed("unexpected"))
+
+    def _on_hop_finished(self) -> None:
+        task = self.sender()
+        if isinstance(task, TaskThread):
+            self._hop_ended(task)
+
+    def _hop_ended(self, task: TaskThread) -> None:
+        """The worker ended: it leaves the busy list, and a hop that gave
+        neither result signal is delivered as ``unexpected`` (D4's fallback;
+        a delivered hop is not delivered again)."""
+        if task in self._hops:
+            self._hops.remove(task)
+        task.finish()
+        self._deliver(task, view.HopFailed("unexpected"))
+        task.deleteLater()
+
+    def _ask_real_passphrase(self, confirm: bool) -> bytearray | None:
+        return backup_dialog.ask_passphrase(self.window(), confirm=confirm)
+
+    def _ask_backup_path(self, start: Path | None, proposed: str) -> Path | None:
+        """The backup's save dialog: the remembered folder while it still
+        passes the location rule, else the system drive's root — never
+        Documents (D7). Only the chosen folder is used, so the dialog never
+        asks to replace a file (D6)."""
+        folder = start if start is not None else Path(os.environ.get("SystemDrive", "C:") + "\\")
+        name, _filter = QFileDialog.getSaveFileName(
+            self,
+            view.BACKUP_DIALOG_TITLE,
+            str(folder / proposed),
+            view.BACKUP_FILTER,
+            options=QFileDialog.Option.DontConfirmOverwrite,
+        )
+        return Path(name) if name else None
+
     # --- settings -------------------------------------------------------------
 
     def _load_settings(self) -> bool:
@@ -1053,6 +1517,11 @@ class PastSessionsScreen(QWidget):
         due, _selected_due = self._review_state()
         if due:
             lines.append(view.review_due_line(due))
+        # Past-sessions-backup plan D10: the backup reminder, from the listing
+        # in memory, so only while the page holds one.
+        backup = self._backup_line()
+        if backup is not None:
+            lines.append(backup)
         lines.extend(self._export_recovery_lines)
         lines.extend(self._exclusion_warnings)
         return lines
@@ -1076,9 +1545,28 @@ class PastSessionsScreen(QWidget):
         )
         return due, selected
 
+    def _backup_line(self) -> str | None:
+        """D10's reminder (``backup_status_line``) over the listed entries'
+        completion dates — an entry whose label cannot be read is not
+        counted — or None while the page holds no listing."""
+        if not self._listed:
+            return None
+        return view.backup_status_line(
+            self._last_backup_at,
+            [item.label.completed_at for item in self._listings if item.label is not None],
+            self._clock(),
+            zone=self._zone,
+        )
+
+    def _load_last_backup(self) -> None:
+        """The last backup's date from ``config\\backup.json`` (absent or
+        unreadable: none recorded)."""
+        self._last_backup_at = read_backup_settings(self._config_root).settings.last_backup_at
+
     def _render_status(self) -> None:
         self._shown_failures = self._audit_failures()
         self._shown_review = self._review_state()
+        self._shown_backup = self._backup_line()
         lines = self.status_lines()
         self.status_label.setText("\n".join(lines))
         self.status_label.setVisible(bool(lines))
@@ -1093,6 +1581,11 @@ class PastSessionsScreen(QWidget):
         # Round 16 LOW-009: an export the key cannot serve is disabled, and
         # the status line says why.
         self.export_button.setEnabled(self._audit is not None and not self._audit_key_unreadable)
+        # Past-sessions-backup plan D10: always enabled, subject only to the
+        # run gate (which disables the whole page) and this page's own run.
+        self.backup_button.setEnabled(
+            has_store and self._audit is not None and self._run is None
+        )
         opened = self._open_entry is not None
         reason = self._copy_reason()
         self.copy_button.setEnabled(reason is None)
@@ -1124,6 +1617,7 @@ class PastSessionsScreen(QWidget):
         if (
             self._audit_failures() != self._shown_failures
             or self._review_state() != self._shown_review
+            or self._backup_line() != self._shown_backup
         ):
             self._render_status()
 

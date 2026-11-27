@@ -1159,6 +1159,11 @@ def _main_window(tmp_path: Path, controller: Any | None = None, **overrides: Any
         "past_sessions_confirm": lambda text, _action: pytest.fail(f"a confirmation: {text}"),
         "past_sessions_save_path": lambda: pytest.fail("a save dialog"),
         "past_sessions_wav_path": lambda _sid: pytest.fail("a WAV save dialog"),
+        # Past-sessions-backup plan Task 2.3: never a real passphrase or
+        # backup save dialog, and never a real worker thread for a backup.
+        "past_sessions_passphrase": lambda _twice: pytest.fail("a passphrase dialog"),
+        "past_sessions_backup_path": lambda _start, _name: pytest.fail("a backup save dialog"),
+        "past_sessions_run_hop": lambda _work, _done: pytest.fail("a backup worker"),
         "style_root": tmp_path / "style",
         "language_model_available": lambda: False,
         # Cliniko safeguards Task 2.2: never the real clinics.json, never the
@@ -11202,10 +11207,12 @@ class TestPastSessionsTab:
             "A kept transcript becomes part of your health record - under the VIC Health "
             "Records Act 2001, the NSW HRIP Act 2002 and the ACT Health Records (Privacy and "
             "Access) Act 1997, and elsewhere APP 11.2. It can be reached by an APP 12 access "
-            "request or a subpoena. Clinic Scribe keeps it, encrypted, only in this Windows "
-            "login's data folder and makes no backup of its own - but backup or sync software, "
-            "or a folder location it has warned about, can still copy the encrypted files. "
-            "Cliniko stays the system of record. A kept transcript is kept for at least 7 "
+            "request or a subpoena. Clinic Scribe keeps it, encrypted, in this Windows login's "
+            "data folder, and in any passphrase-protected backup you make onto a drive "
+            "attached to this computer - a backup is never sent anywhere, and never holds a "
+            "kept development recording or a session that still holds one. Backup or sync "
+            "software, or a folder location it has warned about, can still copy the encrypted "
+            "files. Cliniko stays the system of record. A kept transcript is kept for at least 7 "
             "years. If the patient was a child, it must be kept until they turn 25 - Clinic "
             "Scribe does not know a patient's age, so choose \"Until I delete them\" when that "
             "applies."
@@ -11256,12 +11263,17 @@ class TestPastSessionsTab:
             "Use Delete now only for a recording made in error: the wrong patient, a test, or "
             "one recorded without consent."
         )
+        # Past-sessions-backup plan D10 (Task 2.4): a backup may still hold
+        # the session, and the done line says where it was deleted from.
         assert view.DELETE_CONFIRM_MESSAGE == (
             "Delete this past session now? Use Delete now only for a recording made in error - "
             "the wrong patient, a test, or one recorded without consent - because a kept "
             "transcript must otherwise be kept for at least 7 years. Its notes and transcript "
-            "cannot be recovered. Press Confirm delete to delete it."
+            "are deleted from Past sessions. An earlier backup may still hold them - the "
+            "downtime procedure says when older backups may be destroyed. Press Confirm "
+            "delete to delete it."
         )
+        assert view.DELETE_DONE == "Session deleted from Past sessions."
         screen = self._screen(tmp_path)
         assert screen.delete_help_label.text() == view.DELETE_HELP
         screen.deleteLater()
@@ -11774,9 +11786,13 @@ class TestPastSessionsTab:
         assert asked == [
             (view.retention_confirm_text(_PS_SEVEN), view.RETENTION_CONFIRM_ACTION)
         ]
+        # Past-sessions-backup plan D10 (Task 2.4): an earlier backup may
+        # still hold the sessions it deletes.
         assert asked[0][0] == (
-            "Keep past sessions for only 7 years? Every kept session older than that is "
-            "deleted now and cannot be recovered."
+            "Keep past sessions for only 7 years? Kept sessions older than that are "
+            "deleted now from Past sessions; one whose completion date cannot be read, or "
+            "whose deletion fails, is kept and counted. An earlier backup may still hold "
+            "them."
         )
         assert load_past_session_settings(tmp_path / "config").retention_days == _PS_SEVEN
         assert [item.session_id for item in store.list_entries()] == [recent]
@@ -11908,7 +11924,10 @@ class TestPastSessionsTab:
         # the state the practitioner was looking at - and Hide names works again.
         never = view.retention_index(None)
         screen.on_retention_chosen(never)
-        assert screen.status_lines() == []
+        # Past-sessions-backup Task 2.4 (D10), a named test change: the only
+        # line left is the backup reminder — the listed entry is dated, no
+        # backup date is recorded and more than 7 days have passed.
+        assert screen.status_lines() == ["No backup date recorded - 1 session kept."]
         from scribe_desktop.past_sessions import load_past_session_settings
 
         saved = load_past_session_settings(tmp_path / "config")
@@ -12349,7 +12368,12 @@ class TestPastSessionsTab:
         assert len(self._rows(screen)) == 2
         assert screen.message_label.text() == view.DELETE_DONE
         screen._tick()  # the 1 s tick re-reads the in-memory failure count
-        assert screen.status_label.text() == view.audit_failures_line(1)
+        # Past-sessions-backup Task 2.4 (D10), a named test change: the backup
+        # reminder follows the failure line (the two listed entries are dated,
+        # no backup date is recorded, the oldest more than 7 days ago).
+        assert screen.status_label.text() == "\n".join(
+            [view.audit_failures_line(1), "No backup date recorded - 2 sessions kept."]
+        )
         save_past_session_settings(
             PastSessionSettings(retention_days=_PS_SEVEN), config_root=tmp_path / "config"
         )

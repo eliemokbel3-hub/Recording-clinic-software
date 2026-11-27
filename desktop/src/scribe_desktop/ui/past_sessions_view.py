@@ -15,7 +15,8 @@ it for the screen and nothing else (no log, no audit, no CSV).
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, tzinfo
 from functools import partial
 from pathlib import Path
@@ -33,6 +34,7 @@ from scribe_desktop.audit import (
     RowState,
 )
 from scribe_desktop.exclusions import EXPORT_UNCHECKED
+from scribe_desktop.logging_setup import exception_type_name
 from scribe_desktop.past_sessions import (
     MIN_RETENTION_DAYS,
     PAST_SESSION_REASONS,
@@ -44,6 +46,14 @@ from scribe_desktop.past_sessions import (
     PastSessionListing,
     PastSessionStore,
     RetentionSweepReport,
+)
+from scribe_desktop.past_sessions_backup import (
+    BACKUP_FILENAME_PREFIX,
+    BACKUP_SUFFIX,
+    BackupFormatError,
+    BackupReport,
+    BackupRunError,
+    LeftOut,
 )
 from scribe_desktop.session_store import StoreWriteError
 from scribe_desktop.ui.models import CUSTODY_UNEXPECTED_REASON
@@ -194,13 +204,19 @@ DELETE_HELP: Final = (
     "Use Delete now only for a recording made in error: the wrong patient, a test, or "
     "one recorded without consent."
 )
+# Past-sessions-backup plan D10 (decisions 0.5, 0.12): a backup may still hold
+# a deleted session, so the confirmation and the done line say "from Past
+# sessions"; WHEN older backups may be destroyed is stated once, in the
+# downtime procedure (D14). Deletion itself does not change.
 DELETE_CONFIRM_MESSAGE: Final = (
     "Delete this past session now? Use Delete now only for a recording made in error - "
     "the wrong patient, a test, or one recorded without consent - because a kept "
     "transcript must otherwise be kept for at least 7 years. Its notes and transcript "
-    "cannot be recovered. Press Confirm delete to delete it."
+    "are deleted from Past sessions. An earlier backup may still hold them - the "
+    "downtime procedure says when older backups may be destroyed. Press Confirm delete "
+    "to delete it."
 )
-DELETE_DONE: Final = "Past session deleted (its key was destroyed)."
+DELETE_DONE: Final = "Session deleted from Past sessions."
 
 # The named buttons of the two confirmations (design-system Microcopy:
 # destructive actions are named for what they do, never Yes / No).
@@ -226,8 +242,10 @@ RETENTION_WARNING: Final = (
     "A kept transcript becomes part of your health record - under the VIC Health "
     "Records Act 2001, the NSW HRIP Act 2002 and the ACT Health Records (Privacy and "
     "Access) Act 1997, and elsewhere APP 11.2. It can be reached by an APP 12 access "
-    "request or a subpoena. Clinic Scribe keeps it, encrypted, only in this Windows "
-    "login's data folder and makes no backup of its own - but backup or sync software, "
+    "request or a subpoena. Clinic Scribe keeps it, encrypted, in this Windows login's "
+    "data folder, and in any passphrase-protected backup you make onto a drive attached "
+    "to this computer - a backup is never sent anywhere, and never holds a kept "
+    "development recording or a session that still holds one. Backup or sync software, "
     "or a folder location it has warned about, can still copy the encrypted files. "
     "Cliniko stays the system of record. A kept transcript is kept for at least 7 "
     "years. If the patient was a child, it must be kept until they turn 25 - Clinic "
@@ -322,9 +340,13 @@ def is_lowering(old: int | None, new: int | None) -> bool:
 
 
 def retention_confirm_text(days: int | None) -> str:
+    """The shorter-retention confirmation (past-sessions-backup plan D10: an
+    earlier backup may still hold the sessions it deletes)."""
     return (
-        f"Keep past sessions for only {retention_label(days).lower()}? Every kept session "
-        "older than that is deleted now and cannot be recovered."
+        f"Keep past sessions for only {retention_label(days).lower()}? Kept sessions "
+        "older than that are deleted now from Past sessions; one whose completion date "
+        "cannot be read, or whose deletion fails, is kept and counted. An earlier backup "
+        "may still hold them."
     )
 
 
@@ -880,3 +902,263 @@ def retention_sweep(
                     session_id, "expired", created_at=write.created_at, create=write.create
                 )
     return report
+
+
+# --- the run gate (past-sessions-backup plan D11) ----------------------------
+# Why a backup or restore cannot start now — checked in this order by
+# ``MainWindow.archive_run_refusal`` (a draft write in flight reads the write's
+# own line, ``models.write_line("write_in_flight")``, first) — and why the
+# window will not close while one runs.
+
+ARCHIVE_RUNNING_LINE: Final = "A backup or restore is running - wait for it to finish."
+ARCHIVE_CLOSE_LINE: Final = (
+    "A backup or restore is running - wait for it to finish before closing."
+)
+ARCHIVE_LIVE_LINE: Final = "Finish or discard the current recording first."
+ARCHIVE_RECOVERY_LINE: Final = "Review or discard the recordings on the Recovery page first."
+ARCHIVE_ENROLMENT_LINE: Final = (
+    "Voice enrolment is running - wait for it to finish, or Stop it, first."
+)
+ARCHIVE_BUSY_LINE: Final = "Wait for the current work to finish."
+
+
+# --- Back up (past-sessions-backup plan Flow 1; D1, D5, D6, D10) -------------
+# Counts, dates and the backup file's own name only (C1, C7): never an id, a
+# name, a path or exception text. No verdict and no keep-or-destroy advice
+# (decision 0.14): the downtime procedure states that rule once.
+
+BACKUP_GROUP_TITLE: Final = "Backup"
+BACKUP_LABEL: Final = "Back up..."
+BACKUP_HELP: Final = (
+    "An encrypted backup of Past sessions and the audit record, protected by a "
+    "passphrase you choose, onto a drive attached to this computer."
+)
+BACKUP_DIALOG_TITLE: Final = "Back up past sessions"
+BACKUP_FILTER: Final = "Clinic Scribe backups (*.csbk)"
+BACKUP_NOT_AVAILABLE: Final = "Back up is not available in this window."
+BACKUP_NO_LAYER: Final = (
+    "The backup was not made: Clinic Scribe cannot check where a file would go in this "
+    "window."
+)
+BACKUP_RUNNING: Final = (
+    "Backing up - this can take a minute. The rest of Clinic Scribe waits until it is done."
+)
+BACKUP_NOTHING: Final = "Nothing to back up yet."
+BACKUP_NOTHING_LEFT_OUT: Final = "Nothing eligible was left out."
+BACKUP_KEEP_PASSPHRASE: Final = "Keep the passphrase somewhere other than the drive."
+BACKUP_PART_MAY_REMAIN: Final = "A partial backup file may remain on the drive."
+BACKUP_DATE_NOT_SAVED: Final = (
+    "The backup date could not be saved - the reminder will not know about this backup."
+)
+BACKUP_CHOOSE_ATTACHED: Final = "Choose a folder on a drive attached to this computer."
+BACKUP_SAME_DISK_QUESTION: Final = "Back up to this folder anyway?"
+BACKUP_SAME_DISK_ACTION: Final = "Back up here"
+# D1: Back up refuses while the audit record cannot be read (any code).
+BACKUP_AUDIT_UNREADABLE: Final = (
+    "The audit record cannot be read - see Past sessions problems in the downtime "
+    "procedure."
+)
+_BACKUP_FAILED: Final[dict[str, str]] = {
+    "archive_unreadable": (
+        "The backup was not made: the Past sessions list could not be read just now. "
+        "Try again."
+    ),
+    "audit_unavailable": BACKUP_AUDIT_UNREADABLE,
+    "too_large": (
+        "The backup was not made: it would be larger than one backup file can hold."
+    ),
+    "nothing_to_back_up": BACKUP_NOTHING,
+    "nothing_could_be_read": (
+        "The backup was not made: no session or audit row could be read."
+    ),
+    "destination_refused": (
+        "The backup was not made: Clinic Scribe could not confirm that folder is still a "
+        "place a backup can be kept. Choose the folder again."
+    ),
+    "write_failed": (
+        "The backup could not be written to that folder - check the drive and try again."
+    ),
+    "publish_unverified": (
+        "The backup file could not be checked once it was saved, so it may not open - "
+        "make the backup again."
+    ),
+    "kdf_memory": (
+        "The backup was not made: there was not enough free memory to protect it with "
+        "the passphrase. Close other programs and try again."
+    ),
+    "kdf_unavailable": (
+        "The backup was not made: this computer could not protect it with the passphrase."
+    ),
+    "unexpected": f"The backup was not made: {UNEXPECTED_REASON}.",
+}
+# Decision 0.6 / 0.10: the reminder shows once this many days have passed.
+BACKUP_REMINDER_DAYS: Final = 7
+
+
+@dataclass(frozen=True)
+class HopFailed:
+    """A backup or restore hop's failure, as a worker reports it (D4): a
+    closed code — never exception text — and, from the writer, whether a
+    ``.part`` file may remain and what a ``nothing_could_be_read`` left out.
+    ``error_type`` is an unforeseen exception's TYPE name only (sanitised by
+    ``logging_setup.exception_type_name``), for the page to log once (peer
+    round 29 PR-LOW-202); it never reaches a line."""
+
+    code: str
+    part_may_remain: bool = False
+    left_out: LeftOut | None = None
+    error_type: str | None = None
+
+
+def hop_failure(exc: BaseException) -> HopFailed:
+    """The closed code of a hop's exception (D4): a backup format or run
+    error's own code (with the writer's two facts); anything else is
+    ``unexpected``, carrying its type name and nothing else."""
+    if isinstance(exc, BackupRunError):
+        # Peer round 30 PR-LOW-301: the writer's own ``unexpected`` carries
+        # the unforeseen exception's type name through its cleanup.
+        return HopFailed(exc.code, exc.part_may_remain, exc.left_out, exc.error_type)
+    if isinstance(exc, BackupFormatError):
+        return HopFailed(exc.code)
+    return HopFailed("unexpected", error_type=exception_type_name(type(exc)))
+
+
+def _count(number: int, singular: str, plural: str) -> str:
+    return f"{number} {singular if number == 1 else plural}"
+
+
+def _sessions(number: int) -> str:
+    return _count(number, "session", "sessions")
+
+
+def _rows(number: int) -> str:
+    return _count(number, "audit row", "audit rows")
+
+
+def eligible_left_out(left_out: LeftOut) -> int:
+    """Sessions left out for any reason but a kept recording (D12: those are
+    in no backup, old or new, and are counted apart)."""
+    return sum(
+        count for reason, count in left_out.entries.items() if reason != "holds_recording"
+    )
+
+
+def _left_out_sentences(left_out: LeftOut, not_restorable: int) -> list[str]:
+    """"Left out: X sessions, Y audit rows." and "Cannot be restored by this
+    version: V.", each part that is zero omitted."""
+    sentences: list[str] = []
+    parts = []
+    sessions = eligible_left_out(left_out)
+    if sessions:
+        parts.append(_sessions(sessions))
+    if left_out.rows:
+        parts.append(_rows(left_out.rows))
+    if parts:
+        sentences.append(f"Left out: {', '.join(parts)}.")
+    if not_restorable:
+        sentences.append(f"Cannot be restored by this version: {not_restorable}.")
+    return sentences
+
+
+def _holds_recording_sentence(count: int) -> list[str]:
+    """D12: in words that are true whether or not the audio file is there."""
+    if not count:
+        return []
+    verb = "is" if count == 1 else "are"
+    return [
+        f"{_sessions(count)} {verb} not in a backup because a kept recording or its key "
+        "is still present."
+    ]
+
+
+def backup_success_line(report: BackupReport, *, date_saved: bool = True) -> str:
+    """Flow 1's success line: the published file's name and its counts; then
+    "Nothing eligible was left out." ONLY when no eligible session and no
+    audit row was left out and nothing is ``not_restorable`` — otherwise
+    what was left out; then the sessions a kept recording keeps out of every
+    backup (D12); then the passphrase rule. With ``date_saved`` False, D6's
+    sentence that the reminder will not know about it."""
+    sentences = [
+        f"Backup written: {report.file_name} - {_sessions(report.entries)}, "
+        f"{_rows(report.rows)}."
+    ]
+    if report.nothing_left_out:
+        sentences.append(BACKUP_NOTHING_LEFT_OUT)
+    else:
+        sentences += _left_out_sentences(report.left_out, report.not_restorable)
+    sentences += _holds_recording_sentence(report.holds_recording)
+    sentences.append(BACKUP_KEEP_PASSPHRASE)
+    if not date_saved:
+        sentences.append(BACKUP_DATE_NOT_SAVED)
+    return " ".join(sentences)
+
+
+def backup_failed_line(failure: HopFailed) -> str:
+    """A refused or failed backup, by its closed code (an unknown code reads
+    the fixed line); ``nothing_could_be_read`` gives what was left out, and a
+    ``.part`` that could not be confirmed removed is said to remain (D6)."""
+    sentences = [_BACKUP_FAILED.get(failure.code, _BACKUP_FAILED["unexpected"])]
+    if failure.code == "nothing_could_be_read" and failure.left_out is not None:
+        sentences += _left_out_sentences(failure.left_out, 0)
+        sentences += _holds_recording_sentence(
+            failure.left_out.entries.get("holds_recording", 0)
+        )
+    if failure.part_may_remain:
+        sentences.append(BACKUP_PART_MAY_REMAIN)
+    return " ".join(sentences)
+
+
+def backup_refused_line(reason: str) -> str:
+    """A destination the location rule refused (D7): its fixed reason, then
+    where to choose instead — refused, never "back up anyway"."""
+    return f"The backup was not made: {reason} {BACKUP_CHOOSE_ATTACHED}"
+
+
+def backup_same_disk_question(warning: str) -> str:
+    """D7's same-volume warning, asked before the run begins."""
+    return f"{warning} {BACKUP_SAME_DISK_QUESTION}"
+
+
+def backup_default_name(now: datetime, zone: tzinfo | None = None) -> str:
+    """The name the save dialog proposes; only the chosen FOLDER is used —
+    the writer names the file itself (D6, C1)."""
+    try:
+        day = now.astimezone(zone).strftime("%Y-%m-%d")
+    except (OSError, OverflowError, ValueError):
+        day = now.strftime("%Y-%m-%d")
+    return f"{BACKUP_FILENAME_PREFIX}{day}{BACKUP_SUFFIX}"
+
+
+def _day_text(moment: datetime, zone: tzinfo | None) -> str:
+    try:
+        return moment.astimezone(zone).strftime("%Y-%m-%d")
+    except (OSError, OverflowError, ValueError):
+        return moment.strftime("%Y-%m-%d UTC")
+
+
+def backup_status_line(
+    last_backup_at: datetime | None,
+    completion_dates: Iterable[datetime],
+    now: datetime,
+    *,
+    zone: tzinfo | None = None,
+) -> str | None:
+    """D10's reminder (decisions 0.6, 0.10): N = the listed sessions completed
+    after the last backup (every dated one with no date; an undated entry is
+    not counted). Shown when N > 0 and ``BACKUP_REMINDER_DAYS`` have passed
+    since the last backup — or, with no date, since the OLDEST such session
+    was completed. The app cannot tell a missing date from no backup, so it
+    never says there is none. It never acts."""
+    since = [
+        moment
+        for moment in completion_dates
+        if last_backup_at is None or moment > last_backup_at
+    ]
+    if not since:
+        return None
+    anchor = last_backup_at if last_backup_at is not None else min(since)
+    if now - anchor < timedelta(days=BACKUP_REMINDER_DAYS):
+        return None
+    if last_backup_at is None:
+        return f"No backup date recorded - {_sessions(len(since))} kept."
+    return f"Last backup {_day_text(last_backup_at, zone)} - {_sessions(len(since))} kept since."

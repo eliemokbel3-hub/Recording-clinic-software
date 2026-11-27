@@ -66,14 +66,15 @@ from pydantic import (
 from scribe_desktop import __version__, install_layout
 from scribe_desktop.audit import (
     MAX_ROW_FILE_BYTES,
-    AuditLog,
     AuditSnapshot,
     AuditUnavailable,
     RowDescriptor,
+    RowState,
     _row_aad,
     row_importable,
     valid_month,
 )
+from scribe_desktop.logging_setup import exception_type_name
 from scribe_desktop.past_sessions import (
     AUDIO_KEY_FILENAME,
     ENTRY_FILE_KINDS,
@@ -220,7 +221,11 @@ class BackupRunError(Exception):
     reads ``unexpected``). The text is the code only. From the writer (D6):
     ``part_may_remain`` — the ``.part`` file could not be confirmed removed,
     so the line ends "A partial backup file may remain on the drive." — and,
-    for ``nothing_could_be_read``, the ``left_out`` counts the line gives."""
+    for ``nothing_could_be_read``, the ``left_out`` counts the line gives.
+    ``error_type``: for an ``unexpected`` one translated from an unforeseen
+    exception, that exception's TYPE name only (sanitised by
+    ``logging_setup.exception_type_name``; never its text or the object), so
+    the page can log it once (D4; peer round 30 PR-LOW-301)."""
 
     def __init__(
         self,
@@ -228,10 +233,12 @@ class BackupRunError(Exception):
         *,
         part_may_remain: bool = False,
         left_out: LeftOut | None = None,
+        error_type: str | None = None,
     ) -> None:
         self.code = code if code in RUN_CODES else "unexpected"
         self.part_may_remain = part_may_remain
         self.left_out = left_out
+        self.error_type = error_type
         super().__init__(self.code)
 
 
@@ -1130,6 +1137,15 @@ def _add(archive: zipfile.ZipFile, name: str, blob: bytes) -> None:
 # ---------------------------------------------------------------------------
 
 
+class BackupAuditSource(Protocol):
+    """What hop B reads of the audit record (``AuditLog`` satisfies it, as
+    does the Past sessions page's audit surface)."""
+
+    def backup_snapshot(self) -> AuditSnapshot: ...
+
+    def row_state(self, session_id: str) -> RowState: ...
+
+
 class HoldsBackupKey(Protocol):
     """What ``prepare_backup`` needs of the run (D4's ``ArchiveRun``): the
     derived key ``K_b`` and the KDF parameters (with their salt) it was
@@ -1211,7 +1227,7 @@ _NOT_RESTORABLE_ROWS: Final = frozenset({"newer", "unreadable"})
 
 def prepare_backup(
     store: PastSessionStore,
-    audit: AuditLog,
+    audit: BackupAuditSource,
     run: HoldsBackupKey,
     *,
     made_at: datetime | None = None,
@@ -1487,7 +1503,10 @@ def write_backup_file(
         error = _run_error(exc)
         removed = _remove_part(part, identity) and _listable(destination)
         raise BackupRunError(
-            error.code, part_may_remain=not removed, left_out=error.left_out
+            error.code,
+            part_may_remain=not removed,
+            left_out=error.left_out,
+            error_type=error.error_type,
         ) from None
     finally:
         if owned:
@@ -1607,7 +1626,8 @@ def _run_error(exc: Exception) -> BackupRunError:
         return BackupRunError("too_large" if exc.code == "too_large" else "write_failed")
     if isinstance(exc, OSError):
         return BackupRunError("write_failed")
-    return BackupRunError("unexpected")
+    # Peer round 30 PR-LOW-301 (D4): the type name only, for the one log line.
+    return BackupRunError("unexpected", error_type=exception_type_name(type(exc)))
 
 
 def _listable(folder: Path) -> bool:

@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** past-sessions-backup
-**Overall Progress:** `48%` (21 of 44 tasks)
+**Overall Progress:** `57%` (25 of 44 tasks; Phase 2 done)
 
 ## Lifecycle State
 - Active — REWRITTEN 2026-11-25 as one clean body (the practitioner: "Yes, rewrite it"). It replaces the October 2026 body and the two correction layers (D13, D14) that plan peer-review rounds 6 and 7 added; it folds in every verified finding of rounds 1–8 and three simplifications the practitioner chose that day (decisions 0.10–0.12), and three more taken during the review of this body (0.13–0.15). Nothing is built. NOT ready to build until a fresh cross-family plan peer pass over this body converges (Current State / Handoff Note).
@@ -271,6 +271,30 @@ See `Planning Extraction Summary` (state-once). In one line each: kept recording
   - Verified, then fixed in the same leg: an entry file over D2's per-file bound is now refused `too_large` by the planner, before any file exists or is read in full (it was refused only after the copy, as `unexpected`). The worker's read is capped at the bound too.
   - One new test (the refusal and the boundary-equal success). ruff and mypy clean. No gate opened.
   - OWED: the composer's full desktop suite.
+- 2026-11-26 (stage-3 leg x1): Phase 2 BUILT, Tasks 2.1–2.4, each 🟨 "built, suite owed"; ruff and mypy clean (74 files).
+  - New: `ui/backup_dialog.py`, `tests/test_archive_run.py`, `tests/test_backup_ui.py`. Changed: `ui/main_window.py`, `ui/past_sessions.py`, `ui/past_sessions_view.py`, `ui/bridge.py`, `ui/models.py`, `app.py`, `past_sessions_backup.py` (the `BackupAuditSource` protocol), and the exact-text pins and window helper in `test_ui_screens.py`.
+  - Deviation: `ArchiveRun` is in `ui/past_sessions.py` (import direction); see Task 2.1.
+  - `test_shadow_exits.py` unedited. The app's window was never launched. No gate opened.
+  - OWED, in order: the composer's full desktop suite; then Phase 2's `/review-loop` and peer pass; then the practitioner's live smoke of Back up… on the developer build (UI phase).
+  - NEXT: the composer's suite run.
+- 2026-11-26 (stage-3 leg x2): the composer's run had 4 failures (full suite 11514 passed / 10 skipped). All four are fixed, each at its cause:
+  - `test_shadow_exits.py` drag pin: `PassphraseField` no longer calls `setDragEnabled`. A QLineEdit's drag is off by default, and the dialog test still asserts it. `test_shadow_exits.py` unedited.
+  - The two `TestPastSessionsTab` exact-status pins: D10's reminder belongs there, so these are Task 2.4's named test changes (recorded under Task 2.4).
+  - `test_ui_theme.py`'s same-scheme pin: `test_backup_ui.py`'s dialog render test forced dark on the real application and restored only the scheme marker. It now re-applies the saved scheme. `test_ui_theme.py` unedited; no product change.
+  - Phase 2's `/review-loop` CONVERGED in two rounds. Round 27 found 1 MED and 2 LOW, all applied: a close is refused while a backup hop's thread is still ending; every exit after the passphrase, an unforeseen raise included, closes the run; Back up…'s own group recorded as a deviation on Task 2.3. Three new tests. Round 28 was clean.
+  - ruff and mypy clean (74 files). No gate opened.
+  - OWED, in order: the composer's narrow and full desktop suites; then the codex peer pass; then the practitioner's live smoke of Back up… on the developer build.
+- 2026-11-26 (stage-3 leg v1): peer round 29 (codex, stage-3.p1, round 1 of the cap of 5) verified and fixed in one leg (verify-then-fix).
+  - Both findings verified LOW, production, Fix-now; both applied:
+    - PR-LOW-201: a worker whose `start` raises no longer leaves the page busy (its registration is taken back).
+    - PR-LOW-202: an unforeseen backup failure's stage and type name are now logged once through the app's logger, as D4 requires.
+  - 9 new test functions in `test_backup_ui.py`, and the classifier test pins the type name. ruff and mypy clean (74 files). No gate opened.
+  - OWED: the composer's full desktop suite (and the narrow Phase 2 selection), then peer round 30.
+- 2026-11-26 (stage-3 leg v2): peer round 30 (codex, stage-3.p1, round 2 of the cap of 5) confirmed PR-LOW-201 and found one LOW sibling of PR-LOW-202, PR-LOW-301.
+  - Verified, then fixed in the same leg: an unforeseen failure inside the real writer (copy, verification or publish) now keeps its type name through the writer's `unexpected` translation and cleanup rethrow (`BackupRunError.error_type`). It is logged once at the page's write boundary.
+  - One new test, parametrised on the `.part` removal's outcome, in `test_backup_ui.py`. ruff and mypy clean (74 files). No gate opened.
+  - OWED: the composer's full desktop suite (and the narrow Phase 2 selection, with `test_backup_write.py`), then peer round 31.
+- 2026-11-27 (composer, Phase 2 close): the composer's suites after round 30's fix: desktop 11532 passed / 10 skipped, ruff and mypy clean (74 files); peer pass stage-3.p1 converged at round 31 (findings 2 / 1 / 0). The practitioner's live smoke of Back up… on the developer build at 0.5.0 PASSED ("It passed"; the test backup deleted). Tasks 2.1–2.4 are 🟩 (25 of 44, 57%). NEXT: Phase 3 (Tasks 3.1–3.4: Open a backup and Restore; UI, so it stops for the live smoke).
 - Loop config: executor=claude-p model="claude-opus-5-5" effort=high profile=default; peer=codex model="gpt-6-astra" effort=high; architect=off; cadence=every-phase; caps=review:3,peer:5; gates=executor; cap-raise=executor; high-auto=on; peer-max=12; notify=action-only; scope=all; autocommit=on; isolation=worktree; merge=off; perms=scoped; liveness=10; monitor-delivery=auto; verify=composer
 
 ## Tasks
@@ -324,10 +348,19 @@ Grouped into phases for `/execute-loop` (a review loop and a codex peer pass at 
 
 ### Phase 2 — Back up on the Past sessions page
 
-- [ ] 🟥 **2.1 The run gate (D4, D11).** `ui/main_window.py`: `ArchiveRun`, `archive_run_refusal`, `begin_archive_run`, the disabled window, the `closeEvent` branch. `app.py`: the gate injected into `PeriodicSweep`. `ui/bridge.py`: the `backup_running` refusal and the gate in `_situation`. `ui/models.py`: `START_BACKUP_RUNNING_MESSAGE` and its `chrome_refusal_message` case. Done when: `test_archive_run.py` passes.
-- [ ] 🟥 **2.2 The dialogs (D10).** `ui/backup_dialog.py` (the ONLY file with the new `QLineEdit`s): `passphrase_decision`, the passphrase dialog, the summary dialog. Done when: their Validation items pass and `test_shadow_exits.py` is unedited.
-- [ ] 🟥 **2.3 Back up… (Flow 1).** `ui/past_sessions.py`: the button; a `ChooseBackupPath` seam (the `ChooseWavPath` shape); admission; the passphrase dialog; the location rule; `begin_archive_run`; the four hops over `ui/tasks.py::TaskThread`; hop D's settings write; the success line's two forms and each refusal line. Done when: the UI tests drive the whole flow with fakes, including every exit of Validation's `test_archive_run.py` line for this flow.
-- [ ] 🟥 **2.4 The status line and the changed wording (D10).** `ui/past_sessions_view.py`: `backup_status_line`, shown by `status_lines`; the Delete now confirmation, the delete-done line, the shorter-retention confirmation and the retention warning as D10 gives them (the delete-failed line keeps today's words: deletion does not change). Done when: the Qt-free function is tested for each state and the exact-text tests are updated in this task.
+- [x] 🟩 **2.1 The run gate (D4, D11).** **DONE 2026-11-27** (verified by the composer's suite run after peer round 30 and the practitioner's live smoke) `ui/main_window.py`: `ArchiveRun`, `archive_run_refusal`, `begin_archive_run`, the disabled window, the `closeEvent` branch. `app.py`: the gate injected into `PeriodicSweep`. `ui/bridge.py`: the `backup_running` refusal and the gate in `_situation`. `ui/models.py`: `START_BACKUP_RUNNING_MESSAGE` and its `chrome_refusal_message` case. Done when: `test_archive_run.py` passes.
+  - BUILT 2026-11-26 (stage-3 leg x1), suite owed (composer). `MainWindow.archive_running`, `archive_run_refusal()` (D11's order: a write in flight, a live recording or a discard, Recovery after a refresh, enrolment, the generic busy list and the Past sessions page's own worker), `begin_archive_run(run)` (the admission again and the gate in one call; the rail, the Settings strip and the pages disabled), the release (re-enabled, Recovery refreshed, the bridge told), and `closeEvent` refusing first with `ARCHIVE_CLOSE_LINE`. `PeriodicSweep(archive_running=)` skips all three steps while a run holds the gate. The bridge refuses start, discard and open_review with `backup_running`. Tests: `test_archive_run.py`.
+  - Deviation: `ArchiveRun` lives in `ui/past_sessions.py`, not `ui/main_window.py`, because the window imports the page (one import direction); the window takes the page's `ArchiveGate` protocol shape. `prepare_backup`'s audit parameter is now a `BackupAuditSource` protocol, so the page's audit type is accepted.
+- [x] 🟩 **2.2 The dialogs (D10).** **DONE 2026-11-27** (verified by the composer's suite run after peer round 30 and the practitioner's live smoke) `ui/backup_dialog.py` (the ONLY file with the new `QLineEdit`s): `passphrase_decision`, the passphrase dialog, the summary dialog. Done when: their Validation items pass and `test_shadow_exits.py` is unedited.
+  - BUILT 2026-11-26 (stage-3 leg x1), suite owed (composer). `passphrase_decision` (empty, under 20, not the same; no composition rule; never echoes), `PassphraseField` (signals blocked from construction, `Password` echo, no context menu, no drag, Copy and Cut keys swallowed), `PassphraseDialog` (the value handed over once as a `bytearray`; the fields emptied on accept, refusal, reject and close), `SummaryDialog` and `show_summary` (Close the default; parented to the window). Tests: `test_backup_ui.py` (the decision, both dialogs, Copy and Cut guarded before native Qt, no text signal delivered, no selectable text, list or combo box, light and dark). `test_shadow_exits.py` unedited. The summary dialog is wired to Open a backup in Phase 3.
+- [x] 🟩 **2.3 Back up… (Flow 1).** **DONE 2026-11-27** (verified by the composer's suite run after peer round 30 and the practitioner's live smoke) `ui/past_sessions.py`: the button; a `ChooseBackupPath` seam (the `ChooseWavPath` shape); admission; the passphrase dialog; the location rule; `begin_archive_run`; the four hops over `ui/tasks.py::TaskThread`; hop D's settings write; the success line's two forms and each refusal line. Done when: the UI tests drive the whole flow with fakes, including every exit of Validation's `test_archive_run.py` line for this flow.
+  - BUILT 2026-11-26 (stage-3 leg x1), suite owed (composer). The "Backup" group with Back up… on the page; seams `ask_passphrase`, `choose_backup_path` and `run_hop` (the window passes them through; the real ones are the dialog, a save dialog that uses only the folder, and a `TaskThread` whose `done` is called exactly once, with `unexpected` when the worker ends with no result). Every exit closes the run: both buffers zeroed, the gate released. The settings date is written only after a verified, published file; a failed save adds D6's sentence. Tests: `test_backup_ui.py` `TestBackUp`, `TestTheProductionWorker`, `TestBackUpInTheWindow` (the window disabled mid-run; the button row at the 150 % stand-in and at 960 x 640).
+  - Note for review: the UI has no logger, so an `unexpected` hop is shown by its closed line only; its exception type is not logged.
+  - Superseded 2026-11-26 (peer round 29 PR-LOW-202): the page now takes the app's logger, and an unforeseen failure's stage and type name are logged once (`backup_unexpected`), as D4 requires.
+  - Deviation (review round 27 LOW-002): D10 puts Back up… "beside Export CSV". It is built in its own "Backup" group under the export group, with its help line, so each row stays short at 150 %. Open a backup… joins this row in Phase 3.
+- [x] 🟩 **2.4 The status line and the changed wording (D10).** **DONE 2026-11-27** (verified by the composer's suite run after peer round 30 and the practitioner's live smoke) `ui/past_sessions_view.py`: `backup_status_line`, shown by `status_lines`; the Delete now confirmation, the delete-done line, the shorter-retention confirmation and the retention warning as D10 gives them (the delete-failed line keeps today's words: deletion does not change). Done when: the Qt-free function is tested for each state and the exact-text tests are updated in this task.
+  - BUILT 2026-11-26 (stage-3 leg x1), suite owed (composer). `backup_status_line` (shown after 7 days with at least one session kept since the last backup, or since the oldest when no date is recorded; an entry whose label cannot be read is not counted; only while the page holds a listing). The four strings as D10 gives them; the delete-failed line unchanged. Tests: `test_backup_ui.py` `TestTheBackupStatusLine`, `TestTheChangedWording`; the exact-text pins in `test_ui_screens.py` updated. The state "after a restore moved the date" is tested in Phase 3, with Restore.
+  - Named test changes (leg x2, 2026-11-26): two exact-status pins in `test_ui_screens.py` `TestPastSessionsTab` now include the reminder D10 shows there (dated entries, no backup date, more than 7 days): `test_an_unreadable_setting_deletes_nothing_and_says_so` ("No backup date recorded - 1 session kept.") and `test_a_failing_audit_update_never_stops_a_deletion` (the failure line, then "No backup date recorded - 2 sessions kept.").
 
 ### Phase 3 — Open a backup and Restore
 
@@ -391,6 +424,11 @@ Grouped into phases for `/execute-loop` (a review loop and a codex peer pass at 
 - 2026-11-26 round 24: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=none; action=none
 - 2026-11-26 round 25: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=none; action=none
 - 2026-11-26 round 26: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none [recorded by the composer at stage-2.p1 peer round 4: the converged round omitted its summary line]
+- 2026-11-26 round 27: 0 CRIT / 0 HIGH / 1 MED / 2 LOW; skew=none; action=none
+- 2026-11-26 round 28: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
+- 2026-11-26 round 29: 0 CRIT / 0 HIGH / 0 MED / 2 LOW; skew=none; action=none
+- 2026-11-26 round 30: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=none; action=none
+- 2026-11-26 round 31: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
 
 ## Review Findings Log
 
@@ -3029,3 +3067,211 @@ No new findings — converged
 
 (1 prior fix confirmed / 0 disputed / 0 new PR-* / 0 regression PR-REG-*; verification: 2 candidates / 2 dropped / 0 downgraded.)
 Round Classification: no new or fix-induced finding.
+
+### Round 27 - 2026-11-26 - Phase 2 review (Tasks 2.1–2.4), /review-loop round 1
+
+Source: Claude Code (`claude-opus-5-5` high, executor leg x2 of `/execute-loop` run `past-sessions-backup-20261126-063148-9edc`, stage-3)
+Round status: Closed (3 applied)
+Scope: Phase 2's whole uncommitted diff against `HEAD` (`df33fa7`), with the three new files (`ui/backup_dialog.py`, `tests/test_archive_run.py`, `tests/test_backup_ui.py`), read against D4, D6, D7, D10, D11, the Critical Constraints and Tasks 2.1–2.4. Special attention: every exit closes the run; nothing else writes the archive or the audit record while the gate is held; no passphrase or key in a signal, a log or a line; the changed strings word for word against D10. The composer's suite run of leg x1 (4 failures) was fixed in this leg before the round. Suite evidence for this round: none (pytest is the composer's); ruff and mypy exit 0 (74 files). No session id, patient content or machine-local path is recorded.
+
+**MED-001 — A close can be accepted while a backup hop's thread is still ending.**
+Severity: MED · Class: 🆕 · Triage: Fix-now
+Evidence: a hop's result is delivered by `succeeded`, whose handler can end the run and release the gate (`_backup_written` → `_end_run` → `ArchiveRun.close`). The thread's `run()` has not necessarily returned yet; `finished`, which takes it off `_hops`, is a later queued event. `closeEvent` refuses while `_archive_run` is set, but its generic busy list did not include the Past sessions page, so a close in that gap was accepted with a `QThread` still running. Destroying a running `QThread` aborts the process (the PR6 hazard `closeEvent`'s docstring names). D11 adds the page to the run's admission for this reason; the close needed it too.
+/fix decision: Applied. `closeEvent`'s generic busy list gains `self.past_sessions_screen.is_busy`; the close line is unchanged. Test: `test_backup_ui.py` `test_a_close_waits_for_a_backup_worker_still_ending`.
+
+- LOW-001 — An unforeseen raise after the passphrase was accepted (in the save dialog, the same-disk question, the admission's Recovery refresh, or a hop's handler) left `_run` set with the passphrase or key not zeroed. Back up then stayed unavailable until a restart, which goes against D4's "close on every exit". Triage: Fix-now; Decision: Applied. `on_backup` runs everything after the run object exists inside a guard (`_backup_from_dialogs`), and `_start_hop` wraps each handler. Both close the run through one `_fail_run` (the fixed `unexpected` line) and re-raise, so the exception hook still logs the type name. Tests: `test_a_raise_after_the_passphrase_closes_the_run`, `test_a_handler_that_raises_closes_the_run`. Named residue: a raise in hop D after the file was published shows the not-made line although a verified file exists; no such raise is known.
+- LOW-002 — D10 puts Back up… "beside Export CSV"; the build puts it in its own "Backup" group under the export group, with its help line. Triage: Fix-now (the record); Decision: Applied as an as-built deviation on Task 2.3. The separate group keeps each row short at 150 %, and Open a backup… joins this row in Phase 3. The practitioner's live smoke sees the layout.
+
+Checked with no finding:
+- The bridge refuses `start`, `discard` and `open_review`. `resume_previous`, `resume`, `pause` and `finish` need a live session, and the admission refuses a run while any live, paused or queued session exists. The refusal goes out as message text, not a protocol enum, so the protocol is unchanged (D11).
+- `PeriodicSweep` returns before all three steps. The page's own retention sweep runs only from a tab change, and the tabs are disabled while the gate is held.
+- The hop runner delivers `done` exactly once (`_pending_hops.pop`), with the no-result fallback on `finished`. `succeeded` and `finished` come from one thread to one receiver, so they arrive in order.
+- `accept_key` on a closed run zeroes the incoming key. No path closes a run while hop A's worker holds it.
+- The settings date is saved only on a `BackupReport`. A folder over the bound or holding a control character fails validation (`ValueError`) and gives D6's sentence.
+- The four changed strings match D10 word for word, and the retention warning's new sentence matches D14's inventory wording. The delete-failed line is unchanged.
+- No colour, font or stylesheet outside `ui/theme.py`. The two dialogs hold no selectable text, list or combo box.
+
+Round Classification: 🆕 3 / ⚡ 0 / 🔁 0 (the first review of Phase 2).
+/fix notes: `ui/main_window.py` (one busy check), `ui/past_sessions.py` (`_backup_from_dialogs`, `_fail_run`, the handler guard in `_start_hop`), `tests/test_backup_ui.py` (three tests), the plan (Task 2.3's deviation). ruff and mypy exit 0 after the fixes; pytest owed by the composer. /fix date: 2026-11-26. /fix applied by: the executor (leg x2).
+
+### Round 28 - 2026-11-26 - Phase 2 review (Tasks 2.1–2.4), /review-loop round 2
+
+Source: Claude Code (`claude-opus-5-5` high, executor leg x2 of `/execute-loop` run `past-sessions-backup-20261126-063148-9edc`, stage-3)
+Round status: Closed (0 findings — converged)
+Scope: the whole Phase 2 diff again (baseline `df33fa7`, the three new files included), not only round 27's fixes.
+
+Post-fix checks:
+- `closeEvent`: the page's busy check sits in the generic list after the note engine's `prepare_close`. The run-gate branch still comes first, so a held gate refuses with its own line.
+- `_start_hop`'s handler guard: with the real worker, the re-raise leaves a Qt slot, so the exception hook logs the type name. With a test's synchronous runner, it is caught by the dispatch's own `except` and the run is closed again, which `close` allows.
+- `on_backup`'s guard covers everything after the run object exists. Before that, the admission and the layer check hold no secret. A refusal at the click shows its line and creates nothing.
+- `_fail_run` closes a stale run without touching the page's current one.
+- The three new tests drive each path through the page's seams, with no real thread, and remove the task they add to `_hops` afterwards.
+- The leg's four fixes: the passphrase field makes no `setDragEnabled` call, and drag stays at QLineEdit's default (off), which the dialog test asserts; the two exact-status pins now name the backup reminder D10 shows; the dialog render test restores the saved scheme with `apply_theme`, so the application's palette, sheet, tokens and marker agree again.
+
+ruff and mypy exit 0 (74 files). No session id, patient content or machine-local path is recorded.
+
+No findings.
+
+Round Classification: 🆕 0 / ⚡ 0 / 🔁 0 — converged.
+
+### Round 29 - 2026-11-26 - Phase 2 independent cross-family code peer-review (stage-3.p1, peer round 1)
+
+Source: Codex peer-review
+Round status: Closed
+Reviewer: GPT-family cross-family peer; executor Claude-family. Fresh code review of the uncommitted Phase 2 diff against `df33fa7`, Tasks 2.1–2.4; the new dialog read in full, the other primary files' diffs and their relevant callers read directly. D1–D14, Critical Constraints, Key Findings, Flows, Phase 2's task text and Task 2.3's layout deviation were the contract. Rounds 27 and 28 were read as the current review baseline; closed rounds 1–26 were not review inputs.
+
+Validation evidence supplied by the composer, not rerun here: desktop 11521 passed / 10 skipped (narrow Phase 2 selection 1158 passed / 1 skipped), ruff and mypy clean (74 source files); no extension changes. No pytest, npm, ruff or mypy was run. This review used static source and test inspection only; no real clinical data, backup, clipboard or security payload was opened or exercised.
+
+#### Confirmed prior resolutions
+
+- Round 27 MED-001: `MainWindow.closeEvent` now includes `past_sessions_screen.is_busy` in its generic check, covering the interval between result delivery and worker completion; the held-gate check still precedes `prepare_close`.
+- Round 27 LOW-001: the post-passphrase guard and the result-handler guard close the run and zero its mutable buffers on the paths they cover. The dispatch bookkeeping issue below is a separate sibling, not a repeat of that fix.
+- Round 27 LOW-002: Task 2.3 explicitly records the separate Backup group; no finding is raised against that accepted layout deviation. Round 28 has no finding to dispute.
+
+#### New Findings
+
+**PR-LOW-201 — A failed production worker start leaves the page permanently busy.**
+- **[LOW]** `desktop/src/scribe_desktop/ui/past_sessions.py:1204` — roll back worker registration when dispatch fails before the thread starts.
+- Triage: Fix-now
+- Fix route: premium-only
+- Why it matters: the run gate and secrets are released, but the stale busy entry prevents both another backup and a normal window close. This is a recoverability gap in D4's failed-dispatch exit, made visible by round 27's necessary close guard.
+- Current behaviour: `_run_task` inserts the task into `_pending_hops`, appends it to `_hops`, then calls `task.start()` without cleanup on a raise. `_start_hop` catches that exception and calls `_fail_run`, which closes the run but removes neither registration. A task that never started provides no completion callback to perform `_hop_ended` cleanup. `is_busy` remains true, `archive_run_refusal` returns the busy line, and `closeEvent` refuses indefinitely. `test_a_failed_dispatch_closes_the_run` replaces the entire runner, so it never exercises this partially registered state.
+- Desired behaviour: a dispatch failure before the task starts removes its pending callback and busy registration and disposes of the non-running task, while preserving the existing run cleanup. Do not remove a genuinely running task from close protection.
+- Pattern to follow: the paired `_pending_hops`/`_hops` cleanup in `_deliver` and `_hop_ended`, with exception-safe ownership during construction, connection and start.
+- Pattern siblings: the search for `TaskThread(`, `task.start(`, `_pending_hops` and `_hops` in the Phase 2 primary files found one new production dispatcher, `_run_task`; it serves both hop A and hop C. Both call sites (`on_backup` via `_backup_from_dialogs`, and `_backup_key_ready`) inherit this issue. No second dispatcher was added in this phase.
+- Invariant: D4's failed dispatch leaves no secret, gate or phantom work reservation behind; D11 still refuses close for a real running worker.
+- Verification: with the real `_run_task` selected, replace only `TaskThread.start` with a fake that raises before starting, then invoke Back up on synthetic data. Check that both buffers are zeroed, the gate is released, `_hops` and `_pending_hops` are empty, a later backup can be admitted, and a close can be accepted. Repeat for hop C's dispatch; retain the finishing-worker close test. This reproduction was traced statically, not run in this sandbox.
+- Regression risk: cleanup must distinguish an unstarted task from a running task and must not deliver the handler twice or prematurely release close protection.
+- Scope-expansion disposition: within Task 2.3's existing worker and failed-dispatch contract; no production store change.
+- /fix decision: Applied
+- /fix notes: `ui/past_sessions.py` `_run_task`. The task is wired first and registered after, and a `start` that raises takes back its `_pending_hops` and `_hops` registration and is disposed, but only while `isRunning()` is false, so a running worker keeps close protection. The raise is passed on to `_start_hop`'s dispatch `except`, which ends the run as before. Nothing is delivered twice: the callback is popped. Pattern siblings: the one dispatcher, used by both hop A and hop C; no other site. Tests: `test_backup_ui.py` `TestAFailedWorkerStart`, which uses the real `_run_task` with `TaskThread.start` faked to raise and never starts a thread. It covers hop A (then a second run admitted), hop C, and the window's admission refusing nothing afterwards. The finishing-worker close test is kept. Verified by ruff and mypy (exit 0, 74 files); pytest owed by the composer.
+- /fix date: 2026-11-26
+- /fix applied by: Claude Code
+
+**PR-LOW-202 — Unexpected backup exceptions lose D4's type-only diagnostic.**
+- **[LOW]** `desktop/src/scribe_desktop/ui/past_sessions.py:259` — preserve the safe exception type before converting an unforeseen failure to `unexpected`.
+- Triage: Fix-now
+- Fix route: premium-only
+- Why it matters: a failed backup presents only the generic line, and the only permitted diagnostic explaining which operation failed is discarded. D4 explicitly requires the exception's type name to be logged for unforeseen failures; the Task 2.3 note that the UI has no logger describes the omission but does not implement that requirement.
+- Current behaviour: `_derive_backup_key` and `_write_backup` catch every ordinary exception and return `hop_failure(exc)`; `hop_failure` reduces an unrecognised exception to `HopFailed("unexpected")` without retaining its type. The GUI snapshot catch does the same. These exceptions never reach the application exception hook. The dispatch catch also swallows its exception. `_on_hop_failed` intentionally discards the TaskThread string, which is safe for content but supplies no replacement diagnostic. Round 27's re-raise covers handler/dialog exceptions only.
+- Desired behaviour: record a sanitised type-only diagnostic at the catch boundary for an unforeseen exception, through the existing safe logging machinery or an injected content-free reporting seam, while keeping the UI's fixed `unexpected` line. Do not log, forward or parse the raw `TaskThread.failed` message to recover a diagnostic.
+- Pattern to follow: `logging_setup.exception_type_name` and `log_event`; preserve the existing prohibition on exception messages, tracebacks, passphrases, keys, content and arbitrary paths.
+- Pattern siblings: a search for `hop_failure`, `except Exception`, `_on_hop_failed`, `logger` and logging calls across the new backup flow found the two worker catches (`ui/past_sessions.py:259`, `:281`), the snapshot catch (`:1119`), and the dispatch catch (`:1189`). The fallback at `:1215` has no safe exception object and must continue to ignore its raw message; arrange any reporting before that boundary. `ui/past_sessions_view.py:1008` is the shared classifier that currently drops the type. Existing unrelated page error handlers are outside this finding.
+- Invariant: D4/C3: unforeseen failures are diagnosable by type only; no sensitive text reaches signals, logs or audit records.
+- Verification: inject ordinary unexpected exceptions independently into derivation, snapshot, write and dispatch using synthetic fakes and a captured diagnostic seam. Assert one type-only diagnostic, the unchanged fixed UI line, and normal cleanup; named backup refusals remain named. The review did not run these checks or author payload strings.
+- Regression risk: introducing logging at several layers can duplicate records or accidentally include exception text. Log once at the boundary that still owns the exception and use the existing type sanitiser.
+- Scope-expansion disposition: within D4's specified failure reporting; no new audit field or schema.
+- /fix decision: Applied
+- /fix notes: `ui/past_sessions_view.py`: `HopFailed` gains `error_type`, and `hop_failure` fills it, for an unforeseen exception only, through `logging_setup.exception_type_name`. A named code carries none, and the line is unchanged. `ui/past_sessions.py`: an injected `logger` (None: nothing logged) and one `_noted(stage, failure)`. It writes `log_event(logger, "backup_unexpected", detail_code=<stage>, error_code=<type>)` once, at the GUI-thread boundary that receives the failure: `derive` (hop A's result), `snapshot` (hop B's catch), `write` (hop C's result), `dispatch` (the dispatch catch). The raw `TaskThread.failed` text and the no-result fallback stay unlogged. `ui/main_window.py` passes `past_sessions_logger`, and `app.main` passes the app's one logger. Pattern siblings: the four catch boundaries the finding names, plus the shared classifier. Tests: `test_backup_ui.py` `TestTheUnforeseenFailureIsLoggedByType`, one test per boundary: one record, stage and type only, no exception text, the fixed line, the run closed. It also checks that a named failure (`kdf_memory`) logs nothing and that a page without a logger still closes the run. The classifier test now pins the type name. Verified by ruff and mypy (exit 0, 74 files); pytest owed by the composer.
+- /fix date: 2026-11-26
+- /fix applied by: Claude Code
+
+#### Independent pass and handoff
+
+The gate's admission, disabled parent widgets, bridge refusals and periodic-sweep early return cover the normal competing writers. The remaining bridge actions require a live session that admission excludes. Passphrase fields block their text signals, use Password echo, suppress Copy/Cut and context menus, and disable drops; the normal accept/refusal/cancel/close paths clear their text. Mutable run buffers are zeroed on the inspected completed exits; immutable/Qt memory residue remains the plan's expressly named limit. The new dialogs add no list, combo box, selectable label, visual token value, clipboard placement or audit text. The status calculation and changed deletion/retention strings follow D10. No change to `test_shadow_exits.py` was found.
+
+Recommended action: fix the two failure-path gaps, run the focused fake-dispatch and diagnostic checks, then let the composer rerun the authorised suites outside this sandbox and request the next peer pass.
+
+Summary: 3 prior resolutions confirmed / 0 disputed / 2 new PR-* / 0 regression PR-REG-*; verification: 4 candidates / 2 dropped / 0 downgraded. Dropped candidates were ungated remaining Chrome actions (their live-session precondition rules them out) and ordinary immutable passphrase residue (already named by D3/D4). Pair precheck: 28 unique round headers, no compaction marker and no exact-name findings companion; Round 29 allocated from the highest Findings Log header. Only this appended round was written.
+
+#### Verified tuples (executor, stage-3 leg v1, 2026-11-26)
+
+- PR-LOW-201 (peer: LOW · Fix-now · premium-only): materiality=behavioral severity=low surface=production rec=Fix-now — `_run_task` registers the task in `_pending_hops` and `_hops` before `task.start()` with no rollback. A raise from `start` goes to `_start_hop`'s dispatch `except`, which closes the run, but nothing removes the registration. An unstarted thread emits no `finished`, so `_hop_ended` never runs, `is_busy` stays true, and both a later backup (`ARCHIVE_BUSY_LINE`) and a close (round 27's busy check) are refused until restart. Reaching it needs `QThread.start` to raise (resource exhaustion, a deleted C++ object), so LOW.
+- PR-LOW-202 (peer: LOW · Fix-now · premium-only): materiality=behavioral severity=low surface=production rec=Fix-now — D4 says "anything unforeseen is `unexpected`, with the exception's TYPE name logged and nothing else", and C3 says "anything unforeseen its type name only". The four catch boundaries (hop A's and hop C's worker bodies, hop B's snapshot catch, the dispatch catch) turn an unforeseen exception into `HopFailed("unexpected")` and log nothing, and `ui/` holds no logger. Task 2.3's "no logger" note records the gap but does not meet D4.
+Cap verdict: accept — production-behavioral — peer round 1 of 5; two verified LOW failure-path gaps inside Task 2.3's contract, both fixed in this leg; no CRIT, HIGH, regression or scope expansion.
+Leg route: verify-then-fix
+- PR-LOW-201 decision: Applied — `_run_task` takes back an unstarted task's registration; `TestAFailedWorkerStart`.
+- PR-LOW-202 decision: Applied — the type name logged once per boundary through the injected logger; `TestTheUnforeseenFailureIsLoggedByType`.
+Fix-delta self-check: PASS — re-read the applied hunks in `ui/past_sessions.py`, `ui/past_sessions_view.py`, `ui/main_window.py`, `app.py` and `tests/test_backup_ui.py`. No import cycle (`logging_setup` imports only `install_layout`). The `HopFailed("unexpected")` equality pins elsewhere compare the fallback, which carries no type. A handler raise under a synchronous test runner is logged at most once (`dispatch`, and only with a logger).
+
+
+### Round 30 - 2026-11-26 - Phase 2 independent cross-family code peer-review (stage-3.p1, peer round 2)
+
+Source: Codex peer-review
+Round status: Closed
+Reviewer: GPT-family cross-family peer; executor Claude-family. Fresh code re-review of the uncommitted Phase 2 diff against HEAD, Tasks 2.1–2.4, including the new dialogs and tests. Read Round 29's findings, verified tuples, decisions and fix notes first, then checked the whole supplied scope against D1–D14, the Critical Constraints, Key Findings, Flows and task text. Rounds 27–29 were the current review baseline; closed Findings Log rounds 1–26 and Review History before round 27 were not review inputs.
+
+Validation supplied by the composer, accepted without rerunning: desktop pytest 11530 passed / 10 skipped, exit 0; narrow Phase 2 selection 1294 passed / 1 skipped; ruff and mypy clean (74 source files). No extension file changed. This review ran no pytest, npm, ruff or mypy; source and tests were inspected statically. No real clinical data or backup was read, and no security payload was authored or run.
+
+#### Verification of Round 29's fixes
+
+- PR-LOW-201 confirmed fixed for a start that raises before running: `ui/past_sessions.py:1213–1236` wires before registration, then removes both registrations and schedules disposal only when `isRunning()` is false. A running task remains in `_hops` for close protection. Both hop A and hop C use this dispatcher. `TestAFailedWorkerStart` exercises the real dispatcher with only `start` replaced; `_deliver` still pops the callback before invoking it, so a later `finished` cannot deliver the result twice. Round 27's finishing-worker close guard remains present.
+- PR-LOW-202 confirmed at the four outer boundaries, but incomplete inside the real writer: `hop_failure` sanitises an ordinary exception's type, `_noted` logs only the fixed stage and that type, and the logger is wired from `app.py:884` through `ui/main_window.py:791`. The raw TaskThread failure message remains ignored. The direct derive, snapshot, write and dispatch tests cover those boundaries. The remaining normalisation path is the finding below; neither exception text nor a path was found reaching the new log call.
+- No dispute with the original diagnoses or the executor's verified tuples. Round 27's cleanup and layout resolutions remain intact; no duplicate result delivery or newly unprotected running task was identified in the production paths inspected.
+
+#### New Findings
+
+**PR-LOW-301 — The real writer still discards an unforeseen exception's type before the new diagnostic boundary.**
+- **[LOW]** `desktop/src/scribe_desktop/ui/past_sessions_view.py:1018` — the `BackupRunError` branch drops the diagnostic for the writer's `unexpected` result.
+- Triage: Fix-now
+- Fix route: premium-only
+- Why it matters: D4's type-only diagnostic remains absent for unforeseen exceptions during the actual copy, verification or publication. The backup still fails closed and releases its run; the gap is diagnosis of a failed backup, not loss of the custody or close guard.
+- Current behaviour: `past_sessions_backup.py:1491–1500` catches an exception from the real write pipeline, calls `_run_error`, then creates a new `BackupRunError` preserving only its code and the cleanup facts. `_run_error` at `:1612–1619` reduces an unrecognised exception to `BackupRunError("unexpected")`, losing the original type. `_write_backup` passes that through the new `hop_failure` branch at `ui/past_sessions_view.py:1018`, which supplies no `error_type`; `_noted("write", ...)` therefore emits no record. `TestTheUnforeseenFailureIsLoggedByType.test_hop_c` at `desktop/tests/test_backup_ui.py:993` replaces `write_backup_file` itself, bypassing this catch and normalisation entirely.
+- Desired behaviour: retain only the sanitised original type through the writer's `unexpected` normalisation and cleanup rethrow, then log it once at the existing GUI-thread write boundary. Keep the fixed UI code, `part_may_remain` and `left_out` intact. Do not recover the type by parsing exception text or by logging a chained exception or traceback.
+- Pattern to follow: the existing `exception_type_name` sanitiser, the new `HopFailed.error_type` metadata and `_noted`'s single content-free record. Carry similarly bounded optional metadata across the writer's closed error boundary; do not retain the exception object.
+- Pattern siblings: searched `unexpected`, `except Exception`, `_run_error`, `BackupRunError(` and `hop_failure` in the backup backend and new UI flow. The exception-to-`unexpected` conversion with an original exception available is `_run_error:1619`, followed by its cleanup rethrow at `:1498`; both must preserve the same diagnostic. The four UI catch boundaries already preserve direct unforeseen exceptions. `prepare_backup`'s missing-key `unexpected`, missing-key worker returns, and TaskThread/no-result fallbacks have no original exception type to preserve. Named conversions such as `kdf_unavailable`, `destination_refused` and ordinary `write_failed` retain their specified refusal behaviour.
+- Invariant: D4/C3 — an unforeseen failure is diagnosable by sanitised type only; secrets, paths, exception text and tracebacks never enter signals or logs, and cleanup facts survive error translation.
+- Verification: keep the real `write_backup_file` and UI worker wrapper in a synthetic fixture, and make an operation inside the writer's guarded pipeline raise an ordinary unexpected exception. Assert exactly one `backup_unexpected` record with stage `write` and the original sanitised type, the unchanged fixed UI line, the correct partial-file warning for the cleanup outcome, zeroed run buffers and a released gate. Retain the existing named-failure/no-diagnostic checks and exactly-once delivery checks. This reproduction was traced in source only; no payload or test was run here.
+- Regression risk: metadata can be lost again at the cleanup rethrow, or logging in both backend and GUI can duplicate the record. Preserve only bounded type metadata and keep logging at the existing single boundary; do not alter writer cleanup or catch coverage.
+- Scope-expansion disposition: a missed sibling of PR-LOW-202 in the already-integrated hop C failure path; a small supporting backend change is needed within D4/Task 2.3, with no file-format, audit-schema or store change.
+- /fix decision: Applied
+- /fix notes: `past_sessions_backup.py` changes in three places:
+  - `BackupRunError` gains a bounded `error_type` (a string; never the text or the exception object).
+  - `_run_error` fills it for an unrecognised exception through `logging_setup.exception_type_name`.
+  - `write_backup_file`'s cleanup rethrow carries it beside `part_may_remain` and `left_out`.
+
+  `ui/past_sessions_view.py`: `hop_failure`'s `BackupRunError` branch passes it on into `HopFailed.error_type`. The record is still written once, by the page's `_noted("write", …)`; the backend logs nothing. Named conversions (`write_failed`, `too_large`, `destination_refused`, `kdf_unavailable`) carry no type.
+
+  Pattern siblings: `_run_error` and its rethrow, the one conversion with an exception in hand; the other catches are named or have no exception (verified tuple above).
+
+  Test: `test_backup_ui.py` `TestTheUnforeseenFailureIsLoggedByType::test_inside_the_real_writer`, parametrised on whether the `.part` removal succeeds. It uses the real writer and the page's worker body, with the writer's own `_publish` raising: one `write` record with the original type, no exception text, the fixed line with the partial-file sentence following the removal, no published `.csbk`, and the run closed. The direct `test_hop_c` and the named-failure test are kept.
+
+  Verified by ruff and mypy (exit 0, 74 files); pytest owed by the composer.
+- /fix date: 2026-11-26
+- /fix applied by: Claude Code
+
+#### Independent pass and handoff
+
+The run admission still refreshes Recovery and checks write reservations, live and recovered sessions, enrolment and every relevant busy screen before taking the gate without yielding. The disabled window, Chrome refusal state and periodic-sweep early return cover the app's competing writers; the held-run close branch remains before `prepare_close`. The dispatcher retains callback ownership until its first result, and completion removes busy registration. Passphrase text signals and copy routes remain suppressed; the dialog exits clear widget text, and the run's completed exits zero its mutable buffers. The summary defaults to Close. The success, reminder, deletion and retention text follows the scoped decisions, including Task 2.3's recorded separate Backup group. `test_shadow_exits.py` has no diff. No additional correctness, structural or downstream regression finding survived verification.
+
+Recommended action: preserve the original safe type through the real writer's unexpected-error translation, add the integrated failure-path check, then have the composer rerun the authorised suites outside the sandbox before the next peer pass.
+
+Summary: 1 prior fix fully confirmed / 1 partly confirmed / 0 disputed / 1 new PR-* / 0 regression PR-REG-*; verification: 3 candidates / 2 dropped / 0 downgraded. Dropped candidates: a destination alias changed by another program is within the explicitly accepted same-user race boundary, and premature release after a hypothetical start-then-raise had no demonstrated production trigger (a running task's close protection is retained). Pair precheck: 29 unique Findings Log round headers, highest 29; no compaction marker and no exact-name findings companion. Round 30 allocated from the highest Findings Log header. Only this new round was appended; no other file or earlier plan section was changed.
+
+#### Verified tuples (executor, stage-3 leg v2, 2026-11-26)
+
+- PR-LOW-301 (peer: LOW · Fix-now · premium-only): materiality=behavioral severity=low surface=production rec=Fix-now — `write_backup_file`'s catch (`past_sessions_backup.py:1491`) calls `_run_error`. That returns a bare `BackupRunError("unexpected")` for an exception it does not recognise (`:1619`), and the rethrow at `:1498` rebuilds the error from its code, `part_may_remain` and `left_out` only. So `hop_failure`'s `BackupRunError` branch gets no type, and `_noted("write", …)` logs nothing for an unforeseen failure inside the real copy, verification or publish. `test_hop_c` replaces `write_backup_file` itself and never reaches that catch. Siblings checked: `derive_key`'s catch (`:525`) gives the named `kdf_unavailable`; `prepare_backup`'s missing-key `unexpected` (`:1240`) has no exception; `check_location`'s catch (`:1475`) is the named `destination_refused`. `_run_error` is the only conversion with an exception in hand.
+Cap verdict: accept — production-behavioral — peer round 2 of 5; one verified LOW sibling of round 29's PR-LOW-202 in the same Task 2.3 path, fixed in this leg with a bounded type-only field; no CRIT, HIGH, regression or scope expansion (no file-format, audit-schema or store change).
+Leg route: verify-then-fix
+- PR-LOW-301 decision: Applied — the writer's `unexpected` keeps the sanitised type through its translation and cleanup rethrow, and it is logged once at the page's write boundary; `test_inside_the_real_writer` (both removal outcomes).
+Fix-delta self-check: PASS — re-read the applied hunks in `past_sessions_backup.py` (the field, `_run_error`, the rethrow), `ui/past_sessions_view.py` (`hop_failure`'s positional order matches `HopFailed`'s fields) and `tests/test_backup_ui.py`. No exception object is kept, `part_may_remain` and `left_out` are passed through unchanged, no second log site was added, and `logging_setup` imports only `install_layout`, so there is no cycle.
+
+### Round 31 - 2026-11-26 - Phase 2 independent cross-family code peer-review (stage-3.p1, peer round 3)
+
+Source: Codex peer-review
+Round status: Closed
+Reviewer: GPT-family cross-family peer; executor Claude-family. Fresh code re-review of the uncommitted Phase 2 diff against HEAD, Tasks 2.1–2.4. Round 30's PR-LOW-301, verified tuple, decision and fix notes were checked first; then the full new dialog, the scoped production diffs and their callers, and the tests needed to verify the claims. Reference: D1–D14, Critical Constraints, Key Findings, Flows and Phase 2's task text, including the recorded layout and ArchiveRun-location deviations. Rounds 27–30 were the current findings baseline; closed findings rounds 1–26 and pre-round-27 Review History were not review inputs.
+
+Validation supplied by the composer, accepted without rerunning: desktop pytest 11532 passed / 10 skipped, exit 0; narrow Phase 2 selection 744 passed; ruff and mypy clean (74 source files). No extension file changed. Static source and test inspection only: no pytest, npm, ruff or mypy, no real clinical data or backup, and no security payload authored or run.
+
+#### Confirmed fix and downstream checks
+
+- PR-LOW-301 is fixed. `desktop/src/scribe_desktop/past_sessions_backup.py:1622` preserves the original unforeseen exception's type through `exception_type_name`; the cleanup rethrow at `:1505` carries that metadata together with `part_may_remain` and `left_out`. `desktop/src/scribe_desktop/ui/past_sessions_view.py:1013` passes it into the matching `HopFailed` fields. `desktop/src/scribe_desktop/ui/past_sessions.py:1199` remains the single backup diagnostic site; the backend adds no logging. Named failures retain their existing codes and do not acquire a diagnostic. No exception text, exception object, traceback or path is passed to this log call.
+- `desktop/tests/test_backup_ui.py:1007` retains the real writer and UI worker wrapper and injects the failure inside `_publish`. Both partial-file removal outcomes assert one original-type diagnostic, the corresponding fixed UI line, no published backup and run cleanup. This closes the earlier test's bypass of the writer's own exception translation.
+- Round 29's dispatch fix remains intact: `ui/past_sessions.py:1213` rolls back an unstarted task's registrations; a running task remains protected. `_deliver` at `:1237` pops the callback before invoking it, so `_hop_ended` at `:1254` cannot deliver a second result. The finishing-worker close guard remains in `MainWindow.closeEvent`; no regression from the diagnostic metadata change was found.
+
+#### Independent pass
+
+- Admission still refreshes Recovery and checks write reservations, live and recovered sessions, enrolment and busy workers before taking the gate without an event-loop yield (`ui/main_window.py:1598`, `:1638`). Disabled pages and navigation, the bridge refusal and the periodic-sweep early return cover the app's competing writers. Remaining bridge actions require a live session, which admission excludes. The held-run close refusal remains before `prepare_close` (`:1669`).
+- The inspected dialog exits clear widget text; text signals, Copy/Cut, context menus and drops remain blocked. Accepted mutable buffers pass to the run, which zeroes them on completed exits; the immutable/Qt memory residue is already named in D3/D4. The summary remains parented to the window with Close as default. No new clipboard placement, selectable text, list or combo box was introduced.
+- The backup settings date is recorded only after the verified publication report. The success/refusal lines, reminder calculation and changed deletion/retention wording follow the scoped decisions. The separate Backup group is the recorded Task 2.3 deviation. `test_shadow_exits.py` has no diff. No additional correctness, structural or downstream regression finding survived verification.
+
+#### Review summary
+
+No new findings — converged.
+
+Recommended action: return this clean peer result to the composer; no fix is requested by this round. The supplied suite evidence stands, and the plan's practitioner-owned UI smoke remains separate from this static review.
+
+Summary: 1 targeted fix confirmed / 0 disputed / 0 new PR-* / 0 regression PR-REG-*; verification: 2 candidates / 2 dropped / 0 downgraded. Dropped candidates: unchecked diagnostic metadata at the exception constructor (all current production producers use the sanitiser, and no file or external input supplies it), and remaining ungated Chrome actions (their live-session prerequisites cannot hold during an admitted run).
+
+Pair precheck: 30 unique Findings Log round headers, highest 30; no compaction marker and no exact-name findings companion. Round 31 allocated from the highest Findings Log header. Only this new round was appended; no earlier plan text or other file was changed.

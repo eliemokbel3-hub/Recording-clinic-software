@@ -244,6 +244,12 @@ LIVE_TRANSCRIPT_NOT_READY_PLACEHOLDER: Final = (
 START_GETTING_READY_MESSAGE: Final = (
     "Clinic Scribe is still getting ready - start again in a moment."
 )
+# Past-sessions-backup plan D11: while a backup or restore runs, Chrome's Start,
+# Discard and "Open for review" are refused with this line (never
+# ``getting_ready``). Also ``CHROME_REFUSALS["backup_running"]``.
+START_BACKUP_RUNNING_MESSAGE: Final = (
+    "A backup or restore is running - wait for it to finish."
+)
 
 # Cliniko workflow safeguards plan Task 3.3 (Constraint 4, D1): the desktop
 # consent tick carries PLAN.md's wording verbatim; it is never pre-ticked and
@@ -1017,6 +1023,8 @@ CHROME_REFUSALS: Final[Mapping[str, str]] = {
     # every Start, Chrome's and the desktop's, waits out the start-up import
     # warm-up — bounded (``ml_warmup.START_HOLD_SECONDS``).
     "getting_ready": START_GETTING_READY_MESSAGE,
+    # Past-sessions-backup plan D11: the run gate.
+    "backup_running": START_BACKUP_RUNNING_MESSAGE,
     # Task 5.5 (D6): the banner's "Open for review".
     "review_in_progress": (
         "Save or cancel the note review open on the Review screen first, then open this "
@@ -5423,6 +5431,7 @@ __all__ = [
     "LIVE_TRANSCRIPT_PLACEHOLDER",
     "LIVE_TRANSCRIPT_NOT_READY_PLACEHOLDER",
     "START_GETTING_READY_MESSAGE",
+    "START_BACKUP_RUNNING_MESSAGE",
     "RECORDING_CONSENT_LABEL",
     "DEVELOPMENT_CONSENT_LABEL",
     "DEVELOPMENT_ARMED_LINE",

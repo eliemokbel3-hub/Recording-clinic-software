@@ -178,6 +178,9 @@ _ACTION_CONTROL: Final[dict[str, str]] = {
     "finish": "finish",
     "discard": "discard",
 }
+# Past-sessions-backup plan D11: the commands that start, adopt, discard or
+# open a review of a recording — refused while a backup or restore runs.
+_ARCHIVE_GATED_ACTIONS: Final = frozenset({"start", "discard", "open_review"})
 
 
 class PipeSender(Protocol):
@@ -330,6 +333,9 @@ class ChromeBridge(QObject):
         self._hotkey: HotkeyStatus = NOT_SET_UP
         self._system_pause: SystemPauseStatus = SYSTEM_PAUSE_NOT_SET_UP
         self._lock_refusal: Callable[[], str | None] | None = None
+        # Past-sessions-backup plan D11: the main window's run gate (None: no
+        # backup or restore can run, as in a test that builds a bridge alone).
+        self._archive_gate: Callable[[], bool] | None = None
         self._warning_session: str | None = None
         for signal, slot in (
             (self._connected_q, self._on_connected),
@@ -542,6 +548,18 @@ class ChromeBridge(QObject):
     def _locked_refusal(self) -> str | None:
         check = self._lock_refusal
         return check() if check is not None else None
+
+    def set_archive_gate(self, running: Callable[[], bool] | None) -> None:
+        """Past-sessions-backup plan D11: whether a backup or restore holds the
+        main window's run gate. While it does, every command that starts,
+        adopts, discards or opens a review of a recording is refused
+        ``backup_running``; the gate's state is part of every refusal's
+        situation, so the refusal goes when the run ends."""
+        self._archive_gate = running
+
+    def _archive_running(self) -> bool:
+        running = self._archive_gate
+        return running is not None and running()
 
     def resume_refusal(self) -> str | None:
         """Constraint 7: why a Resume of the tracked session is refused now
@@ -924,6 +942,9 @@ class ChromeBridge(QObject):
             None if outcome is None else type(outcome),
             self._controller.session_ref,
             self._controller.state,
+            # Past-sessions-backup plan D11: a ``backup_running`` refusal is
+            # dropped when the run ends, with no further command.
+            self._archive_running(),
         )
 
     def _current_refusal(self) -> _Refusal | None:
@@ -939,6 +960,12 @@ class ChromeBridge(QObject):
     def _on_command(self, command: CommandPayload) -> None:
         self._refusal = None
         action = command.action
+        if action in _ARCHIVE_GATED_ACTIONS and self._archive_running():
+            # Past-sessions-backup plan D11: refused before anything runs —
+            # never ``getting_ready`` (a refused Start still clears an armed
+            # development tick, ``_refuse``'s rule).
+            self._refuse(action, "backup_running")
+            return
         if action == "open_review":
             self._open_review(command.session_ref)
             return

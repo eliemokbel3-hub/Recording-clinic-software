@@ -593,11 +593,14 @@ class PeriodicSweep:
         last_prune: float,
         last_retention_sweep: float,
         monotonic: Callable[[], float] = time.monotonic,
+        archive_running: Callable[[], bool] = lambda: False,
     ) -> None:
         self._window = window
         self._audit = audit
         self._run_sweep = run_sweep
         self._monotonic = monotonic
+        # Past-sessions-backup plan D11: the main window's run gate.
+        self._archive_running = archive_running
         self.last_prune = last_prune
         self.last_retention_sweep = last_retention_sweep
 
@@ -606,7 +609,11 @@ class PeriodicSweep:
         LOW-003: an unlistable sessions root must not also stop the audit
         prune and the retention deletion, a privacy control). The first
         failure is raised again at the end, so the exception hook logs its
-        type name exactly as before."""
+        type name exactly as before. While a backup or restore holds the run
+        gate (past-sessions-backup D11) NONE of the three steps runs and no
+        clock moves: the next tick after the run does them."""
+        if self._archive_running():
+            return
         failure: Exception | None = None
         for step in (self._session_sweep, self._audit_prune, self._retention_sweep):
             try:
@@ -872,6 +879,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         live_ready=warmup.is_finished,
         start_hold=warmup.holds_start,
         export_recovery_lines=export_recovery_lines,
+        # Past-sessions-backup peer round 29 PR-LOW-202 (D4): an unforeseen
+        # backup failure's type name, through the app's one logger.
+        past_sessions_logger=logger,
     )
     # D8: a linked Start's audit row names the clinic's Cliniko user id,
     # read from the window's clinic registry at each Start.
@@ -915,6 +925,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             run_sweep,
             last_prune=last_prune,
             last_retention_sweep=last_retention_sweep,
+            archive_running=lambda: window.archive_running,
         )
         sweep_timer.timeout.connect(periodic_sweep)
         sweep_timer.start()
