@@ -1325,5 +1325,7 @@ class TestCustody:
 
     def test_the_docstring_gives_the_exact_command(self, tool: ModuleType) -> None:
         doc = tool.__doc__ or ""
-        assert r"& 'C:\Recording clinic software\.venv\Scripts\python.exe'" in doc
-        assert r"\scripts\measure-capture-stall.py'" in doc
+        # The main checkout's command (P.1): cd into it, then two relative paths.
+        assert r"    cd 'C:\Recording clinic software'" + "\n" in doc
+        assert r"    & '.venv\Scripts\python.exe' 'scripts\measure-capture-stall.py'" in doc
+        assert "worktrees" not in doc

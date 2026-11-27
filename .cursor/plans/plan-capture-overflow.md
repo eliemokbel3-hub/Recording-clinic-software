@@ -579,6 +579,7 @@ Source: Codex peer-review (gpt-6-astra, read-only; working tree unchanged). All 
 ### Phase P — Release and observe
 - [ ] 🟥 **P.1 `main`, push, build of record.**   [operator]
   - On the practitioner's word: the script's docstring run command changed from this worktree's path to the main checkout's (Round 7); `main` fast-forwarded per C8; `npm run qa` and the dev extension build in the main checkout; push; the `Release` run; `gh attestation verify` (exit code) and the hashes; the row in `docs/release/pilot-builds.md` with D9's one rollback sentence; `AGENTS.md` and `CHANGELOG.md` updated in the same commit.
+  - As run (2026-11-28, the practitioner's "Yes, start Phase P"): the docstring's command now cds into the main checkout and runs two relative paths (the absolute form does not fit ruff's 100-character line, so the old E501 goes too); its pin in `test_measure_capture_stall.py` moves with it (116 passed).
 - [ ] 🟥 **P.2 Install.**   [operator]
   - The practitioner re-verifies from a normal terminal, installs over 0.4.2 after the day's last Complete or Discard with shadow mode on, reloads the extension and restarts Chrome. The dated line on `plan-phase3a-note-pipeline.md` is on `main` first.
 - [ ] 🟥 **P.3 The first recording's lines.** The installed log shows `capture_stream … state=opened` with `detail_code=mme` and the chosen buffer in ms, a `state=closed` line, and no `state=default_latency`. Recorded here as numbers, by month.

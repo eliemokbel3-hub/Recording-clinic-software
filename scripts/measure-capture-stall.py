@@ -13,7 +13,8 @@ own: every trial, count and time is D5's sampling protocol.
 Run it YOURSELF from a normal PowerShell (never an agent shell), outside
 clinic hours, with Clinic Scribe closed (either build). About 20 minutes:
 
-    & 'C:\\Recording clinic software\\.venv\\Scripts\\python.exe' 'C:\\Recording clinic software\\.claude\\worktrees\\plan-run3-leftovers-8f7c7f\\scripts\\measure-capture-stall.py'
+    cd 'C:\\Recording clinic software'
+    & '.venv\\Scripts\\python.exe' 'scripts\\measure-capture-stall.py'
 
 The same command with one option added:
 
