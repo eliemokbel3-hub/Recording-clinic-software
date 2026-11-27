@@ -1796,6 +1796,101 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     case above, logged as metadata, never a destroyed key; and the plaintext
     the worker holds is bounded in audio (the cap) and not in window count
     (short utterances 5 s apart make many small windows).
+
+    THE RECORDING BUFFER (capture-overflow plan, version 0.4.3). In 2026-11
+    a recording on installed 0.4.2 ended with dropped frames well into the
+    recording, with the app long open and its imports done: not the
+    start-up case the warm-up closes, and the log could not name the cause.
+    Measured on this computer (`scripts/measure-capture-stall.py`, the
+    plan's Tasks 0.2 and 2.1): the microphone stream is on MME, not WASAPI
+    as these documents had said, and with the default buffer a callback
+    held up for 0.3 s was flagged as dropped frames in 5 of 5 trials. So
+    the RECORDING's stream is now opened with an explicit input buffer,
+    `audio_capture.INPUT_LATENCY_SECONDS` (2.5 s, passed as `latency=` in
+    `SoundDeviceBackend.open_stream`), and only when the device's host API
+    is MME. The value was chosen by a rule frozen before the measurement
+    (the plan's D5) and changes only by a new dated decision with the
+    measurement repeated. With it, through the app's own open, callbacks
+    held up for 0.3, 1 and 2 s lost nothing and raised no flag; one held up
+    for 3 s, longer than the buffer, was flagged in 5 of 5. The never-drop
+    rule is unchanged: a flag still delivers its block and then fails the
+    recording with the same message and log word, the audio kept for
+    recovery. What the change adds:
+    - The Microphone tab's level meter and a voice enrolment use a second
+      backend built with no explicit buffer (`app.main`) and open exactly
+      as before, so the always-open meter does not hold 2.5 s of room audio
+      in the device's buffers while the app is idle (the practitioner's
+      decision, 2026-11-26). An overflow there fails safe and visibly:
+      the meter stops with a message and stays stopped until Refresh or
+      a new choice of microphone, and a voice enrolment ends with
+      nothing saved.
+    - If PortAudio refuses the explicit buffer (at the stream's
+      construction or its start), that attempt is closed and ONE open with
+      the default follows, so a refused buffer never refuses a Start; a
+      second refusal is the same `open_failed` device error as before.
+    - `list_input_devices` keeps only the MME entries when any input is on
+      MME (the practitioner's decision, 2026-11-26): each microphone
+      appears once in the app's two device lists, and every listed entry is
+      one whose dropped frames are reported. As PortAudio's source reads
+      (not measured here), a DirectSound or WASAPI input never raises that
+      flag, so a held-up callback there would lose audio silently. Device
+      numbers are PortAudio's own and do not change.
+    - New log lines, written only by the recording's backend and never from
+      the callback, each numbers and fixed words only (`log_event`'s
+      whitelist; a device is its PortAudio number, never its name, and no
+      status or error text is logged): `capture_stream state=opened` with
+      the host word (`mme`, `directsound`, `wasapi`, `wdmks` or `other`)
+      and the buffer asked for, in ms; `state=default_latency` when the
+      stream opened with the default (the host is not MME, or the retry
+      above); `state=closed`, once per stream, with the number of blocks
+      and the longest time between two callbacks; `state=backlog_dropped`
+      just before it when the last callback was more than 250 ms old at the
+      stop; and `capture_failure` gains `duration_ms`, the largest of the
+      last three times between callbacks, when a dropped-frames flag
+      carries one. How to read them: a time far above 100 ms means the
+      callback ran late (the interpreter lock, or Windows not scheduling
+      the thread; a timestamp cannot tell them apart); 30 s or more most
+      likely means the computer was asleep or locked, which the log cannot
+      show, so it is read beside Windows' own power and lock events before
+      a cause is named; an opened line with no closed line is a process
+      exit.
+
+    Residue, named (the plan's D3): the buffer covers a stall, it does not
+    remove it, and the cause is not found. Audio still waiting behind a
+    held-up callback when Finish is pressed is dropped WITHOUT a flag (the
+    stop aborts the stream), and at Pause it arrives while paused and is
+    discarded: up to the stall's length and at most the buffer either way.
+    Before 0.4.3 that stall ended the recording instead. The other
+    direction, accepted by the practitioner by name on 2026-11-27 ("Accept,
+    name it (Recommended)"): if a stall straddles Resume, up to about 2.5 s
+    of sound captured WHILE PAUSED can arrive after Resume and be written
+    into the recording and its transcript, and nothing is logged for it
+    (before 0.4.3 at most about 0.2 s, because a longer stall failed the
+    recording). A pause may be one the patient asked for, or the pause
+    rule's patient-change pause; the clinician reviews the transcript's
+    lines around a Resume as any other. The fix, dropping audio by the
+    time it was captured, is deferred with the Pause and Finish item.
+    `state=backlog_dropped` marks a stop more than 250 ms after the last
+    callback, which is a stop inside a stall; it has two stated limits.
+    It misses a stop that lands just after a stall ends, while the
+    queued blocks are still arriving back to back (the last callback is
+    then recent, yet the abort drops the rest), and a Pause, which does
+    not close the stream. It also appears when a device is lost, because
+    the failed recording's stop comes long after the last callback, with
+    nothing dropped. Read it beside the closed line's longest gap. During a recording the
+    device's buffers can hold up to the buffer's length of room audio in
+    memory, freed when the stream closes. The buffer was measured on this
+    computer's microphone only: another device, or clinic 2's computer, is
+    read from its first `state=opened` line. The measurement script keeps
+    no audio, writes no file of its own (holding the app's single-instance
+    lock opens the app's empty `app.lock`) and calls no logger; a
+    microphone block is in its memory only long enough to be counted, and
+    an error during the measurement prints only its type's name (Ctrl+C
+    prints `interrupted`); an error before the measurement starts, in
+    the imports or the start-up checks, is an ordinary Python error. It is the THIRD developer
+    tool that refuses to start unless `python.exe` is excluded from Windows
+    crash reporting (`exclusions.check_tool_wer`), and it holds the app's
+    single-instance lock for its run.
 12. **Typed edits — the `clinician` provenance (D4; C3, C9).** The TYPE is
     built. In `note.py` a `clinician` assertion's typed text IS its span text
     (no second field, so the digested wording and the carried wording cannot
@@ -4084,6 +4179,9 @@ the installation plan also `packaging/scribe.iss`, its D6/D10).
     kept-recordings replay and `measure-speakers.py` — run under it, and each
     REFUSES to start unless the running interpreter's name is confirmed
     excluded (`exclusions.check_tool_wer`, "Kept recordings" residue (18)).
+    Since the capture-overflow plan (0.4.3) a third tool refuses the same
+    way: `measure-capture-stall.py` reads no stored recording, but it opens
+    the microphone, so live room audio passes through its memory.
 - Backup and snapshot (installation plan D6, installed app only): the
   installer writes one `REG_MULTI_SZ` value `ClinikoScribe` under each of
   `HKLM\SYSTEM\CurrentControlSet\Control\BackupRestore\FilesNotToBackup` and

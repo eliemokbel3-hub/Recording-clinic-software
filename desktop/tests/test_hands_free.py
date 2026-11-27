@@ -694,7 +694,7 @@ class TestHotkeyWindow:
             "acquire_instance_exclusion": lambda name=None, lock_path=None: (
                 app_module.InstanceExclusion("acquired")
             ),
-            "SoundDeviceBackend": lambda: object(),
+            "SoundDeviceBackend": lambda **kwargs: object(),
             "ImportWarmup": InertWarmup,  # round 35 MED-001: no warm-up thread
             # Privacy-professional-controls Task 1.3: never the real audit root.
             "AuditLog": lambda **kwargs: _InertAudit(),

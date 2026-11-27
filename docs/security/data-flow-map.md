@@ -172,7 +172,11 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
    `--unregister` removes them with the rest.
 
 6. **Microphone → encrypted session store (Phase 2).** `scribe-app` captures
-   16 kHz mono PCM16 (sounddevice/WASAPI, ~1 s chunks). Each chunk is
+   16 kHz mono PCM16 (sounddevice on PortAudio's MME host, as measured on
+   this computer in 2026-11; 100 ms device blocks packed into ~1 s chunks;
+   since 0.4.3 the recording's stream asks MME for a 2.5 s input buffer,
+   `audio_capture.INPUT_LATENCY_SECONDS`, so up to that much room audio can
+   wait in the device's buffers, in memory only). Each chunk is
    AES-256-GCM-encrypted IN MEMORY and appended to
    `%LOCALAPPDATA%\ClinikoScribe\sessions\<id>\audio.enc` (fresh random
    nonce per record, chunk index as AAD, sealed footer at Finish). The
@@ -216,6 +220,39 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
    separator form `install_layout.is_unc_path` normalises; an extended
    `\\?\C:\…` drive path counts as local, every other device form as
    network).
+
+   The recording buffer (capture-overflow plan, 0.4.3). Only the
+   recording's stream asks for the 2.5 s buffer, and only on MME; the
+   Microphone tab's level meter and a voice enrolment open with the
+   default, as before. If PortAudio refuses the buffer, one open with the
+   default follows. The device lists show MME entries only when any input
+   is on MME. A stream's life is logged as `capture_stream` lines
+   (`state=opened` with a host word and the buffer in ms, or
+   `state=default_latency`; `state=closed` with the number of blocks and
+   the longest time between two callbacks; `state=backlog_dropped` when a
+   stop lands more than 250 ms after the last callback): numbers and fixed
+   words only, a device by its PortAudio number and never its name. Dropped
+   frames still fail the recording. Named residues (the threat model's
+   "THE RECORDING BUFFER"): audio waiting behind a held-up callback at
+   Pause or Finish is dropped without a flag, up to the buffer's length;
+   a stall straddling Resume can put up to about 2.5 s of sound captured
+   while paused into the recording, unlogged (accepted by the
+   practitioner by name, 2026-11-27); `state=backlog_dropped` misses a
+   stop just after a stall and also appears after a device is lost.
+
+   The measurement tool (developer build only, practitioner-run from a
+   normal terminal with both builds closed):
+   `scripts/measure-capture-stall.py` opens the microphone with the app's
+   stream arguments, counts each block's length and drops the block. No
+   audio is kept, it writes no file of its own (holding the app's lock
+   opens the app's empty `app.lock`) and no logger is called; its printed
+   block holds numbers, a device number, a host word, library versions and
+   whether the imported code is this checkout's, never a device name or a
+   folder path, and an error during the measurement prints only its type's
+   name (Ctrl+C prints `interrupted`; an error in its start-up checks is an
+   ordinary Python error). It refuses before any
+   stream unless `python.exe` is excluded from Windows crash reporting and
+   holds the app's single-instance lock for its run.
 
 7. **Local transcription (Phase 2, in-process, zero network).** On Finish,
    chunks are decrypted streamwise → silero-VAD segmentation → faster-whisper
@@ -745,7 +782,9 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     residue).
     A capture failure is logged as `capture_failure` with the exception's
     type name and a fixed detail word (`audio_capture.CAPTURE_DETAIL_CODES`),
-    never its message. Since 0.3.2 (invented-text guard plan) each window's
+    never its message; since 0.4.3 a dropped-frames failure also carries
+    `duration_ms`, the largest of the last three times between microphone
+    callbacks, when there is one (a number; flow 6). Since 0.3.2 (invented-text guard plan) each window's
     VAD segments pass through the SAME guard as flow 7
     (`transcription.mark_segment_words`, with the worker's accumulated
     segments as "the previous segment") BEFORE the window is posted, so the
@@ -1274,7 +1313,8 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       Reporting\ExcludedApplications`; `--unregister` removes them
       (`python.exe` since the development-recordings plan's hardening round
       45: the two tools that read a real consultation run under it and refuse
-      without it — flow 27; `audacity.exe` since the clinic-smoke plan's
+      without it — flow 27; since 0.4.3 the microphone measurement tool of
+      flow 6 refuses the same way; `audacity.exe` since the clinic-smoke plan's
       D11, for Audacity labelling an exported kept recording — the app's own
       start-up check requires only the first four). For the installed app the installer writes `scribe-app.exe` and
       `scribe-host.exe` = DWORD 1 under the same key in HKLM, plus the

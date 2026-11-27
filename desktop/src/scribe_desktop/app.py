@@ -783,7 +783,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     # a live worker (``live_ready``).
     warmup = ImportWarmup(logger=logger)
     warmup.start()
-    backend = SoundDeviceBackend()
+    # Capture-overflow plan D1/D4: the RECORDING's backend asks for the
+    # larger input buffer and logs its ``capture_stream`` lines; the level
+    # monitor and enrolment get a second instance that opens as before and
+    # logs nothing.
+    backend = SoundDeviceBackend(logger=logger)
+    ui_backend = SoundDeviceBackend(input_latency=None)
     # Privacy-professional-controls Task 1.3: the audit record. Construction
     # touches nothing on disk; Start writes the first row (and the key).
     audit = AuditLog(logger=logger)
@@ -835,7 +840,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     window = MainWindow(
         controller,
-        backend,
+        ui_backend,
         sessions_root=sessions_root,
         audit=audit,
         past_sessions=past_sessions,
