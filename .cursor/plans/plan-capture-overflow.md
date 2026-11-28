@@ -1,14 +1,14 @@
 # Feature Implementation Plan
 **Feature:** capture-overflow
-**Overall Progress:** `85%` (17 of 20 tasks)
+**Overall Progress:** `90%` (18 of 20 tasks done; P.3 and P.4 retained as follow-ups at the close, nothing left to build)
 
 ## Lifecycle State
-- Active
+- Completed — Follow-ups Retained
 
 ## Completion Status
-- Completion timestamp:
-- Main implementation complete: No
-- Ready for archive: No
+- Completion timestamp: 2026-11-28 (the practitioner's "Yes, close it": no clinic use of 0.4.3 for about a month, development continues)
+- Main implementation complete: Yes (0.4.3 built of record at `ee4ae60` and installed, shadow mode on)
+- Ready for archive: No (the plan holds Retained Follow-Up Items: P.3, P.4 and the five deferred items)
 
 ## Plan Lineage
 - Parent plan: `plan-installation.md` (its retained follow-up "a larger PortAudio input buffer", recorded 2026-10-03, round 35 MED-001; this plan is that follow-up, triggered by its own trigger).
@@ -223,10 +223,10 @@ None. No record, file, setting or protocol message changes shape. The installed 
 See `Planning Extraction Summary` (five deferred items, one exclusion, three accepted assumptions). No change to live transcription, thread counts, garbage collection, the warm-up, the queue or the chunk store.
 
 ## Current State / Handoff Note
-- Last completed step: P.2 (2026-11-28: 0.4.3 installed over 0.4.2, shadow mode on). Before it: P.1 (2026-11-28: `main` pushed at `ee4ae60`, 0.4.3 built of record, `Release` run 46083359087, attested). Before it: the commit `3ad0a11` (2026-11-28, on the practitioner's "Yes, commit it"), the full suite after Round 8 (11343 passed / 9 skipped), H4 (2026-11-27: codex rounds 8 and 9, every finding fixed), the full suite after Round 7 (11334 passed / 9 skipped), H1–H3 (Round 7), Tasks 3.1 and 3.2, Task 2.1 ("pass, all good", longest gap 189 ms), Task 1.5, Tasks 1.1 to 1.4, Task 0.3 ("Yes, 2.5 s"), Tasks 0.2 and 0.1, planning and "Approve plan" (2026-11-26).
+- Last completed step: P.5, the close (2026-11-28, the practitioner's "Yes, close it"): Completed — Follow-ups Retained, P.3 and P.4 retained. Before it: the 69 s mock accepted ("Accept 69 s mock", 2026-11-28, `9c5bc3f`), P.2 (0.4.3 installed over 0.4.2, shadow mode on), P.1 (`main` pushed at `ee4ae60`, 0.4.3 built of record, `Release` run 46083359087, attested), the commit `3ad0a11`, H4, H1–H3, Phases 0–3 and planning (2026-11-26).
 - Current in-progress step: None
-- Immediate next action: P.3 after the first recording on 0.4.3: the installed log's `capture_stream` lines (`state=opened` with `detail_code=mme` and 2500 ms, a `state=closed` line, no `state=default_latency`), recorded as numbers by month; then P.4 after about four weeks.
-- Open blockers / open questions: each Phase P step waits for the practitioner's word; none open (the 69 s mock accepted, 2026-11-28). Working pattern: parallel subagents only until the practitioner's usage reset; after it, back to one session working in sequence (their words in Round 7).
+- Immediate next action: none in this plan until the first recording on 0.4.3 (Retained: P.3, then P.4).
+- Open blockers / open questions: none.
 - Last plan sync: 2026-11-28
 
 ## Review History
@@ -586,24 +586,41 @@ Source: Codex peer-review (gpt-6-astra, read-only; working tree unchanged). All 
   - The practitioner re-verifies from a normal terminal, installs over 0.4.2 after the day's last Complete or Discard with shadow mode on, reloads the extension and restarts Chrome. The dated line on `plan-phase3a-note-pipeline.md` is on `main` first.
   - Re-verified 2026-11-28 by the practitioner from a normal terminal: `gh attestation verify` printed "Verification succeeded!" (source ref `refs/heads/main`, workflow `release.yml`), and `Get-FileHash` gave `F916E44F…C061A`, equal to the recorded installer hash. The dated line on `plan-phase3a-note-pipeline.md` is on `main` (`3ad0a11`, pushed).
   - Installed 2026-11-28 over 0.4.2 (the practitioner: "installed, status shows 0.4.3 and shadow mode on").
-- [ ] 🟥 **P.3 The first recording's lines.** The installed log shows `capture_stream … state=opened` with `detail_code=mme` and the chosen buffer in ms, a `state=closed` line, and no `state=default_latency`. Recorded here as numbers, by month.
-- [ ] 🟥 **P.4 After about four weeks of clinic use.** From the installed log, by month: the largest `state=closed` gap under 30 s, and the counts of overflows, `state=default_latency` and `state=backlog_dropped` lines. Each deferred item's trigger is read against them.
-- [ ] 🟥 **P.5 Close.** The findings-register row's resolved month, the lifecycle state, `/document`.
+- [ ] ↪ **P.3 The first recording's lines.** (retained at the close, 2026-11-28; see Retained Follow-Up Items) The installed log shows `capture_stream … state=opened` with `detail_code=mme` and the chosen buffer in ms, a `state=closed` line, and no `state=default_latency`. Recorded here as numbers, by month.
+- [ ] ↪ **P.4 After about four weeks of clinic use.** (retained at the close, 2026-11-28; see Retained Follow-Up Items) From the installed log, by month: the largest `state=closed` gap under 30 s, and the counts of overflows, `state=default_latency` and `state=backlog_dropped` lines. Each deferred item's trigger is read against them.
+- [x] 🟩 **P.5 Close.** The findings-register row's resolved month, the lifecycle state, `/document`.
+  - As run (2026-11-28, the practitioner's "Yes, close it"): closed before P.3 and P.4, because the practitioner will not use 0.4.3 in clinic for about a month and continues development. Lifecycle State Completed — Follow-ups Retained; P.3 and P.4 moved to Retained Follow-Up Items. F-175 stays `controlled` (closed 2026-11): it is marked resolved only on P.4's numbers. `/document` run; `AGENTS.md` and `docs/architecture/phase-history.md` updated.
 
 ## Retained Follow-Up Items
-N/A until the plan completes.
+Kept at the close (2026-11-28). The five deferred items, the exclusion and the three accepted assumptions in `Planning Extraction Summary` carry forward unchanged, each with its own `Risk if deferred:` and `Revisit by:`.
 
 ### Deferred — Actionable Later
-- N/A
+- **P.3, the first recording's lines** (retained at the close, the practitioner's "Yes, close it", 2026-11-28).
+  - Why deferred: no clinic recording on 0.4.3 for about a month; development continues meanwhile.
+  - Intended future outcome: the installed log shows `capture_stream state=opened` with `detail_code=mme` and 2500 ms, a `state=closed` line and no `state=default_latency`, recorded in this plan as numbers by month (C2).
+  - Relevant files / subsystems: the installed app's `logs\scribe-app.log` (content-free lines only).
+  - Dependencies / prerequisites: one recording on installed 0.4.3. A recording made in the meantime keeps its lines in the log.
+  - Recommended next action: after the first recording, read the `capture_stream` lines and write the numbers here.
+  - Risk if deferred: minor: the buffer was proven on this computer by the `--product` run and the mock; only the installed build's lines are unread.
+  - Revisit by: the first recording on installed 0.4.3
+- **P.4, about four weeks of clinic use** (retained at the close, 2026-11-28).
+  - Why deferred: needs weeks of clinic recordings on 0.4.3.
+  - Intended future outcome: by month, the largest `state=closed` gap under 30 s and the counts of overflows, `state=default_latency` and `state=backlog_dropped` lines; each deferred item's trigger read against them; F-175 marked resolved if no overflow is logged.
+  - Relevant files / subsystems: the installed log; `docs/pilot/findings-register.md` F-175.
+  - Dependencies / prerequisites: P.3.
+  - Recommended next action: read the lines after about four weeks of clinic use on 0.4.3.
+  - Risk if deferred: ux-degradation: a stall longer than the buffer would still end a recording, now with its length logged.
+  - Revisit by: about four weeks of clinic use on installed 0.4.3
 
 ### Excluded — Revisit Only If Needed
-- N/A
+- See `Planning Extraction Summary` (one exclusion, unchanged).
 
 ### Accepted Assumptions — Revalidate Later
-- N/A
+- See `Planning Extraction Summary` (three accepted assumptions, unchanged); the named residue of Round 7 (a stall straddling Resume) is recorded on the first deferred item there.
 
 ## Follow-Up Continuation Notes
-N/A until the plan completes.
+- 0.4.3 is on `main` and installed with shadow mode on. The backup run (0.5.0) meets it when its composer merges `main`; nothing for this plan to do there.
+- P.3 and P.4 need no new plan: read the log lines and write the numbers here. A new plan is needed only if a deferred item's trigger fires.
 
 ---
 *Plan saved to: .cursor/plans/plan-capture-overflow.md*
