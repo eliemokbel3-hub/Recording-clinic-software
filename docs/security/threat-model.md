@@ -1,4 +1,4 @@
-# Threat Model (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot, kept recordings, note content design, stronger voice)
+# Threat Model (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot, kept recordings, note content design, stronger voice, past-sessions backup)
 
 Scope: the implemented system — extension shell, native-messaging host,
 registration chain, logging, credential/session-crypto foundations (Phase 1),
@@ -2886,7 +2886,9 @@ at Complete the display name the app holds for THAT session (matched by
 session id: the bridge's verified Start display, else its live
 re-verification, else a checkout's Verified result — D5) is written into the
 session's Past-sessions entry label, encrypted under the entry's key, and
-nowhere else ("Privacy and professional controls" below). Phase 3 showed them nowhere; since Phase 4 the Chrome bridge
+nowhere else ("Privacy and professional controls" below) — apart from, since
+0.5.0, that same ciphertext inside a backup the practitioner makes, its entry
+key wrapped under the passphrase ("Past-sessions backup and restore" below). Phase 3 showed them nowhere; since Phase 4 the Chrome bridge
 shows them — on the Record page (and, since 0.4.0, the header strip) and in `state`, for a verified note only
 ("The Chrome link" below). A result is applied on the GUI
 thread only when it is the one the current checkout dispatched (request
@@ -3959,7 +3961,8 @@ THE PAST-SESSIONS ARCHIVE (`past_sessions.py`; D1, D3, D6; C1, C4).
   so a Complete never stamps today's constants on yesterday's note.
 
 THE NAME (D5). The patient's name is written in ONE place at rest: the
-entry's `label.enc`. It is resolved by the UI at the Complete click, matched
+entry's `label.enc` (and, since 0.5.0, that same file, byte for byte, inside a
+backup the practitioner makes — "Past-sessions backup and restore" below). It is resolved by the UI at the Complete click, matched
 by session id, from what the app already holds in memory — the bridge's
 verified Start display, else the name a Verified live re-verification of
 that session found (remembered for the label only, until the session ends —
@@ -4135,19 +4138,24 @@ unchanged.
 
 NAMED RESIDUES.
 (a) THE SAME-USER BOUNDARY NOW GUARDS LONG-LIVED STORES. A Past-sessions
-entry can live indefinitely and an audit row 7 years, each protected only by
-DPAPI current-user custody: any process of this Windows user can unwrap their
+entry can live indefinitely and an audit row 7 years, each protected on this
+computer only by DPAPI current-user custody (since 0.5.0 a backup's copy is
+under its passphrase instead — "Past-sessions backup and restore"): any process of this Windows user can unwrap their
 keys while they exist (boundary 2), for as long as they exist — a far longer
 window than a session's 24 h.
 (b) NTFS UNLINK. Delete now, expiry and the audit prune are plain deletion,
 not forensic erasure (Phase 2 item 2).
-(c) "UNTIL I DELETE THEM" WITH NO BACKUP. The default keeps every entry
-indefinitely on this PC and this Windows login only. A dead disk, a lost
-profile or an administrator's reset of the Windows password (which breaks
-DPAPI) loses every entry; the entries are then listed as unreadable — kept,
-never deleted by age and never readable again (Delete now still works on
-them; the Past sessions page limits it by wording to a recording made in error, round 40
-PR-LOW-034). Passphrase-protected backup/restore is deferred.
+(c) "UNTIL I DELETE THEM" AND THE BACKUP. The default keeps every entry
+indefinitely on this PC and this Windows login — and, since 0.5.0, in any
+backup the practitioner makes. A dead disk, a lost profile or an
+administrator's reset of the Windows password (which breaks DPAPI) loses every
+entry that no backup holds; after a reset the entries are listed as unreadable
+— kept, never deleted by age and never readable again on this login (Delete
+now still works on them; the Past sessions page limits it by wording to a
+recording made in error, round 40 PR-LOW-034). Since 0.5.0 they can be set
+aside unread and restored from a backup ("Past-sessions backup and restore"
+below); before 0.5.0 there was no backup (the privacy-professional-controls
+plan deferred it).
 (d) EXPIRY ONLY WHILE THE APP RUNS, and it trusts the wall clock: an entry
 can outlive its setting while the app is closed (deleted at the next start),
 and a clock jumped forward can expire entries early (as the 24 h sweep can).
@@ -4660,7 +4668,13 @@ keep a Copy or Cut, and a normal one's would run Qt's own copy, without the
 formats. (6) A LABEL'S SHADOW FLAG is the only record of the mode the Past
 sessions page reads once the session's key is gone (the audit row records the
 mode too, but nothing there consults it): a same-user process that rewrote a
-label under the entry key (boundary 2) could clear it.
+label under the entry key (boundary 2) could clear it. (7) A BACKUP IS A NEW
+PLACE THE NOTE EXISTS (since 0.5.0, the past-sessions-backup plan's C14): a
+backup the practitioner makes holds a shadow entry's notes as the same
+ciphertext, wrapped under the passphrase, on a drive outside the data folder;
+the label is copied and restored byte for byte, so a restored shadow entry
+keeps its mark and its Copy refusal ("Past-sessions backup and restore"
+below).
 
 THE VALIDATION HARNESS (D8, D9; Constraints 5–8). A developer-build tool:
 both entry points refuse a packaged build once their arguments are parsed.
@@ -4948,6 +4962,11 @@ lives inside its NTFS file record and is overwritten there, but the file
 system's journal, a volume shadow copy, a backup made before the deletion or
 an SSD's remapped cells may still hold the old bytes, and with them and this
 user's DPAPI the audio is readable again until the entry itself is deleted.
+Since 0.5.0 a Clinic Scribe backup made after the deletion may hold that same
+entry key under its passphrase (the entry is eligible once its recording key
+is zeroed), so with those old bytes and the unlinked `audio.enc` recovered from
+the disk, the backup's entry key and its passphrase open the audio too, for as
+long as the backup is kept ("Past-sessions backup and restore", residue (b2)).
 Delete now destroys the entry's whole DPAPI-wrapped key instead (the same
 forensic class as every key unlink here, but nothing on disk then opens the
 audio). Full-disk encryption (BitLocker) is the practice's control for the
@@ -5390,6 +5409,356 @@ consent. The control is the rule in `docs/release/pilot-builds.md`
 removed from before installing an older build); nothing enforces it. A
 Past-sessions entry already written kept no audio and is unaffected.
 
+## Past-sessions backup and restore (past-sessions-backup plan; 0.5.0; BUILT 2026-11-26 → 2026-11-28, live smokes PASS on the developer build)
+
+WHAT EXISTS. Four actions on the Past sessions page: **Back up...** writes ONE
+encrypted file of the Past-sessions archive and the audit record to a drive
+attached to this computer, under a passphrase the practitioner chooses;
+**Open a backup...** checks such a file and shows what it holds and what
+Restore would do here; **Restore** ADDS to this computer what is absent here;
+and **Set aside sessions that cannot be opened...** moves, unread, the
+sessions this Windows login can no longer open into a folder beside the
+archive. Nothing reaches a network (C2; `assert_offline_env` and the
+`TestConfinement` pin are unchanged). The plan's D1–D15 and C1–C15; data-flow
+flow 30 and the retention schedule's "Past-sessions backup" rows describe the
+same surfaces.
+
+THE FILE IS OUTSIDE CUSTODY (D1, D2, D6). A backup is
+`ClinikoScribe-backup-<local date>[-n].csbk` in the folder the practitioner
+chose (only the FOLDER of the save dialog is used; the app names the file). It
+holds every committed entry that opens and holds no live recording key (D12,
+below) — `label.enc`, `transcript.enc` and,
+when the label calls for them, `note.enc` / `generated.enc`, byte for byte —
+with each entry key wrapped under the backup key, and every audit row that
+authenticates and is importable (`audit.row_importable`), as ciphertext, with
+the audit store key wrapped the same way. It NEVER holds `key.dpapi`, a
+`pending` entry, `.staging`, `audio.enc`, `audio-key.enc`, the export ledger,
+the voice profile, the learned style or phrases, the configuration, the clinic
+list or a Cliniko API key. Once published, the file is the practitioner's to
+keep and destroy (the downtime procedure's "Backups" rule); the app keeps
+only `config\backup.json` (the folder and the last backup's time) and never
+looks at the file again unless it is opened.
+
+THE KEYS (D2, D3, C3, C6). The backup key `K_b` (32 bytes) is derived by
+Argon2id from the passphrase and a fresh 16-byte salt per backup, at
+`memory_cost` 262 144 KiB (256 MiB), `iterations` 3, `lanes` 1; the header
+carries the name and parameters, and a reader accepts only the envelope
+`memory_cost` 65 536–524 288 KiB, `iterations` 2–10, `lanes` 1–4, checked
+BEFORE any derivation (`kdf_unknown`, `kdf_out_of_range`); a `MemoryError` is
+caught by type (`kdf_memory`); a lower floor exists only through the
+test-only seam `_kdf_floor_for_tests`, never through the file. Each entry key
+is wrapped with `AESGCM(K_b)` and AAD `csbk-entry-key:<id>`, the audit key with
+AAD `csbk-audit-key`, each under a fresh nonce; `manifest.enc` is AES-GCM under
+`K_b` with AAD `csbk-manifest:` + SHA-256 of the header's bytes, so any change
+to the plaintext header fails the manifest. There is no archive-wide content
+key before, inside or after a backup: a backup carries the per-entry
+compartments as they are, and a restored entry gets a fresh DPAPI wrap for
+THIS login and opens nothing else. The passphrase is entered twice, at least
+20 characters, with no composition rule (Open accepts any non-empty text),
+in two `Password`-echo fields of `ui/backup_dialog.py` whose signals are
+blocked from construction and which offer no menu, drag, Copy or Cut; it is
+handed over once as a `bytearray`, never stored, logged, signalled or put in
+an exception. `ArchiveRun` (`ui/past_sessions.py`) owns the passphrase and
+`K_b` buffers and zeroes them on every exit, the passphrase as soon as the
+worker's hop returns (for Back up after the derivation, for Open after the
+whole-file check); a worker writes `K_b` into the run object, and no Qt
+signal carries a key, a passphrase or anything derived from them. The frozen
+build's `--self-check-offline` derives with Argon2id at fixed small parameters
+and exits 3 (`SELF_CHECK_KDF`) when it cannot — proof that Argon2id is
+present, not that 256 MiB can be allocated on a given computer.
+
+THE READER FAILS CLOSED (D2, C8). The reader never constructs a `zipfile`
+reader: a preflight walks the end record, the central directory and every
+local header itself (`struct` only) behind a size-and-read seam, and refuses
+by closed code a file over 1 GiB, a ZIP64 record or field, a comment, more
+than 65 535 members, an oversized or miscounted directory, a non-ASCII,
+over-long or repeated name, an extra field in either header, a compressed or
+flagged member, sizes that differ, `header.json` not first or over 4 KiB, and
+a `manifest.enc` missing, doubled or over 16 MiB. Then the header is parsed
+(`extra="forbid"`), its format and KDF checked, the channel compared (a
+courtesy refusal before the passphrase), the key derived and the manifest
+decrypted — a wrong passphrase and a damaged manifest give ONE code
+(`passphrase`) — the manifest's own channel and counts checked, the member
+set required to be EXACTLY what the manifest implies, every member's size and
+SHA-256 verified, and the OPEN CHECK run. The reader iterates the manifest,
+never the archive's own listing. Each refusal writes nothing.
+
+THE OPEN CHECK HOLDS PLAINTEXT IN MEMORY (D5, decision 0.11). Every entry a
+backup accepts is proved to open: in the writer's worker (hop C, and again in
+its read-back), at Open (hop A), and once more in Restore's re-verification
+(a worker), its key is unwrapped into a `bytearray` and
+`past_sessions.entry_opens` — a pure function, no disk — decrypts the label
+under `past-label:<id>`, requires it to name this id and to match the files,
+and accepts the transcript, saved note and generated note by the SAME
+bytes-level validation the three readers use (`transcript_from_blob`,
+`note_from_blob`, `generated_from_blob`). One entry at a time; the plaintext is
+discarded at once and the key zeroed; nothing is written. It is not the only
+decryption: the snapshot decodes each label (hop B, GUI thread); Open's
+planner reads every local label through `list_entries` and decrypts every
+backed-up audit row (GUI thread); and Restore verifies each staged entry
+through the existing readers, transcript and notes included (GUI thread).
+Every one is in memory and none writes plaintext.
+
+THE SNAPSHOT AND THE COPY ARE READ-ONLY (D5, C4). Hop B (GUI thread) takes a
+STRICT listing of the archive (an archive that exists but cannot be listed
+refuses the run) and the audit store's `backup_snapshot` (any
+`AuditUnavailable` refuses: Back up is never made while the audit record
+cannot be read). Per entry, before any content: a link or unreadable link
+state is `uninspectable`; a confirmed-absent `key.dpapi` (a key-first
+deletion's leftover) and a `pending` entry are not entries; the recording-key
+state is read FIRST — live → `holds_recording`, unknown → `uninspectable`;
+then the key unwrapped and the label decoded (`unreadable`), the file set
+required (`incomplete`), and each file's size, time, number and device and the
+label's SHA-256 recorded. The snapshot returns every eligible entry's key
+together, each a `bytearray`, and `prepare_backup` zeroes them all (and the
+audit store key) only after it has wrapped every one under `K_b`, on every
+path: for that span hop B holds all of those keys in memory at once (keys,
+not content). Hop C (worker; no store or audit method runs there)
+re-reads each file through one handle and requires the same identity
+(`changed`) and the open check (`damaged`). A left-out entry or row is counted
+by reason and never fatal; nothing of it is written. The archive and the audit
+store are byte-identical before and after. The only things a backup writes are
+its own file and, after the published file is verified, `config\backup.json`.
+
+THE WRITE (D6). Immediately before the create, the destination folder is
+checked again by the location rule; then `<name>.csbk.part` is made by one
+exclusive create (the name the first for which neither `.csbk` nor
+`.csbk.part` exists; an existing file is never touched), written through ONE
+handle — `header.json` first, `manifest.enc` last, stored, no ZIP64 — flushed,
+`fsync`ed, and VERIFIED BY READING BACK THROUGH THE SAME HANDLE with the whole
+reader and the file's SHA-256; then renamed (never replacing) and the final
+file hashed again (`publish_unverified` otherwise: nothing recorded, the file
+left alone). On a failure the handle is closed first and the `.part` removed
+only through an identity-checked handle (Export's `_remove_part`) with the
+folder still listable afterwards; otherwise the line adds "A partial backup
+file may remain on the drive."
+
+THE LOCATION RULE (D7, C2). `exclusions.check_archive_backup_location`:
+REFUSED, never asked — a `\\` or prefixed path or a remote drive letter,
+judged from the TEXT (and the drive root's type) before any call that touches
+the path itself; then a folder in or under a
+OneDrive root the environment names, a network location, the roaming profile,
+either channel's data folder, a volume that is not fixed or removable (a CD or
+DVD, a RAM disk, an unknown type), and anything the layer cannot resolve or
+inspect. WARNED (one question, "Back up here" against "Keep things as they
+are"): a volume whose GUID equals this channel's data folder's. Removable
+drives are admitted. `check_backup_source`, for Open: the same text-first
+refusal, an ordinary file that is not a link, and its resolved folder passing
+the same refusals; a refused source receives no read. The remembered folder is
+offered to a dialog only while it still passes, checked before the dialog is
+given it. Every call goes through the injected `WindowsLayer` (`volume_of`
+new); no layer → refused.
+
+THE RUN GATE (D11, C12). `MainWindow.archive_run_refusal` refreshes the
+Recovery page and refuses, in order: a run already held, a Cliniko draft write
+in flight, a live recording or a discard in progress, a recovered or
+Unreviewed recording on the Recovery page, a voice enrolment, and any busy
+screen or the Chrome link (the list `closeEvent` uses, plus the Past sessions
+page itself). `begin_archive_run` re-checks and takes the gate in one call
+after the last dialog; holding it disables the rail, the Settings strip and
+every page (the summary dialog, a child of the window, stays usable); the
+periodic sweep returns before any of its three steps; the Chrome bridge
+refuses start, discard and open-review with `backup_running`; `closeEvent`
+refuses first. Cliniko note checks (reads only) may continue. The set-aside
+takes the same admission and no gate: it is one GUI-thread call that does not
+yield.
+
+RESTORE ONLY ADDS (D8, D9, C5, C6). The whole file is refused for another
+channel or a newer format. Restore is DISABLED — the summary still shown —
+while the local audit key cannot be opened (any `AuditUnavailable`,
+`AuditLog.key_unopenable`) or the retention setting cannot be read. Per entry
+id, `classify_entry`, in order: a live session of that id, an entry path that
+cannot be inspected or is a link, ANYTHING at the entry path (readable,
+unreadable or a leftover — never compared, never replaced, never written
+under), an audit row this build cannot read or one the backup could not copy,
+a deletion recorded in either row (`deleted_early` / `expired`), an age past
+"7 years" (under "Until I delete them" an entry of any age restores) — and
+only otherwise `add`. Before any write a worker re-verifies the whole file
+against the SHA-256 Open verified (`source_changed`); then, on the GUI thread,
+audit rows first, then entries, each RECLASSIFIED against the plan's one
+listing and a fresh look at its own path and rows — a recheck can only
+withdraw a write. An `add` is staged under `.staging\<id>` (a linked or
+unreadable `.staging` refuses the whole restore, `staging_unusable`; a linked
+child is skipped), wrapped for this login by DPAPI, verified through the
+existing readers, and published by one rename onto a CONFIRMED-absent path —
+the destination is never removed on any path (`skipped_collision`). Once an
+entry is here — just published, or an entry already present that is still
+`skipped_present` on its recheck — a kept local row whose Past-sessions state
+is `none` is recorded `archived` (`create=False`: Restore never makes a row
+for an entry); this is the one change Restore makes to a present local row's
+fields apart from `provenance_recovered` (next sentence), and a failed one is
+counted `unmarked`. Rows are decrypted
+under the backed-up key and re-encrypted UNCHANGED under the LOCAL key into
+the manifest's month — `_NEWER` rows too — only where no local row file exists
+and the month is not past its 7 years; a present local row is otherwise kept,
+with one exception: a bare `pre_audit` row in the same month is overwritten by
+a backed-up `recorded` one (`provenance_recovered`).
+
+THE SET-ASIDE (D8, decision 0.15). For the DPAPI break a Windows password
+reset causes on the SAME login. `PastSessionStore.set_aside_refused`, in
+order: (a) a DPAPI round trip of 32 random bytes in memory must succeed
+(`dpapi_unavailable` otherwise, nothing moved); (b) a strict listing; (c) per
+id-shaped child: its own link state first (a link or an unreadable state is
+left, nothing under it opened); a confirmed-absent `key.dpapi` is not an
+entry; a `pending` marker not confirmed absent, a key file that is a link or
+not an ordinary single-link file, or a read error leaves it; the key blob,
+read ONCE, is judged by `session_store.unwrap_key_blob` — `ok` (this login
+opens it: not a candidate, not counted), `dead`, `dpapi_error`,
+`foreign_description` or `bad_length` (left), or `dpapi_refused`, the ONLY
+answer that goes on: `CryptUnprotectData` raised `pywintypes.error` whose
+`winerror`, as an unsigned 32-bit value, is `NTE_BAD_KEY_STATE` (0x8009000B)
+or `ERROR_INVALID_DATA` (13). That answer establishes THAT this login cannot
+open the blob, never WHY: a master key lost at a password reset and a
+damaged blob can draw the same code. A `dpapi_refused` entry moves only when
+`audio-key.enc` and `audio.enc` are each CONFIRMED absent (else `held`). (d)
+ONE new folder `past_sessions.unreadable-<YYYYMMDD-HHMMSS>-<8 hex>` (UTC) is
+made by `os.mkdir` beside the archive (never an existing name;
+`set_aside_unavailable`, nothing moved, when it cannot be), and each
+qualifying entry moved into it by ONE `os.rename` (a failure counted, the rest
+tried; an empty folder removed again, best effort); (e) the store forgets the
+moved ids' cached dates and marks. NOTHING is deleted or rewritten, no
+content is decrypted (a key blob this login opens is judged and its key
+destroyed at once), NO audit row is written or changed — so no deletion is recorded,
+and a backup that holds a moved session restores it by the same rules as on a
+new computer. Nothing in the app opens a set-aside folder again: no listing,
+restore, sweep, deletion, export or reader reaches it; only the start-up
+not-content-indexed walk visits its folders (it opens no file).
+
+A SESSION THAT HOLDS A KEPT RECORDING IS NEVER BACKED UP AND NEVER SET ASIDE
+(D12, decision 0.13). An entry key also wraps that entry's recording key, and
+the development consent says the recording "can be opened only from your
+practitioner's own Windows login on that computer" and that "the program makes
+no backup of it". So an entry is backed up only when its recording key is
+CONFIRMED absent or zeroed (read in hop B and again in hop C); in hop B a live
+key is `holds_recording` (counted apart, and named on every line that counts it
+as "a kept recording or its key") and an unknown one `uninspectable`, and in
+hop C a key found live, or a linked folder, is counted `changed`; and the set-aside
+moves no entry holding any recording file. Delete now, expiry and Delete
+recording are unchanged. Once a recording is deleted, the next backup holds the
+session's transcript and notes.
+
+THE SHADOW MARK SURVIVES (C14). `label.enc` is copied and restored byte for
+byte and read only through the existing readers, so a restored shadow entry is
+still marked "(shadow recording)" and its "Copy saved note" still refuses
+("The pilot", residue (7)). `tests/test_shadow_exits.py` is unedited: the
+writer copies ciphertext by file name and calls no placement, clipboard or
+reader of note text.
+
+LOGS (C7). The page logs an unforeseen failure once, as `backup_unexpected
+detail_code=<stage> error_code=<type name>`; the store logs its restore and
+set-aside events as its usual `past_session` line, by session id and closed
+`detail_code=` only (`restore_failed_write`, `restore_failed_verify`,
+`restore_collision`, `link_refused`, `staging_link_refused`,
+`restore_staging_left`, `set_aside_failed`), and two set-aside events with no
+session id (`set_aside_dpapi_unavailable`, `set_aside_unavailable`). No line
+carries a path, a passphrase, a name or text; the page's lines carry counts,
+dates, a version, a channel and the backup's own file name (a date).
+
+WHAT A LOST DRIVE SHOWS WITHOUT THE PASSPHRASE (D14). The file name (the
+app's name and the date), which with the member names says it is a Clinic
+Scribe backup; the plaintext `header.json` — its format and app
+version, its channel, `made_at` (UTC), the KDF parameters and salt, and the
+planned counts `max_entries` / `max_rows`; the member names — each archive
+entry's session id and which of the note files it holds, each audit row's
+session id and its stored audit month (including sessions that have only an
+audit row), and whether an audit key is present; each member's exact size
+(stored: an encrypted member's nonce, ciphertext and tag; `header.json` in
+plain); and each member's CRC-32, so that someone
+holding two backups sees which members changed between them. Everything else —
+every name, every word, every date inside a label or row, and the left-out
+counts — needs the passphrase, except that the planned counts set against the
+member names show how many entries and rows hop C left out.
+
+NAMED RESIDUES (backup).
+(b1) A BACKUP HOLDS WHAT WAS DELETED AFTER IT WAS MADE. Delete now and expiry
+act on this computer only; every older backup still holds the session, under
+the passphrase, until the practitioner destroys it (the downtime procedure's
+one rule). Restore's no-resurrection guarantee holds only where tombstone
+evidence survives (C5): a session deleted after the newest surviving backup
+comes back when that backup is restored on a new computer or login; restoring
+an OLDER backup first can bring back what the newer one records as deleted
+(a present local row is kept); an audit row the newest backup could not copy
+may have been a deletion's only record; an entry whose Delete now left no
+tombstone (a failed audit write) comes back and is deleted again; and an entry
+older than the audit's 7 years restores under "Until I delete them" with no
+tombstone possible. The downtime procedure says to restore the NEWEST backup
+and then delete again whatever was deleted after it was made.
+(b2) A DELETED RECORDING'S FORMER KEY. A backup holds an entry key, and that
+entry key wrapped the recording key a later Delete recording zeroed: where the
+file system's journal, a volume shadow copy or an SSD's remapped cells still
+hold the old `audio-key.enc` and `audio.enc` (Kept recordings residue (6)), a
+backup's entry key and its passphrase open that recording again. A backup
+never holds a key that can open a recording the app CURRENTLY holds (D12).
+(b3) THE PASSPHRASE AND KEYS IN MEMORY. Qt's widget text and Python's
+`str` are not zeroed, and the pagefile or hibernation file may hold them;
+`SessionCrypto.export_key()`, `bytes(secret)` inside the derivation and
+`AESGCM` each make an immutable copy that cannot be zeroed — "zeroed" means
+the run's `bytearray`s (BitLocker is the control, as for every secret in
+memory); hop B's snapshot holds every eligible entry key at once until they
+are wrapped (above). A weak passphrase on a drive kept for years is the practitioner's
+risk: the app enforces only the length.
+(b4) THE PLAINTEXT A RUN DECRYPTS IN MEMORY — the open check's in a worker,
+the labels, the backed-up rows and Restore's verification on the GUI thread —
+one entry at a time, except Open's listing of the local labels, which holds
+them all at once as the page's own list does; and so possibly in the pagefile (as residue (h) of
+"Privacy and professional controls").
+(b5) A BACKUP ON THE SAME DISK does not survive that disk: the rule warns and
+asks, and the practitioner may still choose it.
+(b6) SYNC AND VIRTUAL DISKS THE CODE CANNOT SEE. A sync or backup tool that
+is not a OneDrive root the environment names, or that watches a removable
+drive, is not detected (as for Export, Kept recordings residue (7)); a virtual
+disk is judged as the volume it presents, not by where its backing file
+lives; the same-volume warning compares this channel's data folder only.
+(b7) THE DESTINATION RE-CHECK JUDGES THE FOLDER AS CHOSEN. The rule resolves
+the folder to judge it, and the writer then creates the `.part` through the
+path as chosen; a junction or mount changed by another program between that
+check and the create is the same-user residue (boundary 2).
+(b8) A LOST OR STOLEN DRIVE shows what the paragraph above lists, and an
+attacker holding it can try passphrases offline at Argon2id's cost.
+(b9) A `.part` LEFT BY A POWER CUT OR A PULLED DRIVE may be a whole backup
+under another name; the downtime procedure tells the practitioner to keep it
+as a backup of unknown content.
+(b10) A RESTORED ROW CAN SHOW A RECORDING KEPT WITH NO DELETION DATE: the
+recording was deleted before the backup and that fact had not yet been
+recorded, or — after "Start a new audit record" — the start-up repair found
+no row for an unreadable entry's deleted recording, recorded nothing and
+cleared its files (`unattended_write`, `create=False`), and the older row
+restored afterwards shows `kept_at` with no `deleted_at`. The entry is
+restored without any recording, and `_past_session_recorded` dates the
+recording's deletion at the session's own deletion. `record_past_session` is
+unchanged.
+(b11) A SET-ASIDE SESSION THAT NO BACKUP HOLDS (completed after the last
+backup, or holding a kept recording when that backup was made) stays set aside
+and unreadable; only the old Windows password, were it recovered, could open
+it, and moving a folder back is a manual act outside the app. The set-aside
+folder is outside the retention period, Delete now, the audit record and every
+other control of the app; the practitioner keeps it (the retention schedule's
+row). An entry whose key blob is damaged in another way (`dead`, a wrong
+length), whose key Windows could not judge (`dpapi_error`) or whose label
+does not open is not set aside, so Restore skips it and it stays a row that
+cannot be read.
+(b12) A RECORDING KEY LEFT LIVE BESIDE MISSING AUDIO (the app zeroes the key
+before it unlinks the audio, so this needs interference from outside the app)
+reads as holding no recording, Delete recording cannot reach it, and it stays
+out of every backup and every set-aside; the downtime procedure names it.
+(b13) THE RULE FOR DESTROYING OLDER BACKUPS HAS FOUR NAMED LIMITS (D14),
+for the independent review: (i) the app cannot see what this computer has
+lost — a Past sessions folder or audit record that is gone, or started anew,
+makes the next backup smaller and still "Nothing eligible was left out" — so
+the rule rests on the practitioner noticing, by the counts and the page; (ii)
+apart from `provenance_recovered`, Restore does not reconcile two audit rows
+that both read, so an older backup can hold a fact a present row lacks (an
+export count, a later date); (iii) a backup kept under the rule goes on holding
+sessions deleted since; (iv) a session completed since the last backup, and
+one that still holds a kept recording, is in no backup. The app reports facts
+and gives no verdict (decision 0.14).
+(b14) CHANGES FROM OUTSIDE THE APP DURING A RUN (another program of the same
+Windows user) are the accepted same-user risk: the run gate excludes the app's
+own writers, and the identity, hash and re-check steps catch an outside change
+where a cheap check exists. A month folder of the audit store that is a link
+is not the store's (as everywhere in it), so its rows are neither copied nor
+counted as left out.
+
 ## Out of scope (tracked in PLAN.md phases)
 
 Prompt-injection resistance OF THE LOCAL LANGUAGE MODEL ITSELF (narrowed
@@ -5405,8 +5774,11 @@ clinician-owned sections; a model that WRITES note text from the transcript
 was rejected and is not built),
 clinic 2's draft write (its template is unverified until its own test write;
 the write-time template match is the check there — THE DRAFT WRITE residue
-(j)), backup/restore of Past sessions (deferred by the
-privacy-professional-controls plan), code signing (deferred by the
+(j)), scheduled or automatic backups of Past sessions and a backup of the
+practitioner profile, style, phrases and settings (deferred by the
+past-sessions-backup plan, which built the backup itself in 0.5.0), any
+network or cloud destination for a backup, and a kept development recording in
+a backup (excluded there), code signing (deferred by the
 installation plan: the pilot build is unsigned, D7), an enforced allow-list of
 programs (deferred), a Chrome Web Store listing (excluded), Defender
 exclusions or any weakening of Smart App Control (excluded, C10: a blocked
@@ -5452,8 +5824,8 @@ trigger on that surface is a change of MODEL or of RUNTIME — a new pin, a new
 quantisation, a different inference library, or a runtime installed by any
 route other than the pinned hashed wheel. For the privacy and professional
 controls: a field added to the audit row or the Past-sessions label, a new
-file kept in an entry, a backup or restore of Past sessions (deferred), the
-practice relying on Past sessions as part of the health record, a change of
+file kept in an entry, the practice relying on Past sessions as part of the
+health record, a change of
 the retention default, a second Windows user or machine reading the stores,
 or the backup and snapshot exclusions widening beyond live sessions and logs
 (they are built into the installer, residue (g)). For the pilot: a new way
@@ -5470,8 +5842,9 @@ or writer of a kept recording or of plaintext audio (a pin change in
 "export anyway", a copy of a kept recording leaving this computer (excluded
 by the practitioner's decision of 2026-10-07 — it needs a new decision and
 its own consent wording), a change of the development-consent wording (a new
-version), a backup of Past sessions (which would carry the audio), the
-independent review's report on `development-consent-v1`, a rollback below
+version), a backup that would carry a kept recording or the key of one the
+app holds (0.5.0's backup never does: "Past-sessions backup and restore",
+D12), the independent review's report on `development-consent-v1`, a rollback below
 0.3.0, or a change to how exported copies are labelled (a tool other than
 Audacity, or more than one copy at a time — residue (19)). For the
 validation pass (0.3.3): a change to the closing or greeting phrases, the
@@ -5484,4 +5857,16 @@ other-voice line), a widened hedge scope, or a rollback below 0.3.4. For
 0.3.5: a change to the joined-run unit (joining a bare cut or any adjacent
 pieces), a further change to the closing or greeting phrases (a new dated
 decision, validation-run7 plan D2's rules its precedent), a change to rule
-v3's R1 exemption, or a rollback below 0.3.5.
+v3's R1 exemption, or a rollback below 0.3.5. For the Past-sessions backup
+(0.5.0): a new member, a new header or manifest field or a second container
+format (a `format_version` change), a change of the KDF, its parameters or its
+envelope (scrypt is a dated fallback decision, not built), a backup destination
+or source outside the location rule (a network, cloud or roaming place, or an
+"anyway" for a refused one), a kept recording or the key of one the app holds
+in a backup (it needs a new development-consent version), a scheduled or
+automatic backup (the passphrase would have to be kept), a restore that
+replaces, compares or deletes anything present here beyond the `archived` mark
+and `provenance_recovered`, a set-aside that moves
+more than a `dpapi_refused` entry with no recording file or that writes an
+audit row, a second reader of a set-aside folder, the first real restore, or
+a rollback below 0.5.0 (`docs/release/pilot-builds.md`).

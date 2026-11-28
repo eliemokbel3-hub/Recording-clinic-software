@@ -9,7 +9,9 @@ Draft 1 (2026-10-01; the record of a recording and "How we use it" updated 2026-
 the pilot build, approved by the practitioner the same day; the kept recording added
 2026-10-08 for version 0.3.0, approved by the practitioner on 2026-11-10; the learning
 sentence in "How we use it" restated 2026-11-23 for version 0.4.2, approved by the
-practitioner on 2026-11-25).
+practitioner on 2026-11-25; the backup changes for version 0.5.0 drafted 2026-11-28 at
+the end, "Drafted for version 0.5.0", awaiting the practitioner's approval and made with
+`patient-info-v4`).
 Text for the practice's privacy policy and collection notice, describing what Clinic
 Scribe does with patients' information. Fill in the bracketed parts; keep it in step with
 the [patient information](patient-information-and-consent.md) (`patient-info-v3`) and
@@ -186,3 +188,70 @@ may complain to if you are not satisfied with our response.]**
   no names or text, but it holds Cliniko reference numbers that identify appointments to
   anyone with access to the practice's Cliniko account, and it is **not encrypted**:
   treat it as personal information, keep it somewhere safe and delete it when done.
+
+---
+
+### Drafted for version 0.5.0 — NOT IN USE
+
+> **Awaiting the practitioner's approval (drafted 2026-11-28).** These changes are made
+> to the text above together with `patient-info-v4`, in the one approval that makes that
+> sheet current. Until then the text above stands.
+
+**"Where it goes", a new point after the second:**
+
+> - Your practitioner can make a **backup** of the transcripts, notes and records that a
+>   recording happened: one encrypted file, locked with a passphrase only your
+>   practitioner knows, written to a drive attached to their computer (for example a USB
+>   drive kept by the practice; the disk that holds the program's own folder only after a
+>   warning). The program sends it nowhere and refuses to write it to a network drive, a
+>   cloud folder it can recognise, or the roaming part of the Windows profile. A recording kept to help develop the program is **never** in a backup, and
+>   neither is a session that still holds one. Without the passphrase a backup shows no
+>   name and nothing that was said. It does show some facts about itself: when it was
+>   made, by which version of the program and whether by the practice's installed copy
+>   or a developer copy; how many sessions and records it was planned to hold; the
+>   program's own reference number for each session and each record in it, with the
+>   month each record is filed under; the kind and size of each part; and, set beside
+>   another backup, which parts changed.
+
+**"Where it goes", the last sentence of the point beginning "The program itself sends
+nothing anywhere else" becomes:**
+
+> Your practitioner's computer runs no other backup or file-sync software.
+
+**"How it is protected", the first point gains, after its sentence ending "described
+above).":**
+
+> A backup is locked instead with your practitioner's passphrase, which the program
+> never stores.
+
+**"How long it is kept", the "Past sessions" row gains:**
+
+> A backup made by your practitioner holds the same information for as long as the
+> practice keeps that backup; a transcript deleted from the computer may still be held in
+> an older backup until that backup is destroyed under the practice's backup rules.
+
+**"How long it is kept", the "Record that a recording happened" row becomes:**
+
+> 7 years on your practitioner's computer. A copy in a backup is kept for as long as the
+> practice keeps that backup, under its backup rules.
+
+**"About kept transcripts", the second sentence becomes:**
+
+> The program stores it on one computer and, when your practitioner makes one, in an
+> encrypted backup on a drive the practice keeps: if that computer or its Windows login is
+> lost, the transcript can be put back from the newest backup that holds it; one kept
+> after that backup was made is lost, and so is one whose recording was still being kept
+> to help develop the program when that backup was made (your clinical record in Cliniko
+> is not affected).
+
+**"For the practice: what this document relies on", a new point:**
+
+> - Since version 0.5.0: the practitioner can make an encrypted, passphrase-protected
+>   backup of Past sessions and the audit record onto a fixed or removable drive attached
+>   to the computer (never a network, cloud or roaming location the program can
+>   recognise), and restore it on a new computer or Windows login. It never holds a
+>   recording kept for development, or a session that still holds one. The rules for
+>   keeping and destroying backups are in the downtime procedure. The program's own
+>   deletion at the end of a retention period (the audit record's 7 years, and Past
+>   sessions under the "7 years" setting) applies only on the computer: the copies in a
+>   backup last as long as that backup is kept.

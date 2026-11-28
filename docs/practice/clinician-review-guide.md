@@ -16,7 +16,7 @@ practitioner on 2026-11-04; the longer goodbye-and-greeting list lines added 202
 the split-line line added 2026-10-27 for version 0.3.5, approved by the practitioner on
 2026-11-04; the misheard number, unit and abbreviation lines
 added after validation run 7 and the larger-model measurement, 2026-11, with no new
-version, approved by the practitioner on 2026-11-07, their counts refreshed with validation run 8's; the shadow-mode-off line added with them, approved by the practitioner on 2026-11-10 (its wording only: shadow mode stays on); the clinical-shorthand, suggested-section and suggested-next-patient lines and the renamed tick added 2026-11-09 for version 0.3.6, approved by the practitioner on 2026-11-10; the placed-answer and flagged-answer lines added 2026-11-17 for version 0.3.7, approved by the practitioner on 2026-11-17; the speaker-label line and the suggested-headings label line added 2026-11-23 for version 0.4.2, approved by the practitioner on 2026-11-25). For the
+version, approved by the practitioner on 2026-11-07, their counts refreshed with validation run 8's; the shadow-mode-off line added with them, approved by the practitioner on 2026-11-10 (its wording only: shadow mode stays on); the clinical-shorthand, suggested-section and suggested-next-patient lines and the renamed tick added 2026-11-09 for version 0.3.6, approved by the practitioner on 2026-11-10; the placed-answer and flagged-answer lines added 2026-11-17 for version 0.3.7, approved by the practitioner on 2026-11-17; the speaker-label line and the suggested-headings label line added 2026-11-23 for version 0.4.2, approved by the practitioner on 2026-11-25; the two backup lines under Past sessions added 2026-11-28 for version 0.5.0, awaiting the practitioner's approval). For the
 practitioner, before saving a note and before finalising it in Cliniko.
 
 **Why this matters.** Ahpra's guidance on AI in healthcare ("Meeting your professional
@@ -329,9 +329,18 @@ note** (what you saved), with the transcript behind
   Privacy Principles apply, with no fixed period); the app does not know a patient's
   age, so choose "Until I delete them" when that applies. **Cliniko stays the
   record**.
+  **From version 0.5.0** (awaiting the practitioner's approval): it is also in any backup
+  you make with **Back up...** — encrypted under a passphrase you choose, on a
+  drive attached to this computer, never sent anywhere. A backup never holds a recording
+  kept for development, or a session that still holds one; once that recording is
+  deleted, the next backup holds the session's transcript and notes. The downtime
+  procedure's "Backups" section gives the rules for keeping and destroying backups.
 - **Delete now** (press twice) deletes an entry for good — with its kept recording, if it
   has one. Use it only for a recording made in error: the wrong patient, a test, or one
   recorded without consent.
+  **From version 0.5.0** (awaiting the practitioner's approval): it deletes the entry
+  from Past sessions; an earlier backup may still hold its transcript and notes (never its
+  recording) until the downtime procedure's rule lets that backup be destroyed.
 - An entry marked "(recording kept)" also holds its recording, kept with the patient's
   written consent for development. **Delete recording** (press twice) deletes the
   recording alone — when the patient withdraws, or at its 12-month review — and the

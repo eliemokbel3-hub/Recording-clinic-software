@@ -1,4 +1,4 @@
-# Data-Flow Map (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot, kept recordings, invented-text guard, validation pass, validation runs 6 and 7, note content design, stronger voice)
+# Data-Flow Map (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot, kept recordings, invented-text guard, validation pass, validation runs 6 and 7, note content design, stronger voice, past-sessions backup)
 
 Every place data lives or moves in the implemented system. Since Phase 2 the
 desktop app carries **clinical data**: consultation audio, transcripts, and —
@@ -1265,7 +1265,9 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       entry's key first, then its files, and update its audit row
       (`deleted_early` / `expired`). Settings: `config\past_sessions.json`
       (`retention_days` — null or 7 years; a removed shorter value loads as
-      7 years — and `hide_names`).
+      7 years — and `hide_names`). Since 0.5.0 the page also holds Back up...,
+      Open a backup... with Restore, and Set aside sessions that cannot be
+      opened... (flow 30), with their own settings file `config\backup.json`.
     - EXCLUSIONS. For a source checkout (the developer build),
       `scripts/register-native-host.py` (run from a normal
       terminal) writes and reads back `pythonw.exe`, `python.exe`,
@@ -1756,6 +1758,109 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     file and calls no logger; its `--verbose` prints the raw completions,
     which are synthetic text, to the console.
 
+30. **Past-sessions backup, Open a backup, Restore and the set-aside
+    (past-sessions-backup plan D1–D15, C1–C15; BUILT 2026-11-26 → 2026-11-28,
+    version 0.5.0; in-process, zero network).** Every archive and audit call
+    runs on the GUI thread; workers derive the key, read and write files and
+    verify, holding ciphertext, wrapped keys, `K_b` and — one entry at a time —
+    an entry key and its plaintext in memory. While a run holds the gate
+    (`MainWindow.begin_archive_run`) the rail, the Settings strip and every page
+    are disabled, the periodic sweep skips its steps and the Chrome bridge
+    refuses start, discard and open-review (`backup_running`).
+    - BACK UP. The passphrase (twice, at least 20 characters) goes from the
+      dialog's fields into `ArchiveRun` as a `bytearray`; a worker derives
+      `K_b` = Argon2id(passphrase, fresh 16-byte salt; 256 MiB, t = 3, p = 1)
+      into the run object and the passphrase buffer is zeroed. Hop B (GUI
+      thread) snapshots, read-only: `PastSessionStore.backup_snapshot` (a strict
+      listing; per entry the recording-key state first, then `key.dpapi`
+      unwrapped once by DPAPI and the label decoded, the required file set and
+      each file's size, time, number, device and the label's SHA-256; every
+      eligible entry's key returned together, each a `bytearray`);
+      `AuditLog.backup_snapshot` (the store key and one descriptor per row
+      file). `prepare_backup` wraps every entry key and the store key under
+      `K_b`, and only then zeroes all of those buffers (on every path, a
+      failure included): until then hop B holds every eligible entry key in
+      memory at once (keys, not content).
+      `prepare_backup` plans the counts and refuses over 1 GiB or 65 535
+      members before any file exists. Hop C (worker) re-reads each entry's files
+      through one handle each, proves the entry opens in memory
+      (`past_sessions.entry_opens`) and each row authenticates and is
+      importable, and writes them as ciphertext into
+      `<chosen folder>\ClinikoScribe-backup-<local date>[-n].csbk.part` —
+      members `header.json` (plaintext), `keys/<id>.enc`,
+      `entries/<id>/<label|transcript|note|generated>.enc`, `audit-key.enc`,
+      `audit/<YYYY-MM>/<id>.enc` and `manifest.enc` (AES-GCM under `K_b`, AAD
+      bound to the header's hash) — through ONE handle, reads it back through
+      that handle with the whole reader, renames it to `.csbk` (never
+      replacing) and hashes the published file again. Never copied:
+      `key.dpapi`, `pending` entries, `.staging`, `audio.enc`, `audio-key.enc`
+      (an entry whose recording key is live is left out — `holds_recording`
+      in hop B, `changed` when hop C finds it live — and one whose key
+      cannot be inspected, `uninspectable`),
+      the export ledger, and everything outside the archive and the audit
+      store. Hop D (GUI thread) writes `config\backup.json`
+      (`{"schema_version": 1, "folder": <the chosen folder>, "last_backup_at":
+      <made_at>}`, at most 4 KiB, the config folder's atomic write) and shows
+      the success line (counts and the file's name). The destination must pass
+      `exclusions.check_archive_backup_location` (fixed or removable drives
+      only; flow 22's OneDrive, network and roaming refusals, either data
+      folder, a CD, a RAM disk or an unknown drive refused; the data folder's
+      own volume warned) when chosen and again immediately before the create.
+    - OPEN A BACKUP. The chosen file must pass `check_backup_source` (an
+      ordinary file, not a link, in a folder the same rule admits) before any
+      byte is read; the header's preflight runs on the GUI thread before the
+      passphrase (bounded reads of the end record, the directory, the local
+      headers and `header.json`); then a worker derives `K_b`, decrypts and
+      checks the manifest, verifies every member's size and SHA-256 and proves
+      every audit row and every entry opens (in memory, one at a time; the
+      plaintext discarded, the key zeroed), returning dates and counts only.
+      The GUI thread lists the archive once (`list_entries`, which decrypts
+      each local label) and plans the restore (`plan_restore`, reading each
+      backed-up row under the backed-up audit key, one key at a time). The
+      summary dialog shows counts, dates, the backup's app version and its
+      channel only; Close writes nothing.
+    - RESTORE. A worker re-verifies the whole file against the SHA-256 Open
+      verified. Then, on the GUI thread, rows first: each backed-up row is
+      decrypted and re-encrypted UNCHANGED under the LOCAL audit key
+      (`audit\YYYY-MM\<id>.enc`, AAD `audit:<id>`) where no local row file
+      exists and its month is not past 7 years (`AuditLog.restore_row`); then
+      entries: each `add` is staged under `past_sessions\.staging\<id>\` —
+      its key wrapped for THIS login by DPAPI into `key.dpapi`, its files
+      written byte for byte — verified through the existing readers, and
+      published by one rename onto a confirmed-absent `past_sessions\<id>\`
+      (no `pending` marker). For each entry published, and each entry already
+      present that is still `skipped_present` on its recheck, a kept local row
+      still reading `none` is then recorded `archived`. No present entry is
+      read further, compared, replaced or deleted; a present local row changes
+      only by that mark, or when it is a bare `pre_audit` row overwritten by
+      a backed-up `recorded` one of the same month (`provenance_recovered`).
+      `config\backup.json`'s `last_backup_at` advances to
+      the file's `made_at` when that is later (the folder kept).
+    - SET ASIDE. A DPAPI round trip of 32 random bytes in memory (no file);
+      a strict listing; each entry's `key.dpapi` read once and judged by
+      `session_store.unwrap_key_blob` (the key destroyed at once); an entry
+      whose blob DPAPI refuses (one of two named Windows error codes), with no
+      recording file, is moved by one `os.rename` into a new folder
+      `%LOCALAPPDATA%\ClinikoScribe\past_sessions.unreadable-<YYYYMMDD-HHMMSS>-<8
+      hex>\` beside the archive. No content file is decrypted, and no file is
+      rewritten or deleted; none is read past the key blob except
+      `audio-key.enc`, read (not decrypted) when present, and any
+      recording-key file there — live, zeroed or unreadable — holds the entry
+      back; no audit row is written. No listing, restore,
+      sweep, deletion, export or reader reaches that folder again; the
+      start-up not-content-indexed walk visits its folders (flow 22).
+    - LOGS: `backup_unexpected detail_code=<stage> error_code=<type name>`,
+      and the store's restore and set-aside events as its `past_session` line
+      by session id and closed `detail_code=` only, two set-aside events with
+      no session id (flow 2). No line, log, signal or exception carries the
+      passphrase, `K_b`, a path, a name or text.
+    - THE FILE once written is outside custody: on a drive the practitioner
+      chose, readable with the passphrase on any computer running 0.5.0 or
+      later of the same channel. Without the passphrase it shows what the
+      threat model's "Past-sessions backup and restore" lists (the header,
+      the session ids and audit months in the member names, each member's
+      size and CRC-32).
+
 ## Explicit non-flows
 
 - No application-generated plaintext clinical content at rest — the
@@ -1768,7 +1873,12 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
   with the patient's name), plus the content-free audit rows encrypted under
   the audit key (flow 22) — and, since the development-recordings plan, a kept
   recording's audio, ONLY encrypted inside its entry under an audio key that
-  is itself encrypted under the entry key (flow 27). The plaintext exports
+  is itself encrypted under the entry key (flow 27) — and, since 0.5.0, a
+  backup file the practitioner makes on a drive attached to this computer,
+  which holds those entries' and rows' SAME ciphertext with each entry key and
+  the audit key wrapped under a key derived from the passphrase, plus a
+  plaintext header and member names of ids, months and sizes (flow 30); it
+  never holds a kept recording. The plaintext exports
   are TWO: the audit CSV, which holds no text or name but Cliniko ids, and
   lands only where the practitioner saves it (flow 22); and, since 0.3.0, a
   kept recording's `<session id>.wav`, the whole consultation unencrypted,
@@ -1945,7 +2055,8 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
   for one entry at a time, under a key held only in memory and never written,
   its teardown attempted on every path, a leftover being keyless ciphertext
   named for deletion by hand — flow 27, REPLAY),
-  never a backup — and nothing that
+  never a backup (the Past-sessions backup of flow 30 leaves out every entry
+  whose recording key is live or cannot be inspected) — and nothing that
   reads or writes it opens a connection: the archive, the Past sessions page
   and the export import no network module (the confinement test of flow 18
   covers them), and the replay tool applies and asserts the offline
@@ -1969,5 +2080,7 @@ Chrome-spawned host is a thin, stateless relay; the app alone decides every
 pause, Start, Resume and refusal; a patient's name crosses only for a note
 Cliniko verified, lives in memory only on the Chrome side and in the app
 until that session's Complete — when the app writes it, encrypted, into the
-session's Past-sessions label and nowhere else (flow 22) — and reaches a
+session's Past-sessions label and nowhere else (flow 22; since 0.5.0 that
+same encrypted label is also copied into any backup the practitioner makes,
+flow 30) — and reaches a
 Cliniko tab only for that tab's own clinic.

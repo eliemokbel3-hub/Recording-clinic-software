@@ -67,6 +67,7 @@ All confirmed by the practitioner in the 2026-10-01 planning session.
   - Relevant files / subsystems: `past_sessions.py`, the Past sessions tab, retention-schedule.md.
   - Dependencies / prerequisites: this plan's archive store.
   - Recommended next action: plan it before relying on Past sessions as part of the record, or before commercialising.
+  - [2026-11-28] Planned and built as `plan-past-sessions-backup.md` (version 0.5.0, Phases 1–3 built 2026-11-26 → 2026-11-28 on its own branch; not yet merged, built of record or installed — its C13 and Phase P). Kept recordings stay out of every backup (its decision 0.2).
   - Risk if deferred: correctness: with the default "never", a lost disk or profile loses every retained transcript, and DPAPI-sealed data cannot be restored on another machine.
   - Revisit by: before commercialisation, or before Past sessions is relied on as part of the health record
 - **Admin-only backup/snapshot exclusions** (HKLM `FilesNotToBackup` / `FilesNotToSnapshot`).

@@ -61,6 +61,15 @@ When in doubt, stop using the software and investigate before resuming.
   investigating as a possible tamper; a start-up warning that the data folder
   is inside OneDrive, on a network drive or in the roaming profile means
   clinical data may have left this computer — assess it as below
+- (Since 0.5.0, the past-sessions-backup plan; added 2026-11-28) a backup
+  drive lost, stolen or found somewhere it was not kept, or a backup's
+  passphrase written down beside it or known to someone else (the file shows
+  what the threat model's "Past-sessions backup and restore" lists without the
+  passphrase, and everything with it); a backup file found on a network,
+  OneDrive or synced location; or a session in Past sessions that nobody
+  restored and that should not be there (a deleted one put back by the
+  documented newest-backup step, and deleted again with Delete now, is not an
+  incident)
 - (Cliniko draft write) a draft written into the wrong Cliniko note or the
   wrong patient's note; text in a Cliniko note that nobody's "Write draft to
   Cliniko" click put there; text already in a Cliniko note — typed by you, or
@@ -140,7 +149,13 @@ follow the steps below — then enter the finding. The clinic's exit gate
    Do not move or delete `audit\`, `audit.unreadable-…\` or
    `past_sessions\`: their keys are bound to this Windows account and
    machine, so a copy elsewhere cannot be read, and an administrator's reset
-   of this account's password makes them unreadable here too.
+   of this account's password makes them unreadable here too. Since 0.5.0
+   (added 2026-11-28) the same holds for any `past_sessions.unreadable-…\`
+   folder beside the archive (sessions the set-aside moved, still holding
+   clinical content); keep every backup file and its drive as they are; and
+   do not press Set aside sessions that cannot be opened... or Restore during
+   an investigation, since each moves or adds sessions or audit rows and so
+   changes the evidence.
 
 **A draft written into the wrong note or patient** (Cliniko draft write):
 1. In Cliniko, open that note and delete the written text — or archive the

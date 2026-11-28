@@ -65,8 +65,10 @@ view patterns · tokens · microcopy.
   the list (date + patient name, or "Patient hidden" under **Hide names**), the opened
   entry's generated note beside its saved note with the Cliniko write outcome, "Copy
   saved note" and "Show transcript", the two-click Delete now, the retention setting
-  with its warning, Export audit record (CSV) and a status line. LEAVING the page drops
-  the opened entry's text and the names from every panel; opening it re-lists. Both the
+  with its warning, Export audit record (CSV), since 0.5.0 the "Backup" group (Back
+  up..., Open a backup... and, only while a session cannot be read, Set aside sessions
+  that cannot be opened...; Microcopy, "Backup and restore") and a status line. LEAVING
+  the page drops the opened entry's text and the names from every panel; opening it re-lists. Both the
   Status tab and the Past sessions page head with the intended-use line ("Documentation
   aid, not clinical decision support. You review and finalise every note in Cliniko." —
   `ui/models.py` `INTENDED_USE_LINE`) and show the start-up exclusion warnings
@@ -75,13 +77,18 @@ view patterns · tokens · microcopy.
   learned-style review dialogs, the Past sessions page's two confirmations — lowering
   the retention setting and "Start a new audit record" — and, since 0.3.3, the
   "Remove lines N-end from this recording..." question (on the Review screen since
-  0.4.0), all of which
+  0.4.0), and, since 0.5.0, the Past sessions page's set-aside confirmation and its
+  same-disk backup question, all of which
   name their buttons for what they do ("Delete older sessions" / "Start a new audit
   record" against "Keep things as they are"; "Remove lines" against "Keep the whole
-  transcript"), the safe one the default — plus two file dialogs (the
-  Practitioner tab's sample-note picker and Export's save dialog, which opens in
-  Documents) and the start-up boxes shown before the window exists ("already
-  running" and "cannot start", `app.py`; and, in the installed app only,
+  transcript"), the safe one the default — plus, since 0.5.0, the two backup dialogs
+  of `ui/backup_dialog.py`, named here under this rule: the passphrase dialog
+  (`PassphraseDialog`) and the summary dialog of Open a backup (`SummaryDialog`, Close
+  the default) — plus the file dialogs (the Practitioner tab's sample-note picker,
+  Export's save dialog, which opens in Documents, and, since 0.5.0, the backup's save and
+  open dialogs, which open in the remembered folder while it still passes the location
+  rule and otherwise at the system drive's root, not Documents) and the start-up boxes shown before the
+  window exists ("already running" and "cannot start", `app.py`; and, in the installed app only,
   "Clinic Scribe is not running from its install folder — reinstall Clinic
   Scribe." for a packaged copy started from anywhere but
   `C:\Program Files\ClinikoScribe` — `install_layout.NOT_INSTALLED_LINE`,
@@ -237,8 +244,11 @@ view patterns · tokens · microcopy.
   now** follows the two-click pattern: it becomes "Confirm delete" for 10 seconds for the
   same entry with "Delete this past session now? Use Delete now only for a recording made
   in error - the wrong patient, a test, or one recorded without consent - because a kept
-  transcript must otherwise be kept for at least 7 years. Its notes and transcript cannot
-  be recovered. Press Confirm delete to delete it." (a selection change or the deadline
+  transcript must otherwise be kept for at least 7 years. Its notes and transcript are
+  deleted from Past sessions. An earlier backup may still hold them - the downtime
+  procedure says when older backups may be destroyed. Press Confirm delete to delete it."
+  (`DELETE_CONFIRM_MESSAGE`; since 0.5.0, the past-sessions-backup plan's D10 — before
+  it, "Its notes and transcript cannot be recovered.") (a selection change or the deadline
   disarms it, checked at the click), and the second click destroys the entry's key first
   (`ui/past_sessions.py`). Its **Delete recording** (a kept recording only, the audio
   alone) takes the same two clicks as "Confirm delete recording" (Microcopy, kept
@@ -247,8 +257,12 @@ view patterns · tokens · microcopy.
   without consent.", `DELETE_HELP`). Choosing "7 years" over "Until I delete them" is the
   other destructive choice there (the only two choices since the 7-year minimum,
   practitioner decision 2026-10-02): it asks first, names what goes ("Keep past sessions
-  for only 7 years? Every kept session older than that is deleted now and cannot be
-  recovered."), and a declined choice puts the setting back and writes nothing.
+  for only 7 years? Kept sessions older than that are deleted now from Past sessions; one
+  whose completion date cannot be read, or whose deletion fails, is kept and counted. An
+  earlier backup may still hold them." — `retention_confirm_text`, since 0.5.0), and a
+  declined choice puts the setting back and writes nothing. A completed Delete now reads
+  "Session deleted from Past sessions." (`DELETE_DONE`, since 0.5.0: a backup may still
+  hold it).
 - **Edits over whole lines, with typing only OVER a line.** The Review screen's "Edit the
   note" group, under the note, offers Add line / Remove line / Move / Edit / Undo (each
   "Lines in the note" row shows its line's whole text across the row with its controls
@@ -898,18 +912,23 @@ style or background setter fails `desktop/tests/test_ui_theme.py`.
   the window lands on.
 - A Past-sessions line carries a date, the patient's name as the entry's label holds it
   (never under Hide names) and authored words — never an id (but for an exported
-  recording's file name, below), a path or exception text; a
+  recording's file name, below), a path or exception text (a backup's line names only
+  its own file, whose name is a date, below); a
   failure names its authored reason, and an error the app did not author reads the one
   fixed reason (`past_sessions_view.failure_reason`). The retention warning is pinned
   text: "A kept transcript becomes part of your health record - under the VIC Health
   Records Act 2001, the NSW HRIP Act 2002 and the ACT Health Records (Privacy and Access)
   Act 1997, and elsewhere APP 11.2. It can be reached by an APP 12 access request or a
-  subpoena. Clinic Scribe keeps it, encrypted, only in this Windows login's data folder
-  and makes no backup of its own - but backup or sync software, or a folder location it
-  has warned about, can still copy the encrypted files. Cliniko stays the system of
-  record. A kept transcript is kept for at least 7 years. If the patient was a child, it
-  must be kept until they turn 25 - Clinic Scribe does not know a patient's age, so choose
-  "Until I delete them" when that applies." (`RETENTION_WARNING`; it states the PROGRAM's
+  subpoena. Clinic Scribe keeps it, encrypted, in this Windows login's data folder, and
+  in any passphrase-protected backup you make onto a drive attached to this computer - a
+  backup is never sent anywhere, and never holds a kept development recording or a
+  session that still holds one. Backup or sync software, or a folder location it has
+  warned about, can still copy the encrypted files. Cliniko stays the system of record. A
+  kept transcript is kept for at least 7 years. If the patient was a child, it must be
+  kept until they turn 25 - Clinic Scribe does not know a patient's age, so choose
+  "Until I delete them" when that applies." (`RETENTION_WARNING`; its backup sentence since
+  0.5.0, which before it read "keeps it, encrypted, only in this Windows login's data
+  folder and makes no backup of its own"; it states the PROGRAM's
   behaviour — an encrypted copy made by other software is not prevented, only warned
   about where it can be seen; change it together with `docs/practice/`). The combo offers
   exactly "Until I delete them" and "7 years" (practitioner decision 2026-10-02). A
@@ -919,6 +938,118 @@ style or background setter fails `desktop/tests/test_ui_theme.py`.
   this." until a save (`RETENTION_RAISED_LINE`); a sweep refused for a window under 7
   years says "The retention setting is shorter than 7 years, so nothing was deleted by
   age." (`SWEEP_TOO_SHORT_LINE`).
+- **Backup and restore (since 0.5.0; past-sessions-backup plan D10, Flows 1–3; the
+  strings in `ui/past_sessions_view.py` unless named otherwise).** Counts, dates, a
+  version, a channel and the backup's own file name (a date) only — never an id, a name,
+  a path or exception text — and NO
+  verdict: no line calls a backup complete or safe, or says whether this or any other
+  backup may be kept or destroyed (decision 0.14; that rule is stated once, in the
+  downtime procedure).
+  - The page's "Backup" group (`BACKUP_GROUP_TITLE`) holds, one above the other, **Back
+    up...** (`BACKUP_LABEL`) and **Open a backup...** (`OPEN_BACKUP_LABEL`), then the help
+    line "An encrypted backup of Past sessions and the audit record, protected by a
+    passphrase you choose, onto a drive attached to this computer." (`BACKUP_HELP`), then
+    **Set aside sessions that cannot be opened...** (`SET_ASIDE_LABEL`), shown only while
+    the list holds a session whose label cannot be read ("Cannot be read on this Windows
+    account"), as "Start a new audit record" is shown only while the audit key cannot be
+    read. Back up... and Open a backup... are enabled whenever the page has its store and
+    audit record and no backup run of its own is open; they sit one above the other
+    because side by side they overflowed the left column at the narrowest supported
+    size (`test_restore_ui.py` `TestTheRowFits`).
+  - The save and open dialogs ("Back up past sessions", "Open a backup";
+    `BACKUP_DIALOG_TITLE`, `OPEN_BACKUP_DIALOG_TITLE`; filter "Clinic Scribe backups
+    (*.csbk)") start in the last folder that still passes the location rule, else at the
+    system drive's root, not Documents (a remembered Documents folder that passes the
+    rule is used like any other). Back up proposes
+    `ClinikoScribe-backup-<date>.csbk`, but only the chosen FOLDER is used: the app names
+    the file itself, taking `-2`, `-3`... when that name, or its `.csbk.part`, exists.
+  - A refused destination reads "The backup was not made: <reason> Choose a folder on a
+    drive attached to this computer." (`backup_refused_line`, the reasons from
+    `exclusions.py`; refused, never "back up anyway"); a folder on the data folder's own
+    disk asks "A backup on this computer's own disk does not survive that disk - use it
+    only until you can copy to another drive. Back up to this folder anyway?" with "Back
+    up here" against "Keep things as they are" (`backup_same_disk_question`). A refused
+    source reads "The backup was not opened: Copy the backup to a drive attached to this
+    computer first." (`open_refused_line`), and nothing of that file is read.
+  - The passphrase dialog (`ui/backup_dialog.py` `PassphraseDialog`): for Back up, "Choose
+    a passphrase of at least 20 characters and enter it twice. The passphrase is never
+    stored. Without it the backup cannot be opened by anyone, including you."
+    (`BACKUP_PASSPHRASE_INTRO`), fields "Passphrase" and "Passphrase again", Continue
+    (the default) against Cancel; for Open, "Enter the passphrase this backup was made
+    with.", Open against Cancel. Its refusals clear both fields: "Enter the passphrase.",
+    "The passphrase must be at least 20 characters - enter it again.", "The two
+    passphrases are not the same - enter them again." (`passphrase_decision`). The fields
+    echo as dots, offer no menu, drag, Copy or Cut, and are emptied on every exit.
+  - While a run holds the gate the whole window but the summary dialog is disabled and the
+    page says "Backing up - this can take a minute. The rest of Clinic Scribe waits until
+    it is done." (`BACKUP_RUNNING`; "Opening the backup - …" `OPEN_RUNNING`, "Restoring -
+    …" `RESTORE_RUNNING`). A run is refused while other work is in progress, in this
+    order: a draft write in flight (the write's own line); "Finish or discard the current
+    recording first."; "Review or discard the recordings on the Recovery page first.";
+    "Voice enrolment is running - wait for it to finish, or Stop it, first."; "Wait for
+    the current work to finish." (`ARCHIVE_*_LINE`). Closing the window during a run reads
+    "A backup or restore is running - wait for it to finish before closing."
+    (`ARCHIVE_CLOSE_LINE`), and Chrome's Start, Discard and Open for review read "A backup
+    or restore is running - wait for it to finish." (`ui/models.py`
+    `START_BACKUP_RUNNING_MESSAGE`).
+  - The success line (`backup_success_line`): "Backup written: <file name> - N sessions, M
+    audit rows." then "Nothing eligible was left out." ONLY when no eligible session or
+    audit row was left out and nothing is unrestorable — otherwise "Left out: X
+    sessions, Y audit rows." and "Cannot be restored by this version: V." (a zero part
+    omitted) — then, when any, "H sessions are not in a backup because a kept recording
+    or its key is still present.", and always "Keep the passphrase somewhere other than
+    the drive." A failed date save adds "The backup date could not be saved - the
+    reminder will not know about this backup." With nothing to back up: "Nothing to back
+    up yet." Each other refusal or failure has one fixed line (`backup_failed_line`), and
+    a part file that could not be confirmed removed adds "A partial backup file may
+    remain on the drive."
+  - The reminder (`backup_status_line`), a status line on the page, shown only once 7
+    days have passed with at least one dated session kept since: "Last backup <date> - N
+    sessions kept since." / "No backup date recorded - N sessions kept." (the app cannot
+    tell a missing date from no backup, so it never says there is none). It never acts.
+  - The summary dialog (`ui/backup_dialog.py` `SummaryDialog`, titled "Open a backup",
+    parented to the window; Close the default against Restore), its lines from
+    `restore_summary_lines`: "This backup opens: N sessions from <date> to <date> and M
+    audit rows, made on <date> by Clinic Scribe <version> (the installed app / the
+    developer build)." ("no sessions" when it holds none); "Left out when it was made: X
+    sessions, Y audit rows." (omitted when both are 0); "Not in it because a kept
+    recording or its key was present: H." (omitted when 0); then one line of what Restore
+    would do here — "To add: A sessions, R audit rows." and, each only when not zero,
+    "Already here", "Here but cannot be read", "Could not be inspected", "Deleted since:
+    D (not restored).", "Older than the retention period: E (not restored).", "In progress
+    or left over here", "Cannot be restored by this version", "Audit provenance to
+    recover", "Audit rows already here or past their 7 years", "Audit rows different or
+    unreadable"; when a session is here but cannot be read, "Restore never replaces a
+    session that is here. If this Windows login can no longer open those sessions, press
+    Close, then Set aside sessions that cannot be opened, and open this backup again."
+    (`RESTORE_NEVER_REPLACES`); and, with Restore disabled, each reason on its own line:
+    "Start a new audit record first." (`RESTORE_NEEDS_AUDIT`), "Choose how long past
+    sessions are kept first." (`RESTORE_NEEDS_RETENTION`, which also leaves out the counts
+    that depend on age). Close reads "The backup was closed. Nothing was written."
+    (`OPEN_CLOSED`). A wrong passphrase and a damaged file share one line, "The backup
+    could not be opened: the passphrase is not right, or the file is damaged."
+  - The final report (`restore_report_line`): "Restored N sessions and R audit rows."
+    then, each when not zero, "Left as they are: F." and "Not restored: X."; "The backup
+    file changed while it was being restored, so the rest was not restored - open it
+    again." when it did; "S sessions could not be marked in the audit record - open this
+    backup and Restore again to finish."; "The backup date could not be saved."; and,
+    once anything was restored, "Add the clinic keys on the Clinics tab if this is a new
+    computer." — so a second Restore of a finished backup reads exactly "Restored 0
+    sessions and 0 audit rows."
+  - The set-aside asks one confirmation in the page's existing pattern, "Set aside the
+    sessions this Windows login can no longer open? They are moved, unread, to a folder
+    beside Past sessions, and nothing is deleted. Open a backup then shows how many
+    sessions it can add back; a session that is in no backup stays set aside and cannot
+    be read. A session that still has a recording file is not moved. Press Set aside to
+    go on." (`SET_ASIDE_CONFIRM`), "Set aside" against "Keep things as they are"; then
+    "Set aside N sessions that this Windows login can no longer open. Nothing was
+    deleted. Open a backup to see how many sessions it can add back." (or "No session was
+    set aside."), with, each when not zero, "H were not moved: a recording file is still
+    present, or could not be ruled out.", "L others were left as they are: they could not
+    be safely assessed." and "F could not be moved." (`set_aside_line`; each verb agrees
+    with its number); its refusals "Windows could not verify a test value just now -
+    nothing was moved. Try again later." and "The set-aside folder could not be made -
+    nothing was moved." (`set_aside_failed_line`).
 - A custody action that fails on an error the app did not author (a disk, permission or
   store error) shows one fixed reason, "an unexpected problem on this computer stopped
   it", never the error's text or type: that text can name the session's directory. The

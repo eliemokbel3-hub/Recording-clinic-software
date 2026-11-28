@@ -42,7 +42,9 @@ reviews and finalises every note in Cliniko.
   the app's draft — which is why the app asks the clinician to reload the
   note and see the draft before pressing Complete.
 - **Not a cloud service.** The app never sends audio or transcripts off the
-  local machine, and transcription and note drafting run on it. There is no
+  local machine over a network (since 0.5.0 the practitioner may write an
+  encrypted backup of transcripts and notes, never audio, to a drive attached
+  to this computer — Past sessions, below), and transcription and note drafting run on it. There is no
   cloud fallback, silent or otherwise. What the app cannot control is other
   software on the machine: Windows Backup, Volume Shadow Copy or a sync tool
   may copy its (encrypted) data folder — it WARNS, never refuses, when that
@@ -70,7 +72,10 @@ reviews and finalises every note in Cliniko.
   until the practitioner deletes it and reviewed at 12 months; that is a
   development aid, never part of the record —
   and nothing for a test-provider session — in **Past sessions**, encrypted on this PC
-  and this Windows login only, with no backup, for as long as the
+  and this Windows login (with no backup before 0.5.0; since 0.5.0 also in any
+  passphrase-protected backup the practitioner makes onto a drive attached to
+  this computer, never sent anywhere and never holding a kept development
+  recording or a session that still holds one), for as long as the
   practitioner's retention setting says — at least 7 years: "7 years" or
   until they delete them, the default (practitioner decision 2026-10-02;
   Delete now is for a recording made in error). Past sessions is a look-back for the practitioner, not the record:

@@ -197,3 +197,93 @@ Patient name: ______________________  Signature: ______________________  Date: _
 If signed on someone's behalf — name and relationship: ______________________
 
 Practitioner: ______________________  Date: __________
+
+---
+
+## DRAFT `patient-info-v4` — NOT IN USE
+
+> **DRAFT, awaiting the practitioner's approval (written 2026-11-28 for version 0.5.0 of
+> the program).** Do not give this to patients. `patient-info-v3` above stays the current
+> sheet — its version line, the Cliniko example and the form — until the practitioner
+> approves this draft; that approval makes `patient-info-v4` current in all of those
+> places together. The independent review (see the README) still applies.
+
+`patient-info-v4` is `patient-info-v3` with the changes below, which say that the
+practitioner can keep an encrypted backup of the kept transcript and notes on a drive of
+their own. Everything not listed stays as in `patient-info-v3`.
+
+**Part A, "Where does the recording go?", the third point becomes:**
+
+> Everything the program keeps on the computer about your appointment — the recording
+> while it exists, the transcript, the notes and the record that a recording happened —
+> is encrypted and can only be opened from your practitioner's own Windows login on that
+> computer (apart from a short-lived unencrypted copy of a recording you agreed in
+> writing to keep — see that separate sheet). Your practitioner can also make a backup of
+> the transcript, the notes and the record that a recording happened: encrypted, locked
+> with a passphrase only your practitioner knows, and written to a drive attached to their
+> computer (usually one the practice then stores away from it). The program sends a backup
+> nowhere, and refuses to write it to a network drive or a cloud folder it can recognise
+> (your practitioner checks for any it cannot). A recording kept to help develop the
+> program is **never** in a backup, and neither is an appointment whose recording is
+> still kept. The program cannot stop the computer's own backup or file-sync software from copying these encrypted
+> files; it warns your practitioner if its folder is in a place it can recognise as
+> synced or shared, such as OneDrive or a network drive (it cannot recognise every one,
+> so your practitioner checks).
+
+**Part A, the two sentences after the table become:**
+
+> The program keeps the transcript and notes on that one computer and, when your
+> practitioner makes one, in an encrypted backup on a drive they keep. If the computer
+> fails, the kept transcript can be put back from the newest backup that holds it; one
+> kept after the newest backup was made is lost, and so is one whose recording was still
+> being kept to help develop the program when that backup was made. Your clinical record
+> in Cliniko is not affected. Without its passphrase a backup shows no name and nothing
+> that was said.
+
+**Part A, the table's "Kept?" cells for "The transcript and the notes" and for "A record
+that a recording happened" become:**
+
+> Yes, encrypted, on your practitioner's computer, and in any encrypted backup your
+> practitioner makes
+
+**Part A, the table's "For how long" cell for "A record that a recording happened"
+begins, in place of "7 years.":**
+
+> 7 years on your practitioner's computer. A copy in a backup is kept for as long as the
+> practice keeps that backup, under its backup rules.
+
+followed by the cell's other sentences as they stand ("It holds the date, …").
+
+**Part A, "Your choices", the third point gains, after its sentence ending "recorded
+without consent).":**
+
+> A transcript deleted this way may still be held in an older backup until that backup
+> is destroyed under the practice's backup rules.
+
+**Part B, "What to say (suggested)", the sentence "A written transcript is kept,
+encrypted, on my computer for at least 7 years." becomes:**
+
+> A written transcript is kept, encrypted, on my computer, and in an encrypted backup I
+> keep, for at least 7 years.
+
+**Part B, "If the patient says no, or changes their mind", the last point becomes:**
+
+> After a recording is completed, its transcript and notes are on the Past sessions page.
+> Delete now removes one from Past sessions (it cannot be undone there; an earlier backup
+> may still hold it until the downtime procedure's rule lets that backup go) — use it only
+> for a recording made in error: the wrong patient, a test, or one recorded without
+> consent. Otherwise a kept transcript is kept for at least 7 years (see the README).
+
+**Part B, the Cliniko example names `patient-info-v4`**, and **Part C's heading names
+`patient-info-v4` in place of `patient-info-v3`**; Part C's second point becomes:
+
+> a transcript and the notes will be kept, encrypted, on that computer — and in an
+> encrypted backup the practice keeps on a drive of its own — for the time the practice
+> has set, and will form part of my health information held by the practice;
+
+**The version line at the top becomes:** "Document version: `patient-info-v4`
+(2026-11-28, approved by the practitioner on <date>; it adds the practitioner's encrypted
+backup of the kept transcript and notes to Parts A, B and C). History: `patient-info-v3`
+(2026-10-08, approved by the practitioner on 2026-10-09) …", followed by v3's history as
+it stands and its last sentence ("Record this version in the patient's Cliniko record
+when you give it.").

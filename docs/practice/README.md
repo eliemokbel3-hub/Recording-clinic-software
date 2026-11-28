@@ -34,7 +34,11 @@ that a suggested heading's "someone else" means how the app labelled the line; i
 the privacy information, the learning sentence restated: the program learns from lines it
 has labelled as the practitioner's, so now and then a line the patient said can be
 learned from — both approved by the practitioner on 2026-11-25, and awaiting the independent
-review below). The patient documents are unchanged for 0.3.6 and 0.3.7, and the patient
+review below), and on 2026-11-28 for version 0.5.0 (an encrypted backup of past sessions
+and the audit record, protected by a passphrase, onto a drive attached to the
+practitioner's computer, and restoring it on a new computer or Windows login — see
+"Backups" below; these lines are **awaiting the practitioner's approval**). The patient
+documents are unchanged for 0.3.6 and 0.3.7, and the patient
 information sheet (`patient-info-v3`) is unchanged for 0.4.2: the transcript is still processed only on
 the practitioner's computer, nothing is sent to any cloud or online AI service, and no
 model is trained on it (since 0.3.6 the program's language model on that computer also
@@ -45,7 +49,7 @@ document must be corrected.
 
 | Document | For | Version |
 |---|---|---|
-| [Patient information and consent](patient-information-and-consent.md) | Patients, and the practitioner asking for consent | `patient-info-v3` (approved 2026-10-09) |
+| [Patient information and consent](patient-information-and-consent.md) | Patients, and the practitioner asking for consent | `patient-info-v3` (approved 2026-10-09); a `patient-info-v4` DRAFT at its end (written 2026-11-28), not in use, awaiting the practitioner's approval |
 | [Keeping a recording to help develop the program](development-recording-consent.md) | Patients asked for a recording to be kept, and the practitioner asking — a separate, written consent | `development-consent-v1` (approved 2026-10-09) |
 | [Privacy information](privacy-information.md) | The practice's privacy policy and collection notice | draft 1 |
 | [Downtime procedure](downtime-procedure.md) | The practitioner, when something stops working | draft 1 |
@@ -89,12 +93,48 @@ below.
   **[Reviewer: …]** rather than stated.
 - Plain English for the practitioner and for patients: no file names, program names
   from inside the app or technical identifiers — except where a line quotes the app's
-  own screen word for word, so it can be matched.
+  own screen word for word, so it can be matched, and (added 2026-11-28 for version
+  0.5.0, awaiting the practitioner's approval) the two endings of a backup file in the
+  downtime procedure's "Backups" section, `.csbk` (the app's own file dialog shows "Clinic
+  Scribe backups (*.csbk)") and `.csbk.part` (on no screen, but the only way to recognise
+  an unfinished backup on the drive). Neither ending appears in a patient-facing text.
 - No promise the app cannot keep — for example, the app never ticks or fills Cliniko's
-  consent field, and nothing it keeps has a backup.
+  consent field, and before version 0.5.0 nothing it keeps has a backup. From 0.5.0
+  (2026-11-28, awaiting the practitioner's approval) the only backup is one the
+  practitioner makes, and it never holds a recording kept for development; the app cannot
+  know where a backup drive is kept or whether a backup was later destroyed, so no
+  document says it does.
 - The patient information's version (`patient-info-v3`) and the app's consent tick are
   versioned separately (above); the development consent's document and its tick share
   `development-consent-v1`.
+
+## Backups (version 0.5.0)
+
+Added 2026-11-28, **awaiting the practitioner's approval**.
+
+- From version 0.5.0 the practitioner can make an encrypted backup of past sessions (the
+  kept transcripts and notes) and of the record that each recording happened, protected
+  by a passphrase they choose, onto a drive attached to their computer, and restore it on
+  a new computer or Windows login. The backup is never sent anywhere. The rules for making,
+  keeping and destroying backups are in the downtime procedure's "Backups" section, stated
+  once there.
+- **A backup never holds a recording kept for development**, and never a session that
+  still holds one: once that recording is deleted, the next backup holds the session's
+  transcript and notes. So the two sentences of the development-recording consent — that
+  the recording "can be opened only from your practitioner's own Windows login on that
+  computer" and that "The program makes no backup of it." — stay exactly true, and that
+  document is not changed (any change to it would be a new version of it).
+- The patient information sheet's next version, `patient-info-v4`, is written as a
+  clearly marked DRAFT at the end of
+  [Patient information and consent](patient-information-and-consent.md), beside the
+  approved `patient-info-v3` text, and the privacy information's matching changes are
+  drafted at its end. Until the practitioner approves them, `patient-info-v3` stays the
+  current sheet everywhere — its version line, the Cliniko example, the form and every
+  sentence naming the current sheet. The approval makes `patient-info-v4` current in all
+  of those places together.
+- Every transcript kept so far was recorded under `patient-info-v3`, which says the
+  program makes no backup of it. No real backup is made until these lines are approved
+  and the practitioner has decided how those existing records are treated.
 
 ## What the drafts rely on
 
@@ -198,3 +238,24 @@ the app's warning and these documents together.
   - the **unencrypted copy** made to label speakers (on the same computer, deleted after
     use): whether it is acceptable at all, and what the practice must do to keep it off
     backups and synced folders the program cannot detect.
+- **Backups (version 0.5.0; these questions added 2026-11-28, awaiting the practitioner's
+  approval):**
+  - whether an encrypted **backup copy** of kept transcripts and notes on a drive kept by
+    the practice needs **fresh consent** from patients, or changes how state
+    health-records law's custody rules apply (the draft `patient-info-v4` tells new
+    patients about the backup; how transcripts already kept under `patient-info-v3` are
+    treated is the practitioner's decision, and no real backup is made before it);
+  - whether a transcript **deleted because the recording was made in error** must also be
+    destroyed in older backups that still hold it (APP 11.2), including in a backup kept
+    only because it was made before a restore or a new audit record;
+  - whether **audit rows and transcripts a backup still holds after the program's own
+    retention period has deleted them from the computer** need a destruction step of their
+    own (the program deletes nothing in a backup; added 2026-11-28 with the drafts' audit
+    retention lines);
+  - whether the downtime procedure's **one rule for destroying older backups**, with its
+    four named limits, is an adequate procedure;
+  - joined to the downtime procedure's existing question — whether a kept transcript that
+    can no longer be read must still be kept for the 7-year minimum — whether the
+    **folder of set-aside sessions** (sessions this Windows login can no longer open,
+    moved there unread) may ever be destroyed, given that for a session no backup holds
+    it is the only copy.

@@ -88,7 +88,7 @@ All confirmed by the practitioner in the 2026-10-02 planning session (native Pla
   - Recommended next action: buy one at commercialisation, or immediately if Smart App Control is on for a target computer (Task 0.5).
   - Risk if deferred: security: an unsigned build is checked only by hash and attestation, which the practitioner must actually run each time.
   - Revisit by: commercialisation, or a target computer with Smart App Control on
-- **Past-sessions backup and restore** (carried from the privacy-professional-controls plan, not owned here).
+- **Past-sessions backup and restore** (carried from the privacy-professional-controls plan, not owned here). [2026-11-28] Now `plan-past-sessions-backup.md` (version 0.5.0; no installer change — the backup file is written where the practitioner chooses, outside the data folder).
   - Why deferred: a feature of its own. This plan only keeps it possible: the exclusions leave Past sessions and audit backup-eligible (D6).
   - Risk if deferred: correctness: a lost disk loses every kept transcript (unchanged).
   - Revisit by: before commercialisation, or before Past sessions is relied on as part of the health record

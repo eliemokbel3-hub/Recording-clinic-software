@@ -56,6 +56,7 @@ Planning sources: the practitioner's seven answers of 2026-10-09 (this session) 
 
 ### Agreed Scope (0.4.1 — Phase 6, after P.4)
 - The setup checklist page (D7); the full Review composition and the retirement of the Note screen's duplicate transcript panel (the ONE shadow-exit pin change, D6's cleanup); the Chrome side panel's token values if P.4 says so (D11); a build of record 0.4.1 under the same install rule (D10).
+- `[2026-11-28]` 0.4.1 stays reserved for this Phase 6: the Past-sessions backup ships as 0.5.0 (`plan-past-sessions-backup.md` D13), not 0.4.1. If Phase 6 is built after 0.5.0, the version it ships as is decided then.
 
 ### Deferred — Actionable Later
 - The full Review composition and the duplicate transcript panel's removal (Task 6.4): the lite composition leaves NoteScreen's hidden `transcript_view` holding the transcript as it does today (`clear()` clears it) — a dead duplicate, not a new exposure.

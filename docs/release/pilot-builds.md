@@ -68,6 +68,49 @@ the repository's visibility may have changed. If no attestation can be made, the
 check above can never pass, and the build of record needs a decision — never an
 install without that check.
 
+## Rolling back below 0.5.0
+
+0.5.0 (the Past-sessions backup build: Back up..., Open a backup..., Restore
+and Set aside sessions that cannot be opened... on the Past sessions page;
+`.cursor/plans/plan-past-sessions-backup.md`) was built on a branch from 0.4.2
+and goes on top of 0.4.3 when that branch is merged to `main`. It is not yet a
+build of record (that plan's H5, after the merge). This section applies from
+that build on.
+
+**Nothing at rest changes shape** (that plan's Schema / Data Changes and
+D13). The audit row stays schema v3 and every store keeps the shape 0.4.3 and
+0.4.2 read; the audit row's `app_version` reads `0.5.0`. What 0.5.0 adds, and
+what an older build does with it:
+
+- `config\backup.json` (the last backup's date and folder): ignored.
+- A backup file (`ClinikoScribe-backup-<date>[-n].csbk`, on the drive the
+  practitioner chose, outside the data folder): an older build has no reader
+  for it. Keep it; only 0.5.0 or later can open it.
+- A session that Restore added: an ordinary Past-sessions entry (this login's
+  key, the same files), read as any entry.
+- A set-aside folder (`past_sessions.unreadable-<stamp>-<8 hex>\`, beside the
+  archive): an older build opens nothing beside the archive (only its start-up
+  walk marks those folders not content-indexed, as 0.5.0's does, opening no
+  file), so the sessions in it stay set aside and unread, as on 0.5.0.
+- An audit row that Restore wrote: read as before.
+
+Kept recordings are deleted exactly as before (0.5.0 never backs one up, and
+never backs up or sets aside a session that still holds one), so no rollback
+step concerns them. So the only step before installing the older build again
+is the pilot's own rule: finish or discard every recording first. Then reload
+the extension in `chrome://extensions` (the older installer puts back its own
+extension) and fully restart Chrome. The model pack is unchanged.
+
+**What an older build shows differently.** (1) The Past sessions page has no
+Backup group (no Back up..., Open a backup... or Set aside) and no reminder
+line about the last backup. (2) Its deletion messages ("Its notes and
+transcript cannot be recovered", "its key was destroyed") and its retention
+warning ("makes no backup of its own") describe Past sessions on this computer
+only: a backup made on 0.5.0 may still hold a session deleted afterwards, and
+the downtime procedure's rule for older backups still governs those files.
+
+Rolling back further also applies each older section below, in turn.
+
 ## Rolling back below 0.4.2
 
 0.4.2 (the stronger-voice build: the guided six-part voice enrolment, and the
