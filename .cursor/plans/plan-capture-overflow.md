@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** capture-overflow
-**Overall Progress:** `80%` (16 of 20 tasks)
+**Overall Progress:** `85%` (17 of 20 tasks)
 
 ## Lifecycle State
 - Active
@@ -223,9 +223,9 @@ None. No record, file, setting or protocol message changes shape. The installed 
 See `Planning Extraction Summary` (five deferred items, one exclusion, three accepted assumptions). No change to live transcription, thread counts, garbage collection, the warm-up, the queue or the chunk store.
 
 ## Current State / Handoff Note
-- Last completed step: P.1 (2026-11-28: `main` pushed at `ee4ae60`, 0.4.3 built of record, `Release` run 46083359087, attested). Before it: the commit `3ad0a11` (2026-11-28, on the practitioner's "Yes, commit it"), the full suite after Round 8 (11343 passed / 9 skipped), H4 (2026-11-27: codex rounds 8 and 9, every finding fixed), the full suite after Round 7 (11334 passed / 9 skipped), H1–H3 (Round 7), Tasks 3.1 and 3.2, Task 2.1 ("pass, all good", longest gap 189 ms), Task 1.5, Tasks 1.1 to 1.4, Task 0.3 ("Yes, 2.5 s"), Tasks 0.2 and 0.1, planning and "Approve plan" (2026-11-26).
+- Last completed step: P.2 (2026-11-28: 0.4.3 installed over 0.4.2, shadow mode on). Before it: P.1 (2026-11-28: `main` pushed at `ee4ae60`, 0.4.3 built of record, `Release` run 46083359087, attested). Before it: the commit `3ad0a11` (2026-11-28, on the practitioner's "Yes, commit it"), the full suite after Round 8 (11343 passed / 9 skipped), H4 (2026-11-27: codex rounds 8 and 9, every finding fixed), the full suite after Round 7 (11334 passed / 9 skipped), H1–H3 (Round 7), Tasks 3.1 and 3.2, Task 2.1 ("pass, all good", longest gap 189 ms), Task 1.5, Tasks 1.1 to 1.4, Task 0.3 ("Yes, 2.5 s"), Tasks 0.2 and 0.1, planning and "Approve plan" (2026-11-26).
 - Current in-progress step: None
-- Immediate next action: P.2, the practitioner's install of 0.4.3 over 0.4.2 (re-verify from a normal terminal; after the day's last Complete or Discard; shadow mode on; reload the extension, restart Chrome); then P.3.
+- Immediate next action: P.3 after the first recording on 0.4.3: the installed log's `capture_stream` lines (`state=opened` with `detail_code=mme` and 2500 ms, a `state=closed` line, no `state=default_latency`), recorded as numbers by month; then P.4 after about four weeks.
 - Open blockers / open questions: each Phase P step waits for the practitioner's word; whether the 69 s mock is accepted or a longer one is wanted (asked 2026-11-27). Working pattern: parallel subagents only until the practitioner's usage reset; after it, back to one session working in sequence (their words in Round 7).
 - Last plan sync: 2026-11-28
 
@@ -582,8 +582,10 @@ Source: Codex peer-review (gpt-6-astra, read-only; working tree unchanged). All 
   - As run (2026-11-28, the practitioner's "Yes, start Phase P"): the docstring's command now cds into the main checkout and runs two relative paths (the absolute form does not fit ruff's 100-character line, so the old E501 goes too); its pin in `test_measure_capture_stall.py` moves with it (116 passed).
   - `main` fast-forwarded locally to `ee4ae60` (2026-11-28; not pushed). In the main checkout: `npm run qa` passed (313 tests), `npm run build -- --mode dev` built `dist-dev` at 0.4.3, `ruff check .` and mypy clean. The full desktop suite was not re-run there: the code is the worktree's, whose suite passed after Round 8 (11343 passed / 9 skipped), and only the docstring and its pin changed since (116 passed). Next: the push, on the practitioner's word.
   - Pushed 2026-11-28 on the practitioner's "Yes, push and build" (`5d63ed6..ee4ae60`; the push also carried the backup plan's `685743a`, already on local `main`). CI run 46083358558 green. `Release` run 46083359087 green; downloaded to the release folder: `BUILD-INFO.txt` `version=0.4.3`, `commit=ee4ae60`, `tree=clean`; every hash matches `SHA256SUMS.txt`; `gh attestation verify` exit 0 for the installer and `SHA256SUMS.txt` (source `refs/heads/main` at `ee4ae60`, run 46083359087; agent shell, so the practitioner re-verifies at P.2); models manifest identical to 0.4.2's. The row in `docs/release/pilot-builds.md` carries D9's rollback sentence; `AGENTS.md` and `CHANGELOG.md` updated in the same commit.
-- [ ] 🟥 **P.2 Install.**   [operator]
+- [x] 🟩 **P.2 Install.**   [operator]
   - The practitioner re-verifies from a normal terminal, installs over 0.4.2 after the day's last Complete or Discard with shadow mode on, reloads the extension and restarts Chrome. The dated line on `plan-phase3a-note-pipeline.md` is on `main` first.
+  - Re-verified 2026-11-28 by the practitioner from a normal terminal: `gh attestation verify` printed "Verification succeeded!" (source ref `refs/heads/main`, workflow `release.yml`), and `Get-FileHash` gave `F916E44F…C061A`, equal to the recorded installer hash. The dated line on `plan-phase3a-note-pipeline.md` is on `main` (`3ad0a11`, pushed).
+  - Installed 2026-11-28 over 0.4.2 (the practitioner: "installed, status shows 0.4.3 and shadow mode on").
 - [ ] 🟥 **P.3 The first recording's lines.** The installed log shows `capture_stream … state=opened` with `detail_code=mme` and the chosen buffer in ms, a `state=closed` line, and no `state=default_latency`. Recorded here as numbers, by month.
 - [ ] 🟥 **P.4 After about four weeks of clinic use.** From the installed log, by month: the largest `state=closed` gap under 30 s, and the counts of overflows, `state=default_latency` and `state=backlog_dropped` lines. Each deferred item's trigger is read against them.
 - [ ] 🟥 **P.5 Close.** The findings-register row's resolved month, the lifecycle state, `/document`.
