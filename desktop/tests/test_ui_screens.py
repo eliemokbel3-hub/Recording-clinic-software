@@ -10955,6 +10955,9 @@ class _FakePastAudit:
     def key_unreadable(self) -> bool:
         return self.unreadable
 
+    def key_unopenable(self) -> bool:
+        return self.unreadable
+
     def reset(self) -> None:
         self.calls.append(("reset",))
         if self.reset_error is not None:
@@ -11008,6 +11011,10 @@ class _FakePastAudit:
 
     def restore_row(self, plaintext: bytes, session_id: str, month: str, *, now: datetime) -> str:
         self.calls.append(("restore_row", session_id, month))
+        return "add_row"
+
+    def plan_row(self, plaintext: bytes, session_id: str, month: str, *, now: datetime) -> str:
+        self.calls.append(("plan_row", session_id, month))
         return "add_row"
 
 

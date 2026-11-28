@@ -696,6 +696,9 @@ class _AuditRecorder:
     def key_unreadable(self) -> bool:
         return False
 
+    def key_unopenable(self) -> bool:
+        return False
+
     def reset(self) -> None:
         pytest.fail("a draft-write test reset the audit record")
 
@@ -748,6 +751,10 @@ class _AuditRecorder:
 
     def restore_row(self, plaintext: bytes, session_id: str, month: str, *, now: datetime) -> str:
         pytest.fail("a draft-write test restored an audit row")
+
+    # Task 3.1: Restore's planner — never reached here either.
+    def plan_row(self, plaintext: bytes, session_id: str, month: str, *, now: datetime) -> str:
+        pytest.fail("a draft-write test planned a restore")
 
 
 def test_the_audit_recorder_implements_the_past_sessions_surface() -> None:

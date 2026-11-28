@@ -138,9 +138,11 @@ from scribe_desktop.ui.note import NoteScreen
 from scribe_desktop.ui.past_sessions import (
     ArchiveRun,
     AskPassphrase,
+    ChooseBackupFile,
     ChooseBackupPath,
     PastSessionsScreen,
     RunHop,
+    ShowBackupSummary,
 )
 from scribe_desktop.ui.past_sessions_view import PAST_SESSIONS_TAB_TITLE
 from scribe_desktop.ui.practitioner import PractitionerScreen
@@ -514,6 +516,8 @@ class MainWindow(QMainWindow):
         past_sessions_backup_path: ChooseBackupPath | None = None,
         past_sessions_run_hop: RunHop | None = None,
         past_sessions_logger: logging.Logger | None = None,
+        past_sessions_backup_file: ChooseBackupFile | None = None,
+        past_sessions_summary: ShowBackupSummary | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Clinic Scribe")
@@ -789,6 +793,11 @@ class MainWindow(QMainWindow):
             run_hop=past_sessions_run_hop,
             # Peer round 29 PR-LOW-202: an unforeseen backup failure's type.
             logger=past_sessions_logger,
+            # Task 3.3: Open a backup's open dialog and summary, and the
+            # sessions folder Restore's planner checks for a live recording.
+            choose_backup_file=past_sessions_backup_file,
+            show_backup_summary=past_sessions_summary,
+            sessions_root=self.recovery_screen.sessions_root,
         )
         # Past-sessions-backup plan D11: the one backup or restore run holding
         # the run gate (None: none).

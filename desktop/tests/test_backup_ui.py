@@ -207,6 +207,20 @@ class World:
         return sorted(self.dest.iterdir())
 
 
+def dispose(widget: Any) -> None:
+    """Delete ``widget`` NOW, inside the test that made it: the page's tick
+    timer stopped and the deferred delete flushed, so nothing of it ticks or
+    is torn down during a later test's event processing (stage-4 leg x2: an
+    order-dependent crash of a later test's ``TaskThread`` construction)."""
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    timer = getattr(widget, "_timer", None)
+    if timer is not None:
+        timer.stop()
+    widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+
+
 @pytest.fixture
 def world(qapp: Any, tmp_path: Path) -> Iterator[World]:
     root = tmp_path / "w"
@@ -214,7 +228,8 @@ def world(qapp: Any, tmp_path: Path) -> Iterator[World]:
     made = World(root)
     yield made
     if made.screen is not None:
-        made.screen.deleteLater()
+        dispose(made.screen)
+        made.screen = None
 
 
 def _settings(world: World) -> BackupSettings:
@@ -295,7 +310,7 @@ class TestThePassphraseDialog:
         assert isinstance(value, bytearray) and value == bytearray(PASSPHRASE, "utf-8")
         assert dialog.take_passphrase() is None  # once
         assert all(field.text() == "" for field in dialog.fields())
-        dialog.deleteLater()
+        dispose(dialog)
 
     def test_a_refused_accept_empties_the_fields_and_says_why(self, qapp: Any) -> None:
         dialog = backup_dialog.PassphraseDialog(confirm=True)
@@ -306,7 +321,7 @@ class TestThePassphraseDialog:
         assert dialog.take_passphrase() is None
         assert dialog.error_label.text() == backup_dialog.PASSPHRASE_MISMATCH
         assert all(field.text() == "" for field in dialog.fields())
-        dialog.deleteLater()
+        dispose(dialog)
 
     @pytest.mark.parametrize("exit_by", ["reject", "close"])
     def test_reject_and_close_empty_the_fields(self, qapp: Any, exit_by: str) -> None:
@@ -320,7 +335,7 @@ class TestThePassphraseDialog:
             dialog.close()
         assert dialog.take_passphrase() is None
         assert all(field.text() == "" for field in dialog.fields())
-        dialog.deleteLater()
+        dispose(dialog)
 
     def test_open_asks_once(self, qapp: Any) -> None:
         dialog = backup_dialog.PassphraseDialog(confirm=False)
@@ -328,7 +343,7 @@ class TestThePassphraseDialog:
         dialog.first_field.setText("x")
         dialog.accept()
         assert dialog.take_passphrase() == bytearray(b"x")
-        dialog.deleteLater()
+        dispose(dialog)
 
     def test_neither_text_signal_delivers_a_value(self, qapp: Any) -> None:
         field = backup_dialog.PassphraseField()
@@ -340,7 +355,7 @@ class TestThePassphraseDialog:
         field.wipe()
         assert seen == []
         assert field.echoMode() == field.EchoMode.Password
-        field.deleteLater()
+        dispose(field)
 
     def test_copy_and_cut_place_nothing_by_shortcut_or_context_menu(
         self, qapp: Any, monkeypatch: pytest.MonkeyPatch
@@ -385,7 +400,7 @@ class TestThePassphraseDialog:
         assert field.text() == PASSPHRASE  # Cut removed nothing either
         assert field.contextMenuPolicy() == Qt.ContextMenuPolicy.NoContextMenu
         assert not field.dragEnabled()
-        field.deleteLater()
+        dispose(field)
 
 
 class TestTheSummaryDialog:
@@ -396,10 +411,10 @@ class TestTheSummaryDialog:
         assert dialog.close_button.isDefault()
         assert not dialog.restore_button.isDefault()
         assert not dialog.restore_button.isEnabled()
-        dialog.deleteLater()
+        dispose(dialog)
         dialog = backup_dialog.SummaryDialog(lines, restore_enabled=True)
         assert dialog.restore_button.isEnabled() and dialog.close_button.isDefault()
-        dialog.deleteLater()
+        dispose(dialog)
 
     def test_show_summary_is_parented_to_the_window_not_the_page(
         self, qapp: Any, monkeypatch: pytest.MonkeyPatch
@@ -417,7 +432,7 @@ class TestTheSummaryDialog:
         page = QWidget(window)
         assert backup_dialog.show_summary(page, ["x"], restore_enabled=True) is False
         assert parents == [window]
-        window.deleteLater()
+        dispose(window)
 
 
 class TestTheDialogsHoldNoCopyableWidget:
@@ -452,7 +467,7 @@ class TestTheDialogsHoldNoCopyableWidget:
                 assert not label.textInteractionFlags() & selectable
             for field in dialog.findChildren(QLineEdit):
                 assert isinstance(field, backup_dialog.PassphraseField)
-            dialog.deleteLater()
+            dispose(dialog)
 
     def test_both_dialogs_render_in_light_and_dark(self, qapp: Any) -> None:
         from scribe_desktop.ui import theme
@@ -469,7 +484,7 @@ class TestTheDialogsHoldNoCopyableWidget:
                     if isinstance(dialog, backup_dialog.PassphraseDialog):
                         assert dialog.error_label.property("role") == "error"
                     dialog.close()
-                    dialog.deleteLater()
+                    dispose(dialog)
         finally:
             # The application is left exactly as it was: its palette, sheet,
             # token set and scheme marker all the saved scheme's again (a
@@ -922,7 +937,7 @@ class TestAFailedWorkerStart:
             if run is not None:
                 run.close()
             window.close()
-            window.deleteLater()
+            dispose(window)
 
 
 class _Records(logging.Handler):
@@ -1107,7 +1122,7 @@ class TestBackUpInTheWindow:
             if run is not None:
                 run.close()
             window.close()
-            window.deleteLater()
+            dispose(window)
 
     def test_a_close_waits_for_a_backup_worker_still_ending(
         self, qapp: Any, tmp_path: Path
@@ -1134,7 +1149,7 @@ class TestBackUpInTheWindow:
             screen._hops.remove(task)
             task.deleteLater()
             window.close()
-            window.deleteLater()
+            dispose(window)
 
     @pytest.mark.parametrize("width", ["150", "narrowest"])
     def test_the_backup_row_fits(self, qapp: Any, tmp_path: Path, width: str) -> None:
@@ -1155,7 +1170,7 @@ class TestBackUpInTheWindow:
             assert 0 <= left and left + button.width() <= window.width()
         finally:
             window.close()
-            window.deleteLater()
+            dispose(window)
 
 
 # ---------------------------------------------------------------------------
@@ -1183,7 +1198,9 @@ def _report(
 
 # Every code a backup run can end with: the run codes but the restore's
 # ``source_changed``, and hop A's two KDF codes.
-_BACKUP_CODES = (backup.RUN_CODES - {"source_changed"}) | {"kdf_memory", "kdf_unavailable"}
+# The restore-only run codes (Task 3.2) never end a backup.
+_RESTORE_ONLY = {"source_changed", "staging_unusable"}
+_BACKUP_CODES = (backup.RUN_CODES - _RESTORE_ONLY) | {"kdf_memory", "kdf_unavailable"}
 
 
 class TestTheBackupLines:

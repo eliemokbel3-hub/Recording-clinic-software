@@ -612,6 +612,10 @@ def _classify_entry_key_blob(blob: bytes) -> str:
 BackupLeftOut = Literal[
     "holds_recording", "unreadable", "incomplete", "damaged", "changed", "uninspectable"
 ]
+# Past-sessions-backup plan D8: what ``restore_entry`` did with one entry.
+RestoreEntryOutcome = Literal[
+    "published", "skipped_collision", "skipped_uninspectable", "failed_write", "failed_verify"
+]
 
 
 @dataclass(frozen=True)
@@ -1759,6 +1763,143 @@ class PastSessionStore:
         except BaseException:
             key[:] = bytes(len(key))
             raise
+
+    # --- Restore's add (past-sessions-backup plan D8) -------------------------
+
+    def staging_usable(self) -> bool:
+        """``.staging`` CONFIRMED an ordinary folder, or absent (D8's staging
+        rule): a link, a status that cannot be read, or anything that is not
+        a folder is not — the whole restore is then refused before anything
+        is written. Never raises."""
+        if link_state(self.staging_root) is not False:
+            return False
+        try:
+            status = os.lstat(self.staging_root)
+        except FileNotFoundError:
+            return True
+        except OSError:
+            return False
+        return stat.S_ISDIR(status.st_mode)
+
+    def restore_entry(
+        self, session_id: str, key: bytes | bytearray, files: dict[str, bytes]
+    ) -> RestoreEntryOutcome:
+        """ADD one entry from a backup (D8; C5, C6), GUI thread: ``files`` are
+        its ciphertext by kind (``ENTRY_FILE_KINDS``) and ``key`` its 32-byte
+        entry key, which is wrapped for THIS login by the store's seam. Staged
+        under ``.staging\\<id>`` (a linked or uninspectable child is
+        ``skipped_uninspectable``, never removed or written through; an
+        ordinary one is removed key-first first), fully verified
+        (``_verify_restored``), then published WITHOUT ``pending`` by
+        ``_publish_new``, which never removes the destination. Outcomes:
+        ``published``; ``skipped_collision`` (the destination appeared after
+        staging — it is left byte-identical); ``failed_verify`` and
+        ``failed_write`` (the staging copy removed key-first, the destination
+        never made). An unusable ``.staging`` is ``failed_write`` here (the
+        restorer refuses the whole run before its first write). Never raises
+        past the id check."""
+        validate_session_id(session_id)
+        if not self.staging_usable():
+            self._log(session_id, "staging_link_refused")
+            return "failed_write"
+        staging = self.staging_root / session_id
+        staged = link_state(staging)
+        if staged is not False:
+            self._log(session_id, "link_refused")
+            return "skipped_uninspectable"
+        if not _remove_key_first(staging):
+            return "failed_write"
+        stage: RestoreEntryOutcome = "failed_write"
+        try:
+            self._stage_restored(staging, session_id, key, files)
+            stage = "failed_verify"
+            self._verify_restored(staging, session_id, files)
+            stage = "failed_write"
+            if not self._publish_new(staging, self._root / session_id):
+                self._discard_staged(staging, session_id)
+                self._log(session_id, "restore_collision")
+                return "skipped_collision"
+        except Exception:  # noqa: BLE001 - a closed outcome, never exception text (C3)
+            self._discard_staged(staging, session_id)
+            self._log(session_id, "restore_" + stage)
+            return stage
+        self._forget_dates(session_id)
+        return "published"
+
+    def _discard_staged(self, staging: Path, session_id: str) -> None:
+        """A staged restore that will not be published, removed key-first; a
+        removal that fails is logged (``restore_staging_left``) and left to
+        ``clean_staging`` (review round 32 LOW)."""
+        if not _remove_key_first(staging):
+            self._log(session_id, "restore_staging_left")
+
+    def _stage_restored(
+        self, staging: Path, session_id: str, key: bytes | bytearray, files: dict[str, bytes]
+    ) -> None:
+        """Write a restored entry into ``staging``: its key wrapped for this
+        login, then its files byte for byte. No ``pending`` marker."""
+        if not set(files) <= set(ENTRY_FILE_KINDS) or not {"label", "transcript"} <= set(files):
+            raise PastSessionError("write_failed")
+        crypto = SessionCrypto.from_key(bytes(key))
+        try:
+            staging.mkdir(parents=True)
+            self._wrap_key(crypto, staging)
+        finally:
+            crypto.destroy()
+        for kind, blob in files.items():
+            atomic_write_bytes(
+                staging / ENTRY_FILE_KINDS[kind], blob, error_label="restored past-session entry"
+            )
+
+    def _verify_restored(self, staging: Path, session_id: str, files: dict[str, bytes]) -> None:
+        """D8's verification of a staged restore, through the entry's OWN key
+        read back by the store's seam: exactly ``key.dpapi`` and the files;
+        each file's SHA-256 equal to the backup's bytes; the label opened
+        under ``_label_aad(id)``, parsed, naming this id, its ``has_saved`` /
+        ``has_generated`` matching the files; and ``read_transcript``,
+        ``read_note``, ``read_generated`` accepting what they will later
+        read. Raises on any difference."""
+        names = {KEY_FILENAME, *(ENTRY_FILE_KINDS[kind] for kind in files)}
+        if frozenset(path.name for path in staging.iterdir()) != names:
+            raise PastSessionError("verify_failed")
+        for kind, blob in files.items():
+            _require_same(
+                _read_capped(staging / ENTRY_FILE_KINDS[kind], max(len(blob), 1)), blob
+            )
+        crypto = self._unwrap_key(staging)
+        try:
+            # ``.staging\<id>`` is named by the id, so the label's associated
+            # data and its own-id check are the committed entry's.
+            label = self._decode_label(staging, crypto)
+            if (
+                label is None
+                or label.has_saved != ("note" in files)
+                or label.has_generated != ("generated" in files)
+            ):
+                raise PastSessionError("verify_failed")
+            read_transcript(staging, crypto)
+            if "note" in files:
+                read_note(staging, crypto)
+            if "generated" in files and read_generated(staging, crypto, session_id) is None:
+                raise PastSessionError("verify_failed")
+        finally:
+            crypto.destroy()
+
+    @staticmethod
+    def _publish_new(staging: Path, final: Path) -> bool:
+        """Publish a restored entry WITHOUT replacing anything (D8): ``final``
+        must be CONFIRMED absent (and not a link), then ONE ``os.rename``,
+        which never replaces on Windows. False when something is there —
+        before the rename or appearing at it (``FileExistsError``; review
+        round 32 LOW) — it is never removed on any path; any other ``OSError``
+        from the rename passes."""
+        if link_state(final) is not False or not _absent(final):
+            return False
+        try:
+            os.rename(staging, final)
+        except FileExistsError:
+            return False
+        return True
 
     # --- the set-aside (past-sessions-backup plan D8) -----------------------
 

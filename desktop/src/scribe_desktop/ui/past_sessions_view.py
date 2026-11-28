@@ -46,15 +46,20 @@ from scribe_desktop.past_sessions import (
     PastSessionListing,
     PastSessionStore,
     RetentionSweepReport,
+    SetAsideReport,
 )
 from scribe_desktop.past_sessions_backup import (
     BACKUP_FILENAME_PREFIX,
     BACKUP_SUFFIX,
+    BackupFacts,
     BackupFormatError,
     BackupReport,
     BackupRunError,
     LeftOut,
+    RestorePlan,
+    RestoreReport,
 )
+from scribe_desktop.past_sessions_backup import FORMAT_CODES as BACKUP_FORMAT_CODES
 from scribe_desktop.session_store import StoreWriteError
 from scribe_desktop.ui.models import CUSTODY_UNEXPECTED_REASON
 
@@ -81,6 +86,9 @@ class PastSessionsAudit(Protocol):
     def failure_count(self) -> int: ...
 
     def key_unreadable(self) -> bool: ...
+
+    # Past-sessions-backup plan D8 (review round 33): Restore's own key check.
+    def key_unopenable(self) -> bool: ...
 
     def reset(self) -> Path | None: ...
 
@@ -134,6 +142,12 @@ class PastSessionsAudit(Protocol):
     def row_state(self, session_id: str) -> RowState: ...
 
     def restore_row(
+        self, plaintext: bytes, session_id: str, month: str, *, now: datetime
+    ) -> RowOutcome: ...
+
+    # Past-sessions-backup plan Task 3.1: Restore's planner and its recheck
+    # (``restore_row``'s outcome, writing nothing).
+    def plan_row(
         self, plaintext: bytes, session_id: str, month: str, *, now: datetime
     ) -> RowOutcome: ...
 
@@ -1008,18 +1022,21 @@ class HopFailed:
     part_may_remain: bool = False
     left_out: LeftOut | None = None
     error_type: str | None = None
+    # Open a backup (D8): the channel an ``other_channel`` file was made by.
+    channel: str | None = None
 
 
 def hop_failure(exc: BaseException) -> HopFailed:
     """The closed code of a hop's exception (D4): a backup format or run
-    error's own code (with the writer's two facts); anything else is
-    ``unexpected``, carrying its type name and nothing else."""
+    error's own code (with the writer's two facts, or the reader's channel);
+    anything else is ``unexpected``, carrying its type name and nothing
+    else."""
     if isinstance(exc, BackupRunError):
         # Peer round 30 PR-LOW-301: the writer's own ``unexpected`` carries
         # the unforeseen exception's type name through its cleanup.
         return HopFailed(exc.code, exc.part_may_remain, exc.left_out, exc.error_type)
     if isinstance(exc, BackupFormatError):
-        return HopFailed(exc.code)
+        return HopFailed(exc.code, channel=exc.channel)
     return HopFailed("unexpected", error_type=exception_type_name(type(exc)))
 
 
@@ -1162,3 +1179,274 @@ def backup_status_line(
     if last_backup_at is None:
         return f"No backup date recorded - {_sessions(len(since))} kept."
     return f"Last backup {_day_text(last_backup_at, zone)} - {_sessions(len(since))} kept since."
+
+
+# --- Open a backup and Restore (past-sessions-backup plan Flows 2 and 3; D8,
+# D10) -------------------------------------------------------------------------
+# Counts, dates, a version and a channel only (C1, C7). No verdict, and nothing
+# about whether this or any other backup may be kept or destroyed (decision
+# 0.14): the downtime procedure states that rule once.
+
+OPEN_BACKUP_LABEL: Final = "Open a backup..."
+OPEN_BACKUP_DIALOG_TITLE: Final = "Open a backup"
+OPEN_NOT_AVAILABLE: Final = "Open a backup is not available in this window."
+OPEN_NO_LAYER: Final = (
+    "The backup was not opened: Clinic Scribe cannot check where the file is in this window."
+)
+OPEN_RUNNING: Final = (
+    "Opening the backup - this can take a minute. The rest of Clinic Scribe waits until it "
+    "is done."
+)
+OPEN_CLOSED: Final = "The backup was closed. Nothing was written."
+RESTORE_RUNNING: Final = (
+    "Restoring - this can take a minute. The rest of Clinic Scribe waits until it is done."
+)
+# D8: why Restore is disabled on the summary, as one more line.
+RESTORE_NEEDS_AUDIT: Final = "Start a new audit record first."
+RESTORE_NEEDS_RETENTION: Final = "Choose how long past sessions are kept first."
+RESTORE_NEVER_REPLACES: Final = (
+    "Restore never replaces a session that is here. If this Windows login can no longer "
+    "open those sessions, press Close, then Set aside sessions that cannot be opened, and "
+    "open this backup again."
+)
+RESTORE_UNMARKED_TAIL: Final = (
+    "could not be marked in the audit record - open this backup and Restore again to finish."
+)
+RESTORE_CLINIC_KEYS: Final = "Add the clinic keys on the Clinics tab if this is a new computer."
+RESTORE_DATE_NOT_SAVED: Final = "The backup date could not be saved."
+RESTORE_SOURCE_CHANGED: Final = (
+    "The backup file changed while it was being restored, so the rest was not restored - "
+    "open it again."
+)
+_CHANNEL_WORDS: Final[dict[str, str]] = {
+    "production": "the installed app",
+    "dev": "the developer build",
+}
+_DAMAGED: Final = (
+    "The backup could not be opened: the file is damaged or is not a Clinic Scribe backup."
+)
+_OPEN_FAILED: Final[dict[str, str]] = {
+    "unreadable": "The backup file could not be read - check the drive and try again.",
+    "passphrase": (
+        "The backup could not be opened: the passphrase is not right, or the file is damaged."
+    ),
+    "format_newer": (
+        "This backup was made by a newer version of Clinic Scribe - it cannot be opened here."
+    ),
+    "kdf_memory": (
+        "The backup could not be opened: there was not enough free memory to check the "
+        "passphrase. Close other programs and try again."
+    ),
+    "kdf_unavailable": (
+        "The backup could not be opened: this computer could not check the passphrase."
+    ),
+    "archive_unreadable": (
+        "The backup was not opened: the Past sessions list could not be read just now. "
+        "Try again."
+    ),
+    # Review round 32 LOW: the file changed between its check and the plan.
+    "source_changed": "The backup file changed while it was being opened. Open it again.",
+    "unexpected": f"The backup was not opened: {UNEXPECTED_REASON}.",
+}
+_RESTORE_FAILED: Final[dict[str, str]] = {
+    "source_changed": (
+        "Nothing was restored: the backup file changed after it was opened. Open it again."
+    ),
+    "staging_unusable": (
+        "Nothing was restored: Clinic Scribe could not prepare the Past sessions folder - "
+        "see Past sessions problems in the downtime procedure."
+    ),
+    "unexpected": f"Nothing was restored: {UNEXPECTED_REASON}.",
+}
+
+
+def channel_words(channel: str) -> str:
+    return _CHANNEL_WORDS.get(channel, "another build")
+
+
+def open_refused_line(reason: str) -> str:
+    """A source the location rule refused (D7): nothing of it was read."""
+    return f"The backup was not opened: {reason}"
+
+
+def backup_open_failed_line(failure: HopFailed) -> str:
+    """A refused or failed Open, by its closed code: another channel's file
+    names that channel (D8); a wrong passphrase and a damaged manifest share
+    ONE line (D2); every other refusal of the file reads as damage."""
+    if failure.code == "other_channel":
+        return f"This backup was made by {channel_words(failure.channel or '')}."
+    if failure.code in _OPEN_FAILED:
+        return _OPEN_FAILED[failure.code]
+    if failure.code in BACKUP_FORMAT_CODES:
+        return _DAMAGED
+    return _OPEN_FAILED["unexpected"]
+
+
+def restore_failed_line(failure: HopFailed) -> str:
+    """Restore refused before its first write, by its closed code."""
+    return _RESTORE_FAILED.get(failure.code, _RESTORE_FAILED["unexpected"])
+
+
+def _date_range(dates: Iterable[datetime], zone: tzinfo | None) -> str:
+    days = sorted({_day_text(moment, zone) for moment in dates})
+    if not days:
+        return ""
+    return days[0] if len(days) == 1 else f"{days[0]} to {days[-1]}"
+
+
+def _parts(pairs: Sequence[tuple[str, int]]) -> str:
+    """``Label: N.`` for each non-zero count, joined; "" when all are zero."""
+    return " ".join(f"{label}: {count}." for label, count in pairs if count)
+
+
+def restore_summary_lines(
+    facts: BackupFacts,
+    plan: RestorePlan,
+    *,
+    ages_known: bool = True,
+    restore_refusals: Sequence[str] = (),
+    zone: tzinfo | None = None,
+) -> list[str]:
+    """The summary dialog's lines (D10): what the file holds; what it left
+    out when it was made; the sessions a kept recording kept out of it; what
+    Restore would do here (a zero part omitted); the set-aside hint when a
+    session is here but cannot be read; and, when Restore cannot run, every
+    reason why, one line each.
+    Counts and dates only — no verdict. ``ages_known`` False (the retention
+    setting cannot be read) leaves out the counts that depend on age."""
+    manifest = facts.manifest
+    made = (
+        f"made on {_day_text(manifest.made_at, zone)} by Clinic Scribe "
+        f"{manifest.app_version} ({channel_words(manifest.channel)})."
+    )
+    entries = len(manifest.entries)
+    if entries:
+        span = _date_range((facts.completed[sid] for sid in manifest.entries), zone)
+        held = f"{_sessions(entries)} from {span}"
+    else:
+        held = "no sessions"
+    lines = [f"This backup opens: {held} and {_rows(len(manifest.rows))}, {made}"]
+    # D10's words: both parts, the line omitted only when both are 0.
+    left_sessions = eligible_left_out(manifest.left_out)
+    if left_sessions or manifest.left_out.rows:
+        lines.append(
+            f"Left out when it was made: {_sessions(left_sessions)}, "
+            f"{_rows(manifest.left_out.rows)}."
+        )
+    holds = manifest.left_out.entries.get("holds_recording", 0)
+    if holds:
+        lines.append(f"Not in it because a kept recording or its key was present: {holds}.")
+    counts = plan.counts()
+    to_add = (
+        f"To add: {_sessions(counts['to_add'])}, {_rows(counts['rows_to_add'])}."
+        if ages_known
+        else f"To add: {_rows(counts['rows_to_add'])}."
+    )
+    rest = _parts(
+        [
+            ("Already here", counts["already_here"]),
+            ("Here but cannot be read", counts["here_unreadable"]),
+            ("Could not be inspected", counts["uninspectable"]),
+        ]
+    )
+    deleted = f"Deleted since: {counts['deleted']} (not restored)." if counts["deleted"] else ""
+    expired = (
+        f"Older than the retention period: {counts['expired']} (not restored)."
+        if ages_known and counts["expired"]
+        else ""
+    )
+    tail = _parts(
+        [
+            ("In progress or left over here", counts["in_progress"]),
+            ("Cannot be restored by this version", counts["not_restorable"]),
+            ("Audit provenance to recover", counts["provenance"]),
+            ("Audit rows already here or past their 7 years", counts["rows_here_or_pruned"]),
+            ("Audit rows different or unreadable", counts["rows_different"]),
+        ]
+    )
+    lines.append(" ".join(part for part in (to_add, rest, deleted, expired, tail) if part))
+    if counts["here_unreadable"]:
+        lines.append(RESTORE_NEVER_REPLACES)
+    lines.extend(restore_refusals)
+    return lines
+
+
+def restore_report_line(report: RestoreReport, *, date_saved: bool = True) -> str:
+    """The final report (D10): what happened to the items the plan set out to
+    WRITE — "Restored N sessions and R audit rows." then, each when not zero,
+    "Left as they are: F." and "Not restored: X."; the file changing part-way;
+    the sessions whose ``archived`` mark failed; the date's save failure; and,
+    once anything was restored, where the clinic keys are added. No verdict
+    and no keep-or-destroy sentence."""
+    sentences = [
+        f"Restored {_sessions(report.restored)} and {_rows(report.rows_restored)}."
+    ]
+    tail = _parts([("Left as they are", report.left), ("Not restored", report.not_restored)])
+    if tail:
+        sentences.append(tail)
+    if report.source_changed:
+        sentences.append(RESTORE_SOURCE_CHANGED)
+    if report.unmarked:
+        sentences.append(f"{_sessions(report.unmarked)} {RESTORE_UNMARKED_TAIL}")
+    if not date_saved:
+        sentences.append(RESTORE_DATE_NOT_SAVED)
+    if report.restored or report.rows_restored:
+        sentences.append(RESTORE_CLINIC_KEYS)
+    return " ".join(sentences)
+
+
+# --- The set-aside (past-sessions-backup plan D8, D10; decision 0.15) ----------
+
+SET_ASIDE_LABEL: Final = "Set aside sessions that cannot be opened..."
+SET_ASIDE_ACTION: Final = "Set aside"
+SET_ASIDE_CONFIRM: Final = (
+    "Set aside the sessions this Windows login can no longer open? They are moved, unread, "
+    "to a folder beside Past sessions, and nothing is deleted. Open a backup then shows how "
+    "many sessions it can add back; a session that is in no backup stays set aside and "
+    "cannot be read. A session that still has a recording file is not moved. Press Set "
+    "aside to go on."
+)
+SET_ASIDE_NOT_AVAILABLE: Final = "Set aside is not available in this window."
+SET_ASIDE_NOTHING: Final = "No session was set aside."
+_SET_ASIDE_FAILED: Final[dict[str, str]] = {
+    "dpapi_unavailable": (
+        "Windows could not verify a test value just now - nothing was moved. Try again later."
+    ),
+    "set_aside_unavailable": "The set-aside folder could not be made - nothing was moved.",
+    "unreadable": LIST_UNREADABLE,
+}
+
+
+def set_aside_line(report: SetAsideReport) -> str:
+    """The set-aside's report (D10): how many were moved — or that none was —
+    then, each when not zero, those kept because of a recording file, those
+    that could not be safely assessed, and those that could not be moved. A
+    session this login can open is never counted."""
+    moved = len(report.moved)
+    if moved:
+        sentences = [
+            f"Set aside {_sessions(moved)} that this Windows login can no longer open. "
+            "Nothing was deleted. Open a backup to see how many sessions it can add back."
+        ]
+    else:
+        sentences = [SET_ASIDE_NOTHING]
+    if report.held:
+        sentences.append(
+            f"{report.held} {'was' if report.held == 1 else 'were'} not moved: a recording "
+            "file is still present, or could not be ruled out."
+        )
+    if report.left:
+        sentences.append(
+            f"{report.left} {'other was' if report.left == 1 else 'others were'} left as "
+            f"{'it is' if report.left == 1 else 'they are'}: "
+            f"{'it' if report.left == 1 else 'they'} could not be safely assessed."
+        )
+    if report.failed:
+        sentences.append(f"{report.failed} could not be moved.")
+    return " ".join(sentences)
+
+
+def set_aside_failed_line(exc: BaseException) -> str:
+    """A set-aside refused with nothing moved, by its closed reason."""
+    reason = exc.reason if isinstance(exc, PastSessionError) else "unexpected"
+    return _SET_ASIDE_FAILED.get(reason, f"Nothing was moved: {UNEXPECTED_REASON}.")

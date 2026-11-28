@@ -47,9 +47,9 @@ import struct
 import zipfile
 from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import BinaryIO, Final, Literal, Protocol, cast
+from typing import BinaryIO, Final, Literal, Protocol, cast, get_args
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -66,11 +66,16 @@ from pydantic import (
 from scribe_desktop import __version__, install_layout
 from scribe_desktop.audit import (
     MAX_ROW_FILE_BYTES,
+    AuditRow,
     AuditSnapshot,
     AuditUnavailable,
+    BackedUpRow,
+    PastSessionEvent,
     RowDescriptor,
+    RowOutcome,
     RowState,
     _row_aad,
+    backed_up_row_reading,
     row_importable,
     valid_month,
 )
@@ -82,7 +87,9 @@ from scribe_desktop.past_sessions import (
     ExportIdentity,
     FileIdentity,
     PastSessionError,
+    PastSessionListing,
     PastSessionStore,
+    RestoreEntryOutcome,
     _audio_key_state,
     _remove_part,
     entry_opens,
@@ -200,6 +207,7 @@ RUN_CODES: Final = frozenset(
         "write_failed",
         "publish_unverified",
         "source_changed",
+        "staging_unusable",
         "unexpected",
     }
 )
@@ -1648,3 +1656,558 @@ def _sha256_of(path: Path) -> str | None:
     except OSError:
         return None
     return digest.hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Restoring (D8, D9): the plan on the GUI thread, ONCE per Open; then, after a
+# second whole-file verification on a worker, the restorer, which rechecks
+# each id immediately before it writes and can only WITHDRAW a write.
+# ---------------------------------------------------------------------------
+
+EntryOutcome = Literal[
+    "add",
+    "skipped_live",
+    "skipped_uninspectable",
+    "skipped_linked",
+    "skipped_present",
+    "skipped_not_readable",
+    "skipped_leftover",
+    "skipped_unknown_row",
+    "skipped_deleted",
+    "skipped_expired",
+]
+RowPlan = Literal[
+    "add_row",
+    "provenance_recovered",
+    "skipped_present_row",
+    "skipped_unreadable_row",
+    "skipped_pruned_row",
+    "skipped_undecodable_row",
+    "conflict_row",
+]
+SummaryCount = Literal[
+    "to_add",
+    "already_here",
+    "here_unreadable",
+    "in_progress",
+    "uninspectable",
+    "deleted",
+    "expired",
+    "not_restorable",
+    "rows_to_add",
+    "provenance",
+    "rows_here_or_pruned",
+    "rows_different",
+]
+# What one planned write ended in (D8's final report).
+WriteOutcome = Literal[
+    "published",
+    "row_written",
+    "skipped_collision",
+    "skipped_uninspectable",
+    "withdrawn",
+    "failed_write",
+    "failed_row_write",
+    "failed_verify",
+    "row_mismatch",
+    "source_changed",
+    "not_attempted",
+    "unexpected",
+]
+ReportCount = Literal["restored", "rows_restored", "left", "not_restored"]
+
+# D8's ONE table: every planner outcome to exactly one SUMMARY count, and every
+# outcome of a planned write to exactly one REPORT count (a test walks both).
+SUMMARY_COUNTS: Final[dict[str, SummaryCount]] = {
+    "add": "to_add",
+    "skipped_present": "already_here",
+    "skipped_not_readable": "here_unreadable",
+    "skipped_live": "in_progress",
+    "skipped_leftover": "in_progress",
+    "skipped_uninspectable": "uninspectable",
+    "skipped_linked": "uninspectable",
+    "skipped_deleted": "deleted",
+    "skipped_expired": "expired",
+    "skipped_unknown_row": "not_restorable",
+    "add_row": "rows_to_add",
+    "provenance_recovered": "provenance",
+    "skipped_present_row": "rows_here_or_pruned",
+    "skipped_pruned_row": "rows_here_or_pruned",
+    "conflict_row": "rows_different",
+    "skipped_undecodable_row": "rows_different",
+    "skipped_unreadable_row": "rows_different",
+}
+REPORT_COUNTS: Final[dict[str, ReportCount]] = {
+    "published": "restored",
+    "row_written": "rows_restored",
+    "skipped_collision": "left",
+    "skipped_uninspectable": "left",
+    "withdrawn": "left",
+    "failed_write": "not_restored",
+    "failed_row_write": "not_restored",
+    "failed_verify": "not_restored",
+    "row_mismatch": "not_restored",
+    "source_changed": "not_restored",
+    "not_attempted": "not_restored",
+    "unexpected": "not_restored",
+}
+_WRITTEN_ROWS: Final = frozenset({"add_row", "provenance_recovered"})
+
+
+class RestoreAudit(Protocol):
+    """What Restore reads and writes of the LOCAL audit record (D8, D9);
+    ``AuditLog`` and the Past sessions page's audit surface satisfy it."""
+
+    def row_state(self, session_id: str) -> RowState: ...
+
+    def row_for(self, session_id: str) -> AuditRow | None: ...
+
+    def plan_row(
+        self, plaintext: bytes, session_id: str, month: str, *, now: datetime
+    ) -> RowOutcome: ...
+
+    def restore_row(
+        self, plaintext: bytes, session_id: str, month: str, *, now: datetime
+    ) -> RowOutcome: ...
+
+    def record_past_session(
+        self,
+        session_id: str,
+        state: PastSessionEvent,
+        *,
+        created_at: float | None = None,
+        create: bool = True,
+    ) -> bool: ...
+
+
+@dataclass(frozen=True)
+class LocalRow:
+    """The local audit row of one session as Restore reads it: ``none``,
+    ``kept``, ``deleted`` (a tombstone) or ``unknown`` (newer, unreadable,
+    or any doubt), and whether a readable row's Past-sessions state is still
+    ``none`` (it is then marked ``archived`` once its entry is here)."""
+
+    reading: Literal["none", "kept", "deleted", "unknown"]
+    unarchived: bool = False
+
+
+_DELETED_PAST_STATES: Final = frozenset({"deleted_early", "expired"})
+
+
+def local_row(audit: RestoreAudit, session_id: str) -> LocalRow:
+    """``session_id``'s local row (D8) — decided in the safe direction: any
+    doubt, an unforeseen error included, is ``unknown``. Never raises."""
+    try:
+        state = audit.row_state(session_id)
+        if state == "none":
+            return LocalRow("none")
+        if state != "readable":
+            return LocalRow("unknown")
+        row = audit.row_for(session_id)
+    except Exception:  # noqa: BLE001 - a row that cannot be judged restores nothing
+        return LocalRow("unknown")
+    if row is None:
+        return LocalRow("unknown")
+    if row.past_session.state in _DELETED_PAST_STATES:
+        return LocalRow("deleted")
+    return LocalRow("kept", unarchived=row.past_session.state == "none")
+
+
+def _presence(path: Path) -> bool | None:
+    """Whether ``path`` is there, from ONE ``os.lstat`` (a link counts as
+    there); None when that cannot be told."""
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return None
+    return True
+
+
+@dataclass(frozen=True)
+class RestorePlan:
+    """``plan_restore``'s answer (D8): each entry id's and each row id's
+    outcome, in the manifest's order, and what the restorer's recheck reuses
+    — the ONE archive listing (labels included, never shown or logged), each
+    backed-up row's reading, the retention it was planned under and the
+    sessions folder."""
+
+    entries: dict[str, EntryOutcome]
+    rows: dict[str, RowPlan]
+    listing: dict[str, PastSessionListing] = field(repr=False)
+    backup_rows: dict[str, BackedUpRow] = field(repr=False)
+    retention_days: int | None
+    sessions_root: Path = field(repr=False)
+
+    def counts(self) -> dict[SummaryCount, int]:
+        """Every SUMMARY count (zero included), by ``SUMMARY_COUNTS``."""
+        counts: dict[SummaryCount, int] = dict.fromkeys(get_args(SummaryCount), 0)
+        for outcome in (*self.entries.values(), *self.rows.values()):
+            counts[SUMMARY_COUNTS[outcome]] += 1
+        return counts
+
+
+def classify_entry(
+    session_id: str,
+    listing: dict[str, PastSessionListing],
+    *,
+    reader: BackupReader,
+    backup_rows: dict[str, BackedUpRow],
+    audit: RestoreAudit,
+    archive_root: Path,
+    sessions_root: Path,
+    retention_days: int | None,
+    now: datetime,
+) -> EntryOutcome:
+    """D8's per-id rule, in order — the planner's and the restorer's recheck
+    alike. It takes the archive's listing as an argument and never lists the
+    archive itself; it looks afresh at this id's own paths and audit rows.
+    (1) ``sessions\\<id>`` there → ``skipped_live``; (2) the local entry path
+    — a link state or an existence that cannot be read →
+    ``skipped_uninspectable``, a link → ``skipped_linked``; (3) something
+    there, decided WITHOUT an audit row: listed with a label that opens →
+    ``skipped_present``, listed with one that does not →
+    ``skipped_not_readable``, not listed (a ``pending`` entry, a keyless
+    leftover) → ``skipped_leftover``; (4) nothing there: the local row
+    ``unknown``, the id in ``rows_unknown`` or the backup's own row newer or
+    not importable → ``skipped_unknown_row``; either row a tombstone →
+    ``skipped_deleted``; under a retention period, a completion date past it
+    → ``skipped_expired``; else ``add``."""
+    live = _presence(sessions_root / session_id)
+    if live is None:
+        return "skipped_uninspectable"
+    if live:
+        return "skipped_live"
+    entry = archive_root / session_id
+    linked = link_state(entry)
+    if linked is None:
+        return "skipped_uninspectable"
+    if linked:
+        return "skipped_linked"
+    present = _presence(entry)
+    if present is None:
+        return "skipped_uninspectable"
+    if present:
+        listed = listing.get(session_id)
+        if listed is None:
+            return "skipped_leftover"
+        return "skipped_present" if listed.label is not None else "skipped_not_readable"
+    row = local_row(audit, session_id)
+    backed_up = backup_rows.get(session_id)
+    if (
+        row.reading == "unknown"
+        or session_id in reader.manifest.rows_unknown
+        or backed_up in ("newer", "undecodable")
+    ):
+        return "skipped_unknown_row"
+    if row.reading == "deleted" or backed_up == "deleted":
+        return "skipped_deleted"
+    if retention_days is not None:
+        completed = reader.facts.completed.get(session_id)
+        if completed is None or now - completed >= timedelta(days=retention_days):
+            return "skipped_expired"
+    return "add"
+
+
+def _backup_row_plain(reader: BackupReader, audit_key: bytearray, session_id: str) -> bytes:
+    """One backed-up row's plaintext, read through the reader (its size and
+    SHA-256 checked at this read) and authenticated under the backup's audit
+    key; ``source_changed`` for anything else."""
+    row = reader.manifest.rows[session_id]
+    blob = reader.read_member(row_member(row.month, session_id))
+    try:
+        return unseal(audit_key, blob, _row_aad(session_id))
+    except InvalidTag:
+        raise BackupRunError("source_changed") from None
+
+
+def _row_plan(outcome: RowOutcome) -> RowPlan:
+    """``plan_row``'s answer as a planner outcome: a row it would refuse as
+    another id's or month's is the planner's ``skipped_undecodable_row``."""
+    if outcome == "row_mismatch":
+        return "skipped_undecodable_row"
+    if outcome == "failed_row_write":
+        return "skipped_unreadable_row"
+    return outcome
+
+
+def plan_restore(
+    reader: BackupReader,
+    store: PastSessionStore,
+    audit: RestoreAudit,
+    sessions_root: Path,
+    *,
+    k_b: bytes | bytearray,
+    retention_days: int | None,
+    now: datetime,
+) -> RestorePlan:
+    """D8's plan, GUI thread, ONCE per Open: the archive listed ONCE
+    (strict — an archive that exists but cannot be listed refuses,
+    ``archive_unreadable``); each backed-up row decrypted one at a time under
+    the backup's audit key (zeroed after) and judged by ``plan_row`` (what
+    ``restore_row`` would do, writing nothing); then each entry id by
+    ``classify_entry``. ``retention_days`` comes only from a settings file
+    that read (None: "Until I delete them")."""
+    try:
+        listing = {item.session_id: item for item in store.list_entries()}
+    except PastSessionError:
+        raise BackupRunError("archive_unreadable") from None
+    backup_rows: dict[str, BackedUpRow] = {}
+    rows: dict[str, RowPlan] = {}
+    audit_key = reader.unwrap_audit_key(k_b)
+    try:
+        for session_id, row in reader.manifest.rows.items():
+            if audit_key is None:  # the manifest never lists a row without its key
+                raise BackupRunError("source_changed")
+            plain = _backup_row_plain(reader, audit_key, session_id)
+            reading = backed_up_row_reading(plain, session_id, row.month)
+            backup_rows[session_id] = reading
+            rows[session_id] = (
+                "skipped_undecodable_row"
+                if reading == "undecodable"
+                else _row_plan(audit.plan_row(plain, session_id, row.month, now=now))
+            )
+    finally:
+        zero(audit_key)
+    entries = {
+        session_id: classify_entry(
+            session_id,
+            listing,
+            reader=reader,
+            backup_rows=backup_rows,
+            audit=audit,
+            archive_root=store.root,
+            sessions_root=sessions_root,
+            retention_days=retention_days,
+            now=now,
+        )
+        for session_id in reader.manifest.entries
+    }
+    return RestorePlan(entries, rows, listing, backup_rows, retention_days, sessions_root)
+
+
+def reverify_backup(
+    source: ByteSource | Path | BinaryIO,
+    k_b: bytes | bytearray,
+    expected_sha256: str,
+    *,
+    channel: str | None = None,
+) -> BackupFacts:
+    """Restore's FIRST step, on a worker (D8): the whole file verified again
+    with the held key, and its SHA-256 equal to the one Open verified. Any
+    difference or refusal is ``BackupRunError("source_changed")``; nothing
+    is written."""
+    try:
+        facts = verify_backup(source, k_b, channel=channel)
+    except BackupFormatError:
+        raise BackupRunError("source_changed") from None
+    if facts.file_sha256 != expected_sha256:
+        raise BackupRunError("source_changed")
+    return facts
+
+
+@dataclass(frozen=True)
+class RestoreReport:
+    """What a Restore did (D8's final report), counts only: the sessions
+    published, the audit rows written or recovered, the planned writes left
+    as they are, and those not restored; how many restored or already-present
+    sessions could not be marked ``archived`` (``unmarked``); whether the
+    file changed part-way (``source_changed``: the run stopped there); and an
+    unforeseen failure's TYPE name for the page to log once."""
+
+    restored: int = 0
+    rows_restored: int = 0
+    left: int = 0
+    not_restored: int = 0
+    unmarked: int = 0
+    source_changed: bool = False
+    error_type: str | None = None
+
+
+@dataclass
+class _Tally:
+    counts: dict[ReportCount, int] = field(
+        default_factory=lambda: {"restored": 0, "rows_restored": 0, "left": 0, "not_restored": 0}
+    )
+    unmarked: int = 0
+    source_changed: bool = False
+    error_type: str | None = None
+
+    def add(self, outcome: WriteOutcome, number: int = 1) -> None:
+        self.counts[REPORT_COUNTS[outcome]] += number
+
+    def report(self) -> RestoreReport:
+        return RestoreReport(
+            restored=self.counts["restored"],
+            rows_restored=self.counts["rows_restored"],
+            left=self.counts["left"],
+            not_restored=self.counts["not_restored"],
+            unmarked=self.unmarked,
+            source_changed=self.source_changed,
+            error_type=self.error_type,
+        )
+
+
+def restore_backup(
+    reader: BackupReader,
+    plan: RestorePlan,
+    store: PastSessionStore,
+    audit: RestoreAudit,
+    *,
+    k_b: bytes | bytearray,
+    now: datetime,
+) -> RestoreReport:
+    """D8's restorer, GUI thread, AFTER ``reverify_backup``: a ``.staging``
+    that is a link, unreadable or not a folder refuses the whole run before
+    anything is written (``staging_unusable``). Then the planned audit rows
+    FIRST (so tombstones are here), then the entries, in the manifest's
+    order — each RECHECKED immediately before it is written (a row by
+    ``plan_row``, an entry by ``classify_entry`` with the plan's ONE
+    listing): written only when the plan and the recheck agree, so nothing
+    the summary did not show as to be added is ever added. A published entry,
+    and an entry still ``skipped_present``, whose local row reads ``none`` is
+    marked ``archived`` (never a new row); a failed mark is ``unmarked``. A
+    write that fails is counted and the next is tried; ``source_changed``
+    (a member's size or hash differing at its read) stops the run — what was
+    restored stays, and that item and every planned write not yet attempted
+    count as not restored. Each key is unwrapped into a ``bytearray`` and
+    zeroed after use."""
+    if not store.staging_usable():
+        raise BackupRunError("staging_unusable")
+    work: list[tuple[Literal["row", "entry", "mark"], str]] = [
+        ("row", session_id)
+        for session_id, outcome in plan.rows.items()
+        if outcome in _WRITTEN_ROWS
+    ]
+    for session_id, entry_outcome in plan.entries.items():
+        if entry_outcome == "add":
+            work.append(("entry", session_id))
+        elif entry_outcome == "skipped_present":
+            work.append(("mark", session_id))
+    tally = _Tally()
+    audit_key: bytearray | None = None
+    try:
+        for index, (kind, session_id) in enumerate(work):
+            try:
+                if kind == "row":
+                    if audit_key is None:
+                        audit_key = reader.unwrap_audit_key(k_b)
+                    if audit_key is None:
+                        raise BackupRunError("source_changed")
+                    tally.add(_restore_one_row(reader, plan, audit, audit_key, session_id, now))
+                elif kind == "entry":
+                    outcome = _restore_one_entry(reader, plan, store, audit, k_b, session_id, now)
+                    tally.add(outcome)
+                    if outcome == "published":
+                        _mark_archived(audit, session_id, tally)
+                elif _recheck(plan, reader, store, audit, session_id, now) == "skipped_present":
+                    _mark_archived(audit, session_id, tally)
+            except BackupRunError as exc:
+                if exc.code != "source_changed":
+                    # As any unforeseen failure below (review round 32 LOW): a
+                    # mark is not a planned write, and the type is kept.
+                    if kind != "mark":
+                        tally.add("unexpected")
+                    if tally.error_type is None:
+                        tally.error_type = exc.error_type or exception_type_name(type(exc))
+                    continue
+                tally.source_changed = True
+                tally.add("source_changed")
+                remaining = sum(1 for later, _sid in work[index + 1 :] if later != "mark")
+                tally.add("not_attempted", remaining)
+                break
+            except Exception as exc:  # noqa: BLE001 - counted; the type name only (D4)
+                if kind != "mark":
+                    tally.add("unexpected")
+                if tally.error_type is None:
+                    tally.error_type = exception_type_name(type(exc))
+    finally:
+        zero(audit_key)
+    return tally.report()
+
+
+def _restore_one_row(
+    reader: BackupReader,
+    plan: RestorePlan,
+    audit: RestoreAudit,
+    audit_key: bytearray,
+    session_id: str,
+    now: datetime,
+) -> WriteOutcome:
+    planned = plan.rows[session_id]
+    month = reader.manifest.rows[session_id].month
+    plain = _backup_row_plain(reader, audit_key, session_id)
+    rechecked = audit.plan_row(plain, session_id, month, now=now)
+    if rechecked == "failed_row_write":
+        # The key or the month folder would refuse the write NOW (review
+        # round 33): not restored — never "left as it is", which says a row
+        # is here.
+        return "failed_row_write"
+    if _row_plan(rechecked) != planned:
+        return "withdrawn"
+    outcome = audit.restore_row(plain, session_id, month, now=now)
+    if outcome in _WRITTEN_ROWS:
+        return "row_written"
+    if outcome in ("failed_row_write", "row_mismatch"):
+        return cast(WriteOutcome, outcome)
+    return "withdrawn"
+
+
+def _restore_one_entry(
+    reader: BackupReader,
+    plan: RestorePlan,
+    store: PastSessionStore,
+    audit: RestoreAudit,
+    k_b: bytes | bytearray,
+    session_id: str,
+    now: datetime,
+) -> WriteOutcome:
+    if _recheck(plan, reader, store, audit, session_id, now) != "add":
+        return "withdrawn"
+    files = reader.entry_files(session_id)
+    key = reader.unwrap_entry_key(session_id, k_b)
+    try:
+        outcome: RestoreEntryOutcome = store.restore_entry(session_id, key, files)
+    finally:
+        zero(key)
+    return outcome
+
+
+def _recheck(
+    plan: RestorePlan,
+    reader: BackupReader,
+    store: PastSessionStore,
+    audit: RestoreAudit,
+    session_id: str,
+    now: datetime,
+) -> EntryOutcome:
+    return classify_entry(
+        session_id,
+        plan.listing,
+        reader=reader,
+        backup_rows=plan.backup_rows,
+        audit=audit,
+        archive_root=store.root,
+        sessions_root=plan.sessions_root,
+        retention_days=plan.retention_days,
+        now=now,
+    )
+
+
+def _mark_archived(audit: RestoreAudit, session_id: str, tally: _Tally) -> None:
+    """D8: once an entry is here — just published, or still ``skipped_present``
+    on the recheck — a KEPT local row whose Past-sessions state is ``none`` is
+    recorded ``archived`` (``create=False``: restore never makes a row). A
+    write that fails is ``unmarked``, whatever the session's own outcome."""
+    row = local_row(audit, session_id)
+    if row.reading != "kept" or not row.unarchived:
+        return
+    try:
+        marked = audit.record_past_session(session_id, "archived", create=False)
+    except Exception as exc:  # noqa: BLE001 - counted; the type name only (D4)
+        marked = False
+        if tally.error_type is None:
+            tally.error_type = exception_type_name(type(exc))
+    if not marked:
+        tally.unmarked += 1

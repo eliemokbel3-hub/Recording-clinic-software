@@ -71,6 +71,22 @@ writes and verifies the file on a worker, and D records the last-backup date
 zeroes the passphrase and the key and releases the gate on EVERY exit. The
 dialogs and the worker are seams (``ask_passphrase``, ``choose_backup_path``,
 ``run_hop``), so a test opens no real dialog and starts no thread.
+
+Open a backup... (Flows 2 and 3; D7, D8, D10, D11): the admission, the open
+dialog, the SOURCE rule (a refused file is never read), the header pre-check,
+the passphrase once, then the gate; hop A derives the key and verifies the
+whole file on a worker; the restore plan is computed here (one archive
+listing); the summary dialog offers Close (nothing written) or Restore — which
+verifies the whole file again on a worker, then restores here, advances the
+last-backup date, re-lists the page and shows the report. Restore is disabled
+while the audit key or the retention setting cannot be read. The open dialog
+and the summary are seams too (``choose_backup_file``, ``show_backup_summary``).
+
+Set aside sessions that cannot be opened... (D8, D10): shown only while the
+list holds a session whose label cannot be read; one confirmation, the run
+gate's admission, then ``PastSessionStore.set_aside_refused`` as ONE call that
+never yields (it takes no gate), the page re-listed and the sweep's undated
+count lowered by the number moved.
 """
 
 from __future__ import annotations
@@ -105,6 +121,7 @@ from scribe_desktop.audit import AuditRow
 from scribe_desktop.exclusions import (
     WindowsLayer,
     check_archive_backup_location,
+    check_backup_source,
     check_export_location,
     proposed_backup_folder,
 )
@@ -117,6 +134,7 @@ from scribe_desktop.note_config import (
 )
 from scribe_desktop.past_sessions import (
     PastSessionEntry,
+    PastSessionError,
     PastSessionListing,
     PastSessionSettings,
     PastSessionSettingsError,
@@ -126,15 +144,24 @@ from scribe_desktop.past_sessions import (
     save_past_session_settings,
 )
 from scribe_desktop.past_sessions_backup import (
+    BackupFacts,
     BackupPlan,
+    BackupReader,
     BackupReport,
     KdfParams,
+    RestorePlan,
     derive_key,
     new_kdf_params,
+    plan_restore,
     prepare_backup,
+    read_backup_header,
+    restore_backup,
+    reverify_backup,
+    verify_backup,
     write_backup_file,
     zero,
 )
+from scribe_desktop.session_store import default_sessions_root
 from scribe_desktop.ui import backup_dialog, models
 from scribe_desktop.ui import past_sessions_view as view
 from scribe_desktop.ui.lists import NoCopyComboBox, NoCopyListWidget
@@ -160,6 +187,11 @@ ChooseWavPath = Callable[[str], Path | None]
 # used.
 AskPassphrase = Callable[[bool], bytearray | None]
 ChooseBackupPath = Callable[[Path | None, str], Path | None]
+# Task 3.3: Open a backup's open dialog, given the folder to start in (None:
+# the system drive's root); and the summary dialog, given its lines and
+# whether Restore is enabled — True only when Restore was pressed.
+ChooseBackupFile = Callable[[Path | None], Path | None]
+ShowBackupSummary = Callable[[Sequence[str], bool], bool]
 # ``run_hop(work, done)``: run ``work`` off the GUI thread and call ``done``
 # with its result on the GUI thread — exactly once, whatever happens (a
 # worker that ends with neither result is ``unexpected``, D4).
@@ -186,6 +218,18 @@ class ArchiveRun:
         self._kdf: KdfParams | None = None
         self._release: Callable[[ArchiveRun], None] | None = None
         self._closed = False
+        # Open a backup (D4): the opened, verified file — key-free.
+        self._reader: BackupReader | None = None
+
+    @property
+    def reader(self) -> BackupReader | None:
+        return self._reader
+
+    def attach_reader(self, reader: BackupReader) -> None:
+        """Hop A of Open verified the file: the run owns its reader until it
+        closes (a closed run keeps nothing)."""
+        if not self._closed:
+            self._reader = reader
 
     @property
     def passphrase(self) -> bytearray | None:
@@ -234,6 +278,7 @@ class ArchiveRun:
         self.drop_passphrase()
         zero(self._key)
         self._key = None
+        self._reader = None
         release, self._release = self._release, None
         if release is not None:
             release(self)
@@ -282,6 +327,38 @@ def _write_backup(
         return write_backup_file(plan, key, folder, check_location=admit)
     except Exception as exc:  # noqa: BLE001 - a closed code, never exception text (C3)
         return view.hop_failure(exc)
+
+
+def _open_backup(run: ArchiveRun, path: Path, kdf: KdfParams) -> object:
+    """Hop A's worker body for Open a backup (Flow 2): the key derived from
+    the run's passphrase with the header's parameters and written INTO the
+    run, then the whole file verified with it (D2's reader, the open check
+    included). Returns the key-free facts, or the closed failure (D4)."""
+    try:
+        passphrase = run.passphrase
+        if passphrase is None:
+            return view.HopFailed("unexpected")
+        run.accept_key(derive_key(passphrase, kdf), kdf)
+        key = run.backup_key
+        if key is None:
+            return view.HopFailed("unexpected")
+        return verify_backup(path, key)
+    except Exception as exc:  # noqa: BLE001 - a closed code, never exception text (C3)
+        return view.hop_failure(exc)
+
+
+def _reverify_backup(run: ArchiveRun, path: Path, expected_sha256: str) -> object:
+    """Restore's first hop, on a worker (Flow 3): the whole file verified
+    again with the held key and its SHA-256 equal to Open's. True, or the
+    closed failure (``source_changed``)."""
+    try:
+        key = run.backup_key
+        if key is None:
+            return view.HopFailed("unexpected")
+        reverify_backup(path, key, expected_sha256)
+    except Exception as exc:  # noqa: BLE001 - a closed code, never exception text (C3)
+        return view.hop_failure(exc)
+    return True
 
 
 def _record_deletion(
@@ -352,10 +429,28 @@ class PastSessionsScreen(QWidget):
         choose_backup_path: ChooseBackupPath | None = None,
         run_hop: RunHop | None = None,
         logger: logging.Logger | None = None,
+        choose_backup_file: ChooseBackupFile | None = None,
+        show_backup_summary: ShowBackupSummary | None = None,
+        sessions_root: Path | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._store = store
+        # Task 3.3: Open a backup's open dialog and summary (seams; None: the
+        # real ones), and the sessions folder Restore's planner checks for a
+        # live recording (None: the default one).
+        self._choose_backup_file: ChooseBackupFile = (
+            choose_backup_file if choose_backup_file is not None else self._ask_backup_file
+        )
+        self._show_backup_summary: ShowBackupSummary = (
+            show_backup_summary if show_backup_summary is not None else self._show_real_summary
+        )
+        self._sessions_root = (
+            sessions_root if sessions_root is not None else default_sessions_root()
+        )
+        # The line an unforeseen failure of the current run ends with (Back up
+        # or Open a backup).
+        self._run_failed_line: Callable[[view.HopFailed], str] = view.backup_failed_line
         # Peer round 29 PR-LOW-202 (D4, C3): an unforeseen backup failure's
         # TYPE name, logged once through ``log_event`` (None: not logged).
         self._logger = logger
@@ -470,18 +565,24 @@ class PastSessionsScreen(QWidget):
         export_layout.addWidget(self.csv_line_label)
         export_box.setLayout(export_layout)
 
-        # Past-sessions-backup plan D10: Back up... in its own row under the
-        # export (Open a backup... joins it in Phase 3).
+        # Past-sessions-backup plan D10: Back up... and Open a backup... under
+        # the export, one above the other (side by side they overflow the
+        # narrowest window); the set-aside below them, shown only while the
+        # list holds a session that cannot be read.
         self.backup_button = QPushButton(view.BACKUP_LABEL)
         self.backup_button.clicked.connect(self.on_backup)
+        self.open_backup_button = QPushButton(view.OPEN_BACKUP_LABEL)
+        self.open_backup_button.clicked.connect(self.on_open_backup)
         self.backup_help_label = _plain_label(view.BACKUP_HELP)
-        backup_row = QHBoxLayout()
-        backup_row.addWidget(self.backup_button)
-        backup_row.addStretch(1)
+        self.set_aside_button = QPushButton(view.SET_ASIDE_LABEL)
+        self.set_aside_button.clicked.connect(self.on_set_aside)
+        self.set_aside_button.setVisible(False)
         self.backup_box = QGroupBox(view.BACKUP_GROUP_TITLE)
         backup_layout = QVBoxLayout()
-        backup_layout.addLayout(backup_row)
+        backup_layout.addWidget(self.backup_button)
+        backup_layout.addWidget(self.open_backup_button)
         backup_layout.addWidget(self.backup_help_label)
+        backup_layout.addWidget(self.set_aside_button)
         self.backup_box.setLayout(backup_layout)
 
         left = QWidget()
@@ -1061,6 +1162,7 @@ class PastSessionsScreen(QWidget):
             return
         run = ArchiveRun(passphrase)
         self._run = run
+        self._run_failed_line = view.backup_failed_line
         try:
             self._backup_from_dialogs(run, layer, gate)
         except BaseException:
@@ -1159,6 +1261,240 @@ class PastSessionsScreen(QWidget):
         self._end_run(view.backup_success_line(result, date_saved=saved))
         self._render_status()
 
+    # --- Open a backup and Restore (Flows 2 and 3; D7, D8, D10, D11) --------
+
+    def on_open_backup(self) -> None:
+        """Open a backup... (Flow 2): the admission check, the open dialog,
+        the SOURCE rule (a refused file receives no read), the header
+        pre-check (its bounds, format and channel), the passphrase once, then
+        the gate taken and hop A started. Every exit after the passphrase
+        closes the run object."""
+        store, audit, gate = self._store, self._audit, self._archive_gate
+        if store is None or audit is None or gate is None or self._run is not None:
+            self._show_message(view.OPEN_NOT_AVAILABLE)
+            return
+        self._disarm_delete()
+        self._disarm_recording_delete()
+        refusal = gate.archive_run_refusal()
+        if refusal is not None:
+            self._show_message(refusal)
+            return
+        layer = self._windows_layer
+        if layer is None:  # fail closed: an unchecked source is never read
+            self._show_message(view.OPEN_NO_LAYER)
+            return
+        remembered = read_backup_settings(self._config_root).settings.folder
+        path = self._choose_backup_file(proposed_backup_folder(layer, remembered))
+        if path is None:
+            return
+        refused = check_backup_source(layer, path)
+        if refused is not None:
+            self._show_message(view.open_refused_line(refused.line))
+            return
+        try:
+            header = read_backup_header(path)
+        except Exception as exc:  # noqa: BLE001 - a closed code, never exception text (C3)
+            failure = self._noted("header", view.hop_failure(exc))
+            self._show_message(view.backup_open_failed_line(failure))
+            return
+        passphrase = self._ask_passphrase(False)
+        if passphrase is None:
+            return
+        run = ArchiveRun(passphrase)
+        self._run = run
+        self._run_failed_line = view.backup_open_failed_line
+        try:
+            self._open_from_dialogs(run, path, header.kdf, gate)
+        except BaseException:
+            # D4 (review round 27 LOW-001's rule): an unforeseen raise still
+            # closes the run, and the exception hook still logs its type.
+            self._fail_run(run)
+            raise
+
+    def _open_from_dialogs(
+        self, run: ArchiveRun, path: Path, kdf: KdfParams, gate: ArchiveGate
+    ) -> None:
+        """``on_open_backup`` once the run object exists: the admission again
+        and the gate in ONE call (D11), then hop A."""
+        self._render_controls()
+        refusal = gate.begin_archive_run(run)
+        if refusal is not None:
+            self._end_run(refusal)
+            return
+        self._show_message(view.OPEN_RUNNING)
+        self._start_hop(
+            run, partial(_open_backup, run, path, kdf), partial(self._backup_opened, run, path)
+        )
+
+    def _backup_opened(self, run: ArchiveRun, path: Path, result: object) -> None:
+        """Hop A returned: the passphrase zeroed at once. Then, here on the
+        GUI thread, the restore plan (ONE archive listing; the retention
+        setting only from a file that read) and the summary dialog — Close
+        ends the run with nothing written; Restore starts the second
+        whole-file verification on a worker. Restore is disabled while the
+        local audit key or the retention setting cannot be read (D8)."""
+        run.drop_passphrase()
+        store, audit = self._store, self._audit
+        if run is not self._run or store is None or audit is None:
+            run.close()
+            return
+        if not isinstance(result, BackupFacts):
+            self._end_run(view.backup_open_failed_line(self._noted("open", _as_failure(result))))
+            return
+        key = run.backup_key
+        if key is None:
+            self._end_run(view.backup_open_failed_line(view.HopFailed("unexpected")))
+            return
+        reader = BackupReader(path, result)
+        run.attach_reader(reader)
+        # Each input of Restore's decision fails closed when its check raises
+        # (stage-4 leg x3): the retention setting reads as unreadable — no age
+        # is judged, and Restore is disabled with its own line.
+        try:
+            settings_read = self._reload_settings()
+        except Exception:  # noqa: BLE001 - Restore fails closed
+            settings_read = False
+        retention = self._settings.retention_days if settings_read else None
+        # D8: Restore is disabled while the local audit key cannot be opened
+        # for ANY reason, a passing one included (review round 33), and a
+        # check that raises counts as not opened (round 32: fail closed).
+        try:
+            audit_unreadable = audit.key_unopenable()
+        except Exception:  # noqa: BLE001 - Restore fails closed
+            audit_unreadable = True
+        try:
+            plan = plan_restore(
+                reader,
+                store,
+                audit,
+                self._sessions_root,
+                k_b=key,
+                retention_days=retention,
+                now=self._clock(),
+            )
+        except Exception as exc:  # noqa: BLE001 - a closed code, never exception text (C3)
+            self._end_run(view.backup_open_failed_line(self._noted("plan", view.hop_failure(exc))))
+            return
+        # Every reason Restore is disabled, each its own line (round 32 LOW).
+        refusals = [
+            line
+            for line, applies in (
+                (view.RESTORE_NEEDS_AUDIT, audit_unreadable),
+                (view.RESTORE_NEEDS_RETENTION, not settings_read),
+            )
+            if applies
+        ]
+        lines = view.restore_summary_lines(
+            result, plan, ages_known=settings_read, restore_refusals=refusals, zone=self._zone
+        )
+        if not self._show_backup_summary(lines, not refusals) or refusals:
+            self._end_run(view.OPEN_CLOSED)
+            return
+        self._run_failed_line = view.restore_failed_line
+        self._show_message(view.RESTORE_RUNNING)
+        self._start_hop(
+            run,
+            partial(_reverify_backup, run, path, result.file_sha256),
+            partial(self._backup_reverified, run, plan),
+        )
+
+    def _backup_reverified(self, run: ArchiveRun, plan: RestorePlan, result: object) -> None:
+        """Restore (Flow 3), once the worker verified the whole file again:
+        the restorer here on the GUI thread (rows first, then entries, each
+        rechecked), the last-backup date advanced to the file's date when it
+        is later (a failure to save it is one sentence and stops nothing), the
+        run ended, the page re-listed, then the final report line."""
+        store, audit = self._store, self._audit
+        reader, key = run.reader, run.backup_key
+        if run is not self._run or store is None or audit is None:
+            run.close()
+            return
+        if result is not True:
+            self._end_run(view.restore_failed_line(self._noted("reverify", _as_failure(result))))
+            return
+        if reader is None or key is None:
+            self._end_run(view.restore_failed_line(view.HopFailed("unexpected")))
+            return
+        try:
+            report = restore_backup(reader, plan, store, audit, k_b=key, now=self._clock())
+        except Exception as exc:  # noqa: BLE001 - a closed code, never exception text (C3)
+            self._end_run(view.restore_failed_line(self._noted("restore", view.hop_failure(exc))))
+            return
+        if report.error_type is not None:
+            self._noted("restore", view.HopFailed("unexpected", error_type=report.error_type))
+        # Review round 32 LOW: the writes stand, so nothing after them may
+        # end the run with a line that denies them.
+        try:
+            saved = self._advance_backup_date(reader.manifest.made_at)
+        except Exception as exc:  # noqa: BLE001 - the date only; the type name logged (D4)
+            self._noted("date", view.hop_failure(exc))
+            saved = False
+        self._end_run(None)
+        self.refresh()  # the page re-listed BEFORE the line shows
+        self._show_message(view.restore_report_line(report, date_saved=saved))
+
+    def _advance_backup_date(self, made_at: datetime) -> bool:
+        """D10: ``last_backup_at`` advanced to a restored file's ``made_at``
+        when that is later (the folder kept). False when a needed save failed
+        — or when the file cannot be read just now: it is then left as it is,
+        never rewritten without its folder or with an earlier date (review
+        round 32 LOW)."""
+        found = read_backup_settings(self._config_root)
+        if found.unreadable:
+            return False
+        current = found.settings
+        if current.last_backup_at is not None and made_at <= current.last_backup_at:
+            return True
+        try:
+            save_backup_settings(
+                BackupSettings(folder=current.folder, last_backup_at=made_at),
+                config_root=self._config_root,
+            )
+        except (NoteConfigError, ValueError):
+            return False
+        self._last_backup_at = made_at
+        return True
+
+    # --- the set-aside (D8, D10; decision 0.15) ------------------------------
+
+    def on_set_aside(self) -> None:
+        """Set aside sessions that cannot be opened...: one confirmation, the
+        run gate's admission (D11), then ``set_aside_refused`` — ONE call that
+        runs to its end without yielding, so it takes no gate. The page is
+        re-listed, the sweep's undated count lowered by the number moved, then
+        the report line. A refusal moves nothing."""
+        store, gate = self._store, self._archive_gate
+        if store is None or gate is None or self._run is not None:
+            self._show_message(view.SET_ASIDE_NOT_AVAILABLE)
+            return
+        self._disarm_delete()
+        self._disarm_recording_delete()
+        if not self._confirm(view.SET_ASIDE_CONFIRM, view.SET_ASIDE_ACTION):
+            return
+        refusal = gate.archive_run_refusal()
+        if refusal is not None:
+            self._show_message(refusal)
+            return
+        try:
+            report = store.set_aside_refused()
+        except Exception as exc:  # noqa: BLE001 - the view maps it to an authored line (C3)
+            if not isinstance(exc, PastSessionError):
+                self._noted("set_aside", view.hop_failure(exc))
+            self.refresh()
+            self._show_message(view.set_aside_failed_line(exc))
+            return
+        self.refresh()
+        moved = len(report.moved)
+        swept = self._current_sweep()
+        if moved and swept is not None and swept.undated:
+            # The undated entries the sweep kept: those moved are gone (D10).
+            self._last_sweep = (
+                self._settings.retention_days,
+                replace(swept, undated=max(0, swept.undated - moved)),
+            )
+            self._render_status()
+        self._show_message(view.set_aside_line(report))
+
     def _end_run(self, line: str | None) -> None:
         """Every exit of a run: the run object closed (both buffers zeroed,
         the gate released), then the line shown (None: the message is left
@@ -1171,10 +1507,11 @@ class PastSessionsScreen(QWidget):
         self._render_controls()
 
     def _fail_run(self, run: ArchiveRun) -> None:
-        """An unforeseen failure: ``run`` closed, with the fixed line when it
-        is still the page's run (D4)."""
+        """An unforeseen failure: ``run`` closed, with the fixed line of its
+        kind (Back up or Open a backup) when it is still the page's run
+        (D4)."""
         if run is self._run:
-            self._end_run(view.backup_failed_line(view.HopFailed("unexpected")))
+            self._end_run(self._run_failed_line(view.HopFailed("unexpected")))
         else:
             run.close()
 
@@ -1278,6 +1615,18 @@ class PastSessionsScreen(QWidget):
             options=QFileDialog.Option.DontConfirmOverwrite,
         )
         return Path(name) if name else None
+
+    def _ask_backup_file(self, start: Path | None) -> Path | None:
+        """Open a backup's open dialog: the remembered folder while it still
+        passes the location rule, else the system drive's root (D7)."""
+        folder = start if start is not None else Path(os.environ.get("SystemDrive", "C:") + "\\")
+        name, _filter = QFileDialog.getOpenFileName(
+            self, view.OPEN_BACKUP_DIALOG_TITLE, str(folder), view.BACKUP_FILTER
+        )
+        return Path(name) if name else None
+
+    def _show_real_summary(self, lines: Sequence[str], restore_enabled: bool) -> bool:
+        return backup_dialog.show_summary(self.window(), lines, restore_enabled=restore_enabled)
 
     # --- settings -------------------------------------------------------------
 
@@ -1586,6 +1935,14 @@ class PastSessionsScreen(QWidget):
         self.backup_button.setEnabled(
             has_store and self._audit is not None and self._run is None
         )
+        self.open_backup_button.setEnabled(
+            has_store and self._audit is not None and self._run is None
+        )
+        # Task 3.4: shown only while the listing holds a session whose label
+        # cannot be read (the store decides what qualifies; D8).
+        unreadable = self._listed and any(item.label is None for item in self._listings)
+        self.set_aside_button.setVisible(has_store and unreadable)
+        self.set_aside_button.setEnabled(has_store and unreadable and self._run is None)
         opened = self._open_entry is not None
         reason = self._copy_reason()
         self.copy_button.setEnabled(reason is None)

@@ -718,6 +718,31 @@ def row_importable(plaintext: bytes, session_id: str, month: str) -> bool:
     )
 
 
+BackedUpRow = Literal["kept", "deleted", "newer", "undecodable"]
+_DELETED_STATES: Final = frozenset({"deleted_early", "expired"})
+
+
+def backed_up_row_reading(plaintext: bytes, session_id: str, month: str) -> BackedUpRow:
+    """Past-sessions-backup plan D8, a PURE function: what an authenticated
+    row of a backup says for Restore's planner — ``newer`` (a newer schema),
+    ``undecodable`` (not importable: it does not decode, or it names another
+    id or month — ``row_importable``'s rule), ``deleted`` (its Past-sessions
+    state is ``deleted_early`` or ``expired``: a tombstone), else ``kept``."""
+    try:
+        decoded = _decode(plaintext)
+    except ValueError:
+        return "undecodable"
+    if decoded is _NEWER:
+        return "newer"
+    if not (
+        isinstance(decoded, AuditRow)
+        and decoded.session_id == session_id
+        and _month_folder(decoded.session_date) == month
+    ):
+        return "undecodable"
+    return "deleted" if decoded.past_session.state in _DELETED_STATES else "kept"
+
+
 @dataclass(frozen=True)
 class RowDescriptor:
     """One row file a backup will copy (D9): its month folder, session id,
@@ -1384,13 +1409,54 @@ class AuditLog:
         finally:
             crypto.destroy()
 
+    def plan_row(
+        self, plaintext: bytes, session_id: str, month: str, *, now: datetime
+    ) -> RowOutcome:
+        """``restore_row``'s outcome as it would be NOW, writing and CREATING
+        nothing (past-sessions-backup plan D8: Restore's planner, and its
+        recheck before each write). With no local key the store has no row
+        (``add_row``, the key made at the write). A key that cannot be opened
+        (any ``AuditUnavailable``), or a month folder the write would refuse,
+        is ``failed_row_write`` — what ``restore_row`` would then return
+        (review rounds 32 and 33): the planner reads it as
+        ``skipped_unreadable_row``, and the restorer's recheck counts it as
+        not restored. Never raises past the id check."""
+        validate_session_id(session_id)
+        parsed_month = valid_month(month)
+        if parsed_month is None:
+            return "row_mismatch"
+        try:
+            decoded = _decode(plaintext)
+        except ValueError:
+            return "skipped_undecodable_row"
+        if isinstance(decoded, AuditRow) and (
+            decoded.session_id != session_id or _month_folder(decoded.session_date) != month
+        ):
+            return "row_mismatch"
+        if month_prune_at(*parsed_month) <= now:
+            return "skipped_pruned_row"
+        crypto: SessionCrypto | None
+        try:
+            crypto = self._open_key(create=False)
+        except _NoKey:
+            crypto = None
+        except AuditUnavailable:
+            return "failed_row_write"
+        try:
+            return self._restore_row(plaintext, decoded, session_id, month, crypto, write=False)
+        finally:
+            if crypto is not None:
+                crypto.destroy()
+
     def _restore_row(
         self,
         plaintext: bytes,
         decoded: AuditRow | _Newer,
         session_id: str,
         month: str,
-        crypto: SessionCrypto,
+        crypto: SessionCrypto | None,
+        *,
+        write: bool = True,
     ) -> RowOutcome:
         try:
             present = self._row_files_of(session_id)
@@ -1402,7 +1468,7 @@ class AuditLog:
         if present:
             local = (
                 self._read(present[0], crypto)
-                if link_state(present[0]) is False
+                if crypto is not None and link_state(present[0]) is False
                 else None
             )
             if not isinstance(local, AuditRow):
@@ -1418,6 +1484,12 @@ class AuditLog:
             outcome: RowOutcome = "provenance_recovered"
         else:
             outcome = "add_row"
+        if not write:
+            # ``plan_row``: a month folder the write would refuse (a link, or
+            # one whose link state cannot be read) is not a row to add.
+            return outcome if link_state(target.parent) is False else "failed_row_write"
+        if crypto is None:
+            return "failed_row_write"
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             if link_state(target.parent) is not False:
@@ -1431,6 +1503,21 @@ class AuditLog:
         return outcome
 
     # --- the unreadable-key reset (D9) --------------------------------------
+
+    def key_unopenable(self) -> bool:
+        """Past-sessions-backup plan D8 (review round 33): True when the
+        store's key cannot be opened for ANY reason — unreadable, dead,
+        missing beside rows, or unavailable just now; False when it opens or
+        there is no store yet. Restore is disabled while it is True (unlike
+        ``key_unreadable``, a passing problem counts: no row could be
+        written)."""
+        try:
+            self._open_key(create=False).destroy()
+        except AuditUnavailable:
+            return True
+        except _NoKey:
+            return False
+        return False
 
     def key_unreadable(self) -> bool:
         """True when Starts are refused for the key (unreadable, dead, or
