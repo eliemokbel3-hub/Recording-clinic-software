@@ -154,3 +154,8 @@ Run 8's six harness reports, redirected with `>` in the practitioner's PowerShel
 ## A scoped executor cannot read a folder outside the repository (2026-11-07)
 Under `perms=scoped`, the executor's file tools are confined to the checkout, so it could not read the composer's re-transcription in `C:\run8-p3\` (validation-run8 P.3, leg px2).
 - **Rule:** the composer copies the files byte for byte into a git-ignored folder under `.cursor/loops/` and names that path in the next leg's prompt. It deletes the copy after the commit, recording the deletion in the plan's custody line. Synthetic content only (C1 still applies).
+
+## A docstring's hardware claim is measured before it is trusted (2026-11-26)
+The capture module and the data-flow map said the microphone stream ran on WASAPI. It runs on MME, PortAudio's default Windows host; the capture-overflow plan's measurement script found it, and the fix depends on it: on MME the larger input buffer was measured to work and dropped frames are flagged; as PortAudio's source reads (not measured here), DirectSound and WASAPI inputs never raise that flag.
+- **Rule:** before a plan leans on what a comment says about a device, a driver or a library default, print the fact from the running system (here `sd.query_hostapis(sd.query_devices(id)["hostapi"])["name"]`) and correct the comment in the same change.
+- **Rule:** `stream.latency` cannot show an MME input buffer: it reads 0.1 s whatever was asked. Prove a buffer by a stall test (hold the callback, see whether dropped frames are flagged), and record in the log the buffer that was requested, not a value read back.

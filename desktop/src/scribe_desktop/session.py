@@ -2397,6 +2397,10 @@ class SessionController:
                 return
             if self._logger is not None:
                 detail = exc.detail_code if isinstance(exc, AudioCaptureError) else "none"
+                # Capture-overflow plan D4: a status flag's failure also
+                # carries the largest recent callback gap, a number.
+                gap_ms = exc.gap_ms if isinstance(exc, AudioCaptureError) else None
+                gap: dict[str, int] = {} if gap_ms is None else {"duration_ms": gap_ms}
                 log_event(
                     self._logger,
                     "capture_failure",
@@ -2404,5 +2408,6 @@ class SessionController:
                     session_state=live.session.state.value,
                     error_code=exception_type_name(type(exc)),
                     detail_code=detail,
+                    **gap,
                 )
             self._fail_locked(live)

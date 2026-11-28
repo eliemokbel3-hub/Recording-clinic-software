@@ -1,8 +1,9 @@
 """Audio capture (Phase 2 Step 3).
 
-Capture stack per the plan Design Decision: ``sounddevice``
-(PortAudio/WASAPI), 16 kHz mono PCM16, ~1 s chunks, level metering from
-the same stream.
+Capture stack per the plan Design Decision: ``sounddevice`` (PortAudio;
+on Windows its default host API is MME, which is what the app's streams
+were measured on — capture-overflow plan Task 0.2), 16 kHz mono PCM16,
+~1 s chunks, level metering from the same stream.
 
 Structure:
 
@@ -29,12 +30,18 @@ never reaches a logger (Critical Constraint).
 
 from __future__ import annotations
 
+import contextlib
+import logging
 import queue
 import threading
+import time
 from array import array
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Final, Protocol
+
+from scribe_desktop.logging_setup import log_event
 
 SAMPLE_RATE: Final = 16_000
 CHANNELS: Final = 1
@@ -46,6 +53,25 @@ BLOCK_FRAMES: Final = SAMPLE_RATE // 10
 
 _QUEUE_MAX_BLOCKS: Final = 256  # ~25 s backlog bound; overflow -> failure, never silent loss
 _CONTROL_TIMEOUT_S: Final = 10.0
+
+# Capture-overflow plan D1 (decided 2026-11-26, Task 0.3, from the Task 0.2
+# measurement): the input buffer asked of PortAudio for a RECORDING's stream
+# on an MME device. On MME the buffer count is ceil(latency / 0.1 s) + 1, so
+# a callback may run about this late before a frame is dropped; the default
+# (0.18 s) allows about 0.2 s. The value changes only by a new dated
+# decision with ``scripts/measure-capture-stall.py`` run again.
+INPUT_LATENCY_SECONDS: Final = 2.5
+# D4: a failure carries the largest of this many most recent callback gaps.
+_RECENT_GAPS: Final = 3
+# D4: a stop whose last callback is older than this dropped a backlog.
+_BACKLOG_AGE_SECONDS: Final = 0.25
+# D4: PortAudio's host API names, as this module's fixed words.
+_HOST_WORDS: Final[dict[str, str]] = {
+    "MME": "mme",
+    "Windows DirectSound": "directsound",
+    "Windows WASAPI": "wasapi",
+    "Windows WDM-KS": "wdmks",
+}
 
 
 # Installation plan round 35 MED-001: which capture path raised, as a fixed
@@ -66,11 +92,16 @@ CAPTURE_DETAIL_CODES: Final[frozenset[str]] = frozenset(
 
 class AudioCaptureError(Exception):
     """Base class for capture failures. ``detail_code`` is one of
-    ``CAPTURE_DETAIL_CODES`` (any other value reads as ``unspecified``)."""
+    ``CAPTURE_DETAIL_CODES`` (any other value reads as ``unspecified``).
+    ``gap_ms`` (capture-overflow plan D4) is the largest recent gap between
+    two callbacks when the failure was a status flag, else ``None``."""
 
-    def __init__(self, *args: object, detail_code: str = "unspecified") -> None:
+    def __init__(
+        self, *args: object, detail_code: str = "unspecified", gap_ms: int | None = None
+    ) -> None:
         super().__init__(*args)
         self.detail_code = detail_code if detail_code in CAPTURE_DETAIL_CODES else "unspecified"
+        self.gap_ms = gap_ms if type(gap_ms) is int and gap_ms >= 0 else None
 
 
 def status_detail_code(status: object) -> str:
@@ -148,40 +179,167 @@ def pcm16_rms_level(block: bytes) -> float:
 # --------------------------------------------------------------------------
 
 
+def _milliseconds(seconds: float) -> int:
+    return round(seconds * 1000)
+
+
+def _host_word(sd: Any, info: Any) -> str:
+    """The fixed word for one device entry's host API; ``other`` for
+    anything unresolved (a fake module, a name this module does not list)."""
+    try:
+        name = sd.query_hostapis(int(info["hostapi"]))["name"]
+    except Exception:  # unresolved, whatever the reason: the caller opens as before
+        return "other"
+    return _HOST_WORDS.get(str(name), "other")
+
+
+def _device_host_word(sd: Any, device_id: int) -> str:
+    try:
+        info = sd.query_devices(device_id)
+    except Exception:  # as ``_host_word``
+        return "other"
+    return _host_word(sd, info)
+
+
 class _SoundDeviceStream:
-    def __init__(self, stream: object) -> None:
-        self._stream = stream
+    """One open attempt's handle: the stream, whether WE stopped it, and the
+    callback gaps of its life (capture-overflow plan D4). The gaps are
+    stamped on PortAudio's thread and read on the caller's; every value is
+    a number, and the closed line is written once per stream, in a
+    ``finally`` after ``abort()`` and ``close()``."""
+
+    def __init__(
+        self,
+        device_id: int,
+        clock: Callable[[], float],
+        logger: logging.Logger | None,
+    ) -> None:
+        self._stream: Any = None
+        self.attached = False
         self.stopped_by_us = False
+        self._device_id = device_id
+        self._clock = clock
+        self._logger = logger
+        self._count = 0
+        self._last_entry: float | None = None
+        self._recent: deque[float] = deque(maxlen=_RECENT_GAPS)
+        self._longest = 0.0
+        self._stop_lock = threading.Lock()
+
+    def attach(self, stream: object) -> None:
+        self._stream = stream
+        self.attached = True
+
+    def stamp(self) -> None:
+        """Called first in every callback: count it and record its gap."""
+        now = self._clock()
+        last = self._last_entry
+        if last is not None:
+            gap = now - last
+            self._recent.append(gap)
+            if gap > self._longest:
+                self._longest = gap
+        self._last_entry = now
+        self._count += 1
+
+    def recent_gap_ms(self) -> int | None:
+        """The largest of the most recent gaps, this callback's included;
+        ``None`` before the second callback."""
+        return _milliseconds(max(self._recent)) if self._recent else None
+
+    def discard(self) -> None:
+        """Give up an attempt that would not open (D2): its ``finished``
+        callback must not read as device loss, and it logs nothing."""
+        with self._stop_lock:
+            self.stopped_by_us = True
+            stream, self._stream = self._stream, None
+        if stream is not None:
+            with contextlib.suppress(Exception):
+                stream.close()
 
     def stop(self) -> None:
-        self.stopped_by_us = True
-        stream = self._stream
+        with self._stop_lock:
+            self.stopped_by_us = True
+            stream, self._stream = self._stream, None
         if stream is None:
             return
-        self._stream = None
-        stream.abort()  # type: ignore[attr-defined]
-        stream.close()  # type: ignore[attr-defined]
+        now = self._clock()
+        last = self._last_entry
+        age = None if last is None else now - last
+        try:
+            stream.abort()
+        finally:
+            try:
+                stream.close()
+            finally:
+                self._log_closed(age)
+
+    def _log_closed(self, age: float | None) -> None:
+        if self._logger is None:
+            return
+        if age is not None and age > _BACKLOG_AGE_SECONDS:
+            # D3's residue: audio still waiting behind a late callback was
+            # dropped by this stop.
+            log_event(
+                self._logger,
+                "capture_stream",
+                state="backlog_dropped",
+                device_id=self._device_id,
+                duration_ms=_milliseconds(age),
+            )
+        log_event(
+            self._logger,
+            "capture_stream",
+            state="closed",
+            device_id=self._device_id,
+            count=self._count,
+            duration_ms=_milliseconds(self._longest),
+        )
 
 
 class SoundDeviceBackend:
-    """PortAudio/WASAPI capture via ``sounddevice`` (lazy import)."""
+    """PortAudio capture via ``sounddevice`` (lazy import); MME on Windows.
+
+    Capture-overflow plan: ``input_latency`` is the buffer asked for on an
+    MME device (D1; ``None`` opens exactly as before — the level monitor's
+    and enrolment's instance). ``logger`` receives the ``capture_stream``
+    lines (D4; none without one). ``clock`` stamps the callbacks."""
+
+    def __init__(
+        self,
+        logger: logging.Logger | None = None,
+        input_latency: float | None = INPUT_LATENCY_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._logger = logger
+        self._input_latency = input_latency
+        self._clock = clock
 
     def list_input_devices(self) -> list[AudioDevice]:
+        """The input entries. Capture-overflow plan D8: when any of them is
+        on MME only those are listed (each microphone once, and every listed
+        entry reports dropped frames); otherwise every entry, as before.
+        The ids are PortAudio's own either way."""
         import sounddevice as sd
 
         default_input = sd.default.device[0]
-        devices: list[AudioDevice] = []
+        entries: list[tuple[AudioDevice, str]] = []
         for index, info in enumerate(sd.query_devices()):
             if int(info.get("max_input_channels", 0)) < CHANNELS:
                 continue
-            devices.append(
-                AudioDevice(
-                    device_id=index,
-                    name=str(info.get("name", f"device {index}")),
-                    is_default=index == default_input,
+            entries.append(
+                (
+                    AudioDevice(
+                        device_id=index,
+                        name=str(info.get("name", f"device {index}")),
+                        is_default=index == default_input,
+                    ),
+                    _host_word(sd, info),
                 )
             )
-        return devices
+        if any(host == "mme" for _device, host in entries):
+            return [device for device, host in entries if host == "mme"]
+        return [device for device, _host in entries]
 
     def open_stream(
         self,
@@ -191,9 +349,56 @@ class SoundDeviceBackend:
     ) -> CaptureStream:
         import sounddevice as sd
 
-        handle: _SoundDeviceStream | None = None
+        # Host unused without a buffer or logger: the level meter opens as before.
+        host = (
+            _device_host_word(sd, device_id)
+            if (self._input_latency is not None or self._logger is not None)
+            else "other"
+        )
+        latency = self._input_latency if host == "mme" else None
+        if latency is not None:
+            try:
+                handle = self._open(sd, device_id, on_block, on_error, latency)
+            except sd.PortAudioError:
+                # D2, never worse than before: ONE more open, with the default.
+                pass
+            else:
+                self._log_open("opened", host, device_id, duration_ms=_milliseconds(latency))
+                return handle
+        try:
+            handle = self._open(sd, device_id, on_block, on_error, None)
+        except sd.PortAudioError as exc:
+            raise DeviceLostError(
+                f"failed opening input device {device_id}: {exc}", detail_code="open_failed"
+            ) from exc
+        self._log_open("default_latency", host, device_id)
+        return handle
+
+    def _log_open(self, state: str, host: str, device_id: int, **fields: int) -> None:
+        if self._logger is not None:
+            log_event(
+                self._logger,
+                "capture_stream",
+                state=state,
+                detail_code=host,
+                device_id=device_id,
+                **fields,
+            )
+
+    def _open(
+        self,
+        sd: Any,
+        device_id: int,
+        on_block: Callable[[bytes], None],
+        on_error: Callable[[Exception], None],
+        latency: float | None,
+    ) -> _SoundDeviceStream:
+        """One open attempt with its own handle. ``sd.PortAudioError`` from
+        the constructor or from ``start()`` leaves nothing open."""
+        handle = _SoundDeviceStream(device_id, self._clock, self._logger)
 
         def callback(indata: Any, frames: int, time_info: object, status: object) -> None:
+            handle.stamp()
             # Deliver the block first so already-captured audio is never
             # lost, THEN surface any status flag (input overflow = frames
             # dropped device-side) as a recoverable failure — a consultation
@@ -205,13 +410,14 @@ class SoundDeviceBackend:
                     CaptureOverflowError(
                         f"device reported dropped frames (status: {status})",
                         detail_code=status_detail_code(status),
+                        gap_ms=handle.recent_gap_ms(),
                     )
                 )
 
         def finished() -> None:
             # PortAudio fires finished_callback when the stream ends. If WE
             # did not stop it, the device died mid-session.
-            if handle is not None and not handle.stopped_by_us:
+            if handle.attached and not handle.stopped_by_us:
                 on_error(
                     DeviceLostError(
                         "input stream ended unexpectedly (device lost)",
@@ -219,22 +425,24 @@ class SoundDeviceBackend:
                     )
                 )
 
+        arguments: dict[str, Any] = {
+            "samplerate": SAMPLE_RATE,
+            "blocksize": BLOCK_FRAMES,
+            "device": device_id,
+            "channels": CHANNELS,
+            "dtype": "int16",
+            "callback": callback,
+            "finished_callback": finished,
+        }
+        if latency is not None:
+            arguments["latency"] = latency
         try:
-            stream = sd.RawInputStream(
-                samplerate=SAMPLE_RATE,
-                blocksize=BLOCK_FRAMES,
-                device=device_id,
-                channels=CHANNELS,
-                dtype="int16",
-                callback=callback,
-                finished_callback=finished,
-            )
-            handle = _SoundDeviceStream(stream)
+            stream = sd.RawInputStream(**arguments)
+            handle.attach(stream)
             stream.start()
-        except sd.PortAudioError as exc:
-            raise DeviceLostError(
-                f"failed opening input device {device_id}: {exc}", detail_code="open_failed"
-            ) from exc
+        except BaseException:  # a refusal (PortAudioError) or an interruption
+            handle.discard()
+            raise
         return handle
 
 

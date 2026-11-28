@@ -2450,6 +2450,7 @@ Reconciled 2026-10-04 at completion. The pilot plan, the machine allow-list, cod
   - Risk if deferred: ux-degradation: a capture stall still ends a recording with a clear message.
   - Revisit by: the first `status_input_overflow` in a log
   - [2026-10-04 reconciliation] Still valid — no relevant code changes since 0.1.1; none logged yet.
+  - [2026-11-27 — taken up by `plan-capture-overflow.md`, version 0.4.3] The trigger fired in 2026-11 on installed 0.4.2, well into a recording. Measured on this computer: the stream is on MME, not WASAPI; the default buffer drops frames on a 0.3 s callback stall. The recording's stream now asks for 2.5 s on MME (the level meter keeps the default), and content-free `capture_stream` lines record each stream. Resolved when 0.4.3 is installed (that plan's Phase P).
 
 ## Follow-Up Continuation Notes
 **Next: write `plan-pilot.md` with `/review-plan`, using this section as its planning source.** The decisions below are the PRACTITIONER's from 2026-10-02; the code facts were verified by the critique lenses at `7849dc4`.

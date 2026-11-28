@@ -1708,7 +1708,7 @@ class TestAppWiring:
             "acquire_instance_exclusion": lambda name=None, lock_path=None: (
                 app_module.InstanceExclusion("acquired")
             ),
-            "SoundDeviceBackend": lambda: object(),
+            "SoundDeviceBackend": lambda **kwargs: object(),
             "ImportWarmup": InertWarmup,  # round 35 MED-001: no warm-up thread
             "AuditLog": FakeAudit,
             "PastSessionStore": FakePastSessions,
@@ -1929,7 +1929,7 @@ class TestAppWiring:
             "acquire_instance_exclusion": lambda name=None, lock_path=None: (
                 app_module.InstanceExclusion("acquired")
             ),
-            "SoundDeviceBackend": lambda: object(),
+            "SoundDeviceBackend": lambda **kwargs: object(),
             "ImportWarmup": InertWarmup,  # round 35 MED-001: no warm-up thread
             "AuditLog": FakeAudit,
             "PastSessionStore": FakePastSessions,

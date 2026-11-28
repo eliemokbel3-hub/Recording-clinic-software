@@ -86,7 +86,9 @@ WER_EXCLUDED_KEY: Final = r"Software\Microsoft\Windows\Windows Error Reporting\E
 # practitioner decision 2026-10-08), ``python.exe``: the developer tools that
 # read a real consultation (the replay tool, ``measure-speakers.py``) run
 # under it and refuse unless it is excluded (``check_tool_wer``). Its breadth
-# (every python.exe process of this user) is the same agreed residue.
+# (every python.exe process of this user) is the same agreed residue. Since
+# the capture-overflow plan (0.4.3) a third tool refuses the same way:
+# ``measure-capture-stall.py`` opens the microphone (it reads no recording).
 WER_PRODUCTION_APPLICATIONS: Final[tuple[str, ...]] = ("scribe-app.exe", "scribe-host.exe")
 WER_EXCLUDED_APPLICATIONS: Final[tuple[str, ...]] = (
     "pythonw.exe",
@@ -825,7 +827,8 @@ def check_tool_wer(
 ) -> ToolWerRefusal | None:
     """Development-recordings hardening round 45 PR-HIGH-002 (practitioner
     decision 2026-10-08): a developer tool that reads a recording which may
-    hold a real consultation — the replay tool, ``measure-speakers.py`` —
+    hold a real consultation — the replay tool, ``measure-speakers.py`` — or
+    that opens the microphone (``measure-capture-stall.py``, since 0.4.3)
     runs only while Windows Error Reporting is excluded for the RUNNING
     interpreter's file name, so a native crash cannot carry part of it off
     this computer in a crash report. None when that name reads as DWORD 1 in

@@ -956,6 +956,41 @@ class TestLiveSessionController:
         finally:
             logger.removeHandler(records)
 
+    @pytest.mark.parametrize("gap_ms", [2375, None], ids=["with-a-gap", "without"])
+    def test_a_capture_failure_carries_the_gap_only_when_the_error_has_one(
+        self, tmp_path: Path, gap_ms: int | None
+    ) -> None:
+        """Capture-overflow plan D4: a status flag's failure carries the
+        largest recent callback gap as ``duration_ms``; an error without one
+        logs the line exactly as before."""
+        logger = logging.getLogger("test-live-session-capture-failure-gap")
+        records = _Records()
+        logger.addHandler(records)
+        logger.setLevel(logging.INFO)
+        try:
+            controller, backend = _controller(tmp_path, None, logger)
+            session = start_unlinked(controller)
+            backend.fail(
+                CaptureOverflowError(
+                    "device reported dropped frames (status: SECRET-TEXT)",
+                    detail_code="status_input_overflow",
+                    gap_ms=gap_ms,
+                )
+            )
+            _wait_for_state(controller, SessionState.FAILED)
+            gap = "" if gap_ms is None else f"duration_ms={gap_ms} "
+            line = (
+                f"capture_failure detail_code=status_input_overflow {gap}"
+                f"error_code=CaptureOverflowError session_id={session.session_id} "
+                "session_state=recording"
+            )
+            assert line in records.messages
+            failures = [m for m in records.messages if m.startswith("capture_failure")]
+            assert failures == [line]
+            controller.discard()
+        finally:
+            logger.removeHandler(records)
+
     def test_the_factory_can_be_registered_after_construction(self, tmp_path: Path) -> None:
         pytest.importorskip("numpy")
         controller, backend = _controller(tmp_path, None)

@@ -50,10 +50,12 @@ development-recordings plan's hardening, round 45, practitioner decision
 2026-10-08) because the replay tool and `measure-speakers.py` read recordings
 that may hold a real consultation under it, and refuse to run unless it is
 excluded; it covers every python.exe process of this user the same way.
+Since the capture-overflow plan (0.4.3) `measure-capture-stall.py`, which
+opens the microphone, refuses without it too.
 `audacity.exe` (the clinic-smoke plan's D11) because Audacity opens an
 exported kept recording to label its speakers; the app itself does not
 require it. `--unregister` removes those five values only, never the key or
-anyone else's values (after it, those two tools refuse again).
+anyone else's values (after it, those tools refuse again).
 
 RUN IT FROM A NORMAL TERMINAL (PowerShell or cmd), never from an agent shell:
 on this machine agent shells are MSIX-virtualized for both %LOCALAPPDATA% and

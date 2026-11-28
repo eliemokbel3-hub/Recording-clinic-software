@@ -170,6 +170,35 @@ set up and build it, and make releases; the installed app needs none of them.
   writes no file and calls no logger. Developer build only; needs the
   language model; close the installed app first. Results of record:
   `docs/testing/validation-harness.md` "Suggestion-stage measurement".
+- `measure-capture-stall.py [--list] [--device <id>] [--product]` (capture-overflow
+  plan Task 0.1) — measures how long a stalled microphone callback this
+  computer's input stream survives before PortAudio reports dropped frames
+  (which ends a recording). It opens the microphone with the app's own stream
+  arguments, once with the default buffer and once per candidate `latency=`
+  value (1.0, 2.0, 2.5 and 3.0 s), each trial its own open: a 20 s cadence
+  run, stalls of 0.3, 1.0, 2.0 and 3.0 s slept inside the callback, twenty
+  stops after 5 s, one stop that lands inside a stall, and one row that holds
+  the interpreter lock instead. It prints a Markdown paste block ending in
+  `premise: met | not met` and `chosen: <value> | none`, computed by the rule
+  frozen in that plan's D5 before any run (a change of a candidate, a count or
+  a bar is a new dated decision with the run repeated, never an edit).
+  `--list` shows the input devices (id, host word, name) on screen only;
+  `--device <id>` measures that device instead of the default input (only an
+  `mme` entry is scored); `--product` runs the stall and stop rows through
+  the app's own `SoundDeviceBackend.open_stream` and ends in
+  `product: pass | fail` (set `PYTHONPATH` to the checkout's `desktop\src`
+  first; refused until `audio_capture.INPUT_LATENCY_SECONDS` exists). It keeps
+  no audio (a block's length is counted and the block dropped), writes no file
+  of its own (holding the app's lock opens the app's empty `app.lock`) and
+  calls no logger; the paste block holds numbers, a device id, a host word,
+  library versions and whether the imported code is this checkout's, never a
+  device name or a folder path; an error during the measurement prints only
+  its type's name and Ctrl+C prints `interrupted` (an error in the imports or
+  the start-up checks before it is an ordinary Python error).
+  It refuses before any stream unless `python.exe` is excluded from Windows
+  crash reporting, and holds the app's single-instance lock for its run.
+  Developer build only, run by the practitioner from a normal terminal with
+  Clinic Scribe closed (either build), outside clinic hours; about 20 minutes.
 - `speaker-embedding-smoke.py --model <path> <wav> [<wav> ...]` (practitioner-profile
   plan Task 0.3) — loads a speaker-embedding ONNX model from an explicit path (the
   `SileroVad` contract: offline kill-switches asserted before onnxruntime is

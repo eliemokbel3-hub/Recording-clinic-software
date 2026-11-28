@@ -1340,7 +1340,7 @@ def test_main_installs_the_hooks_first_and_checks_before_the_window(
         "acquire_instance_exclusion": lambda name=None, lock_path=None: (
             app_module.InstanceExclusion("acquired")
         ),
-        "SoundDeviceBackend": lambda: object(),
+        "SoundDeviceBackend": lambda **kwargs: object(),
         "AuditLog": FakeAudit,
         "PastSessionStore": FakePastSessions,
         "SessionController": FakeController,
