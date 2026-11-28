@@ -1144,7 +1144,8 @@ class TestBackUpInTheWindow:
             event = QCloseEvent()
             window.closeEvent(event)
             assert not event.isAccepted()
-            assert window.statusBar().currentMessage().startswith("Work in progress")
+            # Review round 39: the run's own line, not the generic one.
+            assert window.statusBar().currentMessage() == view.ARCHIVE_CLOSE_LINE
         finally:
             screen._hops.remove(task)
             task.deleteLater()

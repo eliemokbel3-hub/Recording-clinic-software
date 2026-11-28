@@ -704,18 +704,8 @@ def row_importable(plaintext: bytes, session_id: str, month: str) -> bool:
     authenticated row's) decodes to a row whose own session id is
     ``session_id`` and whose session-date month is ``month`` — or is a row of
     a NEWER schema (kept byte for byte, D9). Anything else is not
-    importable."""
-    try:
-        decoded = _decode(plaintext)
-    except ValueError:
-        return False
-    if decoded is _NEWER:
-        return True
-    return (
-        isinstance(decoded, AuditRow)
-        and decoded.session_id == session_id
-        and _month_folder(decoded.session_date) == month
-    )
+    importable. ONE rule with Restore's reading (simplify round 40)."""
+    return backed_up_row_reading(plaintext, session_id, month) != "undecodable"
 
 
 BackedUpRow = Literal["kept", "deleted", "newer", "undecodable"]

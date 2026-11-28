@@ -5474,7 +5474,7 @@ by closed code a file over 1 GiB, a ZIP64 record or field, a comment, more
 than 65 535 members, an oversized or miscounted directory, a non-ASCII,
 over-long or repeated name, an extra field in either header, a compressed or
 flagged member, sizes that differ, `header.json` not first or over 4 KiB, and
-a `manifest.enc` missing, doubled or over 16 MiB. Then the header is parsed
+a `manifest.enc` missing, doubled or over 16 MiB (an entry file over 64 MiB is refused by the manifest's own check, and by Back up before any file exists). Then the header is parsed
 (`extra="forbid"`), its format and KDF checked, the channel compared (a
 courtesy refusal before the passphrase), the key derived and the manifest
 decrypted — a wrong passphrase and a damaged manifest give ONE code
@@ -5534,7 +5534,7 @@ folder still listable afterwards; otherwise the line adds "A partial backup
 file may remain on the drive."
 
 THE LOCATION RULE (D7, C2). `exclusions.check_archive_backup_location`:
-REFUSED, never asked — a `\\` or prefixed path or a remote drive letter,
+REFUSED, never asked — a `\\` or prefixed path (the NT `\??\` prefix included) or a remote drive letter,
 judged from the TEXT (and the drive root's type) before any call that touches
 the path itself; then a folder in or under a
 OneDrive root the environment names, a network location, the roaming profile,
@@ -5712,7 +5712,7 @@ lives; the same-volume warning compares this channel's data folder only.
 (b7) THE DESTINATION RE-CHECK JUDGES THE FOLDER AS CHOSEN. The rule resolves
 the folder to judge it, and the writer then creates the `.part` through the
 path as chosen; a junction or mount changed by another program between that
-check and the create is the same-user residue (boundary 2).
+check and the create is the same-user residue (boundary 2). Creating through the resolved path would not close it — any folder on that path can be replaced by a link in the same instant — so the writer keeps the folder as chosen (security review round 41).
 (b8) A LOST OR STOLEN DRIVE shows what the paragraph above lists, and an
 attacker holding it can try passphrases offline at Argon2id's cost.
 (b9) A `.part` LEFT BY A POWER CUT OR A PULLED DRIVE may be a whole backup

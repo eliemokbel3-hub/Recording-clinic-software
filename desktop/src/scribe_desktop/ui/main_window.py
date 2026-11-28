@@ -1731,6 +1731,13 @@ class MainWindow(QMainWindow):
         # suggestion job is aborted and orphaned FIRST, and `is_busy` below
         # then holds the close only until its in-flight window returns.
         self.note_screen.prepare_close()
+        if self.past_sessions_screen.is_busy:
+            # Past-sessions-backup review round 27 MED-001: a backup hop's
+            # worker can still be ending after its run released the gate —
+            # named as the run's own line (round 39).
+            self.statusBar().showMessage(past_sessions_view.ARCHIVE_CLOSE_LINE)
+            event.ignore()
+            return
         if (
             self.session_screen.is_busy
             or self.recovery_screen.is_busy
@@ -1740,9 +1747,6 @@ class MainWindow(QMainWindow):
             or self.clinics_screen.is_busy
             or self.is_reverifying
             or (self.chrome_bridge is not None and self.chrome_bridge.is_busy)
-            # Past-sessions-backup review round 27 MED-001: a backup hop's
-            # worker can still be ending after its run released the gate.
-            or self.past_sessions_screen.is_busy
         ):
             self.statusBar().showMessage(
                 "Work in progress - wait for transcription, note generation, "

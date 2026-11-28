@@ -143,6 +143,9 @@ _NAMESPACED = (
     r"\\?\unc\server\share",
     r"\\?\Unc\server\share",
     r"\\?\GLOBALROOT\Device\Mup\server\share",
+    # Security review round 41: the NT object prefix, passed through unchanged.
+    r"\??\UNC\server\share",
+    r"\??\unc\server\share",
 )
 
 

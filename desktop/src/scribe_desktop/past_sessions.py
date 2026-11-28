@@ -1995,9 +1995,10 @@ class PastSessionStore:
             return "skip"
         if not _absent(child / PENDING_FILENAME):
             return "left"
-        blob = _read_single_link_file(key_path, MAX_KEY_BLOB_BYTES)
-        if blob is None:
+        looked = inspect_entry_file(key_path, read_cap=MAX_KEY_BLOB_BYTES)
+        if not isinstance(looked, tuple):  # a link, gone, or unreadable
             return "left"
+        blob = looked[1]
         classify = (
             self._classify_key_blob
             if self._classify_key_blob is not None
@@ -2340,26 +2341,6 @@ def _read_capped(path: Path, cap: int) -> bytes:
     if len(blob) > cap:
         raise PastSessionError("unreadable")
     return blob
-
-
-def _read_single_link_file(path: Path, cap: int) -> bytes | None:
-    """``path``'s bytes, read ONCE through one handle, only when ``path`` is
-    itself not a link (its own ``link_state``, read BEFORE it is opened —
-    a handle check alone would follow a file link) and the opened file is
-    a regular file with no other name (``st_nlink`` 1) of at most ``cap``
-    bytes. None for anything else, a read error included. Never raises
-    (past-sessions-backup plan D5 / D8)."""
-    if link_state(path) is not False:
-        return None
-    try:
-        with path.open("rb") as stream:
-            status = os.fstat(stream.fileno())
-            if not stat.S_ISREG(status.st_mode) or status.st_nlink != 1:
-                return None
-            blob = stream.read(cap + 1)
-    except OSError:
-        return None
-    return blob if len(blob) <= cap else None
 
 
 FileLook = Literal["absent", "linked", "unreadable"]

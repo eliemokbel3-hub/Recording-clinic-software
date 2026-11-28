@@ -987,7 +987,7 @@ style or background setter fails `desktop/tests/test_ui_theme.py`.
     order: a draft write in flight (the write's own line); "Finish or discard the current
     recording first."; "Review or discard the recordings on the Recovery page first.";
     "Voice enrolment is running - wait for it to finish, or Stop it, first."; "Wait for
-    the current work to finish." (`ARCHIVE_*_LINE`). Closing the window during a run reads
+    the current work to finish." (`ARCHIVE_*_LINE`). Closing the window during a run, or while its last worker is still ending, reads
     "A backup or restore is running - wait for it to finish before closing."
     (`ARCHIVE_CLOSE_LINE`), and Chrome's Start, Discard and Open for review read "A backup
     or restore is running - wait for it to finish." (`ui/models.py`
@@ -1023,10 +1023,10 @@ style or background setter fails `desktop/tests/test_ui_theme.py`.
     session that is here. If this Windows login can no longer open those sessions, press
     Close, then Set aside sessions that cannot be opened, and open this backup again."
     (`RESTORE_NEVER_REPLACES`); and, with Restore disabled, each reason on its own line:
-    "Start a new audit record first." (`RESTORE_NEEDS_AUDIT`), "Choose how long past
+    "Start a new audit record first." (`RESTORE_NEEDS_AUDIT`, only while the page offers that button; a key that cannot be opened just now has "The audit record cannot be read just now - press Close and open this backup again later.", `RESTORE_AUDIT_UNAVAILABLE`), "Choose how long past
     sessions are kept first." (`RESTORE_NEEDS_RETENTION`, which also leaves out the counts
     that depend on age). Close reads "The backup was closed. Nothing was written."
-    (`OPEN_CLOSED`). A wrong passphrase and a damaged file share one line, "The backup
+    (`OPEN_CLOSED`). A wrong passphrase and a damaged manifest share one line (any other damage reads "The backup could not be opened: the file is damaged or is not a Clinic Scribe backup."), "The backup
     could not be opened: the passphrase is not right, or the file is damaged."
   - The final report (`restore_report_line`): "Restored N sessions and R audit rows."
     then, each when not zero, "Left as they are: F." and "Not restored: X."; "The backup
@@ -1049,7 +1049,7 @@ style or background setter fails `desktop/tests/test_ui_theme.py`.
     be safely assessed." and "F could not be moved." (`set_aside_line`; each verb agrees
     with its number); its refusals "Windows could not verify a test value just now -
     nothing was moved. Try again later." and "The set-aside folder could not be made -
-    nothing was moved." (`set_aside_failed_line`).
+    nothing was moved.", and the page's list-unreadable line when the archive cannot be listed (`set_aside_failed_line`). After a Restore or a set-aside whose re-list could not read the archive, that line follows the report.
 - A custody action that fails on an error the app did not author (a disk, permission or
   store error) shows one fixed reason, "an unexpected problem on this computer stopped
   it", never the error's text or type: that text can name the session's directory. The

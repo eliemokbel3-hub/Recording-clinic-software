@@ -1782,7 +1782,7 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       failure included): until then hop B holds every eligible entry key in
       memory at once (keys, not content).
       `prepare_backup` plans the counts and refuses over 1 GiB or 65 535
-      members before any file exists. Hop C (worker) re-reads each entry's files
+      members, or an entry file over 64 MiB, before any file exists. Hop C (worker) re-reads each entry's files
       through one handle each, proves the entry opens in memory
       (`past_sessions.entry_opens`) and each row authenticates and is
       importable, and writes them as ciphertext into

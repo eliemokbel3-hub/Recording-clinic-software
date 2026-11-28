@@ -150,6 +150,34 @@ class TestPreflight:
         _refused("comment", _Source(fakes.raw_zip(members, comment=b"a comment")))
         _refused("zip64", _Source(fakes.raw_zip(members, zip64_locator=True)))
 
+    def test_an_end_record_whose_own_fields_spell_its_signature_is_found(self) -> None:
+        """Review round 39: a directory at offset 0x06054B50 puts the end
+        record's signature inside its own offset field. The record is still
+        read at its fixed place (the last 22 bytes) — before the fix a search
+        from the end stopped inside it and refused the file as ``comment``.
+        The directory here is zeros, so the walk refuses it instead."""
+        directory_offset, directory_size = 0x06054B50, 60
+        signature = int.from_bytes(backup._END_MAGIC, "little")
+        end = backup._END.pack(signature, 0, 0, 1, 1, directory_size, directory_offset, 0)
+        assert end[16:20] == backup._END_MAGIC
+
+        class Sparse:
+            """Zeros everywhere but the end record, which is the last 22 bytes."""
+
+            def size(self) -> int:
+                return directory_offset + directory_size + len(end)
+
+            def read_at(self, offset: int, length: int) -> bytes:
+                out = bytearray(length)
+                start = self.size() - len(end)
+                for index in range(max(offset, start), min(offset + length, self.size())):
+                    out[index - offset] = end[index - start]
+                return bytes(out)
+
+        with pytest.raises(BackupFormatError) as info:
+            backup.preflight(Sparse())
+        assert info.value.code not in {"comment", "not_a_backup"}
+
     def test_the_directory_count_and_size(self) -> None:
         members = [(backup.HEADER_MEMBER, _header()), (backup.MANIFEST_MEMBER, b"m" * 40)]
         _refused("directory_count", _Source(fakes.raw_zip(members, declared_count=3)))

@@ -1362,6 +1362,15 @@ class PastSessionsScreen(QWidget):
             audit_unreadable = audit.key_unopenable()
         except Exception:  # noqa: BLE001 - Restore fails closed
             audit_unreadable = True
+        # Review round 39: the line names "Start a new audit record" only
+        # when the page offers it (the reset button, re-checked here, as after
+        # any failed audit read); a key that cannot be opened just now, or a
+        # check that raised, has its own line.
+        audit_line = view.RESTORE_AUDIT_UNAVAILABLE
+        if audit_unreadable:
+            self._recheck_audit_key()
+            if self._audit_key_unreadable:
+                audit_line = view.RESTORE_NEEDS_AUDIT
         try:
             plan = plan_restore(
                 reader,
@@ -1379,7 +1388,7 @@ class PastSessionsScreen(QWidget):
         refusals = [
             line
             for line, applies in (
-                (view.RESTORE_NEEDS_AUDIT, audit_unreadable),
+                (audit_line, audit_unreadable),
                 (view.RESTORE_NEEDS_RETENTION, not settings_read),
             )
             if applies
@@ -1431,7 +1440,7 @@ class PastSessionsScreen(QWidget):
             saved = False
         self._end_run(None)
         self.refresh()  # the page re-listed BEFORE the line shows
-        self._show_message(view.restore_report_line(report, date_saved=saved))
+        self._show_after_relist(view.restore_report_line(report, date_saved=saved))
 
     def _advance_backup_date(self, made_at: datetime) -> bool:
         """D10: ``last_backup_at`` advanced to a restored file's ``made_at``
@@ -1481,7 +1490,7 @@ class PastSessionsScreen(QWidget):
             if not isinstance(exc, PastSessionError):
                 self._noted("set_aside", view.hop_failure(exc))
             self.refresh()
-            self._show_message(view.set_aside_failed_line(exc))
+            self._show_after_relist(view.set_aside_failed_line(exc))
             return
         self.refresh()
         moved = len(report.moved)
@@ -1493,7 +1502,16 @@ class PastSessionsScreen(QWidget):
                 replace(swept, undated=max(0, swept.undated - moved)),
             )
             self._render_status()
-        self._show_message(view.set_aside_line(report))
+        self._show_after_relist(view.set_aside_line(report))
+
+    def _show_after_relist(self, line: str) -> None:
+        """A line shown after the page re-listed itself (Restore, Set aside).
+        When that re-list could not read the archive, its own line stays
+        beside this one, so an archive that cannot be listed never looks
+        empty (review round 39; round 16 LOW-003's rule)."""
+        if self._store is not None and not self._listed and view.LIST_UNREADABLE not in line:
+            line = f"{line} {view.LIST_UNREADABLE}"
+        self._show_message(line)
 
     def _end_run(self, line: str | None) -> None:
         """Every exit of a run: the run object closed (both buffers zeroed,

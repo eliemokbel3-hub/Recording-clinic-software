@@ -65,6 +65,7 @@ from pydantic import (
 
 from scribe_desktop import __version__, install_layout
 from scribe_desktop.audit import (
+    _DELETED_STATES,
     MAX_ROW_FILE_BYTES,
     AuditRow,
     AuditSnapshot,
@@ -638,10 +639,14 @@ def preflight(source: ByteSource) -> dict[str, MemberSpan]:
         raise BackupFormatError("not_a_backup")
     tail_length = min(size, _END_SEARCH_BYTES)
     tail = source.read_at(size - tail_length, tail_length)
-    end_at = tail.rfind(_END_MAGIC)
-    if end_at < 0:
-        raise BackupFormatError("not_a_backup")
-    if end_at != tail_length - _END.size:
+    # With no comment the end record is the file's last 22 bytes: looked for
+    # THERE first, since its own fields can spell the signature (a directory
+    # at offset 0x06054B50) and a search from the end would stop inside it
+    # (review round 39). Found only earlier, it is followed by a comment.
+    end_at = tail_length - _END.size
+    if tail[end_at : end_at + len(_END_MAGIC)] != _END_MAGIC:
+        if tail.rfind(_END_MAGIC) < 0:
+            raise BackupFormatError("not_a_backup")
         raise BackupFormatError("comment")
     (_sig, disk, directory_disk, on_disk, total, directory_size, directory_offset, comment) = (
         _END.unpack(tail[end_at:])
@@ -1542,13 +1547,7 @@ def _stem(day: str, n: int) -> str:
 
 def _taken(path: Path) -> bool:
     """Something is at ``path`` — or it cannot be told (never touched)."""
-    try:
-        os.lstat(path)
-    except FileNotFoundError:
-        return False
-    except OSError:
-        return True
-    return True
+    return _presence(path) is not False
 
 
 def _create_part(destination: Path, stems: list[str]) -> tuple[int, int, ExportIdentity]:
@@ -1791,7 +1790,9 @@ class LocalRow:
     unarchived: bool = False
 
 
-_DELETED_PAST_STATES: Final = frozenset({"deleted_early", "expired"})
+# The tombstone states are the audit module's own (simplify round 40): one
+# definition for the local row and the backed-up row alike.
+_DELETED_PAST_STATES: Final = _DELETED_STATES
 
 
 def local_row(audit: RestoreAudit, session_id: str) -> LocalRow:

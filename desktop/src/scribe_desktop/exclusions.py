@@ -568,9 +568,11 @@ def _text_refusal(layer: WindowsLayer, path: str) -> str | None:
     other prefixed form — or a drive letter whose root is remote. A
     prefixed path that names no drive letter once its prefix is removed
     (the ``GLOBALROOT`` namespace and the like) is refused too: its network
-    identity cannot be told from the text (round 23 PR-MED-2302)."""
+    identity cannot be told from the text (round 23 PR-MED-2302). So is the
+    NT object prefix ``\\??\\``, which Windows passes through unchanged (a
+    ``\\??\\UNC\\`` path reaches a share; security review round 41)."""
     text = _normalised(path)
-    if text.startswith("\\\\"):
+    if text.startswith("\\\\") or text.startswith("\\??\\"):
         return "location_network"
     drive, _rest = ntpath.splitdrive(text)
     if len(drive) == 2 and drive[1] == ":":

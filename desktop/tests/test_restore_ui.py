@@ -337,6 +337,7 @@ class TestOpenAndClose:
         screen.on_open_backup()  # the answer would be Restore: it is disabled
         lines, enabled = world.summaries[0]
         assert not enabled and lines[-1] == view.RESTORE_NEEDS_AUDIT
+        assert not screen.reset_audit_button.isHidden()  # the control it names (round 39)
         assert world.here() == before
         assert world.message() == view.OPEN_CLOSED
         _closed_cleanly(world)
@@ -393,7 +394,10 @@ class TestOpenAndClose:
         screen.on_open_backup()
         assert asked  # the product's own check was the one that raised
         lines, enabled = world.summaries[0]
-        assert not enabled and lines[-1] == view.RESTORE_NEEDS_AUDIT
+        # Review round 39: the key itself reads, so no reset is offered and
+        # the line does not name one.
+        assert not enabled and lines[-1] == view.RESTORE_AUDIT_UNAVAILABLE
+        assert screen.reset_audit_button.isHidden()
         assert world.here() == before
         _closed_cleanly(world)
 
@@ -426,7 +430,8 @@ class TestOpenAndClose:
         self, world: RWorld, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Review round 33: a passing key problem disables Restore too (no row
-        could be written), though it offers no reset."""
+        could be written), though it offers no reset — so (round 39) its line
+        does not name one."""
         from scribe_desktop.audit import AuditUnavailable
 
         world.entry()
@@ -442,7 +447,9 @@ class TestOpenAndClose:
         before = world.here()
         screen.on_open_backup()
         lines, enabled = world.summaries[0]
-        assert not enabled and lines[-1] == view.RESTORE_NEEDS_AUDIT
+        assert not enabled and lines[-1] == view.RESTORE_AUDIT_UNAVAILABLE
+        assert view.RESTORE_NEEDS_AUDIT not in lines
+        assert screen.reset_audit_button.isHidden()
         assert world.here() == before
         _closed_cleanly(world)
 
@@ -560,6 +567,42 @@ class TestRestore:
             [f"Restored {view._sessions(1)} and {view._rows(1)}.", view.RESTORE_CLINIC_KEYS]
         )
         assert read_backup_settings(world.config).settings.last_backup_at == fakes.NOW
+        _closed_cleanly(world)
+
+    def test_a_re_list_that_fails_keeps_its_line_beside_the_report(
+        self, world: RWorld, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Review round 39: the report line never hides an archive the page
+        could not list again (it would look empty)."""
+        world.entry()
+        world.backup_file()
+        screen = world.build()
+        restored: list[bool] = []
+        real_restore = page_module.restore_backup
+
+        def restore_then_flag(*args: Any, **kwargs: Any) -> Any:
+            report = real_restore(*args, **kwargs)
+            restored.append(True)
+            return report
+
+        real_list = world.dst.list_entries
+
+        def list_until_restored() -> Any:
+            if restored:
+                raise RuntimeError("synthetic")
+            return real_list()
+
+        monkeypatch.setattr(page_module, "restore_backup", restore_then_flag)
+        monkeypatch.setattr(world.dst, "list_entries", list_until_restored)
+        screen.on_open_backup()
+        assert restored and not screen._listed
+        assert world.message() == " ".join(
+            [
+                f"Restored {view._sessions(1)} and {view._rows(1)}.",
+                view.RESTORE_CLINIC_KEYS,
+                view.LIST_UNREADABLE,
+            ]
+        )
         _closed_cleanly(world)
 
     def test_a_second_restore_changes_nothing(self, world: RWorld) -> None:

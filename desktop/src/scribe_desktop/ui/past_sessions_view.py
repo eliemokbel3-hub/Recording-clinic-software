@@ -61,7 +61,7 @@ from scribe_desktop.past_sessions_backup import (
 )
 from scribe_desktop.past_sessions_backup import FORMAT_CODES as BACKUP_FORMAT_CODES
 from scribe_desktop.session_store import StoreWriteError
-from scribe_desktop.ui.models import CUSTODY_UNEXPECTED_REASON
+from scribe_desktop.ui.models import CUSTODY_UNEXPECTED_REASON, START_BACKUP_RUNNING_MESSAGE
 
 PAST_SESSIONS_TAB_TITLE: Final = "Past sessions"
 
@@ -924,7 +924,8 @@ def retention_sweep(
 # own line, ``models.write_line("write_in_flight")``, first) — and why the
 # window will not close while one runs.
 
-ARCHIVE_RUNNING_LINE: Final = "A backup or restore is running - wait for it to finish."
+# The page's line and Chrome's refusal are ONE wording (simplify round 40).
+ARCHIVE_RUNNING_LINE: Final = START_BACKUP_RUNNING_MESSAGE
 ARCHIVE_CLOSE_LINE: Final = (
     "A backup or restore is running - wait for it to finish before closing."
 )
@@ -1201,8 +1202,13 @@ OPEN_CLOSED: Final = "The backup was closed. Nothing was written."
 RESTORE_RUNNING: Final = (
     "Restoring - this can take a minute. The rest of Clinic Scribe waits until it is done."
 )
-# D8: why Restore is disabled on the summary, as one more line.
+# D8: why Restore is disabled on the summary, as one more line. The first only
+# while the page offers "Start a new audit record" (``key_unreadable``); a key
+# that cannot be opened just now gets the second (review round 39).
 RESTORE_NEEDS_AUDIT: Final = "Start a new audit record first."
+RESTORE_AUDIT_UNAVAILABLE: Final = (
+    "The audit record cannot be read just now - press Close and open this backup again later."
+)
 RESTORE_NEEDS_RETENTION: Final = "Choose how long past sessions are kept first."
 RESTORE_NEVER_REPLACES: Final = (
     "Restore never replaces a session that is here. If this Windows login can no longer "

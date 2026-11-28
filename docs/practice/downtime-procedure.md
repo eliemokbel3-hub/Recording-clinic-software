@@ -312,7 +312,7 @@ session.
 
 Nothing else is a reason to destroy a backup — not "Nothing to back up yet.", not an
 empty Past sessions page, not a restore's summary or report, and not a backup that would
-not open (a mistyped passphrase and a damaged file give the same message, so a failed
+not open (a mistyped passphrase can give the same message as a damaged file, so a failed
 Open proves nothing).
 
 **A file whose name ends in `.csbk.part`** on the backup drive is a backup that did not
